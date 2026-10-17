@@ -64,6 +64,15 @@ const AGREE: readonly string[] = [
   "$.a",
   "$.a && $.b",
   "$.a || $.b",
+  // HR5: a dot reads a missing string as "". A test that is true for "" selects the
+  // document with no `s` on both roads. A `?.` selects it on neither road.
+  '$.s.includes("")',
+  '$.s.startsWith("")',
+  '$.s.endsWith("")',
+  "$.s.match(/^$/)",
+  "!$.s.match(/^$/)",
+  "$.s?.match(/^$/)",
+  '$.s.includes("b")',
 ];
 
 /**

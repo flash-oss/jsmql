@@ -358,6 +358,23 @@ writes by hand, and the server's own rules apply to it.
 `v` would be read as something else, an operator document or a regular
 expression.
 
+HR5 also applies to a query. A dot reads a missing or null receiver as the safe
+value of its kind. A query clause never matches a missing field. So a cell whose
+test is true for the safe value calls `orMissing` for its clause. The clause is the
+test, or the field missing or null (`queryOrMissing` in `src/registry/vocabulary.ts`).
+
+A regex test and the null test share one `$in`. An `$elemMatch` body over a value
+can contain this `$in` too. Any other test takes an `$or`. After a `?.` the call
+gives null, so the clause has no null test. A `?.` earlier in the path gives null
+only where its own link is missing, so the cell takes the `$expr` road there.
+
+| source | shape |
+|---|---|
+| `$.s.match(/^$/)` | `{"s":{"$in":[/^$/,null]}}` |
+| `$.s?.match(/^$/)` | `{"s":{"$regex":/^$/}}` |
+| `$.tags.some(t => t.includes(""))` | `{"tags":{"$elemMatch":{"$in":[/(?:)/,null]}}}` |
+| `$.s.match(/a/)` | `{"s":{"$regex":/a/}}` |
+
 MongoDB then satisfies a field comparison when any ELEMENT of an array value
 satisfies it, and it traverses an array in the middle of a path. JavaScript
 does neither. Two suites measure the gap and name every source it separates:
@@ -398,7 +415,7 @@ root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
 `$elemMatch` boundary records which parameter is its element), `constant` (a
 value the query language compares as written — never an array, a regex or a
-bigint), `query`, `nativeQuery` and `elementQuery`.
+bigint), `query`, `nativeQuery`, `elementQuery` and `orMissing`.
 
 `.inRange()` accepts its two bounds either way round, and the value form
 orders them at run time with `$min`/`$max`. A query clause has no such

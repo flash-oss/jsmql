@@ -14,6 +14,12 @@ function queryOwnValue(path, test) {
   if (path === "") return test;
   return { [path]: shorthand(test) };
 }
+function queryOrMissing(path, test) {
+  const keys = Object.keys(test);
+  if (keys.length === 1 && keys[0] === "$regex") return queryOwnValue(path, { $in: [test.$regex, null] });
+  if (path === "") return null;
+  return { $or: [queryOwnValue(path, test), { [path]: null }] };
+}
 var BSON_KIND = {
   ObjectId: "objectId",
   Decimal128: "number",
@@ -646,6 +652,10 @@ function merged(recv, args, value) {
 var pairsRead = (obj, project) => ({
   $map: { input: { $objectToArray: obj }, in: project("$$this") }
 });
+var matchesEmpty = (pattern, flags) => new RegExp(
+  pattern.replace(/\\[AzZG]|\\.|\[(?:\\.|[^\]\\])*\]/g, (m) => /^\\[AzZG]$/.test(m) ? "(?:)" : m),
+  flags
+).test("");
 var nullOr = (recv, present2, bind, body) => {
   if (present2) return body(recv);
   const cheap = typeof recv === "string" && recv.startsWith("$");
@@ -3541,11 +3551,12 @@ var NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
+        const test = { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3572,11 +3583,12 @@ var NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
+        const test = { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3671,17 +3683,17 @@ var NAMES = {
     // is the one that survives where they differ, and both differences are positions
     // jsmql emits into: a SIBLING operator on the same field
     // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object. The two places the bare form is required
-    // instead — an element of `$in` or `$all` (the server refuses an operator document
-    // there) — no regex reaches: a regex literal is only an argument to `.match` and its
-    // siblings, never an element of a written list.
+    // and `$elemMatch`, which needs an object. An element of `$in` takes the bare form
+    // instead, because the server refuses an operator document there. `queryOrMissing`
+    // in src/registry/vocabulary.ts writes that form.
     filter: {
       args: { sig: "regexp", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, literal: literal2, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: literal2(re) });
+        const test = { $regex: literal2(re) };
+        return matchesEmpty(re.pattern, re.flags) ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3859,11 +3871,12 @@ var NAMES = {
     // run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+        const test = { $regex: new RegExp(escapeForRegex(needle.value)) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -22867,8 +22880,8 @@ function typeOfEmitted(value, doc) {
     };
     const result = evaluate2(returnsOf(op), site);
     const body = (a) => isPlainObject(a) && operatorKeyOf(a) === null;
-    const isPresent3 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
-    return isPresent3 ? present(result) : maybeAbsent(result);
+    const isPresent2 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
+    return isPresent2 ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
     const props = /* @__PURE__ */ new Map();
@@ -24249,6 +24262,11 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name2, cb.pos);
       return q;
+    },
+    orMissing: (path, test) => {
+      const optionalCall = node.optional === true;
+      if (optionalCall || recv === null || isPresent(recv, env.at({ at: "value" }))) return queryOwnValue(path, test);
+      return chainHasOptional(recv) ? null : queryOrMissing(path, test);
     }
   };
 }

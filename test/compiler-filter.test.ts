@@ -283,6 +283,27 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
+  it('matches a missing or null string where the test is true for the safe value "" (HR5)', () => {
+    // A dot reads a missing string as "". A query clause never matches a missing field.
+    // So a test that is true for "" takes the null test beside it, in one `$in`.
+    expect(filter('$.s.includes("")')).toEqual({ s: { $in: [/(?:)/, null] } });
+    expect(filter('$.s.startsWith("")')).toEqual({ s: { $in: [/^/, null] } });
+    expect(filter('$.s.endsWith("")')).toEqual({ s: { $in: [/\z/, null] } });
+    expect(filter("$.s.match(/^$/)")).toEqual({ s: { $in: [/^$/, null] } });
+    // The server matches a PCRE anchor on "". JavaScript reads the anchor as a letter.
+    expect(filter("$.s.match(/\\A\\z/)")).toEqual({ s: { $in: [/\A\z/, null] } });
+    // a test that fails on "" keeps its plain clause
+    expect(filter("$.s.match(/a/)")).toEqual({ s: { $regex: /a/ } });
+    // an `$elemMatch` body over a value can contain the `$in` too
+    expect(filter('$.tags.some(t => t.includes(""))')).toEqual({ tags: { $elemMatch: { $in: [/(?:)/, null] } } });
+    // After a `?.` the call gives null. No test is true for null.
+    expect(filter("$.s?.match(/^$/)")).toEqual({ s: { $regex: /^$/ } });
+    // A `?.` earlier in the path gives null only where `a` is missing. The expression road decides.
+    expect(filter('$.a?.b.includes("")')).toEqual({
+      $expr: { $cond: [{ $lte: ["$a", null] }, null, { $gte: [{ $indexOfCP: [{ $ifNull: ["$a.b", ""] }, ""] }, 0] }] },
+    });
+  });
+
   it("lowers .inRange() on a field against constant bounds to an indexable range on that field", () => {
     expect(filter("$.age.inRange(18, 65)")).toEqual({ age: { $gte: 18, $lt: 65 } });
     // the bounds order at COMPILE time, so the swapped spelling is the same clause

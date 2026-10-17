@@ -1204,6 +1204,19 @@ const pairsRead = (obj: unknown, project: (ref: string) => unknown): unknown => 
 });
 
 /**
+ * Does the regex match the empty string on the server? A dot reads a missing string as
+ * "" (HR5), so the answer decides whether `.match()` matches a missing field. JavaScript
+ * runs the pattern on "". PCRE's anchors `\A`, `\z`, `\Z` and `\G` match on "".
+ * JavaScript reads each one as a letter. So each one outside a character class reads as
+ * an empty group first. The scan keeps all the other escapes and all the classes as written.
+ */
+const matchesEmpty = (pattern: string, flags: string): boolean =>
+  new RegExp(
+    pattern.replace(/\\[AzZG]|\\.|\[(?:\\.|[^\]\\])*\]/g, (m) => (/^\\[AzZG]$/.test(m) ? "(?:)" : m)),
+    flags,
+  ).test("");
+
+/**
  * The body of a method over a receiver that may still be null or missing: null there,
  * the body elsewhere. Under a dot, HR5 reads such a receiver as its safe value first
  * (`dispatchOn` in src/compiler/emit/lower.ts), so the receiver is `present` and the
@@ -4438,11 +4451,13 @@ export const NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
+        const test = { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) };
+        // HR5: a dot reads a missing string as "". "" starts with the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4471,14 +4486,16 @@ export const NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         // `\z` is the end of the subject. PCRE's `$` also matches before a final
         // newline, so it selects "report.pdf\n" where JavaScript's endsWith does not.
         // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
+        const test = { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) };
+        // HR5: a dot reads a missing string as "". "" ends with the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4577,19 +4594,20 @@ export const NAMES = {
     // is the one that survives where they differ, and both differences are positions
     // jsmql emits into: a SIBLING operator on the same field
     // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object. The two places the bare form is required
-    // instead — an element of `$in` or `$all` (the server refuses an operator document
-    // there) — no regex reaches: a regex literal is only an argument to `.match` and its
-    // siblings, never an element of a written list.
+    // and `$elemMatch`, which needs an object. An element of `$in` takes the bare form
+    // instead, because the server refuses an operator document there. `queryOrMissing`
+    // in src/registry/vocabulary.ts writes that form.
     filter: {
       args: { sig: "regexp", exact: 1 },
-      emit: ({ recv, args, pathOf, literal }) => {
+      emit: ({ recv, args, pathOf, literal, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
         // `literal` builds the regex with MongoDB's options, so a JavaScript `g` does not
         // reach the wire as dotAll, and a dotAll `s` does not go missing (src/bson.ts).
-        return queryOwnValue(path, { $regex: literal(re) });
+        const test = { $regex: literal(re) };
+        // HR5: a dot reads a missing string as "", so a regex that matches "" matches it
+        return matchesEmpty(re.pattern, re.flags) ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4779,11 +4797,13 @@ export const NAMES = {
     // run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+        const test = { $regex: new RegExp(escapeForRegex(needle.value)) };
+        // HR5: a dot reads a missing string as "". "" includes the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
