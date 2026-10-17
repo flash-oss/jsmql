@@ -1769,11 +1769,11 @@ $.note.padEnd(10)                  // (default pad char is space)
 /word/gi.test($.s)                 // { $regexMatch: { input: "$s", regex: "word", options: "i" } }  — g dropped
 ```
 
-**`.endsWith()` and out-of-range indices.** MongoDB's `$substrCP` is stricter than JavaScript's
-string slicing. A negative start or length makes the server **abort the whole query**, instead of
-returning a value. This happens exactly where JS is most forgiving: `"a@b.com".endsWith("@example.com")`
-is simply `false` in JS, but the tail index `strLen - needleLen` is negative there. So JSMQL floors every
-index it derives, and `.endsWith()` binds its receiver once:
+**`.endsWith()` and indices out of range.** MongoDB's `$substrCP` is stricter than the string
+slices of JavaScript. A negative start or length makes the server **abort the whole query**, and the
+server returns no value. This happens exactly where JS is most tolerant. `"a@b.com".endsWith("@example.com")`
+is `false` in JS, but the tail index `strLen - needleLen` is negative there. So JSMQL floors every
+index that it derives, and `.endsWith()` binds its receiver once:
 
 ```js
 $.file.endsWith(".pdf")
@@ -1785,9 +1785,9 @@ $.file.endsWith(".pdf")
 ```
 
 Each method keeps its own JavaScript meaning for a negative index. `.substr()` counts
-from the end. `.substring()` clamps to 0. `.charAt()` returns `""`; JSMQL never floors it, because
-that would return the *first* character instead. A start or length past the end of the string is safe.
-It yields `""`, as in JS.
+from the end. `.substring()` clamps to 0. `.charAt()` returns `""`. JSMQL never floors that
+index, because the floor would return the *first* character. A start or length past the end of
+the string is safe: it gives `""`, as in JS.
 
 Each argument of a string method takes one kind (HR7). An index, a count and a length take an
 integer. A search string, a separator, a replacement and a pad string take a string. The compiler
@@ -1824,14 +1824,16 @@ $.s.indexOfSubstring("b", $.from)  // { $indexOfCP: ["$s", "b", { $max: [0, "$fr
 
 **A missing field never aborts a query.** MongoDB's `$strLenCP` aborts the query when its input is
 missing or null, and every derived length needs `$strLenCP`. So JSMQL coerces the receiver of every
-length it derives — `.endsWith()` binds `{ $ifNull: ["$file", ""] }` above — and a string method on a
-receiver it cannot prove is there is tested first and answers `null`, the JavaScript-method rule of
-[Type-aware dispatch](#type-aware-dispatch): on an absent field, `.length()`, `.padStart(5, "0")` and
-`.endsWith(…)` are all `null`. A *type* mismatch is still an error: an array or a number where a string
-is expected fails as the server reports it.
+length that it derives: `.endsWith()` binds `{ $ifNull: ["$file", ""] }` above.
 
-Note: the emitted length of a **literal** folds at compile time. It counts **code points**, the way
-`$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
+A string method on a receiver that JSMQL cannot prove is there gets a test first, and answers
+`null`. This is the JavaScript-method rule of [Type-aware dispatch](#type-aware-dispatch). On an
+absent field, `.length()`, `.padStart(5, "0")` and `.endsWith(…)` are all `null`. A *type* mismatch
+is still an error: an array or a number where the method expects a string fails as the server
+reports it.
+
+Note: JSMQL folds the length of a **literal** at compile time. It counts **code points**, as
+`$strLenCP` does, not the UTF-16 units of JS. So `"a👍b"` is 3, not 4.
 
 **One element per character.** MongoDB has no operator that splits a string into its characters,
 so JSMQL refuses `.split("")` and the spread of a string. Write the characters with `.range()` and
@@ -1846,7 +1848,9 @@ so JSMQL refuses `.split("")` and the spread of a string. Write the characters w
 so a missing or a null field gives `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
 gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
-**Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent. So JSMQL drops them from the emitted `options` and keeps only `i`/`m`/`s`. Dropping `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex, matching JS, which throws without one. But `g` itself does not appear in the output.
+**Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s` and `x`. The JavaScript-only flags have no MongoDB equivalent: `g` (global), `u` and `v` (unicode), `y` (sticky), `d` (indices). So JSMQL removes them from the emitted `options`, and keeps only `i`, `m` and `s`. The removal of `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch` or `$regexFind`.
+
+`.matchAll()` still *requires* a `/g` regex, as JS does, because JS throws without one. But `g` itself does not appear in the output.
 
 #### lodash string methods (ASCII-only)
 
@@ -1868,7 +1872,9 @@ $.s.truncate({ length: 24, omission: "…" })
 
 `.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLowerCase()` and `.toUpperCase()` change only the case, and keep all other characters.
 
-**ASCII-only, by design.** `$toUpper`/`$toLower` work only on ASCII; an accented letter passes through unchanged. Word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits camelCase boundaries and non-alphanumeric characters; an accented character acts as a separator. `truncate`'s word-boundary `separator` option has no MQL equivalent, because MQL cannot search backward. JSMQL omits `deburr`, because it is a no-op without Unicode support. A live mongod verified every shape here.
+**ASCII-only, by design.** `$toUpper` and `$toLower` work only on ASCII, so an accented letter passes through with no change. The split into words uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits at camelCase boundaries and at characters that are not alphanumeric. An accented character acts as a separator.
+
+The word-boundary `separator` option of `truncate` has no MQL equivalent, because MQL cannot search backward. JSMQL omits `deburr`, because it is a no-op without Unicode support. A live mongod verified every shape here.
 
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
