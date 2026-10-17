@@ -1990,7 +1990,7 @@ describe("arr.max() - arr.min() with Array.isArray guard", { features: ["Array s
     { kind: "expression", usage: "db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Array.isArray($.scores) ? $.scores.max() - $.scores.min() : 0`)).toEqual({
-        $cond: [{ $isArray: ["$scores"] }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
+        $cond: [{ $isArray: "$scores" }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
       });
     },
   );

@@ -9297,7 +9297,11 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
+    // the plain operand, and an array literal one level deeper, as `$size` takes it
+    expr: {
+      args: { sig: "value", exact: 1 },
+      emit: ({ args, value }) => ({ $isArray: singleArrayArg(value(args[0])) })
+    },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(\u2026);'"

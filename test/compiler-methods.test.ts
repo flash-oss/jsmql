@@ -2094,8 +2094,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("Number.isNaN($.n)", () => Number.isNaN(DOC.n))).toEqual({
       $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
     });
-    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: ["$a"] });
-    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: ["$n"] });
+    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
+    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
     expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
         $map: {

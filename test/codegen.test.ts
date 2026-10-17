@@ -8550,7 +8550,9 @@ describe(".fromEntries()", () => {
 
 describe("Array.isArray", () => {
   it("on a field", () => {
-    expect(jsmql.expr("Array.isArray($.items)")).toEqual({ $isArray: ["$items"] });
+    expect(jsmql.expr("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
+    // an array literal goes one level deeper, so the server reads it as one argument
+    expect(jsmql.expr("Array.isArray([1, 2])")).toEqual({ $isArray: [[1, 2]] });
   });
 });
 
