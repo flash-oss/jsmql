@@ -579,7 +579,7 @@ the numeric *value*, not the source text. JSMQL matches that, which is the write
 counterpart of reading `doc[0]`:
 
 ```js
-({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "1.5": 2, "16": 3 }   — exactly what JS builds
+({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "16": 3, "1.5": 2 }   — exactly what JS builds
 ```
 
 A 24-hex `0x…` literal is an ObjectId in JSMQL, and an ObjectId is not a field name, so
@@ -1642,30 +1642,30 @@ $.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
 Call methods on any expression that produces a string:
 
 ```js
-$.name.trim()                      // { $trim: { input: "$name" } }
-$.name.trimStart()                 // { $ltrim: { input: "$name" } }
-$.name.trimEnd()                   // { $rtrim: { input: "$name" } }
-$.name.toLowerCase()               // { $toLower: "$name" }
-$.name.toUpperCase()               // { $toUpper: "$name" }
-$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
+$.name.trim()                      // { $trim: { input: { $ifNull: ["$name", ""] } } }
+$.name.trimStart()                 // { $ltrim: { input: { $ifNull: ["$name", ""] } } }
+$.name.trimEnd()                   // { $rtrim: { input: { $ifNull: ["$name", ""] } } }
+$.name.toLowerCase()               // { $toLower: { $ifNull: ["$name", ""] } }
+$.name.toUpperCase()               // { $toUpper: { $ifNull: ["$name", ""] } }
+$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: { $ifNull: ["$name", ""] } }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
-$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: "$name" }, 1] }] }] }
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 1] }] }] }
 $.name.substr(-3)                  // the last three characters — a negative start counts from the end
-$.csv.split(",")                   // { $split: ["$csv", ","] }
+$.csv.split(",")                   // { $split: [{ $ifNull: ["$csv", ""] }, ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
                                    // write `$.csv.length().range().map(i => $.csv.charAt(i))`.
-$.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
-$.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
-$.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
-$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0] }
-$.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: ["$email", "admin@"] }, 0] }
+$.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }
+$.text.replace("old", "new")       // { $replaceOne: { input: { $ifNull: ["$text", ""] }, find: "old", replacement: "new" } }
+$.text.replaceAll(" ", "_")        // { $replaceAll: { input: { $ifNull: ["$text", ""] }, find: " ", replacement: "_" } }
+$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0] }
+$.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: [{ $ifNull: ["$email", ""] }, "admin@"] }, 0] }
 $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
 $.first.trim() + " " + $.last      // { $concat: [{ $trim: ... }, " ", "$last"] }   — `+` joins strings; `.concat()` is an array method
-$.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
-$.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word" } }  — see flag note
+$.email.match(/^[a-z]/)            // { $regexMatch: { input: { $ifNull: ["$email", ""] }, regex: "^[a-z]" } }
+$.text.matchAll(/word/g)           // { $regexFindAll: { input: { $ifNull: ["$text", ""] }, regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
 $.code.padStart(5, "0")            // padded via $reduce + $range + $concat (no length guard — an already-long string concats an empty filler)
 $.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
@@ -1748,16 +1748,16 @@ $.s.truncate({ length: 24, omission: "…" })
 
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
-$.name.trim().length()              // { $strLenCP: ... } under a null test — the character count
+$.name.trim().length()              // { $strLenCP: ... }       — the character count
 $.csv.split(",").size()             // { $size: ... }           — the element count
 $.field.length                      // "$field.length"          — a FIELD named `length`; JSMQL computes no property
-$.field["length"]                   // { $getField: { field: "length", input: "$field" } } — the same field, bracket access
+$.field["length"]                   // { $getField: { field: "length", input: { $ifNull: ["$field", {}] } } } — the same field, bracket access
 
 // Chaining
-$.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }
+$.name.trim().toLowerCase()         // { $toLower: { $trim: { input: { $ifNull: ["$name", ""] } } } }
 
 // On sub-expressions
-($.firstName + " " + $.lastName).trim()  // { $trim: { input: { $concat: [...] } } }
+($.firstName + " " + $.lastName).trim()  // { $trim: { input: { $ifNull: [{ $concat: [...] }, ""] } } }
 ```
 
 ---
@@ -1769,23 +1769,23 @@ Call methods on any expression that produces an array.
 ### Simple Methods
 
 ```js
-$.items.at(0)              // { $arrayElemAt: ["$items", 0] }        — the element at 0
-$.items.at(-1)             // { $arrayElemAt: ["$items", -1] }       — the last element; the only way to index from the end
-[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 2] }          (indices, end-exclusive — like JS)
-[1, 2, 3, 4].slice(1, 3)   // { $slice: [[1, 2, 3, 4], 1, 2] }    (index 1 up to 3 → 2 elements)
-$.items.slice(1, 3)        // { $slice: ["$items", 1, 2] } under a null test — a string takes `.substring(1, 3)`
-$.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, immutable)
-$.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
+$.items.at(0)              // { $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] }   — the element at 0
+$.items.at(-1)             // { $arrayElemAt: [{ $ifNull: ["$items", []] }, -1] }  — the last element; the only way to index from the end
+[1, 2, 3].slice(0, 2)      // [1, 2]   (indices, end-exclusive — like JS)
+[1, 2, 3, 4].slice(1, 3)   // [2, 3]   (index 1 up to 3 → 2 elements)
+$.items.slice(1, 3)        // { $slice: [{ $ifNull: ["$items", []] }, 1, 2] } — a string takes `.substring(1, 3)`
+$.items.toReversed()       // { $reverseArray: { $ifNull: ["$items", []] } }   (ES2023, immutable)
+$.scores.toSorted()        // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 } } (ascending)
 $.scores.toSorted(s => s.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: 1 } } }
 $.scores.toSorted(s => -s.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: -1 } } } (descending)
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: -1 } } } (descending)
 $.scores.toSorted((a, b) => a.value - b.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }  — a comparator
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: 1 } } }  — a comparator
 $.scores.toSorted((a, b) => a - b)
-                           // { $sortArray: { input: "$scores", sortBy: 1 } }   — the ELEMENTS are the key
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 } }   — the ELEMENTS are the key
 $.scores.toSorted((a, b) => b - a)
-                           // { $sortArray: { input: "$scores", sortBy: -1 } }  (descending)
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: -1 } }  (descending)
 $.items.with(0, 99)        // immutable index-set — replace element at index, returns new array (ES2023)
 $.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
 $.items.toSpliced(1, 0, "x", "y")
@@ -2110,7 +2110,7 @@ $.profile.assign({ verified: true });   // ✗ .assign() writes nothing; write $
 Both accept a field name, an array of field names, a `{ field: 1 | -1 | "asc" | "desc" }` spec, or a key-function lambda. `.toSorted()` returns a new array. `.sort()` mutates at statement position. The same shapes work everywhere:
 
 ```js
-$.events.toSorted("distance")             // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
+$.events.toSorted("distance")             // { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } } }
 $.events.toSorted({ distance: -1 })       // descending
 $.events.toSorted({ a: "asc", b: "desc" })// multi-key
 $.events.toSorted(["a", "b"])             // both ascending
