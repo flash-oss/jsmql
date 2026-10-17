@@ -61,7 +61,7 @@ const NOUN: Record<Lit["kind"], string> = {
   bool: "a boolean",
   null: "null",
   array: "an array",
-  object: "an object",
+  object: "a document",
   regex: "a regular expression",
   bigint: "a bigint",
 };
@@ -92,20 +92,34 @@ function matches(lit: Lit, expected: ArgType): boolean {
   }
 }
 
-const EXPECTS: Record<ArgType, string> = {
-  number: "expects a number",
-  int: "expects an integer",
-  "int-or-long": "expects an integer",
-  "number-or-date": "expects a number or a date",
-  string: "expects a string",
-  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "expects a field PATH to read: a string that starts with '$'",
-  bool: "expects a boolean",
-  array: "expects an array",
-  object: "expects a document",
-  date: "expects a date",
-  timestamp: "expects a timestamp",
+/** The kind a slot takes, as a noun with its article. */
+const TAKES: Record<ArgType, string> = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp",
 };
+
+const takesOf = (t: ArgType | readonly ArgType[]): string =>
+  Array.isArray(t) ? (t as readonly ArgType[]).map((x) => TAKES[x]).join(" or ") : TAKES[t as ArgType];
+
+/** The hint for a fraction where the server takes a whole number. */
+const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+
+/**
+ * The one refusal of a value of the wrong kind. The literal checks and the proof check
+ * all build it, so each one reads the same. `slot` names a key or an argument, or is "".
+ */
+const wrongKind = (name: string, slot: string, takes: string, got: string, hint = ""): string =>
+  `'${spell(name)}'${slot ? ` ${slot}` : ""} takes ${takes}, but this value is ${got}.${hint}`;
 
 const hint = (expected: ArgType): string => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
@@ -128,10 +142,7 @@ export function checkSlotKinds(
     const e = operands[Number(i)];
     const k = kinds[Number(i)];
     if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
-    const expected = Array.isArray(t)
-      ? (t as readonly ArgType[]).map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ")
-      : EXPECTS[t as ArgType].replace(/^expects /, "");
-    throw new CodegenError(`'${spell(name)}' takes ${expected}, but this value is ${KIND_NOUN[k] ?? `a ${k}`}.`, e.pos);
+    throw new CodegenError(wrongKind(name, "", takesOf(t), KIND_NOUN[k] ?? `a ${k}`), e.pos);
   }
 }
 
@@ -157,7 +168,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell(name)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos,
       );
     }
@@ -168,7 +179,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
       );
     }
@@ -182,15 +193,17 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
             : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos,
     );
   }
   const lit = literal(e);
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
+  // A number in an integer slot is a fraction: the kind fits, and the value does not.
+  const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
-    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    wrongKind(name, slot, TAKES[expected], fraction ? "a fraction" : NOUN[lit.kind], fraction ? ROUND : hint(expected)),
     e.pos,
   );
 }
@@ -340,10 +353,7 @@ export function checkSlots(
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && !Number.isInteger(n)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(
-        `'${spell(name)}' ${what} must be an integer. The server takes whole numbers here. It got ${n}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
-        e!.pos,
-      );
+      throw new CodegenError(wrongKind(name, what, "an integer", "a fraction", ROUND), e!.pos);
     }
   }
   for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
@@ -404,10 +414,7 @@ export function checkSlots(
     }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(
-      `'${name}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
-      e.pos,
-    );
+    throw new CodegenError(wrongKind(name, "", takesOf(types), NOUN[lit.kind]), e.pos);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];

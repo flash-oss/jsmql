@@ -196,7 +196,6 @@ export function refusalFor(
     case "noCell":
       return new CodegenError(NO_CELL[position](spelled.startsWith("'") ? spelled : `'${spelled}'`, bare), pos);
     case "rule":
-    case "dispatch":
       return new CodegenError(
         `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled}`,
         pos,

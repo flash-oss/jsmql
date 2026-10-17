@@ -3425,7 +3425,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, count]", allowed: [1, 2] },
+      args: { sig: "start[, count]", allowed: [1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
         const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
@@ -3448,7 +3448,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
@@ -3476,7 +3476,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
@@ -3507,6 +3507,7 @@ var NAMES = {
       args: {
         sig: "separator",
         exact: 1,
+        slotType: { 0: "string" },
         // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
         // operator that splits into characters. So this row refuses the empty separator
         // and emits nothing.
@@ -3536,7 +3537,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3545,7 +3546,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
@@ -3567,7 +3568,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3576,7 +3577,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
@@ -3615,7 +3616,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3637,7 +3638,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3745,7 +3746,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
@@ -3767,7 +3768,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
@@ -3787,7 +3788,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "count", exact: 1 },
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({
         $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } }
       })
@@ -3802,38 +3803,21 @@ var NAMES = {
   indexOf: name({
     doc: "'.indexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    sibling: { string: "For the position of a substring, write '.indexOfSubstring(searchString)'." },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
-        },
-        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "string" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
+      args: {
+        sig: "searchValue",
+        exact: 1,
+        noCallback: {
+          0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
         }
       },
-      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
-      uncertain: () => -1
+      emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -3841,6 +3825,35 @@ var NAMES = {
     ),
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string", 1: "int" } },
+      // MEASURED: `$indexOfCP` refuses a negative start. JavaScript reads a negative position
+      // as 0, the default. So a constant one drops, and a run-time one takes `$max`.
+      emit: ({ recv, args, value }) => {
+        const start = args.length === 2 ? literalIndexValue(args[1]) : 0;
+        if (start !== null && start <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), start ?? clampNonNegativeIndex(args[1], value(args[1]))] };
+      }
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'"
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
   }),
   includes: name({
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
@@ -3854,7 +3867,7 @@ var NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3866,6 +3879,7 @@ var NAMES = {
       args: {
         sig: "searchString",
         exact: 1,
+        slotType: { 0: "string" },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
         }
@@ -4629,25 +4643,16 @@ var NAMES = {
   lastIndexOf: name({
     doc: "'.lastIndexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    // `$indexOfCP` searches forward only, so a string has the first match alone.
+    sibling: {
+      string: "A string has no search from the end. For the first match, write '.indexOfSubstring(searchString)'."
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — a single flat cell hides the refusal, which is the useful fact.
-      perFamily: {
-        array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
-        string: unsupported(
-          ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
-        )
-      },
-      // A receiver that cannot be proven takes the array form: this row refuses the
-      // string form on its own, so nothing is lost, and a string that reaches
-      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: lastIndexOfArray
-    },
+    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'"
@@ -5063,8 +5068,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.entries(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`])
+      }
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5092,8 +5096,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.keys(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`)
+      }
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5121,8 +5124,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.values(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`)
+      }
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12072,7 +12074,7 @@ function isRuleCell(cell) {
   if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs).some(isRuleCell);
-  return "emit" in c || "uncertain" in c;
+  return "emit" in c;
 }
 var VALUE_FAMILIES = /* @__PURE__ */ new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
 function methodRows() {
@@ -18148,12 +18150,14 @@ function stringMethod(s, name2, args) {
       return typeof a === "string" ? ok2(s.includes(a)) : NO2;
     case "length":
       return ok2(points(s).length);
-    case "indexOf": {
+    case "indexOfSubstring": {
       if (typeof a !== "string") return NO2;
       if (b !== void 0 && !isInt32(b)) return NO2;
+      const start = b === void 0 ? 0 : Math.max(0, b);
       const cps = points(s);
+      if (start > 0 && start >= cps.length) return ok2(-1);
       const needle = points(a);
-      for (let i = Math.max(0, typeof b === "number" ? b : 0); i <= cps.length - needle.length; i++) {
+      for (let i = start; i <= cps.length - needle.length; i++) {
         if (cps.slice(i, i + needle.length).join("") === a) return ok2(i);
       }
       return ok2(-1);
@@ -20793,7 +20797,7 @@ function consult(name2, position, family) {
   if (isObj2(cell) && isObj2(cell.perFamily)) {
     const branches = cell.perFamily;
     if (family !== void 0 && family in branches) return readCell(name2, position, branches[family]);
-    return { kind: "perFamily", name: name2, position, branches, uncertain: cell.uncertain };
+    return { kind: "perFamily", name: name2, position, branches };
   }
   return readCell(name2, position, cell);
 }
@@ -20891,7 +20895,6 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     case "noCell":
       return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
     case "rule":
-    case "dispatch":
       return new CodegenError(
         `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled3}`,
         pos
@@ -21939,12 +21942,7 @@ function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
   const v = evaluate(args[0], constants);
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
+var FIELD_FAMILIES2 = Object.keys(FIELD_FAMILY_TYPES);
 var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
 var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
 var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
@@ -22033,11 +22031,7 @@ function kindFits(kind, expected) {
       return false;
   }
 }
-var argsFit = (rule, kinds) => Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
-  const k = kinds[Number(i)];
-  return k === void 0 || kindFits(k, t);
-});
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kinds) {
+function fromPerFamily(name2, branches, receiver, shaped, count) {
   const on = familiesFor(name2);
   if (receiver.kind !== "opaque") {
     const family = familyOf2(receiver);
@@ -22052,39 +22046,14 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const fieldFamilies = lowering.length > 0 ? lowering : listed;
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const fitting = fieldFamilies.filter((f) => {
-    const b = branches[f];
-    return !isRule(b) || argsFit(b, kinds);
-  });
-  if (fitting.length === 1 && fieldFamilies.length > 1) {
-    const branch = branches[fitting[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fitting[0]);
+  const families2 = lowering.length > 0 ? lowering : listed;
+  if (families2.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  if (lowering.length > 1) {
+    internalError(`the row '${name2}' lowers on ${lowering.join(" and ")}. A row lowers on one field family`);
   }
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fieldFamilies[0]);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fieldFamilies) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+  return settle(name2, branches[families2[0]], shaped, count, families2[0]);
 }
-function select(verdict, receiver, shaped, count, kinds = []) {
+function select(verdict, receiver, shaped, count) {
   const name2 = verdict.name;
   switch (verdict.kind) {
     case "unknown":
@@ -22104,7 +22073,7 @@ function select(verdict, receiver, shaped, count, kinds = []) {
       return gate ?? { kind: "noCell", name: name2 };
     }
     case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
+      return fromPerFamily(name2, verdict.branches, receiver, shaped, count);
     case "lower": {
       const gate = receiverGate(name2, receiver);
       if (gate !== null) return gate;
@@ -22147,7 +22116,7 @@ var NOUN = {
   bool: "a boolean",
   null: "null",
   array: "an array",
-  object: "an object",
+  object: "a document",
   regex: "a regular expression",
   bigint: "a bigint"
 };
@@ -22175,20 +22144,23 @@ function matches(lit, expected) {
       return false;
   }
 }
-var EXPECTS = {
-  number: "expects a number",
-  int: "expects an integer",
-  "int-or-long": "expects an integer",
-  "number-or-date": "expects a number or a date",
-  string: "expects a string",
-  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "expects a field PATH to read: a string that starts with '$'",
-  bool: "expects a boolean",
-  array: "expects an array",
-  object: "expects a document",
-  date: "expects a date",
-  timestamp: "expects a timestamp"
+var TAKES = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp"
 };
+var takesOf = (t) => Array.isArray(t) ? t.map((x) => TAKES[x]).join(" or ") : TAKES[t];
+var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}'${slot ? ` ${slot}` : ""} takes ${takes}, but this value is ${got}.${hint2}`;
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
@@ -22199,8 +22171,7 @@ function checkSlotKinds(name2, args, operands, kinds) {
     const e = operands[Number(i)];
     const k = kinds[Number(i)];
     if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
-    const expected = Array.isArray(t) ? t.map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ") : EXPECTS[t].replace(/^expects /, "");
-    throw new CodegenError(`'${spell2(name2)}' takes ${expected}, but this value is ${KIND_NOUN2[k] ?? `a ${k}`}.`, e.pos);
+    throw new CodegenError(wrongKind(name2, "", takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
   }
 }
 var KIND_NOUN2 = {
@@ -22218,7 +22189,7 @@ function checkType(name2, slot, e, expected) {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos
       );
     }
@@ -22229,22 +22200,23 @@ function checkType(name2, slot, e, expected) {
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos
       );
     }
     const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos
     );
   }
   const lit = literal(e);
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
+  const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
-    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    wrongKind(name2, slot, TAKES[expected], fraction ? "a fraction" : NOUN[lit.kind], fraction ? ROUND : hint(expected)),
     e.pos
   );
 }
@@ -22330,10 +22302,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     const n2 = e === void 0 ? null : numberOf(e);
     if (n2 !== null && !Number.isInteger(n2)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(
-        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
-        e.pos
-      );
+      throw new CodegenError(wrongKind(name2, what, "an integer", "a fraction", ROUND), e.pos);
     }
   }
   for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
@@ -22390,10 +22359,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(
-      `'${name2}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
-      e.pos
-    );
+    throw new CodegenError(wrongKind(name2, "", takesOf(types), NOUN[lit.kind]), e.pos);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
@@ -23518,11 +23484,6 @@ var switchOn = (candidates, otherwise) => {
   const one = JSON.stringify(fallback);
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
-};
-var switchOver = (candidates) => {
-  const { kept: branches, decided } = liveBranches(candidates);
-  if (decided !== void 0) return switchOn(branches, decided);
-  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
 };
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
@@ -24886,7 +24847,7 @@ function receiverOf(recv, env) {
   }
   const possible = kinds.map(familyOfKind).filter((f) => f !== null);
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
-  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
+  return { kind: "opaque", lowered, possible };
 }
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
@@ -24914,7 +24875,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
   const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, kinds);
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -24948,10 +24909,6 @@ function dispatchOn(node, name2, recvNode, args, env) {
       )
     );
   }
-  if (sel.kind === "dispatch") {
-    if (receiver.kind !== "opaque") internalError("the select pass chose a dispatch for a proven receiver");
-    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container);
-  }
   const format = receiver.kind === "namespace" ? (c) => `${receiver.name}.${c}` : (c) => `.${c}()`;
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
     const on = familiesFor(n2);
@@ -24963,47 +24920,6 @@ function arraysHolder(recv) {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
-}
-function cheapToRepeat(lowered) {
-  if (typeof lowered === "string") return lowered.startsWith("$");
-  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
-  const keys = Object.keys(lowered);
-  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
-  const operands = lowered.$ifNull;
-  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
-}
-function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) {
-  const position = positionIn(env);
-  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
-  const ref = bound === null ? lowered : bound.ref;
-  const bodyEnv = bound === null ? env : bound.env;
-  const run = (rule) => {
-    checkSlots(name2, rule.args, args);
-    const present2 = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
-    return rule.emit(
-      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present2)
-    );
-  };
-  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
-  if (sel.complete && branches.length >= 2) {
-    const doc2 = switchOver(branches);
-    return bound === null ? doc2 : letOne(bound.as, lowered, doc2);
-  }
-  const otherwise = sel.otherwise;
-  let fallback;
-  if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
-  else
-    throw refusalFor(
-      { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
-      spelled3,
-      container,
-      position,
-      node.pos,
-      []
-    );
-  const doc = switchOn(branches, fallback);
-  return bound === null ? doc : letOne(bound.as, lowered, doc);
 }
 function callExpression(node, env) {
   const { callee } = node;
@@ -25040,7 +24956,6 @@ function dispatchBare(node, name2, args, env) {
   const exprArgs = args.filter(isExpr2);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  if (sel.kind === "dispatch") internalError(`a bare call to '${name2}' selected a receiver dispatch`);
   throw refusalFor(sel, name2, "", position, node.pos, []);
 }
 function applyLambda2(lambda, args, env, pos, label, fnName) {
@@ -25084,7 +24999,6 @@ function operatorCall(node, env) {
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
   if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
-  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
   if (sel.kind !== "rule") return plainOperator(node, env);
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
@@ -25147,7 +25061,6 @@ function production2(node, key, operands, env) {
   const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
   const spelled3 = spelledProduction(node, key);
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled3, sel.rule.args, operands);
@@ -26242,7 +26155,6 @@ function refStatement(node, ref, env, first) {
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
   const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   const args = node.args;
   const escape = node.name.startsWith("$");
   let stages;
@@ -26280,7 +26192,6 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   const args = link.args;
   let stages;
   if (escape) {
@@ -26388,7 +26299,6 @@ function stageStatement(node, env, first) {
   if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
-  if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);

@@ -421,7 +421,7 @@ describe("$merge — adding to a collection", () => {
 
   it("a written list of documents keeps the element rule the stream form states", () => {
     expect(() => jsmql("$$$.metrics.push(...[{ a: 1 }, 5]);")).toThrow(
-      "'$$$.<coll>.push(...<array>)' element 2 expects a document, but got a number.",
+      "'$$$.<coll>.push(...<array>)' element 2 takes a document, but this value is a number.",
     );
   });
 

@@ -2204,21 +2204,12 @@ describe("string methods", () => {
   it("split", () => {
     expect(jsmql.expr('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
   });
-  it("indexOf on bare field → runtime $cond on $isArray", () => {
-    expect(jsmql.expr('$.name.indexOf("@")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$name" }, ["array"]] }, then: { $indexOfArray: ["$name", "@"] } },
-          { case: { $in: [{ $type: "$name" }, ["string"]] }, then: { $indexOfCP: ["$name", "@"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("indexOfSubstring → $indexOfCP", () => {
+    expect(jsmql.expr('$.name.indexOfSubstring("@")')).toEqual({ $indexOfCP: ["$name", "@"] });
+    expect(jsmql.expr('$.name.indexOfSubstring("@", 2)')).toEqual({ $indexOfCP: ["$name", "@", 2] });
   });
-  it("indexOf on known string → $indexOfCP", () => {
-    expect(jsmql.expr('$.name.toLowerCase().indexOf("@")')).toEqual({
-      $indexOfCP: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "@"],
-    });
+  it("indexOf on a known string is refused, and the refusal names indexOfSubstring", () => {
+    expect(() => jsmql.expr('$.name.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
   it("replace", () => {
     expect(jsmql.expr('$.name.replace("a", "b")')).toEqual({
@@ -2905,7 +2896,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const p = jsmql.pipeline(
       `const s = $.name.trim();
        const t = $.other.trim();
-       $set({ inc: s.includes("x"), idx: s.indexOf("x"), sl: s.substring(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
+       $set({ inc: s.includes("x"), idx: s.indexOfSubstring("x"), sl: s.substring(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
     );
     expect(setOf(p, 2)).toEqual({
       inc: {
@@ -3024,35 +3015,12 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   });
 
   it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
-    // `.indexOf` reads both families, so an untyped receiver keeps the runtime dispatch.
+    // An untyped receiver of `.indexOf` is an array by the row's claim, and the dot reads a missing one as [].
     const p = jsmql.pipeline(
       `const cfg = ({}).assign($.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
     );
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
-      {
-        $match: {
-          $expr: {
-            $gte: [
-              {
-                $switch: {
-                  branches: [
-                    {
-                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] },
-                      then: { $indexOfArray: ["$$jsmql_v0_ids", "$pid"] },
-                    },
-                    {
-                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["string"]] },
-                      then: { $indexOfCP: ["$$jsmql_v0_ids", "$pid"] },
-                    },
-                  ],
-                  default: -1,
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $gte: [{ $indexOfArray: [{ $ifNull: ["$$jsmql_v0_ids", []] }, "$pid"] }, 0] } } },
     ]);
   });
 });
@@ -3408,12 +3376,16 @@ describe("date arithmetic (.plus / .minus)", () => {
     );
   });
   it("rejects a non-integer literal amount (mongod requires an integer)", () => {
-    expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow("'plus' expects an integer, but got a number.");
-    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow("'minus' expects an integer, but got a string.");
+    expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow(
+      "'.plus()' takes an integer, but this value is a fraction.",
+    );
+    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow(
+      "'.minus()' takes an integer, but this value is a string.",
+    );
   });
   it("rejects a non-string literal timezone", () => {
     expect(() => jsmql.expr('$.t.plus(1, "day", 5)')).toThrow(
-      "'plus' takes a string or a document here, and a number is neither.",
+      "'.plus()' takes a string or a document, but this value is a number.",
     );
   });
   it("allows a negative integer amount and dynamic amount/timezone (literal-gating)", () => {
@@ -3556,8 +3528,12 @@ describe("replacing date parts (.set)", () => {
     );
   });
   it("rejects a part that is not an integer, as mongod does", () => {
-    expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow("'set' year expects an integer, but got a number.");
-    expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow("'set' year expects an integer, but got a string.");
+    expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow(
+      "'.set()' year takes an integer, but this value is a fraction.",
+    );
+    expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow(
+      "'.set()' year takes an integer, but this value is a string.",
+    );
   });
   it("the $dateFromParts operator form is your own MQL, and it passes through", () => {
     // DELIBERATELY invalid: mongod refuses it, because `year` needs an integer, and gets a string.
@@ -3600,7 +3576,7 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
       "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
     expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
-      "'isSame' expects a date, but got a string. Use a field path or new Date(…).",
+      "'.isSame()' takes a date, but this value is a string. Use a field path or new Date(…).",
     );
   });
 });
@@ -3691,7 +3667,9 @@ describe("date formatting (.format)", () => {
     expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({ $dateToString: { date: "$createdAt", format: "$fmt" } });
   });
   it("rejects a non-string literal format and the wrong argument count", () => {
-    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow("'format' expects a string, but got a number.");
+    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow(
+      "'.format()' takes a string, but this value is a number.",
+    );
     expect(() => jsmql.expr("$.createdAt.format()")).toThrow(
       "'.format(format[, timezone])' requires 1 or 2 arguments, got 0",
     );
@@ -3859,7 +3837,7 @@ describe("date difference (.diff)", () => {
   });
   it("rejects a literal non-date argument", () => {
     expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow(
-      "'diff' expects a date, but got a string. Use a field path or new Date(…).",
+      "'.diff()' takes a date, but this value is a string. Use a field path or new Date(…).",
     );
   });
   it("a non-literal unit / other is not checked (literal-gating)", () => {
@@ -3887,7 +3865,7 @@ describe("date-method trailing options argument", () => {
   });
   it("gates option value types the same way the operator form does", () => {
     expect(() => jsmql.expr('$.end.diff($.start, "day", { timezone: 5 })')).toThrow(
-      "'diff' timezone expects a string, but got a number.",
+      "'.diff()' timezone takes a string, but this value is a number.",
     );
     expect(() => jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "moonday" })')).toThrow(
       "'diff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun. It got 'moonday'. Did you mean 'monday'?",
@@ -4727,7 +4705,7 @@ describe("array method additions", () => {
     });
   });
   it(".lastIndexOf on a known string receiver throws", () => {
-    expect(() => jsmql.expr('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/forward-only/);
+    expect(() => jsmql.expr('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/indexOfSubstring/);
   });
   it(".reduceRight(fn, init) reverses the input array", () => {
     expect(jsmql.expr("$.xs.reduceRight((acc, x) => acc + x, 0)")).toEqual({
@@ -5379,7 +5357,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         },
       },
     });
-    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'pick' expects an array, but got a string.");
+    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'.pick()' takes an array, but this value is a string.");
   });
   it(".omit([keys]) → $arrayToObject over a filtered $objectToArray", () => {
     expect(jsmql.expr('$.o.omit(["a"])')).toEqual({
@@ -8752,21 +8730,11 @@ describe("array .indexOf", () => {
   it("on array literal → $indexOfArray", () => {
     expect(jsmql.expr('["a", "b", "c"].indexOf($.x)')).toEqual({ $indexOfArray: [["a", "b", "c"], "$x"] });
   });
-  it("on known string → $indexOfCP", () => {
-    expect(jsmql.expr('$.email.toLowerCase().indexOf("@")')).toEqual({
-      $indexOfCP: [{ $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] }, "@"],
-    });
+  it("on a known string → refused; a string takes .indexOfSubstring()", () => {
+    expect(() => jsmql.expr('$.email.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
-  it("on bare field → runtime $cond on $isArray", () => {
-    expect(jsmql.expr('$.email.indexOf("@")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $indexOfArray: ["$email", "@"] } },
-          { case: { $in: [{ $type: "$email" }, ["string"]] }, then: { $indexOfCP: ["$email", "@"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("on a bare field → $indexOfArray over the field, a missing one read as []", () => {
+    expect(jsmql.expr('$.email.indexOf("@")')).toEqual({ $indexOfArray: [{ $ifNull: ["$email", []] }, "@"] });
   });
 });
 
@@ -10981,7 +10949,7 @@ describe("rejects fractional counts, and never passes them to $slice", () => {
   ];
   for (const [name, src] of rejected) {
     it(`rejects a fraction — ${name}`, () => {
-      expect(() => jsmql.expr(src)).toThrow(/needs a whole number|expects an integer/);
+      expect(() => jsmql.expr(src)).toThrow(/takes an integer, but this value is a fraction/);
     });
   }
 

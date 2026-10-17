@@ -284,7 +284,7 @@ export function exprInputs(
   overrides: ReadonlyMap<Expr, unknown> = new Map(),
   /** The receiver as WRITTEN, where a callback needs the kind of one of its elements. */
   recvNode?: Expr,
-  /** Is the receiver certainly there — proven from the source, or by the `$type` test of a runtime dispatch? */
+  /** Is the receiver certainly there, proven from the source? */
   present = false,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");

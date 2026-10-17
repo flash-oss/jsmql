@@ -71,7 +71,7 @@ A `$name` with no row passes through by its argument count, in every position. S
 
 ## Return kinds
 
-A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands. For example, `$add` gives a number or a date, and `$first` gives whatever the array holds. The chain type-check reads this fact. It refuses `$.s.trim().foo()` when `foo` is not a string method, and it lowers an `.indexOf()` on an unknown kind as the dual-receiver `$switch`. The compiler measures `returns` on a running `mongod` (`{ $type: { <op>: <args> } }`). It never reads the vendored YAML's `type:` field, which is wrong for `$trunc`.
+A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands. For example, `$add` gives a number or a date, and `$first` gives whatever the array holds. The chain type-check reads this fact. It refuses `$.s.trim().foo()` when `foo` is not a string method. The compiler measures `returns` on a running `mongod` (`{ $type: { <op>: <args> } }`). It never reads the vendored YAML's `type:` field, which is wrong for `$trunc`.
 
 ## Adding an operator
 

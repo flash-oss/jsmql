@@ -784,7 +784,7 @@ function isRuleCell(cell: unknown): boolean {
   if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily as Record<string, unknown>).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs as Record<string, unknown>).some(isRuleCell);
-  return "emit" in c || "uncertain" in c;
+  return "emit" in c;
 }
 
 /** The JavaScript-named method rows: callable, on a receiver family, neither a global nor a MongoDB operator. */

@@ -4313,7 +4313,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, count]", allowed: [1, 2] },
+      args: { sig: "start[, count]", allowed: [1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => {
           // `r` is there in the body of the null test, so its length takes no guard
@@ -4339,7 +4339,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present, bind }) => {
         if (args.length === 0) return recv;
         return nullOr(recv, present, bind, (r) => {
@@ -4368,7 +4368,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present, bind }) => {
         // a literal index folds; a negative one is "" as in JavaScript
         const lit = literalIndexValue(args[0]);
@@ -4401,6 +4401,7 @@ export const NAMES = {
       args: {
         sig: "separator",
         exact: 1,
+        slotType: { 0: "string" },
         // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
         // operator that splits into characters. So this row refuses the empty separator
         // and emits nothing.
@@ -4432,7 +4433,7 @@ export const NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4441,7 +4442,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
     },
@@ -4465,7 +4466,7 @@ export const NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4477,7 +4478,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, bind, present }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
@@ -4518,7 +4519,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) },
       }),
@@ -4541,7 +4542,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) },
       }),
@@ -4658,7 +4659,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind)),
     },
@@ -4682,7 +4683,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind)),
     },
@@ -4704,7 +4705,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "count", exact: 1 },
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({
         $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } },
       }),
@@ -4720,38 +4721,21 @@ export const NAMES = {
   indexOf: name({
     doc: "'.indexOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    sibling: { string: "For the position of a substring, write '.indexOfSubstring(searchString)'." },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
-        },
-        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "string" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
+      args: {
+        sig: "searchValue",
+        exact: 1,
+        noCallback: {
+          0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
         },
       },
-      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
-      uncertain: () => -1,
+      emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -4759,6 +4743,36 @@ export const NAMES = {
     ),
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string", 1: "int" } },
+      // MEASURED: `$indexOfCP` refuses a negative start. JavaScript reads a negative position
+      // as 0, the default. So a constant one drops, and a run-time one takes `$max`.
+      emit: ({ recv, args, value }) => {
+        const start = args.length === 2 ? literalIndexValue(args[1]) : 0;
+        if (start !== null && start <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), start ?? clampNonNegativeIndex(args[1], value(args[1]))] };
+      },
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'",
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
   }),
 
   includes: name({
@@ -4773,7 +4787,7 @@ export const NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4785,6 +4799,7 @@ export const NAMES = {
       args: {
         sig: "searchString",
         exact: 1,
+        slotType: { 0: "string" },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
         },
@@ -5600,25 +5615,16 @@ export const NAMES = {
   lastIndexOf: name({
     doc: "'.lastIndexOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    // `$indexOfCP` searches forward only, so a string has the first match alone.
+    sibling: {
+      string: "A string has no search from the end. For the first match, write '.indexOfSubstring(searchString)'.",
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — a single flat cell hides the refusal, which is the useful fact.
-      perFamily: {
-        array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
-        string: unsupported(
-          ".lastIndexOf() on strings isn't supported — MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.",
-        ),
-      },
-      // A receiver that cannot be proven takes the array form: this row refuses the
-      // string form on its own, so nothing is lost, and a string that reaches
-      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: lastIndexOfArray,
-    },
+    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'",
@@ -6064,7 +6070,6 @@ export const NAMES = {
           "'Object.entries(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]),
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6094,7 +6099,6 @@ export const NAMES = {
           "'Object.keys(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`),
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6124,7 +6128,6 @@ export const NAMES = {
           "'Object.values(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`),
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(

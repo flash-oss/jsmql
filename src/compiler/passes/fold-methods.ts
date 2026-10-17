@@ -386,14 +386,19 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       // two differ for a character outside the basic plane: `"😀".length` is 2 there and 1
       // here. The fold answers the LANGUAGE's question.
       return ok(points(s).length);
-    case "indexOf": {
-      // `$indexOfCP` answers in CODE POINTS. `"😀a".indexOf("a")` is 1 there and
-      // 2 in JavaScript, whose index counts UTF-16 units.
+    case "indexOfSubstring": {
+      // `$indexOfCP` answers in CODE POINTS. `"😀a".indexOfSubstring("a")` is 1 there,
+      // and `.indexOf("a")` is 2 in JavaScript, whose index counts UTF-16 units. The
+      // fold gives `$indexOfCP`'s answer for the start the lowering writes: a negative
+      // one reads as 0. MEASURED: a start at or past the end gives -1, also for the
+      // empty string, unless the start is 0.
       if (typeof a !== "string") return NO;
       if (b !== undefined && !isInt32(b)) return NO;
+      const start = b === undefined ? 0 : Math.max(0, b);
       const cps = points(s);
+      if (start > 0 && start >= cps.length) return ok(-1);
       const needle = points(a);
-      for (let i = Math.max(0, typeof b === "number" ? b : 0); i <= cps.length - needle.length; i++) {
+      for (let i = start; i <= cps.length - needle.length; i++) {
         if (cps.slice(i, i + needle.length).join("") === a) return ok(i);
       }
       return ok(-1);
