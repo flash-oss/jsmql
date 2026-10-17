@@ -102,9 +102,9 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
     expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
     expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 }); // SHORTER → clamped, whole string
-    // a JavaScript method on a null or missing receiver answers null — `"".substr` would be "", `undefined.substr` throws
-    expect(byName["Margaret Hamilton"]).toEqual({ tail: null, len: null }); // email: null
-    expect(byName["Karen Spärck Jones"]).toEqual({ tail: null, len: null }); // email absent
+    // under a dot, a null or missing string reads as "" (HR5), so each method gives its answer on ""
+    expect(byName["Margaret Hamilton"]).toEqual({ tail: "", len: 0 }); // email: null
+    expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
   });
 
   // The date vocabulary, end-to-end. Three of these compose more than one

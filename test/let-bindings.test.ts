@@ -615,17 +615,7 @@ describe("let bindings — member / method / index access", () => {
   it("method call on a let resolves the receiver to its field path", () => {
     expect(jsmql("let name = $.name; $project({ upper: name.toUpperCase() })")).toEqual([
       { $set: { "__jsmql.var.name": "$name" } },
-      {
-        $project: {
-          upper: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.name", null] }, null] },
-              then: null,
-              else: { $toUpper: "$__jsmql.var.name" },
-            },
-          },
-        },
-      },
+      { $project: { upper: { $toUpper: { $ifNull: ["$__jsmql.var.name", ""] } } } },
       { $unset: "__jsmql" },
     ]);
   });

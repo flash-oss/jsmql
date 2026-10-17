@@ -81,124 +81,84 @@ const nullOr = (recv: unknown, body: unknown): unknown => ({
 
 describe("compiler/emit — string methods", () => {
   it("lowers each string method to its operator", () => {
-    expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: "$s" } });
-    expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: "$s" } });
-    expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: "$s" } });
-    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $toLower: "$s" } },
-    });
-    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $toUpper: "$s" } },
-    });
-    expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: ["$csv", ","] });
-    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 0, 1] } },
-    });
+    expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({ $toLower: { $ifNull: ["$s", ""] } });
+    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({ $toUpper: { $ifNull: ["$s", ""] } });
+    expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: [{ $ifNull: ["$csv", ""] }, ","] });
+    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({ $substrCP: ["$csv", 0, 1] });
     expect(compiled("$.csv.charAt(-1)", (d) => d.csv.charAt(-1))).toBe("");
     expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: { $eq: [{ $indexOfCP: ["$csv", "a"] }, 0] },
-      },
+      $eq: [{ $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a"] }, 0],
     });
     expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: {
-          $let: {
-            vars: { jsmqlStr: "$csv" },
-            in: {
-              $eq: [
-                { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] },
-                "c",
-              ],
-            },
-          },
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$csv", ""] } },
+        in: {
+          $eq: [{ $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] }, "c"],
         },
       },
     });
     expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: { $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1] },
-      },
+      $ifNull: [
+        { $getField: { field: "idx", input: { $regexFind: { input: { $ifNull: ["$csv", ""] }, regex: "b" } } } },
+        -1,
+      ],
     });
     expect(compiled('$.csv.padStart(7, "-")', (d) => d.csv.padStart(7, "-"))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: {
-          $let: {
-            vars: { jsmqlPad: "$csv" },
-            in: {
-              $concat: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "-"] },
-                  },
-                },
-                "$$jsmqlPad",
-              ],
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $concat: [
+            {
+              $reduce: {
+                input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
+                initialValue: "",
+                in: { $concat: ["$$value", "-"] },
+              },
             },
-          },
+            "$$jsmqlPad",
+          ],
         },
       },
     });
     expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: {
-          $let: {
-            vars: { jsmqlPad: "$csv" },
-            in: {
-              $concat: [
-                "$$jsmqlPad",
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $concat: [
+            "$$jsmqlPad",
+            {
+              $substrCP: [
                 {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "xy"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                  ],
+                  $reduce: {
+                    input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
+                    initialValue: "",
+                    in: { $concat: ["$$value", "xy"] },
+                  },
                 },
+                0,
+                { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
               ],
             },
-          },
+          ],
         },
       },
     });
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
-      $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", "$csv"] } },
+      $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", { $ifNull: ["$csv", ""] }] } },
     });
-    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 2, 2] } },
-    });
-    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 1, 2] } },
-    });
+    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({ $substrCP: ["$csv", 2, 2] });
+    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({ $substrCP: ["$csv", 1, 2] });
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
-      $replaceOne: { input: "$csv", find: ",", replacement: ";" },
+      $replaceOne: { input: { $ifNull: ["$csv", ""] }, find: ",", replacement: ";" },
     });
     expect(compiled('$.csv.replaceAll(",", ";")', (d) => d.csv.replaceAll(",", ";"))).toEqual({
-      $replaceAll: { input: "$csv", find: ",", replacement: ";" },
+      $replaceAll: { input: { $ifNull: ["$csv", ""] }, find: ",", replacement: ";" },
     });
     expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: { $regexMatch: { input: "$csv", regex: "B", options: "i" } },
-      },
+      $regexMatch: { input: { $ifNull: ["$csv", ""] }, regex: "B", options: "i" },
     });
     expect(compiled("$.csv.truncate({ length: 3 })", () => "...")).toEqual({
       $let: {
@@ -227,7 +187,9 @@ describe("compiler/emit — string methods", () => {
     });
     expect(compiled("$.w.words()", () => ["foo", "Bar", "baz", "qux"])).toEqual({
       $map: {
-        input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+        input: {
+          $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+        },
         as: "jsmqlWord",
         in: "$$jsmqlWord.match",
       },
@@ -237,7 +199,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -253,7 +217,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -268,7 +234,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$dashed", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -283,7 +254,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$under", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -298,7 +274,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -313,7 +291,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$dashed", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -328,7 +311,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$under", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -340,13 +328,15 @@ describe("compiler/emit — string methods", () => {
     });
     // a missing field: the dot form answers "" as lodash does, and `?.` answers null
     expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
-    expect(compiled("$.nope?.upperCase()", () => null)).toEqual(nullOr("$nope", expr("$.nope.upperCase()")));
+    expect(compiled("$.nope?.upperCase()", () => null)).toHaveProperty("$cond");
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
       $toLower: {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -362,7 +352,9 @@ describe("compiler/emit — string methods", () => {
           $map: {
             input: {
               $map: {
-                input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                input: {
+                  $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+                },
                 as: "jsmqlWord",
                 in: "$$jsmqlWord.match",
               },
@@ -389,7 +381,12 @@ describe("compiler/emit — string methods", () => {
                 $map: {
                   input: {
                     $map: {
-                      input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                      input: {
+                        $regexFindAll: {
+                          input: { $ifNull: ["$w", ""] },
+                          regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                        },
+                      },
                       as: "jsmqlWord",
                       in: "$$jsmqlWord.match",
                     },
@@ -424,7 +421,7 @@ describe("compiler/emit — string methods", () => {
               $replaceAll: {
                 input: {
                   $replaceAll: {
-                    input: { $replaceAll: { input: "$h", find: "&", replacement: "&amp;" } },
+                    input: { $replaceAll: { input: { $ifNull: ["$h", ""] }, find: "&", replacement: "&amp;" } },
                     find: "<",
                     replacement: "&lt;",
                   },
@@ -600,12 +597,7 @@ describe("compiler/emit — object methods", () => {
           in: {
             k: {
               $toString: {
-                $let: {
-                  vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
-                  in: {
-                    $cond: { if: { $eq: [{ $ifNull: ["$$k", null] }, null] }, then: null, else: { $toUpper: "$$k" } },
-                  },
-                },
+                $let: { vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" }, in: { $toUpper: { $ifNull: ["$$k", ""] } } },
               },
             },
             v: "$$jsmqlKv.v",
@@ -632,13 +624,7 @@ describe("compiler/emit — object methods", () => {
               {
                 $let: {
                   vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
-                  in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$k", null] }, null] },
-                      then: null,
-                      else: { $eq: [{ $indexOfCP: ["$$k", "_"] }, 0] },
-                    },
-                  },
+                  in: { $eq: [{ $indexOfCP: [{ $ifNull: ["$$k", ""] }, "_"] }, 0] },
                 },
               },
             ],
@@ -1507,7 +1493,7 @@ describe("compiler/emit — array methods", () => {
     });
     expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
-      $indexOfArray: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, "b"],
+      $indexOfArray: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, "b"],
     });
     // `.lastIndexOf` states one emitting family — the string form is refused — so it
     // answers the array reading outright rather than testing the receiver's type.
@@ -1534,20 +1520,12 @@ describe("compiler/emit — array methods", () => {
     // Membership is `.has` on an array; the substring test is `.includes` on a string.
     expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual({ $in: [2, { $ifNull: ["$a", []] }] });
     expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: { $gte: [{ $indexOfCP: ["$csv", "b"] }, 0] },
-      },
+      $gte: [{ $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"] }, 0],
     });
     expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, -1] });
     expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 1, 2] });
     expect(compiled("$.csv.substring(2)", (d) => d.csv.substring(2))).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
-        then: null,
-        else: { $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: "$csv" }, 2] }] }] },
-      },
+      $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, 2] }] }],
     });
     // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
     // array it stands for, as JavaScript's `Array.prototype.concat` reads it. An argument
@@ -1571,7 +1549,7 @@ describe("compiler/emit — array methods", () => {
       $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }, ["!"], ["?"]],
     });
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
-      $concatArrays: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, ["!"], ["?"]],
+      $concatArrays: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, ["!"], ["?"]],
     });
     // Strings join with `+`.
     expect(compiled('$.csv + "!" + "?"', (d) => d.csv + "!" + "?")).toEqual({ $concat: ["$csv", "!", "?"] });
@@ -1583,7 +1561,7 @@ describe("compiler/emit — array methods", () => {
     });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toEqual({
       $let: {
-        vars: { jsmqlV: "$a" },
+        vars: { jsmqlV: { $ifNull: ["$a", ""] } },
         in: {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
@@ -1630,7 +1608,7 @@ describe("compiler/emit — array methods", () => {
     });
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({
       $let: {
-        vars: { jsmqlV: "$n" },
+        vars: { jsmqlV: { $ifNull: ["$n", ""] } },
         in: {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
@@ -2554,7 +2532,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
     expect(compiled('$.csv.split(",").concat(...$.a)', () => DOC.csv.split(",").concat(...DOC.a))).toEqual({
       $concatArrays: [
-        { $ifNull: [{ $split: ["$csv", ","] }, []] },
+        { $split: [{ $ifNull: ["$csv", ""] }, ","] },
         {
           $reduce: {
             input: { $ifNull: ["$a", []] },
@@ -3116,6 +3094,7 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
+  toString: ["$.nope.toString()", '""'],
 };
 
 /** Each row that states `passesNull`: the call after a `?.` on a receiver the document lacks. */

@@ -334,13 +334,7 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
     // a field against a field has no query form: the value cell's shape under `$expr`
     expect(filter("$.s.startsWith($.prefix)")).toEqual({
-      $expr: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$s", null] }, null] },
-          then: null,
-          else: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] },
-        },
-      },
+      $expr: { $eq: [{ $indexOfCP: [{ $ifNull: ["$s", ""] }, "$prefix"] }, 0] },
     });
   });
 

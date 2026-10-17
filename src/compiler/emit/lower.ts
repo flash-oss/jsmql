@@ -848,11 +848,9 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     checkSlots(name, sel.rule.args, exprArgs, true, recvNode);
     checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
-    // the EMPTY value of its family — `[]` for an array method, `{}` for an object
-    // method — so the operator answers what it answers there, and the cell sees a
-    // receiver that is present. A receiver the proof shows present takes no wrap. A
-    // `?.` never reaches here with an absent receiver: the chain stopped above and
-    // proved the path. A string method keeps its receiver, and answers null itself.
+    // the SAFE value of its kind: `[]`, `{}`, `""`, or the value its row states. The
+    // operator answers on that value, so the cell sees a receiver that is present. A receiver the proof shows present takes no wrap. A `?.` never reaches
+    // here with an absent receiver: the chain stopped above and proved the path.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
     const empty = emptyValueOf(name, family);

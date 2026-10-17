@@ -144,9 +144,7 @@ describe("compiler/emit/lower — access", () => {
     expect(expr("[$.a, 2].size()")).toBe(2);
     // an unproven receiver takes the method's one family, and the server judges the value:
     // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
-    expect(expr("$.x.length()")).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
-    });
+    expect(expr("$.x.length()")).toEqual({ $strLenCP: { $ifNull: ["$x", ""] } });
     expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
     // a proven array refuses `.length()`, and the refusal names `.size()`
     expect(() => expr("[$.a, 2].length()")).toThrow(

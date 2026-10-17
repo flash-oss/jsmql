@@ -9,8 +9,8 @@
 //     each element of an array. Anything else gives missing.
 //   - An index read `[k]` reads the field `k` of an object, the element of an array for a
 //     number key, and missing for anything else. A missing key reads no field.
-//   - A method under a dot on a null or missing value runs on its empty value: `.uniq()`
-//     answers `[]`, and a string method answers null.
+//   - A method under a dot on a null or missing value runs on its safe value: `.uniq()`
+//     answers `[]`, and `.trim()` answers `""`.
 //   - A `?.` with a method after it stops the chain where the value before the LAST `?.`
 //     is null or missing. The chain then answers null.
 //   - A `?.` read with no method after it answers null where the value is missing.
@@ -122,9 +122,9 @@ function readAll(doc: Record<string, unknown>, reads: readonly Read[]): unknown 
 
 const absent = (v: unknown): boolean => v === MISSING || v === null;
 
-/** The method under a dot: a null or missing receiver runs on its empty value. */
+/** The method under a dot: a null or missing receiver runs on its safe value. */
 function apply(method: Method, v: unknown): unknown {
-  if (method.name === "trim") return absent(v) ? null : typeof v === "string" ? v.trim() : SKIP;
+  if (method.name === "trim") return absent(v) ? "" : typeof v === "string" ? v.trim() : SKIP;
   if (absent(v)) return [];
   return Array.isArray(v) ? [...new Set(v.map((e) => JSON.stringify(e)))].map((e) => JSON.parse(e)) : SKIP;
 }

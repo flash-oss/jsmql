@@ -147,16 +147,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
 
   it("method call on a field stays in $expr", () => {
     expect(jsmql('[$match($.name.toLowerCase() === "alice")]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              { $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } },
-              "alice",
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $toLower: { $ifNull: ["$name", ""] } }, "alice"] } } },
     ]);
   });
 
@@ -202,20 +193,7 @@ describe("$match translation — typeof → $type", () => {
   });
   it("falls through to $expr when the operand is not a static field path", () => {
     expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $type: {
-                  $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } },
-                },
-              },
-              "string",
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $type: { $toLower: { $ifNull: ["$name", ""] } } }, "string"] } } },
     ]);
   });
 });
@@ -384,17 +362,7 @@ describe("$match translation — .match(regex) → BSON regex", () => {
     // A computed regex (or string arg) cannot go in the query-doc slot, so the
     // existing $regexMatch translation handles it.
     expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$name", null] }, null] },
-              then: null,
-              else: { $regexMatch: { input: "$name", regex: "^a" } },
-            },
-          },
-        },
-      },
+      { $match: { $expr: { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: "^a" } } } },
     ]);
   });
 });
@@ -429,18 +397,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
               $map: {
                 input: { $ifNull: ["$items", []] },
                 as: "it",
-                in: {
-                  $eq: [
-                    {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$$it.tag" },
-                      },
-                    },
-                    "vip",
-                  ],
-                },
+                in: { $eq: [{ $toLower: { $ifNull: ["$$it.tag", ""] } }, "vip"] },
               },
             },
           },
@@ -589,18 +546,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
 
   it("reads `.length()` on a bare field as a string length: `$strLenCP` under a null guard", () => {
     expect(jsmql("[$match($.name.length() === 3)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $strLenCP: "$name" } },
-              },
-              3,
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 3] } } },
     ]);
   });
 

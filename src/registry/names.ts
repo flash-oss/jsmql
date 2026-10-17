@@ -57,6 +57,7 @@ import {
   sliceArray,
   strLenOf,
   stringKeyExpr,
+  substrOperand,
   takeDropWhile,
   type Minted,
   uniqByReduce,
@@ -202,12 +203,13 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
-   * The value the cell reads a null or missing receiver as, so its answer is there
-   * whatever the receiver is. lodash's `_.range` reads a missing bound as 0.
-   * MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
-   * test/compiler-methods.test.ts measures each row.
+   * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
+   * states it only where it differs from the safe value of the row's family. lodash's `_.range` reads a
+   * missing bound as 0. `.toString()` works on every kind, and answers a string, so it
+   * reads `""`. MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)`
+   * is. test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0;
+  nullReceiverAs?: 0 | "";
   /**
    * The cell, run on a receiver that it reads as there, answers null when that
    * receiver is null or missing. So a `?.` directly before the call needs no `$cond`:
@@ -1186,20 +1188,15 @@ const mergedSources = (recv: unknown, args: readonly Expr[], value: ExprIn["valu
 };
 
 /**
- * A STRING method on a receiver that is null or missing answers null (HR5).
- *
- * JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to
- * raise inside an expression, and null is the nearest thing it holds. Nothing else is
- * acceptable: `$strLenCP` ABORTS the command on null, and `$toUpper`, `$substrCP`,
- * `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 — that hides
- * the missing field. MEASURED on every row that calls this.
+ * The body of a method over a receiver that may still be null or missing: null there,
+ * the body elsewhere. Under a dot, HR5 reads such a receiver as its safe value first
+ * (`dispatchOn` in src/compiler/emit/lower.ts), so the receiver is `present` and the
+ * test drops out. The test stays where no safe value applies, for example inside a
+ * dispatch branch that admits null. `$strLenCP` ABORTS the command on null, so a
+ * cell must not run its body on a receiver that may be null.
  *
  * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
- * path is cheap to read twice, and this function binds anything else once. A receiver
- * that is `present` skips the test — a literal, a `$lookup`'s array, a path that an
- * earlier `?.` test proved, or an array or object receiver the compiler read as `[]`
- * or `{}` (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
- * array cell that calls this never emits the test under a dot.
+ * path is cheap to read twice, and this function binds anything else once.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
   if (present) return body(recv);
@@ -4280,7 +4277,7 @@ export const NAMES = {
           // `r` is there in the body of the null test, so its length takes no guard
           const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
           const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, count] };
+          return { $substrCP: [substrOperand(r), start, count] };
         }),
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
@@ -4306,7 +4303,7 @@ export const NAMES = {
         return nullOr(recv, present, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
           const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+          return { $substrCP: [substrOperand(r), start, clampNonNegative(foldedSubtract(end, start))] };
         });
       },
     },
@@ -4335,9 +4332,9 @@ export const NAMES = {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
         return nullOr(recv, present, bind, (r) => {
-          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          if (lit !== null) return { $substrCP: [substrOperand(r), lit, 1] };
           const index = value(args[0]);
-          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [substrOperand(r), index, 1] });
         });
       },
     },
@@ -4368,7 +4365,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$.<field>.length().range().map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -5741,6 +5738,8 @@ export const NAMES = {
     elements: "scalar",
     returns: "unknown",
     neverNull: true,
+    // lodash's `_.toString(null)` is "": the method answers a string on any kind of receiver
+    nullReceiverAs: "",
     where: ["value"],
     filter: viaFallback,
     expr: {

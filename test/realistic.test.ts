@@ -694,13 +694,7 @@ $.plan = $.plan.toUpperCase();
     ).toEqual([
       { $match: { status: "active" } },
       { $project: { name: 1, email: 1, plan: 1, lastLoginAt: 1, _id: 0 } },
-      {
-        $set: {
-          plan: {
-            $cond: { if: { $eq: [{ $ifNull: ["$plan", null] }, null] }, then: null, else: { $toUpper: "$plan" } },
-          },
-        },
-      },
+      { $set: { plan: { $toUpper: { $ifNull: ["$plan", ""] } } } },
     ]);
   });
 });
@@ -1003,13 +997,7 @@ describe("uppercase a user's name through updateOne", { features: ["Update filte
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
       expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
-        {
-          $set: {
-            name: {
-              $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toUpper: "$name" } },
-            },
-          },
-        },
+        { $set: { name: { $toUpper: { $ifNull: ["$name", ""] } } } },
       ]);
     },
   );
@@ -1278,23 +1266,7 @@ $.customer.region.trim().toLowerCase() === "us"
       $expr: {
         $and: [
           { $lt: [{ $size: { $ifNull: ["$cart.items", []] } }, 20] },
-          {
-            $eq: [
-              {
-                $let: {
-                  vars: { jsmqlRecv: { $trim: { input: "$customer.region" } } },
-                  in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $toLower: "$$jsmqlRecv" },
-                    },
-                  },
-                },
-              },
-              "us",
-            ],
-          },
+          { $eq: [{ $toLower: { $trim: { input: { $ifNull: ["$customer.region", ""] } } } }, "us"] },
         ],
       },
     });
@@ -1365,63 +1337,9 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
           },
           then: {
             $cond: {
-              if: {
-                $let: {
-                  vars: {
-                    jsmqlRecv: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$role" },
-                      },
-                    },
-                  },
-                  in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    },
-                  },
-                },
-              },
-              then: {
-                $gt: [
-                  {
-                    $let: {
-                      vars: { jsmqlRecv: { $trim: { input: "$name" } } },
-                      in: {
-                        $cond: {
-                          if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                          then: null,
-                          else: { $strLenCP: "$$jsmqlRecv" },
-                        },
-                      },
-                    },
-                  },
-                  0,
-                ],
-              },
-              else: {
-                $let: {
-                  vars: {
-                    jsmqlRecv: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$role" },
-                      },
-                    },
-                  },
-                  in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    },
-                  },
-                },
-              },
+              if: { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$role", ""] } }, "admin"] }, 0] },
+              then: { $gt: [{ $strLenCP: { $trim: { input: { $ifNull: ["$name", ""] } } } }, 0] },
+              else: { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$role", ""] } }, "admin"] }, 0] },
             },
           },
           else: "$active",
@@ -1615,17 +1533,7 @@ describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["St
           "-",
           {
             $replaceAll: {
-              input: {
-                $trim: {
-                  input: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$title", null] }, null] },
-                      then: null,
-                      else: { $toLower: "$title" },
-                    },
-                  },
-                },
-              },
+              input: { $trim: { input: { $toLower: { $ifNull: ["$title", ""] } } } },
               find: " ",
               replacement: "-",
             },
@@ -1642,16 +1550,7 @@ describe("email domain through .split().at().toLowerCase()", { features: ["Strin
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
-        $let: {
-          vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } },
-          in: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-              then: null,
-              else: { $toLower: "$$jsmqlRecv" },
-            },
-          },
-        },
+        $toLower: { $ifNull: [{ $arrayElemAt: [{ $split: [{ $ifNull: ["$email", ""] }, "@"] }, 1] }, ""] },
       });
     },
   );
@@ -1662,7 +1561,7 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").size()`)).toEqual({ $size: { $ifNull: [{ $split: ["$tags", ","] }, []] } });
+      expect(jsmql.expr(`$.tags.split(",").size()`)).toEqual({ $size: { $split: [{ $ifNull: ["$tags", ""] }, ","] } });
     },
   );
 });
@@ -1683,13 +1582,7 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
           " — your ",
           {
             $cond: {
-              if: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$invoice.id", null] }, null] },
-                  then: null,
-                  else: { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] },
-                },
-              },
+              if: { $eq: [{ $indexOfCP: [{ $ifNull: ["$invoice.id", ""] }, "INV-VIP-"] }, 0] },
               then: "VIP ",
               else: "",
             },
@@ -1714,26 +1607,7 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         $concat: [
           { $dateToString: { date: "$event.ts" } },
           " [",
-          {
-            $let: {
-              vars: {
-                jsmqlRecv: {
-                  $cond: {
-                    if: { $eq: [{ $ifNull: ["$event.level", null] }, null] },
-                    then: null,
-                    else: { $substrCP: ["$event.level", 0, 1] },
-                  },
-                },
-              },
-              in: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                  then: null,
-                  else: { $toUpper: "$$jsmqlRecv" },
-                },
-              },
-            },
-          },
+          { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
           "] ",
           { $toString: "$event.message" },
         ],
@@ -2049,45 +1923,26 @@ $.file.size <= 25_000_000
       "file.size": { $lte: 25000000 },
       $expr: {
         $and: [
+          { $in: [{ $toLower: { $ifNull: ["$file.ext", ""] } }, [".jpg", ".png", ".pdf", ".docx"]] },
           {
-            $in: [
-              {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$file.ext", null] }, null] },
-                  then: null,
-                  else: { $toLower: "$file.ext" },
-                },
-              },
-              [".jpg", ".png", ".pdf", ".docx"],
-            ],
-          },
-          {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$file.name", null] }, null] },
-              then: null,
-              else: {
-                $let: {
-                  vars: { jsmqlStr: "$file.name" },
-                  in: {
-                    $eq: [
+            $let: {
+              vars: { jsmqlStr: { $ifNull: ["$file.name", ""] } },
+              in: {
+                $eq: [
+                  {
+                    $substrCP: [
+                      "$$jsmqlStr",
                       {
-                        $substrCP: [
-                          "$$jsmqlStr",
-                          {
-                            $max: [
-                              0,
-                              {
-                                $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }],
-                              },
-                            ],
-                          },
-                          { $strLenCP: { $ifNull: ["$file.ext", ""] } },
+                        $max: [
+                          0,
+                          { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }] },
                         ],
                       },
-                      "$file.ext",
+                      { $strLenCP: { $ifNull: ["$file.ext", ""] } },
                     ],
                   },
-                },
+                  "$file.ext",
+                ],
               },
             },
           },
@@ -2257,7 +2112,7 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
       expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : String($.value)`)).toEqual({
         $cond: {
           if: { $eq: [{ $type: "$value" }, "string"] },
-          then: { $trim: { input: "$value" } },
+          then: { $trim: { input: { $ifNull: ["$value", ""] } } },
           else: { $toString: "$value" },
         },
       });

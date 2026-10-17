@@ -84,13 +84,16 @@ safe answer for a missing number states it instead: `nullReceiverAs: 0` (`.range
 or an operator that answers a value for null (`.clamp()`, `.inRange()`). Such a row
 keeps the `$cond` of a `?.`.
 
-**A string method on a receiver that may be missing answers null.** `nullOr`
-in `src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
-null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
-A cell calls it where its operator would otherwise ABORT on null (`$strLenCP`)
-or would answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch`
-→ false, `$indexOfCP` → -1) — each case measured per row. The body runs on a
-proven receiver, so it carries no `$ifNull` of its own. The compiler skips the
+**A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
+the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`
+under a dot, as it does with `[]` and `{}`. `$.s.length()` is
+`{ $strLenCP: { $ifNull: ["$s", ""] } }`. Where the operator already reads null as
+`""`, the cell takes the bare receiver: `$substrCP` of null is `""` (measured), so
+`substrOperand` in `src/registry/mql.ts` drops the wrap there. `nullOr` in
+`src/registry/names.ts` keeps one shape for a receiver that may still be null,
+`{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] }, null, <body over r>] }`, with
+the receiver bound by `$let` unless it is a path. The body runs on a proven
+receiver, so it carries no `$ifNull` of its own. The compiler skips the
 test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
@@ -1015,8 +1018,8 @@ rejection that comes from a row quotes the row.
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For
 example, the `.split("")` hint is
-`($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))`.
-The `?? 0` matters: `.length()` answers null for a missing string, and a range needs a number. `test/compiler-methods.test.ts` reads each such
+`$.<field>.length().range().map(i => $.<field>.charAt(i))`.
+`.length()` reads a missing string as `""` and answers 0, so the range has a number. `test/compiler-methods.test.ts` reads each such
 hint out of its message, fills in the placeholder, and runs it on the server.
 
 ## What proves the value target

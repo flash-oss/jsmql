@@ -155,14 +155,18 @@ function normaliseSliceIndex(node, lowered, recv, present2 = false) {
   if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present2)] }), lowered);
 }
+var substrOperand = (s) => {
+  const operands = typeof s === "object" && s !== null && !Array.isArray(s) ? s.$ifNull : void 0;
+  return Array.isArray(operands) && operands.length === 2 && operands[1] === "" && Object.keys(s).length === 1 ? operands[0] : s;
+};
 var strTail = (s, from, present2 = false) => ({
-  $substrCP: [s, from, strLenOf(s, present2)]
+  $substrCP: [substrOperand(s), from, strLenOf(s, present2)]
 });
 var capitalizeExpr = (s, present2 = false) => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
+  $concat: [{ $toUpper: { $substrCP: [substrOperand(s), 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
 });
 var firstCharExpr = (s, op, present2 = false) => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present2)]
+  $concat: [{ [op]: { $substrCP: [substrOperand(s), 0, 1] } }, strTail(s, 1, present2)]
 });
 var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 var HTML_ESCAPE_PAIRS = [
@@ -3413,7 +3417,7 @@ var NAMES = {
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
         const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [r, start, count] };
+        return { $substrCP: [substrOperand(r), start, count] };
       })
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
@@ -3438,7 +3442,7 @@ var NAMES = {
         return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
           const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+          return { $substrCP: [substrOperand(r), start, clampNonNegative(foldedSubtract(end, start))] };
         });
       }
     },
@@ -3465,9 +3469,9 @@ var NAMES = {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
         return nullOr(recv, present2, bind, (r) => {
-          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          if (lit !== null) return { $substrCP: [substrOperand(r), lit, 1] };
           const index = value(args[0]);
-          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [substrOperand(r), index, 1] });
         });
       }
     },
@@ -3496,7 +3500,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$.<field>.length().range().map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -4777,6 +4781,8 @@ var NAMES = {
     elements: "scalar",
     returns: "unknown",
     neverNull: true,
+    // lodash's `_.toString(null)` is "": the method answers a string on any kind of receiver
+    nullReceiverAs: "",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11773,15 +11779,21 @@ function readsNullAsEmptyOf(name2) {
 function passesNullOf(name2) {
   return row(name2)?.passesNull === true;
 }
+function nullReceiverAsOf(name2) {
+  return row(name2)?.nullReceiverAs;
+}
 function readsNullReceiverOf(name2) {
-  return row(name2)?.nullReceiverAs !== void 0;
+  return nullReceiverAsOf(name2) !== void 0;
 }
 function emptyValueOf(name2, family) {
+  const stated = nullReceiverAsOf(name2);
+  if (stated !== void 0) return stated;
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
+  if (fams.every((f) => f === "string")) return "";
   return null;
 }
 function siblingOf(name2, family) {
@@ -20664,7 +20676,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '<string>.length().range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -20978,7 +20990,7 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '<string>.length().range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
 function noReceiver(name2, pos) {

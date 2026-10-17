@@ -540,18 +540,26 @@ export function passesNullOf(name: string): boolean {
   return (row(name) as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
+/** The safe value a row states for a null or missing receiver (`.range()` reads 0, `.toString()` reads ""). */
+function nullReceiverAsOf(name: string): 0 | "" | undefined {
+  return (row(name) as { nullReceiverAs?: 0 | "" } | undefined)?.nullReceiverAs;
+}
+
 /** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
 export function readsNullReceiverOf(name: string): boolean {
-  return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;
+  return nullReceiverAsOf(name) !== undefined;
 }
 
 /**
- * HR5: the EMPTY value that an array or object method runs on when its receiver is
- * null or missing — `[]` for an array, `{}` for an object — or null for a method
- * of another family. `family` is the receiver's proven family, or null; then the row's own
- * field families decide, and they must agree on one empty value.
+ * HR5: under a dot, a method runs on the SAFE value of its kind when its receiver is
+ * null or missing: `[]` for an array, `{}` for an object, `""` for a string. A family
+ * with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
+ * `family` is the receiver's proven family, or null; then the row's own field families
+ * decide, and they must agree on one safe value.
  */
-export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | null {
+export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | "" | 0 | null {
+  const stated = nullReceiverAsOf(name);
+  if (stated !== undefined) return stated;
   const own = families(row(name)?.on);
   const fams: readonly string[] =
     family !== null
@@ -562,6 +570,7 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
   if (fams.length === 0) return null;
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
+  if (fams.every((f) => f === "string")) return "";
   return null;
 }
 

@@ -11,7 +11,7 @@ describe("jsmql.filter() — strict Filter shape", () => {
   });
   it("takes the expression road where the query language has no clause", () => {
     expect(jsmql.filter("$.name.trim() === 'alice'")).toEqual({
-      $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] },
+      $expr: { $eq: [{ $trim: { input: { $ifNull: ["$name", ""] } } }, "alice"] },
     });
   });
   it("accepts the arrow form", () => {

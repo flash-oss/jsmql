@@ -603,11 +603,11 @@ string-returning expression, a `const k = "…"` binding, or **a lambda paramete
 an array whose elements are all strings** — it can only be an object property name (a string
 is never a numeric array index), so JSMQL skips the dispatch and emits `$getField` directly.
 A string key that can be missing reads as `""`, because `$getField` refuses a null name. A
-string method answers null for a missing string, so `.toLowerCase()` takes this guard:
+string method reads a missing string as `""`, so `.toLowerCase()` gives such a key:
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, ""] }, input: { $ifNull: ["$scores", {}] } } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$scores", {}] } } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
@@ -645,13 +645,13 @@ $[$.fieldName]                      // → { $getField: { field: { $toString: { 
 
 `?.` is accepted everywhere `.` is, and it does what JavaScript's `?.` does.
 
-**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it; a dot after it follows the dot rule of [HR5](LANG_RULES.md): an array or object method runs on an empty array or object when its receiver is missing.
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it. A dot after it follows the dot rule of [HR5](LANG_RULES.md): a method runs on the safe value of its kind (`[]`, `{}`, `""`, …) when its receiver is missing.
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
 // → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $trim: { input: "$s" } } } } }
-$.s.trim().length()  // no ?. — but `.length()` is a string method, and its receiver may be null, so it too answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
+$.s.trim().length()  // no ?. — a missing `s` reads as "", so the length is 0
+// → { $strLenCP: { $trim: { input: { $ifNull: ["$s", ""] } } } }
 $.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rule
 // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }
 $.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
@@ -1652,7 +1652,7 @@ $.name.substr(-3)                  // the last three characters — a negative s
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `($.csv.length() ?? 0).range().map(i => $.csv.charAt(i))`.
+                                   // write `$.csv.length().range().map(i => $.csv.charAt(i))`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1711,7 +1711,7 @@ so JSMQL refuses `.split("")` and the spread of a string. Write the characters w
 `.charAt()` instead:
 
 ```js
-($.s.length() ?? 0).range().map(i => $.s.charAt(i))
+$.s.length().range().map(i => $.s.charAt(i))
 // { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
 ```
 
@@ -1860,11 +1860,11 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what it answers on an empty array or object.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
+**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, and a string method on `""`. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`. In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
 ```js
-$.s.trim().length()               // a STRING method: `s` may be missing → tested first, and answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
+$.s.trim().length()               // a STRING method: a missing `s` is "", so the length is 0
+// → { $strLenCP: { $trim: { input: { $ifNull: ["$s", ""] } } } }
 
 $.a.map(x => x + 1).size()        // an ARRAY method: a missing `a` is [], so the count is 0, and `.size()` adds no guard of its own
 // → { $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } } }
