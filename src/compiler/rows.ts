@@ -852,7 +852,7 @@ export function valueTerminalMethodNames(): string[] {
   });
 }
 
-/** Every method the rows know in value position — a rule or a refusal that names the alternative; the editor completes both. */
+/** Every method the rows know in value position — a rule or a refusal; the editor completes both. */
 export function valueMethodNames(): string[] {
   return methodRows().filter((n) => lists(n, "value") || (row(n) as { expr?: unknown }).expr !== undefined);
 }
