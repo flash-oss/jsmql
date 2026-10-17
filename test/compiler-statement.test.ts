@@ -877,6 +877,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // A method on a value receiver, as a statement: the mutators take this position.
     expect(refusal("$.tags.popp();")).toBe("Unknown method '.popp()' at position 6. Did you mean '.pop()'?");
     expect(refusal("$.tags.pushh(1);")).toBe("Unknown method '.pushh()' at position 6. Did you mean '.push()'?");
+    expect(refusal("$.tags.Numbr();")).toBe("Unknown method '.Numbr()' at position 6.");
     // A static on a namespace, and a global.
     expect(refusal("Date.noww();")).toBe("Unknown method 'Date.noww()' at position 4. Did you mean 'Date.now'?");
     // A refused static is never a suggestion: `Object.assign` parses only so that it can refuse.

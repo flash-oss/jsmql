@@ -203,3 +203,20 @@ export function familiesFor(name: string): readonly Family[] | "any" | undefined
 export function everyName(): readonly string[] {
   return Object.keys(NAMES);
 }
+
+/**
+ * Every METHOD name: a row that a value calls after a dot. A global (`Number`) and a static
+ * of a namespace (`Array.isArray`) are not methods, so a suggestion after a dot never names one.
+ */
+export function everyMethodName(): readonly string[] {
+  const namespaces = new Set(
+    Object.entries(NAMES)
+      .filter(([, r]) => (r as { provides?: unknown }).provides !== undefined)
+      .map(([n]) => n),
+  );
+  return everyName().filter((n) => {
+    if (n.startsWith("$")) return false;
+    const on = familiesFor(n);
+    return on === "any" || (on !== undefined && on.some((f) => !namespaces.has(f)));
+  });
+}

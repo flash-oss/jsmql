@@ -20893,6 +20893,16 @@ function familiesFor(name2) {
 function everyName() {
   return Object.keys(NAMES);
 }
+function everyMethodName() {
+  const namespaces = new Set(
+    Object.entries(NAMES).filter(([, r]) => r.provides !== void 0).map(([n2]) => n2)
+  );
+  return everyName().filter((n2) => {
+    if (n2.startsWith("$")) return false;
+    const on = familiesFor(n2);
+    return on === "any" || on !== void 0 && on.some((f) => !namespaces.has(f));
+  });
+}
 
 // src/compiler/emit/errors.ts
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
@@ -24979,6 +24989,7 @@ function receiverOf(recv, env) {
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
+var METHOD_NAMES = everyMethodName();
 function methodCall2(node, env) {
   return dispatchOn(node, node.name, node.object, node.args, env);
 }
@@ -25044,7 +25055,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
     const on = familiesFor(n2);
     return on !== void 0 && on !== "any" && on.includes(receiver.name) && lowersOn(n2, receiver.name);
-  }) : JS_NAMES;
+  }) : METHOD_NAMES;
   throw refusalFor(sel, spelled3, container, position, node.pos, near, format);
 }
 function arraysHolder(recv) {
@@ -26408,11 +26419,11 @@ function unknownCall(sel, node, env) {
       const members = everyName().filter((n2) => familiesOf(n2)?.includes(ns) === true && lowersOn(n2, ns));
       return refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
     }
-    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES2);
+    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, METHOD_NAMES2);
   }
   return refusalFor(sel, sel.name, "", "statement", node.pos, []);
 }
-var JS_NAMES2 = everyName().filter((n2) => !n2.startsWith("$"));
+var METHOD_NAMES2 = everyMethodName();
 function stageStatement(node, env, first) {
   const base = chainBase(node);
   if (node.type === "MethodCall") {

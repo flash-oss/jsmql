@@ -252,6 +252,9 @@ describe("compiler/emit/lower — calls", () => {
 
   it("refuses a name from a closed set with a suggestion", () => {
     expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
+    // After a dot, a suggestion names a method, never a global: `Number` is not a method.
+    expect(() => expr("$.s.toDoubel()")).toThrow(/Did you mean '.toDouble\(\)'/);
+    expect(() => expr("$.s.Numbr()")).toThrow(/^Unknown method '.Numbr\(\)' at position 3.$/);
     expect(() => expr("Math.randon()")).toThrow(
       /Unknown method 'Math.randon\(\)' at position 4. Did you mean 'Math.random'/,
     );

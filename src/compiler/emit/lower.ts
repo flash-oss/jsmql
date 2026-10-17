@@ -43,7 +43,7 @@ import {
   passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
+import { consult, everyMethodName, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
 import { operandShapeOf } from "../rows.ts";
 import type { Env } from "./env.ts";
@@ -820,6 +820,8 @@ const wroteName = (node: Expr, name: string): string =>
 
 /** Every JavaScript name, for a suggestion over a real closed set. */
 const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
+/** Every method name, for a suggestion after a dot on a value. */
+const METHOD_NAMES = everyMethodName();
 
 function methodCall(node: Extract<Expr, { type: "MethodCall" }>, env: Env): unknown {
   return dispatchOn(node, node.name, node.object, node.args, env);
@@ -910,14 +912,14 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container);
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
-  // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
+  // A namespace's suggestion draws from its own members; a value's from every method.
   const near =
     receiver.kind === "namespace"
       ? JS_NAMES.filter((n) => {
           const on = familiesFor(n);
           return on !== undefined && on !== "any" && on.includes(receiver.name) && lowersOn(n, receiver.name);
         })
-      : JS_NAMES;
+      : METHOD_NAMES;
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);
 }
 

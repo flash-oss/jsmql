@@ -43,7 +43,7 @@ import {
   namespaceNames,
   streamReceiverNames,
 } from "../rows.ts";
-import { consult, everyName, listedIn } from "./consult.ts";
+import { consult, everyMethodName, everyName, listedIn } from "./consult.ts";
 import { checkBodyKeys, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import { Capture, fieldSlot, type Declared } from "./names.ts";
@@ -1411,13 +1411,13 @@ function unknownCall(sel: Extract<Selected, { kind: "unknown" }>, node: Expr, en
       const members = everyName().filter((n) => familiesOf(n)?.includes(ns as Family) === true && lowersOn(n, ns));
       return E.refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
     }
-    return E.refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES);
+    return E.refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, METHOD_NAMES);
   }
   return E.refusalFor(sel, sel.name, "", "statement", node.pos, []);
 }
 
-/** Every name a JavaScript program calls as a method or a global: the rows that are not MongoDB `$` names. */
-const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
+/** Every name a value calls after a dot, for a suggestion over a real closed set. */
+const METHOD_NAMES = everyMethodName();
 
 /**
  * A statement that NAMES something: `$match(…)` and its siblings,
