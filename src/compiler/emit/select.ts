@@ -226,6 +226,12 @@ export function kindFits(kind: Kind | "null" | "unknown", expected: ArgType | re
       return kind === expected;
     case "timestamp":
       return false;
+    // every kind, never null: the test above refuses null
+    case "any":
+      return true;
+    // `regexp` is a family of the source, not a kind of the proof, so this case judges only null
+    case "regex":
+      return true;
   }
 }
 

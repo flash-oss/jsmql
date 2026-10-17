@@ -1893,11 +1893,11 @@ describe("compiler/emit — array methods", () => {
     // a body key and an element of a list
     expect(() => expr("$.d.set({ year: null })")).toThrow("'.set()' year takes an integer, but got null.");
     expect(() => expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 takes a field NAME .*, but got null\./);
-    // a value the proof shows is null: a binding, and a `?.` read of a key that no stage wrote
+    // a value the proof shows is null: a binding, and a `?.` read of a key that a stage wrote as null
     expect(() => jsmql("let x = null; $.r = $.a.slice(x);")).toThrow(
       "'.slice()' argument 1 takes an integer, but got null.",
     );
-    expect(() => jsmql("$.o = {}; $.r = $.a.slice($.o?.b);")).toThrow(
+    expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
       "'.slice()' argument 1 takes an integer, but got null.",
     );
     // a slot that states no kind takes `null` as a value

@@ -1526,7 +1526,7 @@ When JSMQL does not know the type, it rejects nothing and emits the MQL. These v
 
 **This check follows JavaScript, not the coercions of MongoDB.** MongoDB runs `$toUpper` on a date with no error, and gives back the date as a string. JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it passes through with no change, because raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
 
-An argument slot that states a kind refuses `null`, because `null` is not that kind. This applies to three cases:
+An argument slot or an operator that states a kind refuses `null`, because `null` is not that kind. This applies to three cases:
 
 - a written `null`
 - a value that JSMQL can show is always `null` or missing
@@ -1536,6 +1536,7 @@ A slot that takes any value keeps `null` as a value:
 
 ```js
 jsmql.expr("$.a.slice(null)")     // ✗ .slice() takes an integer
+jsmql.expr("$.n + null")          // ✗ + takes a number, a string or a date
 jsmql.expr("$.a.has(null)")       // → { $in: [null, { $ifNull: ["$a", []] }] }
 ```
 

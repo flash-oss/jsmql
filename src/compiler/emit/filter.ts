@@ -427,10 +427,13 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   if (!escape) {
     const argEnv = childEnv(env, node, "args");
     checkSlots(
-      name,
+      node.type === "BinaryExpr" ? node.op : name,
       sel.rule.args,
       args,
       args.map((a) => kindOf(a, argEnv)),
+      true,
+      undefined,
+      (a) => lowerValue(a, argEnv),
     );
   }
   const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {

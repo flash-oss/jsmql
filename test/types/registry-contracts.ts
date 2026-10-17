@@ -7,8 +7,8 @@
 // (TS2578), so a rule that stops firing fails this file in either direction.
 // test/registry-contracts.test.ts runs it.
 
-import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
-import { unsupported } from "../../src/registry/vocabulary.ts";
+import type { Arity, Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
+import { inCode, unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
 import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
@@ -127,3 +127,18 @@ export const exprOfValue = matchExpr("$a");
 export const andOfValues = and("$a", "$b");
 export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
 export const condOfBool = cond(boolTruth({ $gt: ["$a", 1] }), 1, 2);
+
+// ── an operand's kind: `rest`, "any", "regex", and the rule of a road ────────
+
+export const restKind: Arity = { sig: "operands", atLeast: 2, rest: ["number", "string", "date"] };
+// @ts-expect-error — `rest` names an ArgType, and "integer" is not one
+export const restNotAKind: Arity = { sig: "operands", atLeast: 2, rest: "integer" };
+export const anyKind: Arity = { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } };
+// @ts-expect-error — "any" is the one spelling of every kind; "unknown" is a proof, not a slot kind
+export const unknownKind: Arity = { sig: "left, right", exact: 2, slotType: { 0: "unknown" } };
+export const regexKind: Arity = { sig: "regex", exact: 1, slotType: { 0: "regex" } };
+// @ts-expect-error — "regexp" is the family of a receiver; a slot states "regex"
+export const regexpKind: Arity = { sig: "regex", exact: 1, slotType: { 0: "regexp" } };
+export const roadRule = inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } });
+// @ts-expect-error — the rule of a road is an Arity, so it states its signature
+export const roadRuleNoSig = inCode("src/compiler/emit/lower.ts", { exact: 1 });

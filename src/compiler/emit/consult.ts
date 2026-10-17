@@ -10,7 +10,7 @@
 // cell in the row. Only the sixth needs a lowering to run. This is why the
 // refusal surface of the whole language works before anyone writes a lowering.
 
-import type { Family, Position } from "../../registry/vocabulary.ts";
+import type { Arity, Family, Position } from "../../registry/vocabulary.ts";
 import { NAMES } from "../../registry/names.ts";
 import { PRODUCTIONS } from "../../registry/productions.ts";
 import type { Where } from "../passes/position.ts";
@@ -106,8 +106,9 @@ export type Verdict =
    * A cell the row hands to a PASS — `inCode(<file>)`. There is nothing here to
    * lower: the pass either rewrote the node already or left it, and a caller that
    * meets this verdict must read the node the way its other cells describe.
+   * `args` is the argument rule that the code checks, when the row states one.
    */
-  | { kind: "inCode"; name: string; position: Position; file: string };
+  | { kind: "inCode"; name: string; position: Position; file: string; args?: Arity };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -130,7 +131,10 @@ function readCell(name: string, position: Position, cell: unknown): Verdict {
       needsSubject: cell.subjectFromCaller === true,
     };
   }
-  if (typeof cell.inCode === "string") return { kind: "inCode", name, position, file: cell.inCode };
+  if (typeof cell.inCode === "string") {
+    const args = isObj(cell.args) ? (cell.args as Arity) : undefined;
+    return { kind: "inCode", name, position, file: cell.inCode, ...(args === undefined ? {} : { args }) };
+  }
   if (cell.fallback === "expr") return { kind: "fallback", name, position };
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name, position, owners: cell.composedInto as readonly string[] };

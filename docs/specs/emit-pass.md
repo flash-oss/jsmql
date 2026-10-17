@@ -204,6 +204,26 @@ body key, and `element N` for an element of a list. A slot that states a kind
 refuses `null`: a written `null`, an injected `null`, and a value that the
 proof shows is absent. See [types.md § The slot check](types.md#the-slot-check).
 
+Each operator production states the kinds of its operands, as a method row does.
+Three facts on `Arity` serve the operators:
+
+- `"any"` is a slot of every kind, never `null`. An ordered comparison states it.
+- `"regex"` is a slot that a regex literal fills. The proof judges only a `null` there,
+  because `regexp` is a family of the source, not a kind of the proof.
+- `rest` is the kind of each operand beyond the stated slots. A flattened chain
+  (`a * b * c`) states it.
+
+A road that lowers in code states its rule as `inCode(file, args)`. The `+` road and
+the `x[i]` road read that rule and run `checkSlots` with it. A proven `null` operand
+first lowers, so that a read of a field that no stage wrote gives its own refusal.
+
+```js
+$.n + 1          // → { $add: ["$n", 1] }
+$.n + null       // ✗ '+' takes a number, a string or a date
+$.a * $.b * 2    // → { $multiply: ["$a", "$b", 2] }
+$.s.trim() * 2   // ✗ the proof shows a string, and '*' takes a number
+```
+
 ## Truthiness
 
 A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only

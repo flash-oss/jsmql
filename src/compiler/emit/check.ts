@@ -89,6 +89,10 @@ function matches(lit: Lit, expected: ArgType): boolean {
     case "date":
     case "timestamp":
       return false;
+    case "any":
+      return true;
+    case "regex":
+      return lit.kind === "regex";
   }
 }
 
@@ -106,7 +110,23 @@ const TAKES: Record<ArgType, string> = {
   object: "a document",
   date: "a date",
   timestamp: "a timestamp",
+  any: "a value",
+  regex: "a regular expression",
 };
+
+/**
+ * Each positional slot that states a kind, in order: the `slotType` slots, and `rest`
+ * for every other operand of a flattened chain.
+ */
+function slotKinds(args: Arity, count: number): readonly (readonly [number, ArgType | readonly ArgType[]])[] {
+  const stated = args.slotType ?? {};
+  const out: (readonly [number, ArgType | readonly ArgType[]])[] = Object.entries(stated).map(
+    ([i, t]) => [Number(i), t] as const,
+  );
+  const rest = args.rest;
+  if (rest !== undefined) for (let i = 0; i < count; i++) if (!(i in stated)) out.push([i, rest]);
+  return out.sort((a, b) => a[0] - b[0]);
+}
 
 /** The kinds a slot takes, as one list: "a number", "a number or a date", "a number, a string or a date". */
 const takesOf = (t: ArgType | readonly ArgType[]): string => {
@@ -347,6 +367,11 @@ export function checkSlots(
   hasObjectForm = true,
   /** The receiver of a method call, for a rule that states slot `-1`. */
   receiver?: Expr,
+  /**
+   * Lowers an operand before its refusal as a proven null. A read of a field that no
+   * stage wrote has a refusal of its own, and that refusal names the cause.
+   */
+  readFirst?: (e: Expr) => unknown,
 ): void {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
@@ -396,8 +421,8 @@ export function checkSlots(
       );
     }
   }
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
+  for (const [i, t] of slotKinds(args, operands.length)) {
+    const e = operands[i];
     if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
     if (!Array.isArray(t)) {
       checkType(name, argument(i), e, t as ArgType);
@@ -462,10 +487,11 @@ export function checkSlots(
   }
   // A positional operand PROVEN to be a kind the slot can never take: `$.s.indexOf(n)`
   // with `n` a number the program wrote.
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
+  for (const [i, t] of slotKinds(args, operands.length)) {
+    const e = operands[i];
+    const k = kinds[i];
     if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
+    if (k === "null") readFirst?.(e);
     throw new CodegenError(wrongKind(name, argument(i), takesOf(t), KIND_NOUN[k] ?? `a ${k}`), e.pos);
   }
 }

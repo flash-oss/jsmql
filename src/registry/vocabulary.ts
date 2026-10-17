@@ -143,7 +143,19 @@ export type ArgType =
   | "timestamp"
   | "bool"
   | "object"
-  | "array";
+  | "array"
+  /**
+   * A value of every kind, never `null`. An ordered comparison takes any value, and
+   * a `null` operand compares by the BSON order, which no JavaScript reader expects:
+   *   $.n > 1      → accepted
+   *   $.n > null   → refused (HR7)
+   */
+  | "any"
+  /**
+   * A regular expression. A regex literal fills it. `regexp` is a family the source
+   * spells, not a `Kind` the proof shows, so the proof judges only a `null` here.
+   */
+  | "regex";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. LEXICAL — the tokens the lexer can produce, and the nodes the parser builds
@@ -636,6 +648,13 @@ export type Arity = {
   spread?: true;
   /** A count that the parser accepts, but which is wrong for a reason the message must give. */
   reject?: Readonly<Record<number, string>>;
+  /**
+   * The kind of each operand beyond the slots that `slotType` states. A production
+   * that flattens a chain (`a + b + c`) has no fixed count of slots:
+   *   $.a * $.b * 2      → accepted
+   *   $.a * $.b * null   → refused: argument 3 takes a number
+   */
+  rest?: ArgType | readonly ArgType[];
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
   /**
@@ -1157,9 +1176,17 @@ export type Emit<In, Out> = (input: In) => Out;
  * states that the construct exists, and where it is legal. The code says how the
  * compiler builds it.
  */
-type InCode = { inCode: string };
+type InCode = {
+  inCode: string;
+  /**
+   * The argument rule that the code reads, where the code runs the slot check itself.
+   * The `+` road states the kinds of its operands here, because its MQL is code.
+   */
+  args?: Arity;
+};
 
-export const inCode = (file: string): InCode => ({ inCode: file });
+export const inCode = (file: string, args?: Arity): InCode =>
+  args === undefined ? { inCode: file } : { inCode: file, args };
 
 /** A refusal that carries the message for the user to read. */
 export type Refusal = {

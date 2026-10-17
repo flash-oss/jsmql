@@ -74,7 +74,7 @@ var TYPEOF_HINTS = {
   bigint: "long",
   function: "javascript"
 };
-var inCode = (file) => ({ inCode: file });
+var inCode = (file, args) => args === void 0 ? { inCode: file } : { inCode: file, args };
 var composedInto = (...owners) => ({
   composedInto: owners
 });
@@ -10650,7 +10650,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitOr: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      emit: ({ args, value }) => ({ $bitOr: args.map(value) })
+    },
     stream: unsupported("'|' produces a value, not a stage."),
     statement: unsupported("'|' is not a statement \u2014 see its 'where'.")
   }),
@@ -10668,7 +10671,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitXor: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      emit: ({ args, value }) => ({ $bitXor: args.map(value) })
+    },
     stream: unsupported("'^' produces a value, not a stage."),
     statement: unsupported("'^' is not a statement \u2014 see its 'where'.")
   }),
@@ -10686,7 +10692,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitAnd: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      emit: ({ args, value }) => ({ $bitAnd: args.map(value) })
+    },
     stream: unsupported("'&' produces a value, not a stage."),
     statement: unsupported("'&' is not a statement \u2014 see its 'where'.")
   }),
@@ -10771,9 +10780,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gt") },
+    filter: {
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      emit: (input) => orderedQuery(input, "$gt")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
       emit: ({ args, value }) => ({ $gt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>' produces a value, not a stage."),
@@ -10790,9 +10802,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gte") },
+    filter: {
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      emit: (input) => orderedQuery(input, "$gte")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
       emit: ({ args, value }) => ({ $gte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>=' produces a value, not a stage."),
@@ -10809,9 +10824,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lt") },
+    filter: {
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      emit: (input) => orderedQuery(input, "$lt")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
       emit: ({ args, value }) => ({ $lt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<' produces a value, not a stage."),
@@ -10828,9 +10846,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lte") },
+    filter: {
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      emit: (input) => orderedQuery(input, "$lte")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
       emit: ({ args, value }) => ({ $lte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<=' produces a value, not a stage."),
@@ -10869,7 +10890,7 @@ var PRODUCTIONS = {
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts"),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: ["number", "string", "date"] }),
     stream: unsupported("'+' produces a value, not a stage."),
     statement: unsupported("'+' is not a statement \u2014 see its 'where'.")
   }),
@@ -10889,7 +10910,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: ["number", "date"], 1: ["number", "date"] } },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -10910,7 +10931,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $multiply: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "number" },
+      emit: ({ args, value }) => ({ $multiply: args.map(value) })
+    },
     stream: unsupported("'*' produces a value, not a stage."),
     statement: unsupported("'*' is not a statement \u2014 see its 'where'.")
   }),
@@ -10929,7 +10953,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1] },
+      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
       emit: ({ args, value }) => ({ $divide: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'/' produces a value, not a stage."),
@@ -10950,7 +10974,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1] },
+      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
       emit: ({ args, value }) => ({ $mod: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'%' produces a value, not a stage."),
@@ -10972,7 +10996,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, slotType: { 0: "number", 1: "number" } },
       emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'**' produces a value, not a stage."),
@@ -11008,7 +11032,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
+      emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] })
+    },
     stream: unsupported("'-x' produces a value, not a stage."),
     statement: unsupported("'-x' is not a statement \u2014 see its 'where'.")
   }),
@@ -11025,7 +11052,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $bitNot: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } },
+      emit: ({ args, value }) => ({ $bitNot: value(args[0]) })
+    },
     stream: unsupported("'~' produces a value, not a stage."),
     statement: unsupported("'~' is not a statement \u2014 see its 'where'.")
   }),
@@ -11109,7 +11139,9 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts"),
+    // A key of any kind reads as its string, as JavaScript reads `o[k]`: an ObjectId key
+    // reads the field its hex names. A null key reads no field.
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } }),
     stream: unsupported("'x[0]' produces a value, not a stage."),
     statement: unsupported("'x[0]' is not a statement \u2014 see its 'where'.")
   }),
@@ -11733,6 +11765,25 @@ var PRODUCTIONS = {
   })
 };
 
+// src/errors.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
+  }
+};
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier2, pos = 0) {
+    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier2;
+  }
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
+}
+
 // src/compiler/rows.ts
 var ROWS = Object.assign(/* @__PURE__ */ Object.create(null), NAMES);
 var row = (name2) => ROWS[name2];
@@ -12046,6 +12097,14 @@ function productionForOperator(nodeType, op) {
     if (p.becomes === nodeType && p.tokens[0] === op) return key;
   }
   return void 0;
+}
+function productionBuilding(nodeType) {
+  const keys = Object.entries(PRODUCTIONS).filter(([, p]) => p.becomes === nodeType).map(([k]) => k);
+  if (keys.length !== 1) internalError(`${keys.length} productions build a '${nodeType}'`);
+  return keys[0];
+}
+function productionSpelling(productionKey) {
+  return PRODUCTIONS[productionKey].spelling;
 }
 function flattensChain(productionKey) {
   return PRODUCTIONS[productionKey]?.flattensChain === true;
@@ -19901,25 +19960,6 @@ function desugar(program, root2 = STATEMENT) {
   return desugarVerbose(program, root2).program;
 }
 
-// src/errors.ts
-var CodegenError = class extends Error {
-  constructor(message, pos = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-};
-var UnknownIdentifierError = class extends CodegenError {
-  constructor(identifier2, pos = 0) {
-    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier2;
-  }
-};
-function internalError(detail, pos = 0) {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
 // src/compiler/passes/raw-mql.ts
 var isNode5 = (v) => typeof v === "object" && v !== null && typeof v.type === "string";
 function dollarKey(node) {
@@ -20781,7 +20821,10 @@ function readCell(name2, position, cell) {
       needsSubject: cell.subjectFromCaller === true
     };
   }
-  if (typeof cell.inCode === "string") return { kind: "inCode", name: name2, position, file: cell.inCode };
+  if (typeof cell.inCode === "string") {
+    const args = isObj2(cell.args) ? cell.args : void 0;
+    return { kind: "inCode", name: name2, position, file: cell.inCode, ...args === void 0 ? {} : { args } };
+  }
   if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
@@ -22030,6 +22073,12 @@ function kindFits(kind, expected) {
       return kind === expected;
     case "timestamp":
       return false;
+    // every kind, never null: the test above refuses null
+    case "any":
+      return true;
+    // `regexp` is a family of the source, not a kind of the proof, so this case judges only null
+    case "regex":
+      return true;
   }
 }
 function fromPerFamily(name2, branches, receiver, shaped, count) {
@@ -22143,6 +22192,10 @@ function matches(lit, expected) {
     case "date":
     case "timestamp":
       return false;
+    case "any":
+      return true;
+    case "regex":
+      return lit.kind === "regex";
   }
 }
 var TAKES = {
@@ -22157,8 +22210,21 @@ var TAKES = {
   array: "an array",
   object: "a document",
   date: "a date",
-  timestamp: "a timestamp"
+  timestamp: "a timestamp",
+  any: "a value",
+  regex: "a regular expression"
 };
+function slotKinds(args, count) {
+  const stated = args.slotType ?? {};
+  const out = Object.entries(stated).map(
+    ([i, t]) => [Number(i), t]
+  );
+  const rest = args.rest;
+  if (rest !== void 0) {
+    for (let i = 0; i < count; i++) if (!(i in stated)) out.push([i, rest]);
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
 var takesOf = (t) => {
   const nouns = Array.isArray(t) ? t.map((x) => TAKES[x]) : [TAKES[t]];
   return nouns.length === 1 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
@@ -22294,7 +22360,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
 }
 var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
-function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver) {
+function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver, readFirst) {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
     const n2 = e === void 0 ? null : numberOf(e);
@@ -22343,8 +22409,8 @@ function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver
       );
     }
   }
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
+  for (const [i, t] of slotKinds(args, operands.length)) {
+    const e = operands[i];
     if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
     if (!Array.isArray(t)) {
       checkType(name2, argument(i), e, t);
@@ -22397,10 +22463,11 @@ function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver
     const e = operands[Number(i)];
     if (e !== void 0) checkEnum(name2, argument(i), e, allowed, false);
   }
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
+  for (const [i, t] of slotKinds(args, operands.length)) {
+    const e = operands[i];
+    const k = kinds[i];
     if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
+    if (k === "null") readFirst?.(e);
     throw new CodegenError(wrongKind(name2, argument(i), takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
   }
 }
@@ -23735,10 +23802,13 @@ function leaf(node, env) {
   if (!escape) {
     const argEnv = childEnv(env, node, "args");
     checkSlots(
-      name2,
+      node.type === "BinaryExpr" ? node.op : name2,
       sel.rule.args,
       args,
-      args.map((a) => kindOf3(a, argEnv))
+      args.map((a) => kindOf3(a, argEnv)),
+      true,
+      void 0,
+      (a) => lowerValue(a, argEnv)
     );
   }
   const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
@@ -24803,6 +24873,8 @@ function refuseUnreadable(node, env) {
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
+  const key = productionBuilding("IndexAccess");
+  checkRoad(key, productionSpelling(key), [node.index], env);
   if (node.index.type === "StringLiteral") {
     const name2 = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name2, false);
@@ -24903,7 +24975,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs, kinds, true, recvNode);
+    checkSlots(name2, sel.rule.args, exprArgs, kinds, true, recvNode, (e) => lowerValue(e, argEnv));
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
@@ -25086,10 +25158,27 @@ function production2(node, key, operands, env) {
     spelled3,
     sel.rule.args,
     operands,
-    operands.map((e) => kindOf3(e, argEnv))
+    operands.map((e) => kindOf3(e, argEnv)),
+    true,
+    void 0,
+    (e) => lowerValue(e, argEnv)
   );
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
+}
+function checkRoad(key, spelled3, operands, env) {
+  const verdict = consult(key, "value");
+  if (verdict.kind !== "inCode") internalError(`'${key}' hands its value cell to no road`);
+  if (verdict.args === void 0) return;
+  checkSlots(
+    spelled3,
+    verdict.args,
+    operands,
+    operands.map((e) => kindOf3(e, env)),
+    true,
+    void 0,
+    (e) => lowerValue(e, env)
+  );
 }
 function chainOf2(node, op) {
   const out = [];
@@ -25115,6 +25204,12 @@ function binary2(node, env) {
   switch (node.op) {
     case "+": {
       const operands = chainOf2(node, "+");
+      checkRoad(
+        productionForOperator("BinaryExpr", "+") ?? internalError("no production builds '+'"),
+        "+",
+        operands,
+        inner
+      );
       if (operands.some((e) => kindOf3(e, inner) === "string")) {
         return {
           $concat: operands.map((e) => chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))

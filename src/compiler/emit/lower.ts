@@ -46,7 +46,7 @@ import {
 } from "../rows.ts";
 import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots } from "./check.ts";
-import { operandShapeOf } from "../rows.ts";
+import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -724,6 +724,8 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
+  const key = productionBuilding("IndexAccess");
+  checkRoad(key, productionSpelling(key), [node.index], env);
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);
@@ -869,7 +871,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(name, sel.rule.args, exprArgs, kinds, true, recvNode);
+    checkSlots(name, sel.rule.args, exprArgs, kinds, true, recvNode, (e) => lowerValue(e, argEnv));
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
@@ -1139,9 +1141,31 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     sel.rule.args,
     operands,
     operands.map((e) => kindOf(e, argEnv)),
+    true,
+    undefined,
+    (e) => lowerValue(e, argEnv),
   );
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
+}
+
+/**
+ * The slot check of a road that a production hands to this file, with the rule that
+ * its `inCode(file, args)` cell states. `env` is the scope that the operands read.
+ */
+function checkRoad(key: string, spelled: string, operands: readonly Expr[], env: Env): void {
+  const verdict = consult(key, "value");
+  if (verdict.kind !== "inCode") internalError(`'${key}' hands its value cell to no road`);
+  if (verdict.args === undefined) return;
+  checkSlots(
+    spelled,
+    verdict.args,
+    operands,
+    operands.map((e) => kindOf(e, env)),
+    true,
+    undefined,
+    (e) => lowerValue(e, env),
+  );
 }
 
 /** Every operand of a left-nested chain of `op`, outermost-left first. */
@@ -1172,6 +1196,12 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
   switch (node.op) {
     case "+": {
       const operands = chainOf(node, "+");
+      checkRoad(
+        productionForOperator("BinaryExpr", "+") ?? internalError("no production builds '+'"),
+        "+",
+        operands,
+        inner,
+      );
       if (operands.some((e) => kindOf(e, inner) === "string")) {
         return {
           $concat: operands.map((e) => (chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))),

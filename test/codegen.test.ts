@@ -4224,7 +4224,11 @@ describe("bitwise infix operators", () => {
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
-    expect(jsmql.expr("$.a === $.b & $.c")).toEqual({ $bitAnd: [{ $eq: ["$a", "$b"] }, "$c"] });
+    // `&` then takes a boolean as its left operand, and `&` takes an integer (HR7).
+    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes an integer, but got a boolean.");
+    expect(jsmql.expr("($.a === $.b ? 1 : 0) & $.c")).toEqual({
+      $bitAnd: [{ $cond: [{ $eq: ["$a", "$b"] }, 1, 0] }, "$c"],
+    });
   });
   it("unary ~ has higher precedence than &", () => {
     expect(jsmql.expr("~$.flags & 255")).toEqual({ $bitAnd: [{ $bitNot: "$flags" }, 255] });
