@@ -2147,12 +2147,11 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     }
   });
 
-  it("lowers the global constructors and the Number, Array and Object statics", () => {
-    expect(compiled("String($.n)", () => String(DOC.n))).toEqual({ $toString: "$n" });
-    expect(compiled("Boolean($.neg)", () => Boolean(DOC.neg))).toEqual({
-      $and: [{ $gt: ["$neg", null] }, { $ne: ["$neg", false] }, { $ne: ["$neg", ""] }, { $ne: ["$neg", 0] }],
-    });
-    expect(compiled("Number($.n)", () => Number(DOC.n))).toEqual({ $toDouble: "$n" });
+  it("refuses a type name as a conversion function, and lowers the Number, Array and Object statics", () => {
+    // The value's own method converts it, and each refusal names the method.
+    expect(() => expr("String($.n)")).toThrow(/'\$\.x\?\.toString\(\)'/);
+    expect(() => expr("Boolean($.neg)")).toThrow(/'!!\$\.x'/);
+    expect(() => expr("Number($.n)")).toThrow(/'\$\.x\?\.toDouble\(\)'/);
     expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
@@ -2241,15 +2240,24 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
   });
 
-  it("applies a bare callable global to each element", () => {
-    expect(compiled("$.a.map(String)", () => DOC.a.map(String))).toEqual({
-      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toString: "$$x" } },
-    });
-    expect(compiled("$.mixed.filter(Boolean)", () => DOC.mixed.filter(Boolean))).toEqual({
+  it("applies a bare callable static to each element, and refuses a type name as a callback", () => {
+    // A type name as a conversion function is not part of JSMQL, in a callback too.
+    expect(() => expr("$.a.map(String)")).toThrow(/In a callback, write 'x => x\.toString\(\)'/);
+    expect(() => expr("$.a.map(Number)")).toThrow(/In a callback, write 'x => x\.toDouble\(\)'/);
+    expect(() => expr("$.a.map(Long)")).toThrow(/In a callback, write 'x => x\.toLong\(\)'/);
+    expect(() => expr("$.mixed.filter(Boolean)")).toThrow(/For '\.filter\(Boolean\)', write '\.compact\(\)'/);
+    expect(compiled("$.mixed.compact()", () => DOC.mixed.filter(Boolean))).toEqual({
       $filter: {
         input: { $ifNull: ["$mixed", []] },
-        as: "x",
-        cond: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
+        as: "jsmqlItem",
+        cond: {
+          $and: [
+            { $gt: ["$$jsmqlItem", null] },
+            { $ne: ["$$jsmqlItem", false] },
+            { $ne: ["$$jsmqlItem", ""] },
+            { $ne: ["$$jsmqlItem", 0] },
+          ],
+        },
       },
     });
     expect(compiled("[$.neg, $.n].map(x => x.abs())", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
@@ -2274,10 +2282,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // A BSON constructor applies point-free too, but not HERE: this suite asks the
-    // server to agree with JavaScript, and a BSON conversion has no JavaScript
-    // counterpart to agree with — `$toDecimal` answers a Decimal128 where JavaScript
-    // answers a number. test/codegen.test.ts asserts those shapes without running.
     // `Set` demands `new`, so no bare spelling of it applies to an element.
     expect(() => expr("$.a.map(Set)")).toThrow(/takes an arrow/);
   });
@@ -3079,20 +3083,18 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   now: ["Date.now()"],
   UTC: ["Date.UTC(2020, 1, 1)"],
   // the globals
-  String: ["String($.n)"],
-  Boolean: ["Boolean($.n)", "Boolean($.nope)"],
-  Number: ["Number($.n)"],
   ObjectId: ["ObjectId()"],
-  Date: ["Date($.d)"],
-  ISODate: ["ISODate($.d)"],
-  Decimal128: ["Decimal128($.n)"],
-  Long: ["Long($.neg)"],
-  Int32: ["Int32($.neg)"],
-  Double: ["Double($.n)"],
-  UUID: ['UUID($.csv.replace("a,b,c", "6ac24965-7917-4323-8d44-920ad1d69b94"))'],
-  NumberDecimal: ["NumberDecimal($.n)"],
-  NumberLong: ["NumberLong($.neg)"],
-  NumberInt: ["NumberInt($.neg)"],
+  // a constructor takes a constant: the fold builds it, and the server receives it
+  Date: ['Date("2024-01-01")'],
+  ISODate: ['ISODate("2024-01-01")'],
+  Decimal128: ['Decimal128("1.5")'],
+  Long: ["Long(5)"],
+  Int32: ["Int32(3)"],
+  Double: ["Double(1)"],
+  UUID: ['UUID("6ac24965-7917-4323-8d44-920ad1d69b94")'],
+  NumberDecimal: ['NumberDecimal("1.5")'],
+  NumberLong: ["NumberLong(5)"],
+  NumberInt: ["NumberInt(3)"],
   MinKey: ["MinKey()"],
   MaxKey: ["MaxKey()"],
 };

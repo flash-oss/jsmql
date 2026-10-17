@@ -282,14 +282,15 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
   // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
   // by the count no rule states rather than accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
-  // The two refusal keys (`constant`, `otherwise`) state no count: a constant
-  // call is counted by the rule for its class, and the leftover by none.
+  // A refusal states no count: a constant call is counted by the rule for its class,
+  // and the leftover by none. A counted refusal (`Long($.x)`) states the count of
+  // its class, so the fold still builds the constant of that count (`Long(5)`).
   const byArgs = (cell as { byArgs?: Readonly<Record<string, { args?: ArgCount; unsupported?: string }>> }).byArgs;
   if (byArgs === undefined) return undefined;
   const allowed = new Set<number>();
   let atLeast: number | undefined;
   for (const branch of Object.values(byArgs)) {
-    if (branch.unsupported !== undefined) continue;
+    if (branch.unsupported !== undefined && branch.args === undefined) continue;
     const a = branch.args;
     if (a === undefined) return undefined; // a rule with no count accepts anything
     if (a.none === true) allowed.add(0);

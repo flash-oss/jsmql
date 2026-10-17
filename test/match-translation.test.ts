@@ -281,10 +281,18 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     ]);
   });
 
-  it("falls back to $expr when an argument is a field ref", () => {
-    expect(jsmql("[$match($.createdAt >= new Date($.cutoffStr))]")).toEqual([
-      { $match: { $expr: { $gte: ["$createdAt", { $toDate: "$cutoffStr" }] } } },
+  it("falls back to $expr when the date converts a field", () => {
+    expect(jsmql("[$match($.createdAt >= $.cutoffStr.toDate())]")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $gte: ["$createdAt", { $toDate: { $ifNull: ["$cutoffStr", new Date("1970-01-01T00:00:00.000Z")] } }],
+          },
+        },
+      },
     ]);
+    // a value of the document is refused in the constructor, and the refusal names '.toDate()'
+    expect(() => jsmql("[$match($.createdAt >= new Date($.cutoffStr))]")).toThrow(/'\$\.x\.toDate\(\)'/);
   });
 
   it("rejects a constant string that cannot be parsed as a date (HR3)", () => {

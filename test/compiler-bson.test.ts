@@ -101,12 +101,18 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(jsmql.pipeline("$.a = Date();")).toEqual(jsmql.pipeline("$.a = new Date();"));
   });
 
-  it("converts a runtime value through the type's own operator", () => {
-    expect(pipeline("$.a = Decimal128($.numText);")).toEqual([{ $set: { a: { $toDecimal: "$numText" } } }]);
-    expect(pipeline("$.a = Long($.numText);")).toEqual([{ $set: { a: { $toLong: "$numText" } } }]);
-    expect(pipeline("$.a = Int32($.numText);")).toEqual([{ $set: { a: { $toInt: "$numText" } } }]);
-    expect(pipeline("$.a = Double($.numText);")).toEqual([{ $set: { a: { $toDouble: "$numText" } } }]);
-    expect(pipeline("$.a = ObjectId($.hexText);")).toEqual([{ $set: { a: { $toObjectId: "$hexText" } } }]);
+  it("refuses a value of the document, and names the value's own conversion method", () => {
+    expect(() => jsmql.pipeline("$.a = Decimal128($.numText);")).toThrow(/Write '<value>\.toDecimal\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Long($.numText);")).toThrow(/Write '<value>\.toLong\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Int32($.numText);")).toThrow(/Write '<value>\.toInt\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Double($.numText);")).toThrow(/Write '<value>\.toDouble\(\)'/);
+    expect(() => jsmql.pipeline("$.a = ObjectId($.hexText);")).toThrow(/Write '<value>\.toObjectId\(\)'/);
+    // the method converts on the server
+    expect(pipeline("$.a = $.numText.toDecimal();")).toEqual([
+      { $set: { a: { $toDecimal: { $ifNull: ["$numText", 0] } } } },
+    ]);
+    expect(pipeline("$.a = $.numText.toLong();")).toEqual([{ $set: { a: { $toLong: { $ifNull: ["$numText", 0] } } } }]);
+    expect(pipeline("$.a = $.hexText.toObjectId();")).toEqual([{ $set: { a: { $toObjectId: "$hexText" } } }]);
   });
 });
 

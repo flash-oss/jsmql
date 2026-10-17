@@ -537,8 +537,13 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  // A global read without a call — `Number` — is a callable used as a value.
-  if (isGlobalName(node.name) || NAMESPACES.has(node.name)) throw E.callableAsValue(node.name, node.pos);
+  // A global read without a call: a refused one answers with its row's refusal, which
+  // names the way out (`String`), and any other one names its call (`ObjectId`).
+  if (isGlobalName(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+    throw E.callableAsValue(node.name, node.pos);
+  }
   throw new E.UnknownIdentifierError(node.name, node.pos);
 }
 

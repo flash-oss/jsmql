@@ -105,7 +105,7 @@ A callback parameter takes the receiver's element proof through the row's
 argument's proof at that call. A parameter carries its own presence: an element
 the receiver proves present (`o.keys()`, `.split()`, a literal) is
 present, because `$map` over a null receiver never runs the body; an element of
-an unproven array may be null. So `counts.keys().map(ObjectId)` is a
+an unproven array may be null. So `counts.keys().map(id => id.toObjectId())` is a
 present array of present ObjectIds, and `[1, 2, 3].map(i => $.m[i])` reads the
 key with no `$ifNull`.
 

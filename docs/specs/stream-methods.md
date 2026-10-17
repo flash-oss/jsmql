@@ -106,7 +106,7 @@ shorthand `.map("<field>")` (≡ `.map(d => d.<field>)`). It lowers to
 Note: `.keyBy` / `.groupBy` / `.countBy` build their object keys through the shared
 `stringKeyExpr` helper (`src/compiler/emit/lower.ts`) — `{ $ifNull: [{ $toString: <key> }, "null"] }`.
 A missing or null grouping field then coerces to the string `"null"` (matching
-`String(null)`), instead of giving `$arrayToObject` a null key, which the server
+JavaScript's `String(null)`), instead of giving `$arrayToObject` a null key, which the server
 rejects. The value-mode forms use the identical helper, so both modes agree.
 `$toString` still errors on an object or array key — a separate, documented pitfall.
 Because the key is a string, code that reads it back (`.keys()`) and joins

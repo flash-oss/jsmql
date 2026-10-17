@@ -77,7 +77,7 @@ const candidateProductIdCounts = $$$.orders
   .sortBy(([id, count]) => -count)
   .take(10) // top 10
   .fromEntries();
-const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(id => id.toObjectId());
 
 const candidateProducts = $$$.products
   .filter({ _id: candidateProductIds })
@@ -199,8 +199,8 @@ $$ = candidateProductIds
             "__jsmql.var.candidateProductIds": {
               $map: {
                 input: { $map: { input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" }, in: "$$this.k" } },
-                as: "x",
-                in: { $toObjectId: "$$x" },
+                as: "id",
+                in: { $toObjectId: "$$id" },
               },
             },
           },
@@ -927,7 +927,7 @@ describe("fan out per-party risk bands (block-body arrow → nested `$let`)", { 
     // and emit one document per qualifying leg. A block-body arrow
     // `party => { const … ; return … }` lowers to a right-folded nest of `$let`
     // (one binding per `const`, in source order — so `score` can read `leg`).
-    // The `? … : null` + `.filter(Boolean)` drops legs with no risk score, and
+    // The `? … : null` + `.compact()` drops legs with no risk score, and
     // `$ = <array>` fans the survivors out into one document each.
     expect(
       jsmql`
@@ -935,7 +935,7 @@ $$ = ["sender", "recipient"].map(party => {
   const leg = $.legs?.[party];
   const score = leg?.riskScore;
   return score ? { party, score, band: score > 50 ? "high" : "low" } : null;
-}).filter(Boolean);
+}).compact();
       `,
     ).toEqual([
       {
@@ -980,8 +980,15 @@ $$ = ["sender", "recipient"].map(party => {
                   },
                 },
               },
-              as: "x",
-              cond: { $gt: ["$$x", null] },
+              as: "jsmqlItem",
+              cond: {
+                $and: [
+                  { $gt: ["$$jsmqlItem", null] },
+                  { $ne: ["$$jsmqlItem", false] },
+                  { $ne: ["$$jsmqlItem", ""] },
+                  { $ne: ["$$jsmqlItem", 0] },
+                ],
+              },
             },
           },
         },
@@ -1569,7 +1576,7 @@ describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["St
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.articles.aggregate([{ $addFields: { slug: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`String($.articleId) + "-" + $.title.toLowerCase().trim().replaceAll(" ", "-")`)).toEqual({
+      expect(jsmql.expr(`\`\${$.articleId}-\${$.title.toLowerCase().trim().replaceAll(" ", "-")}\``)).toEqual({
         $concat: [
           { $toString: "$articleId" },
           "-",
@@ -1695,21 +1702,26 @@ describe("cart subtotal through .sumBy", { features: ["Array methods"] }, () => 
   );
 });
 
-describe("full display name through .filter(Boolean).join", { features: ["Array methods"] }, () => {
+describe("full display name through .compact().join", { features: ["Array methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")`)).toEqual({
+      expect(jsmql.expr(`[$.firstName, $.middleName, $.lastName].compact().join(" ")`)).toEqual({
         $ifNull: [
           {
             $reduce: {
               input: {
                 $filter: {
                   input: ["$firstName", "$middleName", "$lastName"],
-                  as: "x",
+                  as: "jsmqlItem",
                   cond: {
-                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
+                    $and: [
+                      { $gt: ["$$jsmqlItem", null] },
+                      { $ne: ["$$jsmqlItem", false] },
+                      { $ne: ["$$jsmqlItem", ""] },
+                      { $ne: ["$$jsmqlItem", 0] },
+                    ],
                   },
                 },
               },
@@ -1738,7 +1750,7 @@ describe("full address with conditional inclusion + filter + join", { features: 
       expect(
         jsmql.expr`
 [$.building && $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
-  .filter(Boolean)
+  .compact()
   .join(" ")
       `,
       ).toEqual({
@@ -1769,9 +1781,14 @@ describe("full address with conditional inclusion + filter + join", { features: 
                     "$country",
                     "$postcode",
                   ],
-                  as: "x",
+                  as: "jsmqlItem",
                   cond: {
-                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
+                    $and: [
+                      { $gt: ["$$jsmqlItem", null] },
+                      { $ne: ["$$jsmqlItem", false] },
+                      { $ne: ["$$jsmqlItem", ""] },
+                      { $ne: ["$$jsmqlItem", 0] },
+                    ],
                   },
                 },
               },
@@ -2078,11 +2095,11 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : String($.value)`)).toEqual({
+      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : \`\${$.value}\``)).toEqual({
         $cond: [
           { $eq: [{ $type: "$value" }, "string"] },
           { $trim: { input: { $ifNull: ["$value", ""] } } },
-          { $toString: "$value" },
+          { $concat: [{ $toString: "$value" }] },
         ],
       });
     },

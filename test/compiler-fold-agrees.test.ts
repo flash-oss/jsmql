@@ -213,15 +213,7 @@ const EXPRESSIONS: readonly string[] = [
   // a key that one side holds twice: the server keeps the first element with that key
   "[{ n: 3, t: 'a' }, { n: 1 }, { n: 3, t: 'b' }].xorBy([{ n: 1 }], o => o.n)",
   "[{ n: 1 }].xorBy([{ n: 2, t: 'x' }, { n: 2, t: 'y' }], o => o.n)",
-  // named conversions and constructors
-  'String("a")',
-  "String(true)",
-  "String(null)",
-  "Boolean(1)",
-  "Boolean(0)",
-  'Boolean("")',
-  'Boolean("x")',
-  "Boolean(null)",
+  // constructors
   'ObjectId("507f1f77bcf86cd799439011")',
   'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",
@@ -264,10 +256,9 @@ const EXPRESSIONS: readonly string[] = [
   "({ a: '', b: 1, c: 0, d: null, e: 'x' }).omitBy(v => v)",
   "({ a: 1, b: 2 }).mapKeys((v, k) => k + '!')",
   // the strings `$toString` writes as JavaScript does
-  "String(42)",
-  "String(-7)",
-  "String(9999999999999998)",
-  "String(true)",
+  "`${42}`",
+  "`${-7}`",
+  "`${9999999999999998}`",
   "`id-${42}`",
   "`${1}-${2}`",
   "0x507f1f77bcf86cd799439011.toString()",
@@ -401,10 +392,17 @@ function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
 }
 
 /**
- * The expressions whose top node has no operand to seed. The server receives their
- * constant, so they prove nothing here; the list keeps that set explicit.
+ * The expressions whose top node has no operand to seed, or an operand that takes a
+ * constant only. The server receives their constant, so they prove nothing here; the
+ * list keeps that set explicit.
  */
-const NO_OPERAND: readonly string[] = ["Math.PI", "Math.E"];
+const NO_OPERAND: readonly string[] = [
+  "Math.PI",
+  "Math.E",
+  // a constructor takes a constant only: a value of the document is refused, and '.toObjectId()' converts it
+  'ObjectId("507f1f77bcf86cd799439011")',
+  'new ObjectId("507f1f77bcf86cd799439011")',
+];
 
 describe.skipIf(!up)("compiler/passes/fold — the value it computes is the value the server computes", () => {
   let client: MongoClient;

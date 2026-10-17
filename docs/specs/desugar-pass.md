@@ -175,9 +175,10 @@ field `qty.$gt` equal to 5. The value road reads a `$`-named segment through
 `$getField`, with the name as a literal, because the server refuses it in a
 field path (measured).
 
-`bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
-`$.items.filter(Boolean)`, `$.items.map(ObjectId)` — and
-it means the arrow that applies the global to the element, `x => String(x)`.
+`bareCallable` is a callable handed over unapplied — `$.items.filter(Number.isInteger)` — and
+it means the arrow that applies it to the element, `x => Number.isInteger(x)`. A type
+name rewrites the same way (`.map(Long)` is `x => Long(x)`), and its row refuses the
+call, because the element is a value of the document.
 The row's `iterateeSlots` decides which slots take it. The rewrite only tells a
 callable global apart from a binding, and a name that needs `new` (`Date`) is
 not callable bare. So both stay as written, and the emitter refuses them.
@@ -249,9 +250,8 @@ compares the fold with the server by the values of a set answer, not by their or
 
 The pass leaves a form to the server when it cannot reproduce the answer with
 certainty: a date method with a timezone or another option (a named zone
-shifts with daylight saving), a number in `String(n)` or a template slot
-outside the integers both sides print identically, `Number("42")` (a double on
-the server, an int when written), `typeof` (a BSON type name, when a written
+shifts with daylight saving), a number in a template slot outside the integers
+both sides print identically, `typeof` (a BSON type name, when a written
 `1` is an int). `test/fold-consistency.test.ts` runs every folded method
 against its runtime lowering on the fixture mongod, and the pass removes a
 rule that fails there.

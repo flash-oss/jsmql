@@ -1275,6 +1275,13 @@ export type BsonType =
   | "maxKey"
   | "missing";
 
+/**
+ * A refused class of arguments that still has a count. The row refuses `Long($.x)`, and
+ * the name still takes one argument, so the fold builds `Long(5)`. The fold reads the count,
+ * and the refusal answers the class.
+ */
+export type CountedRefusal = Refusal & { args: Arity };
+
 export type Rule<In, Out> = {
   args: Arity;
   /**
@@ -1343,11 +1350,11 @@ type ByArgs<In, Out> = {
    * value with no source spelling (a Date, an ObjectId, which the evaluator
    * settles at the call), or a value that the server refuses (`ObjectId("nothex")`,
    * which becomes a refusal in the terms of the developer), or one whose TYPE the
-   * server decides (`Number("3")` is a double, and a folded `3` is an int, so a
-   * rule sends it to the server to convert).
+   * server decides, which a rule sends to the server to convert.
    */
   constant?: Rule<In, Out> | Refusal;
-  dynamic?: Rule<In, Out>;
+  /** A value that the document holds: a rule, or a refusal that still states its count. */
+  dynamic?: Rule<In, Out> | CountedRefusal;
   /** Every class that no key above claims. The row states it, so what stays is a decision and not a hole. */
   otherwise: Refusal;
 };

@@ -172,40 +172,20 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
 }
 
 /**
- * A named call: `String(42)`, `Number("42")`, `ObjectId("<24 hex>")`.
+ * A named call: `ObjectId("<24 hex>")`, `Long(5)`, `Date("2024-01-01")`.
  *
- * Each is a conversion, and each refuses exactly where the SERVER refuses.
- * `$convert` with no `onError` fails on a string it cannot parse. So
- * `Number("nope")` is an error there, and a quiet NaN in JavaScript. Folding it
- * would answer where the program does not run.
+ * Each builds a constant, and each refuses exactly where the SERVER refuses. A
+ * type name as a conversion function (`String(42)`) is not part of JSMQL, so it
+ * never folds: the call stands, and its row refuses it.
  */
 
 export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
-  const [a] = values;
   switch (canonicalBsonName(name)) {
     // `Date(…)` without `new` means the same date `new Date(…)` does. JavaScript's
     // bare call returns a string instead; jsmql keeps the syntax, not that meaning.
     case "Date":
       return foldNewDate(values);
-    case "String":
-      // `$toString(null)` is null, not the four letters "null".
-      if (a === null) return ok(null);
-      if (typeof a === "string") return ok(a);
-      if (typeof a === "boolean") return ok(String(a));
-      if (typeof a === "number") {
-        const spelled = numberSpelling(a);
-        return spelled === null ? NO : ok(spelled);
-      }
-      return NO;
-    case "Boolean":
-      return args.length === 1 ? ok(Boolean(a)) : NO;
-    case "Number":
-      // Never folded. `$toDouble("3")` is a DOUBLE on the server and a written `3`
-      // is an int — `$type` tells them apart, and so does `$out`. The call stays
-      // and converts at run time, where the server also judges a string it cannot
-      // parse (" 12 ", "0x10").
-      return NO;
     default:
       return bsonValue(name, args.length, values);
   }

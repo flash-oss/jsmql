@@ -433,21 +433,22 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf('new Date("nope")')).toBe("(not constant)");
   });
 
-  it("converts only where the server converts", () => {
-    // never folded: `$toDouble("42")` is a double on the server; a written 42 is an int
+  it("never folds a type name as a conversion function, so its row refuses it", () => {
+    // `Number(…)`, `String(…)` and `Boolean(…)` are not part of JSMQL. A fold here would
+    // hide the refusal and answer a constant.
     expect(valueOf('Number("42")')).toBe("(not constant)");
-    // `$convert` with no `onError` fails on a string it cannot parse.
-    expect(valueOf('Number("nope")')).toBe("(not constant)");
-    // `$toString(null)` is null, not the four letters.
-    expect(valueOf("String(null)")).toBe(null);
+    expect(valueOf("String(42)")).toBe("(not constant)");
+    expect(valueOf("Boolean(1)")).toBe("(not constant)");
+  });
+
+  it("writes a number into a template as `$toString` writes it", () => {
     // An integer below 10^16 is written digit for digit by `$toString` and by
     // JavaScript; from there the server uses an exponent where JavaScript does not,
     // a fraction's threshold differs, and `-0` keeps its sign on the server only.
-    expect(valueOf("String(42)")).toBe("42");
-    expect(valueOf("String(9999999999999998)")).toBe("9999999999999998");
-    expect(valueOf("String(10000000000000000)")).toBe("(not constant)");
-    expect(valueOf("String(2.5)")).toBe("(not constant)");
-    expect(valueOf("String(-0)")).toBe("(not constant)");
+    expect(valueOf("`${9999999999999998}`")).toBe("9999999999999998");
+    expect(valueOf("`${10000000000000000}`")).toBe("(not constant)");
+    expect(valueOf("`${2.5}`")).toBe("(not constant)");
+    expect(valueOf("`${-0}`")).toBe("(not constant)");
     expect(valueOf("`id-${42}`")).toBe("id-42");
     expect(valueOf("`id-${1e16}`")).toBe("(not constant)");
     expect(valueOf("`id-${0.5}`")).toBe("(not constant)");

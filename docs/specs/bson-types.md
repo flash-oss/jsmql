@@ -144,15 +144,21 @@ that the caller passes at run time is the caller's own value, and stays as it is
 
 | spelling | mongosh name | no argument | a constant | a runtime value |
 |---|---|---|---|---|
-| `ObjectId` | — | `$createObjectId` | live value | `$toObjectId` |
-| `Date` | `ISODate` | `$$NOW` | live value | `$toDate` |
-| `Decimal128` | `NumberDecimal` | refused | live value | `$toDecimal` |
-| `Long` | `NumberLong` | refused | live value | `$toLong` |
-| `Int32` | `NumberInt` | refused | live value | `$toInt` |
-| `Double` | — | refused | live value | `$toDouble` |
-| `UUID` | — | refused | live value | `$toUUID` |
+| `ObjectId` | — | `$createObjectId` | live value | refused: `.toObjectId()` |
+| `Date` | `ISODate` | `$$NOW` | live value | refused: `.toDate()` |
+| `Decimal128` | `NumberDecimal` | refused | live value | refused: `.toDecimal()` |
+| `Long` | `NumberLong` | refused | live value | refused: `.toLong()` |
+| `Int32` | `NumberInt` | refused | live value | refused: `.toInt()` |
+| `Double` | — | refused | live value | refused: `.toDouble()` |
+| `UUID` | — | refused | live value | refused: `.toUUID()` |
 | `MinKey` | — | live value | refused | refused |
 | `MaxKey` | — | live value | refused | refused |
+
+JSMQL refuses a runtime value, because the value's own conversion method says the same
+thing, and one capability gets one spelling. The refusal names the method:
+`Long($.x)` names `$.x.toLong()`. The refusal keeps the count of one argument (a
+`CountedRefusal` in `src/registry/vocabulary.ts`), so the fold still builds a constant
+of that count.
 
 `X(…)` and `new X(…)` are both accepted (`newKeyword: "optional"` on every row), and
 `jsmql.stringify` writes `new X(…)` for either. JavaScript's own bare `Date()` returns

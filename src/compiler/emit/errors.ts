@@ -13,7 +13,7 @@ import type { Where } from "../passes/position.ts";
 import { stringify } from "../../stringify.ts";
 import { isPlainObject } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
-import { refusalSentence } from "./consult.ts";
+import { consult, refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
 import type { Unreadable } from "./type.ts";
 import {
@@ -23,6 +23,7 @@ import {
   isFieldProperty,
   isKnownName,
   isStageName,
+  positionsOf,
   siblingOf,
   spreadAlternativeOf,
   streamReceiverNames,
@@ -230,12 +231,9 @@ export const lambdaAsValue = (pos: number): CodegenError =>
     pos,
   );
 
-/** A callable name read without a call — `Number + 1`, `Math.random + 5`. */
+/** A callable name read without a call — `ObjectId + 1`, `Math.random + 5`. */
 export const callableAsValue = (spelled: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'${spelled}' used as a value is only valid as a callback to a higher-order array method — for example, $.items.map(${spelled}). To apply it to one value, write ${spelled}(value).`,
-    pos,
-  );
+  new CodegenError(`'${spelled}' is a function, not a value. Write a call: '${spelled}(…)'.`, pos);
 
 /**
  * A declared function read as a VALUE. MQL expressions carry no function
@@ -758,6 +756,12 @@ export function noReceiver(name: string, pos: number): CodegenError {
       `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
       pos,
     );
+  }
+  // A global that no position takes answers with its own refusal, which names the way out:
+  // `$.a.String()` names '$.x?.toString()', and never the refused 'String(…)'.
+  if (!name.startsWith("$") && positionsOf(name)?.length === 0) {
+    const verdict = consult(name, "value");
+    if (verdict.kind === "refused") return new CodegenError(refusalSentence(verdict, `'.${name}()'`, "a value"), pos);
   }
   return new CodegenError(
     name.startsWith("$")

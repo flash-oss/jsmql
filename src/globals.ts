@@ -3354,7 +3354,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A Decimal128 — exact decimal arithmetic. A constant is a literal; anything else converts.
+   * A Decimal128 — exact decimal arithmetic. A constant is a literal.
    *
    * `Decimal128(…)` and `new Decimal128(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3365,7 +3365,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.
+   * A double. A constant is a literal. `Double(1)` keeps a whole number a double, where a written `1` is an int.
    *
    * `Double(…)` and `new Double(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3376,7 +3376,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A 32-bit integer. A constant is a literal; anything else converts.
+   * A 32-bit integer. A constant is a literal.
    *
    * `Int32(…)` and `new Int32(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3387,7 +3387,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A date. `new ISODate()` is now; `new ISODate(x)` converts x.
+   * A date. `new ISODate()` is now; a constant is a literal.
    *
    * `ISODate(…)` and `new ISODate(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3398,7 +3398,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A 64-bit integer. A constant is a literal; anything else converts.
+   * A 64-bit integer. A constant is a literal.
    *
    * `Long(…)` and `new Long(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3464,7 +3464,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.
+   * An ObjectId. Empty mints one, and a 24-hex constant is a literal.
    *
    * `ObjectId(…)` and `new ObjectId(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.
@@ -3475,7 +3475,7 @@ declare global {
     new (value?: any): any;
   }
   /**
-   * A UUID. A constant is a literal; anything else converts.
+   * A UUID. A constant is a literal.
    *
    * `UUID(…)` and `new UUID(…)` are equivalent; jsmql emits a live BSON
    * value, which is the only form the MongoDB driver accepts in a query document.

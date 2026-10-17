@@ -45,7 +45,9 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
 
   it("routes each class of `new Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
-    expect(pick("Date", "f($.ms)").kind).toBe("rule");
+    // a value of the document is refused, and the refusal names the value's own method
+    expect(pick("Date", "f($.ms)")).toMatchObject({ kind: "refused" });
+    expect((pick("Date", "f($.ms)") as { message: string }).message).toContain("'$.x.toDate()'");
     expect(pick("Date", "f($.y, $.m)").kind).toBe("rule");
     // a constant that reached the row did not fold: refused, in the developer's terms
     expect(pick("Date", 'f("not a date")')).toMatchObject({ kind: "refused" });
@@ -62,10 +64,11 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("ObjectId", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
   });
 
-  it("converts a constant `Number(…)` on the server, where the type is decided", () => {
-    expect(pick("Number", 'f("abc")').kind).toBe("rule");
-    expect(pick("Number", "f($.s)").kind).toBe("rule");
-    expect(pick("ObjectId", "f($.id)").kind).toBe("rule");
+  it("refuses a type name over a value, and keeps the mint", () => {
+    // `Number(…)` is not part of JSMQL, for a constant too
+    expect(pick("Number", 'f("abc")')).toMatchObject({ kind: "refused" });
+    expect(pick("Number", "f($.s)")).toMatchObject({ kind: "refused" });
+    expect(pick("ObjectId", "f($.id)")).toMatchObject({ kind: "refused" });
     expect(pick("ObjectId", "f()").kind).toBe("rule");
   });
 });

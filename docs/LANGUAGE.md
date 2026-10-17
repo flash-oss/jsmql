@@ -122,7 +122,7 @@ jsmql("$foo($.a)");
 
 JSMQL uses the same translation rules that [`$match` uses inside a Pipeline](#match-indexes-by-default). See [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
 
-**`new Date(...)` and indexes.** Take three cases: `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, and `new Date(Date.UTC(2026, 1, 1))`. When all `new Date(...)` arguments are compile-time literals like these, JSMQL folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. This is the shape an index on `createdAt` needs. `new Date()` (zero-argument, server-side `$$NOW`) and `new Date($.someField)` fall back to `$expr`, because the server cannot evaluate them before query time. `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter, because MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument that matches nothing. The fold avoids this trap.
+**`new Date(...)` and indexes.** Take three cases: `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, and `new Date(Date.UTC(2026, 1, 1))`. When all `new Date(...)` arguments are compile-time literals like these, JSMQL folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. This is the shape an index on `createdAt` needs. `new Date()` (zero-argument, server-side `$$NOW`) and `$.someField.toDate()` fall back to `$expr`, because the server cannot evaluate them before query time. `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter, because MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument that matches nothing. The fold avoids this trap.
 
 ### Stage call → Pipeline (no `;` required)
 
@@ -333,7 +333,7 @@ Backtick-delimited strings with `${expr}` interpolation, just like JS. They comp
 
 JSMQL wraps an interpolated expression with `$toString` to match JS coercion rules, so
 `` `count: ${$.n}` `` works whether `$.n` is a number or a string. An expression that
-statically produces a string — a string literal, `.toLowerCase()`, `String(x)`,
+statically produces a string — a string literal, `.toLowerCase()`, `.trim()`,
 a nested template literal, and so on — skips the wrap, to keep the output compact:
 
 ```js
@@ -477,7 +477,7 @@ $.a = 1, $.b = 2,     // ✗ nothing follows the last ','
 $.a = 1, $.b = 2      // → [{ $set: { a: 1, b: 2 } }]
 ```
 
-A trailing comma never changes the result: the output is identical to the comma-free form. It is **not** a way to add an extra argument. `Number($.x, $.y)` is still an error, because `Number` takes one argument, while `Number($.x,)` is fine.
+A trailing comma never changes the result: the output is identical to the comma-free form. It is **not** a way to add an extra argument. `Long(5, 6)` is still an error, because `Long` takes one argument, while `Long(5,)` is fine.
 
 ---
 
@@ -1579,7 +1579,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), an object predicate method (e.g. `.pickBy`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, a `["field", value]` pair, or a bare `Boolean`. The values below are falsy:
+`&&`, `||`, `!`, `?:`, `!!x`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), an object predicate method (e.g. `.pickBy`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, or a `["field", value]` pair. The values below are falsy:
 
 | Value | Falsy? |
 |---|---|
@@ -1593,7 +1593,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning. A `$op(…)` call that stands alone as a predicate keeps MongoDB's rule too, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. JSMQL refuses such a call as an operand of `&&`, `||` or `!` ([HR6](LANG_RULES.md)).
 
-One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
+One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(x => x)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 
 ```js
 $.active                            // Filter: { $expr: <JS-truthy check on "$active"> }
@@ -2165,7 +2165,7 @@ $.items.partition(x => x.ok)                // [ [matches…], [non-matches…] 
 $.items.reject({ active: false })           // items NOT matching
 $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
 $.xs.flatten()                              // one level (with an $isArray guard)
-$.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(Boolean)
+$.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(x => x)
 $.a.union($.b) / .intersection($.b) / .xor($.b)          // $setUnion / $setIntersection / composed — unique values, order undefined
 $.a.difference($.b)                                      // $setDifference — unique values, as a JavaScript Set gives them
 $.a.without(2, 4)                           // exclude the given values (variadic)
@@ -2185,7 +2185,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2209,39 +2209,33 @@ $.xs.size()                                  // the element count — a string h
 
 ### Bare built-in callbacks
 
-You can pass a built-in that converts one value bare as the callback, just like in plain JavaScript: `Boolean`, `Number`, `String`, `ObjectId`, `Date`, and the single-argument `Math` methods:
+A static that tests one value works bare as the callback, as in plain JavaScript: `Number.isInteger` and `Array.isArray`. Each is sugar for the one-parameter arrow it reads as (`x => Number.isInteger(x)`), and it lowers to exactly what that arrow lowers to:
 
 ```js
-$.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
-// → $filter whose `cond` checks each element for JS truthiness
-// (see "Truthy and falsy" above)
-
-$.scores.map(Number)            // coerce strings to numbers
-// → { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $toDouble: "$$x" } } }
-
-$.counts.keys().map(ObjectId)         // object keys are strings — cast them back
-// → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
-
-$.scores.map(x => x.floor())    // round each element down
-
-$.stamps.map(Date)              // convert each element to a date
-// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
-
-[$.first, $.middle, $.last].filter(Boolean).join(" ")
-// composed display name, skipping missing parts
+$.values.filter(Number.isInteger)   // the whole numbers
+$.rows.some(Array.isArray)          // does any element hold an array?
 ```
 
-Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and it lowers to exactly what that arrow lowers to. Every method that takes a callback accepts them, both the array methods and the lodash iteratee/predicate methods alike — `.uniqBy(Number)`, `.keyBy(ObjectId)`, `.reject(Boolean)`. So one vocabulary covers whichever method you reach for.
+A type name is not a callback, because a type name as a conversion function is not part of JSMQL. Write the arrow with the value's own method. Each refused form gets an error that names the arrow:
 
-The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document. The stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)). Outside a callback position, the bare form errors at compile time. Write `Boolean(x)` / `ObjectId(x)` to convert a single value.
+```js
+$.scores.map(Number)                     // ✗ a type name is not a callback
+$.scores.map(x => x.toDouble())          // → { $map: { …, in: { $toDouble: { $ifNull: ["$$x", 0] } } } }
+$.counts.keys().map(id => id.toObjectId())   // object keys are strings — cast them back
+$.items.filter(Boolean)                  // ✗ Boolean is not part of JSMQL
+$.items.compact()                        // drop JS-falsy values (null, "", 0, false, missing)
+[$.first, $.middle, $.last].compact().join(" ")   // composed display name, skipping missing parts
+```
 
-**`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date(x)` converts `x`. So `$.stamps.map(Date)` converts each element, where JavaScript gives the same string for every element.
+The bare form is for **arrays of values**. A pipeline stream carries documents, so the stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)).
 
-**`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Number(<value>).trunc()` for the whole number `parseInt` would give.
+**`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date("2026-01-01")` is a date constant. A value of the document converts with `.toDate()`.
+
+**`parseInt` and `parseFloat` are not JSMQL names.** `.toDouble()` is the numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `<value>.toDouble()`, or `<value>.toDouble().trunc()` for the whole number `parseInt` would give.
 
 **`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
-`new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new Number(5)`) names the call without `new`.
+`new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new f(1)`) names the call without `new`.
 
 ### Set operations on arrays
 
@@ -2288,7 +2282,7 @@ Three facts differ from a JavaScript `Set`:
 
 `.xor()` and `.symmetricDifference()` give the same values. `.symmetricDifference()` binds each list once in a `$let`, and `.xor()` reads each list twice. The raw operators stay available through the escape hatch (see [Set Operations](#set-operations)). They add no `$ifNull`, so `$setDifference($.a, $.b)` gives null when a field is missing.
 
-For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
+For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(x => x)` / `arr.some(x => x)`.
 
 ### Grouping: `<array>.groupBy()`
 
@@ -2479,7 +2473,7 @@ A practical example: a formatter declared once, reused for sender and recipient.
 ```js
 const addressToString = (a) => {
   return [a.building && a.building + ",", a.streetNo, a.street, a.suburb, a.state, a.country, a.postcode]
-    .filter(Boolean)
+    .compact()
     .join(" ");
 };
 $ = {
@@ -2595,16 +2589,22 @@ $.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x
 
 ## Type Casting
 
-### JavaScript-Style Casting
+### Conversion methods, not type names
+
+A type name is not a conversion function in JSMQL. JSMQL refuses `Number(x)`, `String(x)` and `Boolean(x)`, with `new` or without it, and as a bare callback too (`.map(Number)`). Each error names the value's own method, because one capability gets one spelling:
 
 ```js
-Number($.stringField)              // { $toDouble: "$stringField" }
-String($.numField)                 // { $toString: "$numField" }
-Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
-Number($.stringField).trunc()      // { $trunc: { $ifNull: [{ $toDouble: "$stringField" }, 0] } } — the whole number
+$.stringField?.toDouble()          // { $toDouble: "$stringField" }   — not Number($.stringField)
+$.numField?.toString()             // the JavaScript string of the value — not String($.numField)
+!!$.value                          // the JS-truthy check, see "Truthy and falsy" — not Boolean($.value)
+$.stringField.toDouble().trunc()   // { $trunc: { $toDouble: { $ifNull: ["$stringField", 0] } } } — the whole number
+$.scores.map(x => x.toDouble())    // not .map(Number)
+$.items.compact()                  // not .filter(Boolean)
 ```
 
-`Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
+JSMQL refuses a BSON type name over a value of the document in the same way, and the error names the method: `Long($.x)` names `$.x.toLong()`, and `new Date($.x)` names `$.x.toDate()`. A constant stays a literal: `Long(5)`, `Decimal128("9.99")`, `new Date("2026-01-01")`. See [Type conversion methods](#type-conversion-methods).
+
+`!!x` follows JavaScript's truthy and falsy rules. `!!""` is `false`, `!!0` is `false`, and `!![]` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 
 ### `typeof` Operator
 
@@ -2746,7 +2746,7 @@ JSMQL emits a real BSON `ObjectId` value. This is the only value the MongoDB dri
 Two more forms handle the non-constant cases:
 
 ```js
-$.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idString" } (server-side convert)
+$.userId = $.idString.toObjectId() // a value of the document → { $toObjectId: "$idString" } (server-side convert)
 $.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
 ```
 
@@ -2772,7 +2772,7 @@ $.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")
 $.grade === MinKey()               // → { grade: new MinKey() }
 $.grade < MaxKey()                 // → { grade: { $lt: new MaxKey() } }
 
-$.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }]
+$.a = $.s.toDecimal();             // → [{ $set: { a: { $toDecimal: { $ifNull: ["$s", 0] } } } }]   — not Decimal128($.s)
 ```
 
 If you know mongosh, its names also work here and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
@@ -2828,8 +2828,7 @@ new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // "$$NOW"  (current date/time)
 Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
-new Date($.dateString)             // { $toDate: "$dateString" }
-Date($.dateString)                 // { $toDate: "$dateString" }  — the same as `new Date($.dateString)`
+$.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not new Date($.dateString)
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
@@ -2837,7 +2836,7 @@ Date.UTC(2024, 1, 15)              // 1707955200000  (folded — 15 February)
 Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, timezone: "UTC" } } }
 ```
 
-**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
+**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `$.field.toDate()`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
 **Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month), and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` untouched.
 
@@ -3116,7 +3115,7 @@ the same rule:
 $size($.items)                     // { $size: "$items" }
 $.items.$size()                    // ✗ an operator called as a method; write $size($.items)
 $.items.$sort({ a: 1 })            // ✗ a stage runs on a stream, not on a value; use $sortArray(…)
-$.s.Number()                       // ✗ a global function called as a method; write Number($.s)
+$.s.Long()                         // ✗ a global function called as a method; write Long(…)
 ```
 
 **JSMQL cannot take raw MQL as an operand.** An `$op(…)` call and an object with a `$` key are raw
@@ -5299,7 +5298,7 @@ jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')
 
 ```js
 // Convert string to number
-jsmql.expr("Number($.stringPrice) * 1.1")
+jsmql.expr("$.stringPrice?.toDouble() * 1.1")
 // → { $multiply: [{ $toDouble: "$stringPrice" }, 1.1] }
 
 // Type check

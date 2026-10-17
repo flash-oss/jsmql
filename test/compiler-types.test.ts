@@ -1169,7 +1169,9 @@ describe("types — a join carries the shape its body made", () => {
 
   it("a callback parameter carries the element's own presence, not the array's", () => {
     // `$map` over a null `a` never runs the body, and each part of a `.split()` is a string that is there.
-    expect(jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(ObjectId);')).toEqual([
+    expect(
+      jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(x => x.toObjectId());'),
+    ).toEqual([
       { $set: { a: { $split: [{ $ifNull: ["$s", ""] }, ","] } } },
       { $set: { n: { $map: { input: "$a", as: "p", in: { $strLenCP: "$$p" } } } } },
       { $set: { ids: { $map: { input: "$a", as: "x", in: { $toObjectId: "$$x" } } } } },

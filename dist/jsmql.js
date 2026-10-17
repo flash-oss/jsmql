@@ -434,7 +434,7 @@ var conversion = (e) => name({
   )
 });
 var dateRow = (spelling) => global_({
-  doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
+  doc: `A date. \`new ${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
   // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
   // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
@@ -457,7 +457,7 @@ var dateRow = (spelling) => global_({
       constant: unsupported(
         `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
       ),
-      dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
+      dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate"),
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript.
       multiple: {
@@ -485,16 +485,13 @@ var bsonValue = (e) => global_({
   where: ["value"],
   filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
   updateDoc: unsupported(
-    `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form ('jsmql.pipeline(...)'), which 'updateOne' accepts as well.`
+    `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form with the value's own method ('jsmql.pipeline("$.<field> = <value>.${e.method}();")'), which 'updateOne' accepts as well.`
   ),
   expr: {
     byArgs: {
       constant: unsupported(e.refuseConstant),
-      dynamic: {
-        args: { sig: "value", exact: 1 },
-        emit: ({ args, value }) => ({ [e.convert]: value(args[0]) })
-      },
-      otherwise: unsupported(`'${e.spelling}(\u2026)' takes one value to convert, or one constant.`)
+      dynamic: convertsWith(e.spelling, e.method),
+      otherwise: unsupported(`'${e.spelling}(\u2026)' takes one constant.`)
     }
   },
   stream: unsupported(`'${e.spelling}' produces a value, not a stream of documents.`),
@@ -773,6 +770,27 @@ var isIfNullWrappedPath = (v) => {
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
+var stringIsNotJsmql = unsupported(
+  "'String(x)' is not part of JSMQL \u2014 the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toString()': '$.x?.toString()'. In a callback, write 'x => x.toString()'."
+);
+var numberIsNotJsmql = unsupported(
+  "'Number(x)' is not part of JSMQL \u2014 the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toDouble()': '$.x?.toDouble()'. In a callback, write 'x => x.toDouble()'."
+);
+var booleanIsNotJsmql = unsupported(
+  "'Boolean(x)' is not part of JSMQL \u2014 it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'."
+);
+var parseIntIsNotJsmql = unsupported(
+  `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.`
+);
+var parseFloatIsNotJsmql = unsupported(
+  `'parseFloat()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'.`
+);
+var convertsWith = (spelling, method) => ({
+  ...unsupported(
+    `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.`
+  ),
+  args: { sig: "value", exact: 1 }
+});
 var setIsNotJsmql = unsupported(
   "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
 );
@@ -9419,89 +9437,61 @@ var NAMES = {
     group: unsupported("'Object' is a namespace, not an accumulator."),
     window: unsupported("'Object' is a namespace, not a window function.")
   }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   String: global_({
-    doc: "Converts a value to a string. Emits $toString.",
+    doc: "Parsed, then refused: '<value>.toString()' is JSMQL's conversion to a string.",
     token: "Ident",
     newKeyword: "forbidden",
     returns: "string",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
-    stream: unsupported("'String()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(\u2026);'"
-    ),
-    group: unsupported("'String()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'String()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: stringIsNotJsmql,
+    expr: stringIsNotJsmql,
+    stream: stringIsNotJsmql,
+    statement: stringIsNotJsmql,
+    group: stringIsNotJsmql,
+    window: stringIsNotJsmql
   }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   Boolean: global_({
-    doc: "Converts a value to a boolean, using JavaScript truthiness. Emits the four-clause JavaScript truthiness $and.",
+    doc: "Parsed, then refused: '!!<value>' is the truthiness of JavaScript, and '.compact()' drops the falsy elements.",
     token: "Ident",
     newKeyword: "forbidden",
     returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
-    stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(\u2026);'"
-    ),
-    group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: booleanIsNotJsmql,
+    expr: booleanIsNotJsmql,
+    stream: booleanIsNotJsmql,
+    statement: booleanIsNotJsmql,
+    group: booleanIsNotJsmql,
+    window: booleanIsNotJsmql
   }),
   // The parser accepts the name so it gets an answer, and every position refuses it: one
   // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
   parseInt: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    expr: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    stream: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    statement: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    group: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    window: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    )
+    filter: parseIntIsNotJsmql,
+    expr: parseIntIsNotJsmql,
+    stream: parseIntIsNotJsmql,
+    statement: parseIntIsNotJsmql,
+    group: parseIntIsNotJsmql,
+    window: parseIntIsNotJsmql
   }),
   parseFloat: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    expr: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    stream: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    statement: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    group: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    window: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    )
+    filter: parseFloatIsNotJsmql,
+    expr: parseFloatIsNotJsmql,
+    stream: parseFloatIsNotJsmql,
+    statement: parseFloatIsNotJsmql,
+    group: parseFloatIsNotJsmql,
+    window: parseFloatIsNotJsmql
   }),
   // ── the number methods that JavaScript spells as `Math` statics ──
   abs: name({
@@ -10257,11 +10247,11 @@ var NAMES = {
     window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   ObjectId: global_({
-    doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
+    doc: "An ObjectId. Empty mints one, and a 24-hex constant is a literal.",
     token: "Ident",
     newKeyword: "optional",
     returns: "objectId",
-    // a mint, a literal, or `$toObjectId` over a value that is there: never null
+    // a mint or a literal: never null
     neverNull: true,
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
@@ -10275,8 +10265,8 @@ var NAMES = {
         constant: unsupported(
           `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`
         ),
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }) },
-        otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
+        dynamic: convertsWith("ObjectId", "toObjectId"),
+        otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id), or one 24-hex constant.")
       }
     },
     stream: unsupported("'ObjectId' produces a value, not a stream of documents."),
@@ -10289,53 +10279,53 @@ var NAMES = {
   // ── the BSON value constructors ────────────────────────────────────────────
   //
   // One factory, because the nine differ in three cells and agree on every other.
-  // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
-  // MongoDB has something to mint, a constant is a live BSON value the fold builds
-  // (so only a constant the type CANNOT hold reaches the `constant` cell below),
-  // and anything else converts on the server through its `$to…`
-  // operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
+  // Each has the SAME meaning `ObjectId` has: no argument mints where MongoDB has
+  // something to mint, and a constant is a live BSON value the fold builds (so only a
+  // constant the type CANNOT hold reaches the `constant` cell below). A value of the
+  // document is refused, because its own conversion method says the same thing
+  // (`.toLong()`). JSMQL accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
   // `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
-    doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal; anything else converts.",
+    doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > Decimal128("9.99")',
     refuseConstant: `'Decimal128(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
   }),
   Long: bsonValue({
     spelling: "Long",
-    doc: "A 64-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 64-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === Long("9007199254740993")',
     refuseConstant: `'Long(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
   }),
   Int32: bsonValue({
     spelling: "Int32",
-    doc: "A 32-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 32-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === Int32(3)",
     refuseConstant: "'Int32(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
   Double: bsonValue({
     spelling: "Double",
-    doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
+    doc: "A double. A constant is a literal. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
     returns: "number",
-    convert: "$toDouble",
+    method: "toDouble",
     isA: "a double",
     compare: "$.ratio === Double(1)",
     refuseConstant: "'Double(<constant>)' \u2014 this constant is not a finite number. Write 'Double(1.5)'."
   }),
   UUID: bsonValue({
     spelling: "UUID",
-    doc: "A UUID. A constant is a literal; anything else converts.",
+    doc: "A UUID. A constant is a literal.",
     returns: "binData",
-    convert: "$toUUID",
+    method: "toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
@@ -10346,7 +10336,7 @@ var NAMES = {
     spelling: "NumberDecimal",
     doc: "The mongosh spelling of `Decimal128`.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > NumberDecimal("9.99")',
     refuseConstant: `'NumberDecimal(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
@@ -10355,7 +10345,7 @@ var NAMES = {
     spelling: "NumberLong",
     doc: "The mongosh spelling of `Long`.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === NumberLong("9007199254740993")',
     refuseConstant: `'NumberLong(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
@@ -10364,34 +10354,25 @@ var NAMES = {
     spelling: "NumberInt",
     doc: "The mongosh spelling of `Int32`.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === NumberInt(3)",
     refuseConstant: "'NumberInt(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
+  // The namespace of 'Number.isInteger(x)'. Every position refuses a call of the name itself.
   Number: global_({
-    doc: "Converts a value to a number.",
+    doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
-    expr: {
-      byArgs: {
-        // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
-        // `3` would be an int. The constant converts like anything else, and a string the
-        // server cannot parse is the server's own error.
-        constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-        otherwise: unsupported("'Number(x)' takes exactly one value.")
-      }
-    },
-    stream: unsupported("'Number' produces a value, not a stream of documents."),
-    statement: unsupported("'Number' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Number' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Number' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: numberIsNotJsmql,
+    expr: numberIsNotJsmql,
+    stream: numberIsNotJsmql,
+    statement: numberIsNotJsmql,
+    group: numberIsNotJsmql,
+    window: numberIsNotJsmql
   }),
   Array: global_({
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
@@ -11921,7 +11902,7 @@ function argCountOf(name2, family) {
   const allowed = /* @__PURE__ */ new Set();
   let atLeast;
   for (const branch of Object.values(byArgs)) {
-    if (branch.unsupported !== void 0) continue;
+    if (branch.unsupported !== void 0 && branch.args === void 0) continue;
     const a = branch.args;
     if (a === void 0) return void 0;
     if (a.none === true) allowed.add(0);
@@ -18097,25 +18078,11 @@ function foldConstructor(name2, args) {
 }
 function foldNamedCall(name2, args) {
   const values = args.map(valueOf);
-  const [a] = values;
   switch (canonicalBsonName(name2)) {
     // `Date(…)` without `new` means the same date `new Date(…)` does. JavaScript's
     // bare call returns a string instead; jsmql keeps the syntax, not that meaning.
     case "Date":
       return foldNewDate(values);
-    case "String":
-      if (a === null) return ok2(null);
-      if (typeof a === "string") return ok2(a);
-      if (typeof a === "boolean") return ok2(String(a));
-      if (typeof a === "number") {
-        const spelled3 = numberSpelling(a);
-        return spelled3 === null ? NO2 : ok2(spelled3);
-      }
-      return NO2;
-    case "Boolean":
-      return args.length === 1 ? ok2(Boolean(a)) : NO2;
-    case "Number":
-      return NO2;
     default:
       return bsonValue2(name2, args.length, values);
   }
@@ -21006,10 +20973,7 @@ var lambdaAsValue = (pos) => new CodegenError(
   "A function (=>) is only valid as the callback to an array method that iterates (.map, .filter, .some, .every, .find, .reduce, \u2026), or as the second argument to $let.",
   pos
 );
-var callableAsValue = (spelled3, pos) => new CodegenError(
-  `'${spelled3}' used as a value is only valid as a callback to a higher-order array method \u2014 for example, $.items.map(${spelled3}). To apply it to one value, write ${spelled3}(value).`,
-  pos
-);
+var callableAsValue = (spelled3, pos) => new CodegenError(`'${spelled3}' is a function, not a value. Write a call: '${spelled3}(\u2026)'.`, pos);
 var functionAsValue = (name2, pos) => new CodegenError(
   `'${name2}' is a reusable function, and a function is not a value MQL can carry. Call it \u2014 '${name2}(x)' \u2014 or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => ${name2}(x))'.`,
   pos
@@ -21281,6 +21245,10 @@ function noReceiver(name2, pos) {
       `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
       pos
     );
+  }
+  if (!name2.startsWith("$") && positionsOf(name2)?.length === 0) {
+    const verdict = consult(name2, "value");
+    if (verdict.kind === "refused") return new CodegenError(refusalSentence(verdict, `'.${name2}()'`, "a value"), pos);
   }
   return new CodegenError(
     name2.startsWith("$") ? `'.${name2}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name2}(\u2026)' with every operand inside the parentheses.` : `'.${name2}()' takes no receiver. '${name2}' is a global function: write '${name2}(\u2026)' with the value inside the parentheses.`,
@@ -24805,7 +24773,11 @@ function identifier(node, env) {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  if (isGlobalName(node.name) || NAMESPACES3.has(node.name)) throw callableAsValue(node.name, node.pos);
+  if (isGlobalName(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+    throw callableAsValue(node.name, node.pos);
+  }
   throw new UnknownIdentifierError(node.name, node.pos);
 }
 function locate(node, env) {

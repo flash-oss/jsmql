@@ -149,7 +149,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
       "orders",
       `$match($.status === "shipped");
 $sort({ _id: 1 });
-$ = { codes: $.items.map(s => String(s.qty).padStart(s.qty, "0")) };`,
+$ = { codes: $.items.map(s => s.qty.toString().padStart(s.qty, "0")) };`,
     )) as { codes: string[] }[];
     // Each line's qty is BOTH the padded value and the target width, so a capture
     // shows up immediately. Expected values match real String.prototype.padStart.
@@ -762,7 +762,7 @@ $ = { lines };`,
   // The collaborative-filtering shape from test/realistic.test.ts, on fixture data.
   // The value here is the ROUND TRIP through an object key: `.countBy()` tallies
   // into a MongoDB object, whose keys are STRINGS, so `.keys()` hands back
-  // hex — and `ObjectId(id)` ($toObjectId) casts each one back before it meets an
+  // hex — and `id.toObjectId()` ($toObjectId) casts each one back before it meets an
   // ObjectId `_id`. Both joins below depend on that cast. Without it the server
   // still runs the pipeline and still returns rows, but `_id` never equals a
   // string: `candidateProducts` comes back empty, every `name` resolves to
@@ -793,7 +793,7 @@ const candidateProductIdCounts = $$$.orders
   .map("productId")
   .filter(p => !myProductIds.has(p))
   .countBy();
-const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(id => id.toObjectId());
 
 const candidateProducts = $$$.products
   .filter({ _id: candidateProductIds })
@@ -914,7 +914,7 @@ const candidateProductIdCounts = $$$.orders
   .sortBy(([id, count]) => -count)
   .take(10) // top 10
   .fromEntries();
-const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(id => id.toObjectId());
 
 const candidateProducts = $$$.products
   .filter(pr => candidateProductIds.has(pr._id))
