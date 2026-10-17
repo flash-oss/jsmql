@@ -881,7 +881,7 @@ $.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
 
 `.aggregate` takes the same `(element, index, stream)` parameters that `.filter` and `.map` accept, but the index is there only to reach the third parameter by position. `.aggregate` is the spelling for a pipeline: it reshapes, it groups, or it takes an array of stages that you paste. `.find` and `.filter` are the spellings for a predicate on an element. That split is the reason that the `{ … }` block belongs to `.aggregate` alone.
 
-`.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`). There the statements of the block are the stages of the chain. You get the same result when you write the stages directly, or when you chain them (`$$.$sort({ … }).$limit(10)`). It is useful there in a [`$facet` branch](#facet-via----key--chain--). A `$facet` branch *is* a sub-pipeline, so you cannot write the stages directly there.
+`.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`). There the statements of the block are the stages of the chain. You get the same result when you write the stages directly, or when you chain them (`$$.$sort({ … }).$limit(10)`). It is useful there in a [`$facet` branch](#facet-with----key--chain--). A `$facet` branch *is* a sub-pipeline, so you cannot write the stages directly there.
 
 **The sub-stream count (`(o, _i, stream) => …`).** The third parameter names the **sub-stream** that the pipeline gives at that point. `stream.size()` is the number of documents in it. A `$setWindowFields` `$count` *inside* the `$lookup.pipeline` materialises the count. Use it as a guard inside the pipeline:
 
@@ -1003,7 +1003,7 @@ The `.size()`, `.reduce` and member-access terminals have precedence: `.filter(p
 
 **Validate or reshape with intermediate stages — `.aggregate`.** `.map` reshapes one document at a time, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate`, and write the reshape as `<param> = <expr>`. This replaces the document of the body with the same `$replaceWith` that a `.map` emits.
 
-An object method that also has a stream form emits the stage of that form, for example `o = o.pick([…])`, as `$ = $.pick([…])` does (see [Replace root](#replace-root-via---expr)). `$` is the OUTER document at every depth. So JSMQL refuses `$ = …` inside a body, and the message names the parameter.
+An object method that also has a stream form emits the stage of that form, for example `o = o.pick([…])`, as `$ = $.pick([…])` does (see [Replace root](#replace-root-with---expr)). `$` is the OUTER document at every depth. So JSMQL refuses `$ = …` inside a body, and the message names the parameter.
 
 The block has the full vocabulary of `;`-separated statements: `assert(...)`, `$match(...)`, `let`, `<coll>.size()`, and nested `$$$.<coll>` lookups:
 
@@ -1042,7 +1042,7 @@ $.doubled = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
 
     So one sub-pipeline can read four different "lengths" at the same time. They are `$$.size()` (the root stream count), `$.length` (a field of the root document), a `const` derived from it, and `stream.size()` (the sub-stream). Each one resolves to its own variable with no collision. Each one takes its value from the correct document, not from the immediate parent.
 
-    This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`). A bare `$$ = $$$.<coll>.aggregate(…)` with no filter is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream. So it cannot read the outer document, the count or a `let` inside it. Only `stream.size()` is available there.
+    This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`). A bare `$$ = $$$.<coll>.aggregate(…)` with no filter is a [`$unionWith` source-switch](#replace-stream-with---expr) that *replaces* the stream. So it cannot read the outer document, the count or a `let` inside it. Only `stream.size()` is available there.
 - **`$$.find(...)` (a self-join on the current collection)** needs a binding of the collection name from a schema or a driver `[DEF-013]`. See [DEFERRED.md](DEFERRED.md).
 - **`.find()` with more than one match.** `$first` picks the first matching document, in the storage order of MongoDB. To select one document in a known order, use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
 - **A collection name in brackets.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding. JSMQL inlines its value into `$lookup.from` at call time. A field reference that has a value only at run time (`$$$[$.dynColl]`) cannot become the compile-time `from` field. So JSMQL rejects it with the bare-reference error. JSMQL refuses a binding that is not a string (a number, an array, …).
@@ -1347,7 +1347,7 @@ JSMQL rejects a method that is in neither form. The error names the equivalent s
 
 **Pipeline-mode only.** As with `$$.push(...)` and `$$$.<coll>.find(...)`, JSMQL refuses the `$out` sugar in the Filter (`jsmql.filter`), expression (`jsmql.expr`) and update-pipeline (`jsmql.update`) modes. A `$out` write is a Pipeline-only concept, and MongoDB itself rejects it inside `db.coll.updateOne(filter, update)`.
 
-**Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** JSMQL reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes to another place and does not replace the current document. So the LHS shows the destination on the left, as `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`) do.
+**Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** JSMQL reserves `$ = …` for *root-replacing* sugar (see [Replace root with `$ = <expr>`](#replace-root-with---expr)). `$out` writes to another place and does not replace the current document. So the LHS shows the destination on the left, as `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`) do.
 
 #### `$merge`: add to a collection, and do not replace it
 
@@ -3580,7 +3580,7 @@ MongoDB deprecates `$substr`. For new code, prefer `$substrBytes` (indexed by by
 
 ## Update filters
 
-You can write a document field update in JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage. Multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array**, so you can pass the output directly to `db.coll.updateOne(filter, update)`. See [the document form via `jsmql.update`](#document-form-via-jsmqlupdate) at the end of this section for the `{ $set, $inc, … }` update document.
+You can write a document field update in JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update operation compiles to a MongoDB pipeline `$set` or `$unset` stage. More than one update operation coalesces into the smallest correct stage shape. `jsmql()` always returns a pipeline **array**, so you can pass the output directly to `db.coll.updateOne(filter, update)`. See [the document form with `jsmql.update`](#document-form-with-jsmqlupdate) at the end of this section for the `{ $set, $inc, … }` update document.
 
 ```js
 db.users.updateOne({ _id: 1 }, jsmql("$.score = 100"))
@@ -3593,20 +3593,20 @@ db.users.updateOne({ _id: 1 }, jsmql("delete $.tmp"))
 // → db.users.updateOne({ _id: 1 }, [{ $unset: "tmp" }])
 ```
 
-### Sequencing
+### Updates in one stage
 
-A `,` separates multiple update ops in the **same stage**. A `,` after the last op is a JavaScript SyntaxError, so JSMQL refuses it (see [Trailing commas](#trailing-commas)):
+A `,` separates update operations in the **same stage**. A `,` after the last operation is a JavaScript SyntaxError, so JSMQL refuses it (see [Trailing commas](#trailing-commas)):
 
 ```js
 jsmql("$.a = 1, $.b = 2")
 // → [{ $set: { a: 1, b: 2 } }]
 ```
 
-A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#pipelines) for the canonical `;`-separated pipeline form.
+A `;` does **not** separate operations in the same stage: it splits stages. See [Pipelines](#pipelines) for the canonical `;`-separated pipeline form.
 
 ### Targets
 
-In a Filter or an update document, the left side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. You cannot assign to computed access or index access. A bare identifier is assignable only inside a pipeline, where it names an in-scope `let` binding (see [Local bindings](#local-bindings-let)):
+In a Filter or an update document, the left side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. You cannot assign to a computed access or an index access. You can assign to a bare identifier only inside a pipeline, where it names a `let` binding in scope (see [Local bindings](#local-bindings-let)):
 
 ```js
 x = 5                  // ✗ — bare identifier, no pipeline / not a `let`
@@ -3616,7 +3616,7 @@ $.user.name = "alice"  // ✓ — nested field path
 
 ### Compound assignment
 
-`+=`, `-=`, `*=`, `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator inherits the language's type-aware addition: a numeric `+=` produces `$add`, and a string `+=` produces `$concat`.
+`+=`, `-=`, `*=` and `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator uses the type-aware addition of the language: a numeric `+=` gives `$add`, and a string `+=` gives `$concat`.
 
 ```js
 jsmql("$.score *= 2")
@@ -3626,9 +3626,9 @@ jsmql("$.greeting += '!'")
 // → [{ $set: { greeting: { $concat: ["$greeting", "!"] } } }]
 ```
 
-### Increment / decrement
+### Increment and decrement
 
-`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. JavaScript gives prefix and postfix a different meaning: postfix returns the old value, and prefix returns the new value. A statement-level update op in a MongoDB pipeline has no return value, so all four forms compile to the same `$set` stage.
+`x++`, `++x`, `x--` and `--x` are sugar for `x += 1` and `x -= 1`. JavaScript gives prefix and postfix a different meaning: postfix returns the old value, and prefix returns the new value. A statement-level update operation in a MongoDB pipeline has no return value, so all four forms compile to the same `$set` stage.
 
 ```js
 jsmql("$.cnt++")
@@ -3638,7 +3638,7 @@ jsmql("--$.lives")
 // → [{ $set: { lives: { $subtract: ["$lives", 1] } } }]
 ```
 
-Like other update ops, increment/decrement is a statement, and it works only on a field or a `let` binding. JavaScript groups `1 + $.x++` as `1 + ($.x++)` and `-$.x++` as `-($.x++)`, so JSMQL reads each one the same way. The write then stands inside a value, and JSMQL refuses it. The message names the statement that gives JavaScript's answer. A postfix `++` gives the value from before the write, so the write goes after the read:
+Like other update operations, an increment or a decrement is a statement, and it works only on a field or a `let` binding. JavaScript groups `1 + $.x++` as `1 + ($.x++)` and `-$.x++` as `-($.x++)`, and JSMQL reads each one the same way. The write then stands inside a value, and JSMQL refuses it. The message names the statement that gives JavaScript's answer. A postfix `++` gives the value from before the write, so the write goes after the read:
 
 ```js
 jsmql("$.y = $.x++;")   // ✗ $.x++ is a write, and a write must be its own statement
@@ -3651,20 +3651,20 @@ A prefix `++$.x` gives the value from after the write, so its message puts `$.x 
 
 ### Chained assignment
 
-`$.a = $.b = expr` is right-associative, like JavaScript. Both fields receive the same expression on the right side. A compound chain (`a += b += 1`) is rejected, because it is too easy to misread.
+`$.a = $.b = expr` is right-associative, like JavaScript. Both fields receive the same expression on the right side. JSMQL rejects a compound chain (`a += b += 1`), because it is too easy to misread.
 
 ```js
 jsmql("$.x = $.y = 0")
 // → [{ $set: { x: 0, y: 0 } }]
 ```
 
-### Coalescing
+### The `$set` coalescer
 
-The compiler groups consecutive update ops of the same kind (all assignments, or all deletes) into one `$set` or `$unset` stage. A new stage starts when:
+The compiler groups consecutive update operations of the same kind (all assignments, or all deletes) into one `$set` or `$unset` stage. A new stage starts when:
 
 - The kind changes (assignment to delete, or delete to assignment)
-- A later update op writes to a path the current group already wrote
-- A later assignment **reads** a path the current group has written. This keeps the JavaScript order of execution.
+- A later update operation writes to a path that the current group wrote
+- A later assignment **reads** a path that the current group wrote. This keeps the JavaScript order of execution.
 
 ```js
 // Independent assignments → one stage (wrapped as a one-element pipeline)
@@ -3680,9 +3680,11 @@ jsmql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
 
-### Document form via `jsmql.update`
+### Document form with `jsmql.update`
 
-`jsmql.update()` returns the **update document** — the `{ $set, $inc, $unset, … }` shape that `updateOne(filter, update)` takes. It lowers each write to the update operator that means it. It holds constants only: it refuses a value computed from the document (`$.b + 1`, `$.name.toUpperCase()`), because the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` also accepts. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
+`jsmql.update()` returns the **update document**: the `{ $set, $inc, $unset, … }` shape that `updateOne(filter, update)` takes. It lowers each write to the update operator that means it. It holds constants only.
+
+It refuses a value that depends on the document (`$.b + 1`, `$.name.toUpperCase()`). The reason is that the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` also accepts. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
 
 ```js
 jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
@@ -3699,11 +3701,11 @@ jsmql.update("$.name = $.name.toUpperCase()")
 // ✗ the value comes from the document, and an update document takes only constants; use jsmql.pipeline("$.a = $.b + 1;")
 ```
 
-`jsmql.expr()` refuses a write altogether, because an aggregation expression has no `$set`. It names the two entries that take one.
+`jsmql.expr()` refuses every write, because an aggregation expression has no `$set`. The error names the two entry points that take a write.
 
 ### Update filters inside pipelines
 
-An update filter can appear as a pipeline element alongside an ordinary stage. The same coalescing rule applies between adjacent update op elements. A non-update op stage acts as a boundary:
+An update filter can be a pipeline element next to an ordinary stage. The same coalescing rule applies between adjacent update elements. A stage that is not an update acts as a boundary:
 
 ```js
 jsmql(`[
@@ -3722,7 +3724,7 @@ jsmql(`[
 
 ### Limits
 
-An update filter is a **statement**, not an expression value. It is valid only at the top level of a `jsmql()` call or as a direct pipeline-array element. It cannot appear:
+An update filter is a **statement**, not an expression value. It is valid only at the top level of a `jsmql()` call, or as a direct element of a pipeline array. It cannot be in these places:
 
 - Inside an arbitrary expression (`($.a = 1) + 2`, `f(delete $.a)` — rejected)
 - As an element of an array that is a value (`$.y = [$.x++]` — rejected)
@@ -3731,11 +3733,11 @@ An update filter is a **statement**, not an expression value. It is valid only a
 
 The `delete` keyword is statement-only. Unlike JavaScript, it does not return a boolean.
 
-### Replace root via `$ = <expr>`
+### Replace root with `$ = <expr>`
 
-Assigning to bare `$` replaces the **whole document** with the expression on the right side. The natural JS shape — the left side *is* the document — lowers to MongoDB's `$replaceWith` stage, the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`. The trailing `;` is optional when `$ = <expr>` is the only statement: `jsmql("$ = { … }")` and `jsmql("$ = { … };")` both produce the same `$replaceWith` pipeline.
+An assignment to bare `$` replaces the **whole document** with the expression on the right side. In this natural JS shape, the left side *is* the document. It lowers to MongoDB's `$replaceWith` stage, the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`. The trailing `;` is optional when `$ = <expr>` is the only statement. `jsmql("$ = { … }")` and `jsmql("$ = { … };")` both give the same `$replaceWith` pipeline.
 
-> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). A stage that writes elsewhere uses a different left-side prefix, so the write destination is visible at a glance: `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, and `$unionWith` uses `$$.push(…)`.
+> **Convention:** JSMQL reserves a leading `$ =` for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). A stage that writes to another place uses a different left-side prefix, so you can see the destination of the write immediately. `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, and `$unionWith` uses `$$.push(…)`.
 
 ```js
 // Lift an embedded sub-document to the top level
@@ -3774,30 +3776,30 @@ jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 
 Any other method on bare `$` reads the document as its receiver and stays a `$replaceWith`. For example, `$ = $.mapValues(v => v + 1)` lowers the lodash method over `$$ROOT`.
 
-Bare `$` is a new primary expression: the current document. It plays the role that MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
+Bare `$` is a primary expression: the current document. It has the role that MQL spells as `"$$ROOT"`, and you can use it anywhere that a field path is valid:
 
 ```js
 jsmql.expr("$mergeObjects($, { x: 1 })")
 // → { $mergeObjects: ["$$ROOT", { x: 1 }] }
 ```
 
-Compile-time rejections (each with an actionable hint):
+These right sides are compile-time errors. Each error has a hint that tells you what to do:
 
-| RHS | Why it's rejected |
+| RHS | Why JSMQL rejects it |
 |---|---|
 | `$ = []` | An empty array discards every document. Fan out a data-dependent array (`$ = $.items.filter(...)`) to drop documents conditionally, or use `$$ = []` to empty the stream. |
 | `$ = [1, 2]`, `$ = ["a"]` | Each fanned-out element becomes a document root, so each element must be a document. Wrap it: `$ = [{ value: ... }]`. |
 | `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null`, `$ = $.price * 2` | A scalar is not a document, and an arithmetic operator never gives one. Wrap it: `$ = { value: ... }`. |
-| `$ = undefined` | `undefined` has meaning only in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
+| `$ = undefined` | `undefined` has meaning only in `$match` position. Use `null` for a field that is present and null, or move the comparison into `$match`. |
 | `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array. Use `.find()` for a single document. |
 | `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a field. Write to a field (`$.n += 5`), or merge fields with `$ = { ...$, ...overrides }`. |
 | `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
 
-`$replaceWith` is a **reshape-clearing stage**: any `let` binding declared before it is gone. A later read of it is a compile-time error. See [Local bindings](#local-bindings-let).
+`$replaceWith` is a **reshape-clearing stage**: it removes each `let` binding that comes before it. A later read of such a binding is a compile-time error. See [Local bindings](#local-bindings-let).
 
 #### Fan-out: one document to many documents
 
-The root takes one document, and the stream takes an array, so the destination shows which you mean. `$$ = <array>` makes the stream from the array's elements: one document per element, per input document. JSMQL refuses `$ = <array>`, and the message names the spelling that takes it.
+The root takes one document, and the stream takes an array, so the destination shows what you mean. `$$ = <array>` makes the stream from the elements of the array: one document for each element of each input document. JSMQL refuses `$ = <array>`, and the message names the spelling that takes it.
 
 ```js
 // Explode each order's line-items into per-item documents
@@ -3821,22 +3823,22 @@ jsmql("$ = $.lineItems.map(li => ({ sku: li.sku }));")
 
 A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
 
-A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind. `.split()` and `.keys()` give strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
+A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above applies only where a row *states* the element kind. `.split()` and `.keys()` give strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where no row states the kind, the fan-out stands.
 
-An array LITERAL of documents on the stream is a different operation. `$$ = [{ … }, { … }]` names the stream's documents outright, wherever it stands in the program: it drops every document and unions in the new ones. The fan-out reading belongs to an array that the data decides, with one answer per input document.
+An array LITERAL of documents on the stream is a different operation. `$$ = [{ … }, { … }]` names the documents of the stream directly, wherever it stands in the program. It drops every document and unions in the documents that it names. The fan-out reading belongs to an array that the data decides, with one answer for each input document.
 
-**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array. So a fan-out of a possibly-empty array drops exactly the documents whose array came out empty, and fans out the rest.
+**A fan-out also drops documents conditionally.** `$unwind` emits nothing for an empty array. So a fan-out of an array that can be empty drops exactly the documents whose array is empty, and fans out the rest.
 
 ```js
 // Docs with no qualifying item are dropped; the rest fan out per qualifying item
 jsmql("$$ = $.items.filter(x => x.qty > 0);")
 ```
 
-This is the idiomatic way to drop documents conditionally. (To empty the *whole* stream unconditionally, write `$$ = []`.)
+This is the usual way to drop documents conditionally. (To empty the *whole* stream unconditionally, write `$$ = []`.)
 
-#### `$facet` via `$ = { key: <$$ chain>, … }`
+#### `$facet` with `$ = { key: <$$ chain>, … }`
 
-When every value in the object literal is a `$$` chain, the same `$ = { … }` surface lowers to a `$facet` stage instead. Each named branch becomes its own sub-pipeline that runs against the parent's input documents. A branch is a `$$.filter(<predicate>)`, a chain of stage calls, or any mix:
+When every value in the object literal is a `$$` chain, the same `$ = { … }` surface lowers to a `$facet` stage instead. Each named branch becomes its own sub-pipeline that runs on the input documents of the parent. A branch is a `$$.filter(<predicate>)`, a chain of stage calls, or any mix:
 
 ```js
 jsmql(`$ = {
@@ -3851,20 +3853,20 @@ jsmql(`$ = {
 //   } }]
 ```
 
-The lambda parameter (`o` in the examples; you choose the name) represents each input document inside the sub-pipeline. An expression body becomes a `$match` stage. A block body becomes the block's stages verbatim.
+The lambda parameter (`o` in the examples, but you choose the name) is each input document inside the sub-pipeline. An expression body becomes a `$match` stage. A block body becomes the stages of the block, as written.
 
 Rules:
 
-- **Every value must be a chain on `$$`.** Write a `.filter(<lambda>)`, a run of stage calls (`$$.$sort({…}).$limit(10)`), or any mix. A static value (`b: 1`) or a spread (`...rest`) is a compile-time error. Without this check the parser would silently fall through to `$replaceWith`, and code generation would then give an unclear error.
-- **A `.filter` / `.reject` branch takes exactly one lambda parameter.** Name the document explicitly, so the error message for a stray `$.<field>` reference can point at the right replacement. A stage-call chain has no lambda.
-- **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda parameter IS the current document. Supporting both spellings would only invite drift. JSMQL rejects `$.x` inside the predicate, with a precise hint.
+- **Every value must be a chain on `$$`.** Write a `.filter(<lambda>)`, a run of stage calls (`$$.$sort({…}).$limit(10)`), or any mix. A static value (`b: 1`) or a spread (`...rest`) is a compile-time error. Without this check, the parser would silently take the `$replaceWith` form, and code generation would then give an unclear error.
+- **A `.filter` or `.reject` branch takes exactly one lambda parameter.** Name the document explicitly. Then the error message for a stray `$.<field>` reference can point at the correct replacement. A stage-call chain has no lambda.
+- **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda parameter IS the current document. Support for both spellings would only cause drift. JSMQL rejects `$.x` inside the predicate, with a precise hint.
 - **`$facet` clears the let scope**, because it replaces the document with `{ facetName: [docs], … }`. A later read of a `let` binding is a compile-time error, as after any stage that replaces the document. See [Local bindings](#local-bindings-let).
 
-To filter the current stream as a top-level stage (one `$match`, not split into facets), write `$$.filter(<predicate>);`. This is the bare-stream-chain spelling, and it emits exactly that one `$match`. `$match(<predicate>);` writes the same stage as a stage call. See [Bare-statement stream operations](#bare-statement-stream-operations).
+For a filter on the current stream as a top-level stage (one `$match`, not split into facets), write `$$.filter(<predicate>);`. This is the bare-stream-chain spelling, and it emits exactly that one `$match`. `$match(<predicate>);` writes the same stage as a stage call. See [Bare-statement stream operations](#bare-statement-stream-operations).
 
-### Replace stream via `$$ = <expr>`
+### Replace stream with `$$ = <expr>`
 
-This is the *stream*-level sister of `$ = <expr>`. Assigning to bare `$$` replaces the pipeline's document stream. The trailing `;` below is optional: a lone `$$ = <expr>` is already a Pipeline, per [Output dispatch](#output-dispatch-filter-vs-pipeline). JSMQL accepts two shapes on the right side:
+This is the *stream*-level form of `$ = <expr>`. An assignment to bare `$$` replaces the document stream of the pipeline. The trailing `;` below is optional, because a lone `$$ = <expr>` is already a Pipeline (see [Output dispatch](#output-dispatch-filter-vs-pipeline)). JSMQL accepts two shapes on the right side:
 
 ```js
 // Narrow the current stream (equivalent to $match($.client === 156 && $.createdAt >= "2026-01-01"))
@@ -3881,11 +3883,13 @@ jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new 
 //   ]
 ```
 
-The lambda parameter IS the document being matched: write `t.client`, not `$.client`. This follows the same convention as the facet form. A `$.<field>` in the predicate reads the OUTER document, and it makes the switch correlated (below). A block-body predicate (`o => { $sort(...); $limit(...); }`) works in the source-switch form, just as it does in a lookup.
+The lambda parameter IS the document that the predicate matches: write `t.client`, not `$.client`. This follows the same convention as the facet form. A `$.<field>` in the predicate reads the OUTER document, and it makes the switch correlated (below). A block-body predicate (`o => { $sort(...); $limit(...); }`) works in the source-switch form, as it does in a lookup.
 
-A flat source-switch *replaces* the stream: it is a `$unionWith` with no `let:`, so no value from outside gets into it. The chain can read a value from outside: a field of the outer document, the count of the outer stream (`$$.size()`), or an outer `let` or `const`. Then JSMQL lowers it as a correlated source-switch (below). That form is a `$lookup`, and its `let:` passes each outer value in.
+A flat source-switch *replaces* the stream: it is a `$unionWith` with no `let:`, so no value from outside gets into it. When the chain reads a value from outside, JSMQL lowers it as a correlated source-switch (below). Such a value is a field of the outer document, the count of the outer stream (`$$.size()`), or an outer `let` or `const`. The correlated form is a `$lookup`, and its `let:` passes each outer value in.
 
-**Correlated source-switch — per-outer-document pivot via `$lookup`.** When the predicate *does* reference an outer-document field (`$.<field>`), JSMQL auto-rewrites the chain to `$lookup` + `$unwind` + `$replaceWith`. The result is a stream of foreign documents *correlated* to each input: one row per (outer × matching-foreign) pair, with the foreign document as the new root. MongoDB's `$unionWith` has no `let:` slot to thread outer-document context into its sub-pipeline, so this is the only way to express a "per-outer-document source switch" in MQL. JSMQL picks the right lowering family automatically, based on the predicate shape:
+**Correlated source-switch — a pivot for each outer document, with `$lookup`.** When the predicate *does* refer to a field of the outer document (`$.<field>`), JSMQL rewrites the chain to `$lookup` + `$unwind` + `$replaceWith` automatically. The result is a stream of foreign documents *correlated* to each input. It has one row for each pair of an outer document and a matching foreign document, with the foreign document as the new root.
+
+MongoDB's `$unionWith` has no `let:` slot that can pass the context of the outer document into its sub-pipeline. So this is the only way to express a source switch for each outer document in MQL. JSMQL picks the correct lowering family automatically, from the shape of the predicate:
 
 ```js
 // "For each user, pivot the stream onto their orders, top-5 most-recent."
@@ -3909,11 +3913,11 @@ jsmql`$$ = $$$.orders
 // ]
 ```
 
-The predicate becomes the `localField` / `foreignField` pair when it is one equality. Otherwise it becomes `let` plus `$match $expr` inside the sub-pipeline. These are the two shapes of the one `$lookup` route (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)). Either way, the foreign collection's index is used.
+The predicate becomes the `localField` and `foreignField` pair when it is one equality. Otherwise it becomes `let` plus `$match $expr` inside the sub-pipeline. These are the two shapes of the one `$lookup` route (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)). In both shapes, the query uses the index of the foreign collection.
 
 The `$unwind` drops outer documents with no matches by default. If you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
-**A `let` binding crosses the source-switch boundary too.** You can reference a name bound with `let foo = …` in the surrounding pipeline directly inside a correlated `.filter` predicate. JSMQL carries it into `$lookup.let` the same way it carries a `$.<field>` reference. Member access on a `let`-bound object also works (for example, `user._id` when `let user = $.user`):
+**A `let` binding also crosses the source-switch boundary.** Inside a correlated `.filter` predicate, you can refer directly to a name that `let foo = …` binds in the surrounding pipeline. JSMQL carries it into `$lookup.let` in the same way as a `$.<field>` reference. A member access on a `let`-bound object also works (for example, `user._id` when `let user = $.user`):
 
 ```js
 jsmql`
@@ -3930,7 +3934,13 @@ $$ = $$$.users.filter(u => u._id === uid);
 
 A mixed predicate works too. A `$.<field>` reference and an outer-`let` reference hoist together into the `$lookup.let` slot of the pipeline-form lookup.
 
-**Putting it all together: narrow, guard, pivot.** The full idiom is three statements. Narrow the current stream down to the matching document or documents, assert that exactly one matched, then pivot to another collection correlated by the root document's field. Every line is JavaScript an app developer already knows; JSMQL lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
+**All together: narrow, guard, pivot.** The full idiom is three statements:
+
+1. Narrow the current stream to the matching document or documents.
+2. Assert that exactly one document matched.
+3. Pivot to another collection, correlated by a field of the root document.
+
+Every line is JavaScript that an app developer already knows, and JSMQL lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape, which almost every web app has:
 
 ```js
 jsmql(`
@@ -3962,13 +3972,15 @@ jsmql(`
 // ]
 ```
 
-Note the contrast with hand-written MQL. `$unionWith` has no `let:` slot, so a source-switch cannot carry the user's `_id` forward on its own; only `$lookup` can. JSMQL picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation variable `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.size()` materialises through `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. Each statement stays self-contained and means what JS says it means, and the lowering composes them into one correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
+Compare this with hand-written MQL. `$unionWith` has no `let:` slot, so a source-switch cannot carry the `_id` of the user forward on its own. Only `$lookup` can. JSMQL picks the correct shape automatically when the foreign predicate refers to an outer name. Here the name is `$._id`, and JSMQL captures it as the correlation variable `$$jsmql_f0__id`.
 
-**Empty the stream.** `$$ = []` drops every document. It lowers to `[{ $match: { $expr: false } }]`, a never-matching `$match`. MongoDB rejects `$limit: 0`, so JSMQL emits the never-matching `$match` instead. The explicit-stage spelling is `$match(false)`.
+The `assert` is a guard on the stream count. `$$.size()` materialises through `$setWindowFields`. A `$convert` to bool that fails on the message aborts the run, unless exactly one user matched. Each statement stays self-contained and means what JS says it means. The lowering composes the statements into one correlated pipeline that pivots with `$lookup`. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
 
-Compile-time rejections:
+**Empty the stream.** `$$ = []` drops every document. It lowers to `[{ $match: { $expr: false } }]`, a `$match` that never matches. MongoDB rejects `$limit: 0`, so JSMQL emits that `$match` instead. The explicit-stage spelling is `$match(false)`.
 
-| RHS | Why it's rejected |
+These right sides are compile-time errors:
+
+| RHS | Why JSMQL rejects it |
 |---|---|
 | `$$ = cond ? A : B` | JSMQL does not support a stream-level ternary. A stream has no single condition that swaps the whole stream for A or B. Narrow with `$$.filter(p)`, or switch source with `$$$.<coll>.filter(p)`. |
 | `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS, but a pipeline is an array. For "first match", write `.filter(p).slice(0, 1)`. To replace each document with a single matching foreign document, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
@@ -3976,11 +3988,11 @@ Compile-time rejections:
 | `$$ += …`, `$$++` | `$$` is the root stream, not a field. Write to a field: `$.<field> += …`. |
 | `delete $$` | `$$` is the root stream. Write `$$ = []` to keep no documents, or `$$.filter(d => …)` to keep some. |
 
-**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match`, and it preserves any prior `let` binding: a reference resolves to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's documents are gone after the never-matching `$match`, so any prior `let` becomes unreadable. A later read of it is a compile-time error. See [Local bindings](#local-bindings-let).
+**Let scope.** The narrow form (`$$.filter(p)`) is only a `$match`, and it keeps each `let` binding before it. A reference resolves to the field of the binding as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**. The documents of the outer collection are gone after the `$match` that never matches, so no earlier `let` is readable. A later read of such a binding is a compile-time error. See [Local bindings](#local-bindings-let).
 
 #### Stream methods chained after the RHS
 
-The right side of `$$ = …` accepts a chainable, JS-array-shaped method after the initial `$$` / `$$$.<coll>` receiver, with or without a leading `.filter(<pred>)`. Each chained method appends one or more stages: to the surrounding pipeline for `$$.<chain>`, or to the `$unionWith.pipeline` body for `$$$.<coll>.<chain>`:
+The right side of `$$ = …` accepts chainable methods with the shape of JS array methods. They come after the initial `$$` or `$$$.<coll>` receiver, with or without a leading `.filter(<pred>)`. Each chained method appends one or more stages. For `$$.<chain>`, the stages go to the surrounding pipeline. For `$$$.<coll>.<chain>`, they go to the body of `$unionWith.pipeline`:
 
 ```js
 // Skip the first 5 and keep the next 10 — pure $skip + $limit, no $match.
@@ -4000,33 +4012,33 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 | Method | Args | Lowering |
 |---|---|---|
-| `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
-| `.concat(...others)` | One or more arguments, with the same shapes as `$$.push(...)`: a spread of `$$$.<coll>[.filter(p)]`, an inline `{...}` document, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` stage per argument. Consecutive inline documents batch into one `$documents` stage |
-| `.map(d => <expr>)` / `.map("field")` | A single-parameter, expression-body arrow (the parameter is the current document: write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. An embedded `$$$.<coll>.find/filter(...)` lookup works in both stream contexts | `$replaceWith: <expr>`, the chain form of `$ = <expr>`. The shorthand lowers to `$replaceWith: "$field"`. An embedded lookup materialises into a prologue `$lookup` stage ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context, the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
-| `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (use `\|\|` for a compound key). `.sort` and `.toSorted` mean the same thing on a stream | `$sort: { … }`. JSMQL rejects a zero-argument call, because a stream has no natural document order |
-| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` sorts ascending by one or more keys. `.orderBy` takes parallel keys and directions (`1`/`-1`/`"asc"`/`"desc"`), **or** a `{ field: dir }` object with the directions inline, like `.sort({…})` | `$sort: { … }`. JSMQL rejects `.sortBy({…})`, because an object there is a lodash matches-shorthand, not a direction; the error points you at `.orderBy({…})` |
-| `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. Each spelling is interchangeable, in every position where a `$$` predicate may sit (see the note below) | `$match`, using the index-friendly translator: query syntax where it can, with any residual in `$expr` |
+| `.slice(start, end?)` | 1 or 2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
+| `.concat(...others)` | One or more arguments, with the same shapes as `$$.push(...)`: a spread of `$$$.<coll>[.filter(p)]`, an inline `{...}` document, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` stage for each argument. Consecutive inline documents batch into one `$documents` stage |
+| `.map(d => <expr>)` / `.map("field")` | A single-parameter, expression-body arrow (the parameter is the current document: write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. An embedded `$$$.<coll>.find/filter(...)` lookup works in both stream contexts | `$replaceWith: <expr>`, the chain form of `$ = <expr>`. The shorthand lowers to `$replaceWith: "$field"`. An embedded lookup materialises into a prologue `$lookup` stage before the `$replaceWith`. In the `$$$.<coll>.<chain>` context, the prologue goes inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
+| `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (use `\|\|` for a compound key). `.sort` and `.toSorted` mean the same thing on a stream | `$sort: { … }`. JSMQL rejects a call with no argument, because a stream has no natural document order |
+| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` sorts ascending by one or more keys. `.orderBy` takes parallel keys and directions (`1`, `-1`, `"asc"` or `"desc"`), **or** a `{ field: dir }` object with the directions inline, like `.sort({…})` | `$sort: { … }`. JSMQL rejects `.sortBy({…})`, because an object there is a lodash matches-shorthand, not a direction. The error points you at `.orderBy({…})` |
+| `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. The spellings are interchangeable, in every position where a `$$` predicate can be (see the note below) | `$match`, with the index-friendly translator: query syntax where possible, with any residual in `$expr` |
 | `.reject(<predicate>)` | The negation of `.filter`: an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
-| `.pick([fields])` / `.omit([fields])` | The lodash object methods, applied per document. `.pick` keeps only the named fields and drops `_id` unless you name it. `.omit` drops the named fields | `$project` (inclusion / exclusion). An empty list is what lodash says: `.pick([])` makes each document `{}` (`$replaceWith: {}`), and `.omit([])` keeps each document as it is (no stage) |
-| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). It accepts the same predicate spellings as `.filter`. **A sort must come first**, in any spelling (`.sort` / `.toSorted` / `.sortBy` / `.orderBy` / `.$sort({…})`). With no sort, JSMQL rejects the call rather than default to `_id` | A `$setWindowFields` stage that carries a running "has it failed yet" flag, then a `$match` on that flag (`0` keeps, `1` drops). The two methods are exact complements |
+| `.pick([fields])` / `.omit([fields])` | The lodash object methods, applied to each document. `.pick` keeps only the named fields and drops `_id` unless you name it. `.omit` drops the named fields | `$project` (inclusion or exclusion). An empty list does what lodash says: `.pick([])` makes each document `{}` (`$replaceWith: {}`), and `.omit([])` keeps each document as it is (no stage) |
+| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). It accepts the same predicate spellings as `.filter`. **A sort must come first**, in any spelling (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`, `.$sort({…})`). With no sort, JSMQL rejects the call, and does not use `_id` as the default | A `$setWindowFields` stage that carries a running "has it failed yet" flag, then a `$match` on that flag (`0` keeps, `1` drops). The two methods are exact complements |
 | `.tail()` | Zero arguments: all but the first document | `$skip: 1` |
-| `.shuffle()` | Zero arguments: random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
+| `.shuffle()` | No arguments: random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` lowers to `$limit: n` (`take(0)` lowers to an always-false `$match`, because `$limit: 0` is invalid). `.drop(n)` lowers to `$skip: n` (`drop(0)` is identity: it emits no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
-| `.sample()` | Zero arguments | `$sample: { size: 1 }`: one random document (lodash `_.sample`). Use `.sampleSize(n)` for more |
+| `.sample()` | No arguments | `$sample: { size: 1 }`: one random document (lodash `_.sample`). Use `.sampleSize(n)` for more |
 | `.flatMap(<key>)` | One field key: the array field to flatten | One `$unwind: "$<path>"` stage. From here on **the element is what every callback receives**: `.filter(i => i.qty > 1)` reads `items.qty`, a key-less `.countBy()` groups on the element, and `.sortBy("price")` sorts by `items.price`. The documents keep their other fields, as MQL's `$unwind` does. For "the elements as the documents", chain `.map(item => item)`. JSMQL rejects a complex arrow body (`.flatMap(d => d.items.map(...))`). See [The element after `.flatMap`](#the-element-after-flatmap) |
-| `.groupBy(<key>)` / `.groupBy()` | One key — a field name, an arrow, a matcher object or a `[field, value]` pair — or none for the element itself | Collapses to the lodash object `{ <key>: [docs] }`, like value-mode `$.arr.groupBy(...)`. For a stream of group documents with accumulators, write the stage link `$$.$group({ _id: …, n: $sum(1) })` |
-| `.countBy(<key>)` / `.countBy()` | One field key, or none, in which case the element itself is the key (lodash's identity default, the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }`, like value-mode `$.arr.countBy(...)`. For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
-| `.keyBy(<key>)` / `.keyBy()` | One field key, or none for the element itself | Collapses to the lodash object `{ <key>: <last doc> }`, like value-mode `$.arr.keyBy(...)`; the last document wins. "Last" follows the current order, so precede it with `.sort(...)` when the order matters |
-| `.uniqBy(<key>)` | One field key | `$group` keeps the first document per key, then `$replaceWith`. "First" follows the current order, so precede it with `.sort(...)` when the order matters |
+| `.groupBy(<key>)` / `.groupBy()` | One key — a field name, an arrow, a matcher object or a `[field, value]` pair — or none for the element itself | Gives the lodash object `{ <key>: [docs] }`, like value-mode `$.arr.groupBy(...)`. For a stream of group documents with accumulators, write the stage link `$$.$group({ _id: …, n: $sum(1) })` |
+| `.countBy(<key>)` / `.countBy()` | One field key, or none, in which case the element itself is the key (lodash's identity default, the natural spelling after `.flatMap`) | Gives the lodash object `{ <key>: <count> }`, like value-mode `$.arr.countBy(...)`. For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
+| `.keyBy(<key>)` / `.keyBy()` | One field key, or none for the element itself | Gives the lodash object `{ <key>: <last doc> }`, like value-mode `$.arr.keyBy(...)`. The last document wins. "Last" follows the current order, so put `.sort(...)` before it when the order matters |
+| `.uniqBy(<key>)` | One field key | `$group` keeps the first document for each key, then `$replaceWith`. "First" follows the current order, so put `.sort(...)` before it when the order matters |
 | `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`), then `$replaceWith`: one document per distinct element |
-| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. JSMQL reads a missing `list` as empty, as lodash does | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. JSMQL refuses it on a stream of whole documents; unwind the field first |
+| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. JSMQL reads a missing `list` as empty, as lodash does | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. JSMQL refuses it on a stream of whole documents. Unwind the field first |
 | `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group, because lodash keeps each value once |
-| `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }`. Use `$in` for intersection, then the `.uniq()` group on the key |
+| `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }`. The intersection uses `$in`, then the `.uniq()` group on the key |
 | `.compact()` | **After `.flatMap`**, no arguments: drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }`. `null` in the list also drops a missing value |
 | `.flat()` | **After `.flatMap`**, when the element is itself an array | one more `$unwind: "$<el>"` |
 | `.sortBy()` / `.sort()` / `.toSorted()` with no argument | **After `.flatMap`** — the natural order of the values | `$sort: { <el>: 1 }`. On a stream of whole documents, JSMQL requires a key |
-| `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases for `.uniq` / `.uniqBy`: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
+| `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` and `.uniqBy` | Aliases for `.uniq` and `.uniqBy`. `$group` needs no sorted input, so lodash's precondition of a sorted input has nothing to express in MQL |
 
 `.filter(<pred>)` can appear **anywhere** in the chain, not only as the head. So `.flatMap("items").filter(o => o.qty > 0)` composes.
 
@@ -4047,7 +4059,7 @@ $.n = $$$.orders.filter({ userId: $._id }).size();   // ≡ .filter(o => o.userI
 //    { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }]  — the same $lookup either way
 ```
 
-**A group key may be computed.** MongoDB evaluates `$group._id` per document, so all four grouping methods take any expression. It lowers straight into the key, with no extra stage:
+**A group key can be a computed value.** MongoDB evaluates `$group._id` for each document, so all four grouping methods take any expression. The expression lowers directly into the key, with no extra stage:
 
 ```js
 $$.countBy(d => d.category.toLowerCase());
@@ -4057,7 +4069,7 @@ $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
 $$.countBy({ active: true });             // count matching vs not (lodash _.matches)
 ```
 
-**A sort key may be computed too**, but a `$sort` key must be a literal field path. So JSMQL puts the value in a scratch field first, then clears it once the chain finishes:
+**A sort key can be a computed value too**, but a `$sort` key must be a literal field path. So JSMQL puts the value in a scratch field first, and clears the field when the chain finishes:
 
 ```js
 $$.sortBy(d => d.category.toLowerCase());
@@ -4066,9 +4078,9 @@ $$.sortBy(d => d.category.toLowerCase());
 //    { $unset: "__jsmql" }]
 ```
 
-The scratch field is cleared once the chain finishes, so it never reaches your output.
+JSMQL clears the scratch field when the chain finishes, so it never reaches your output.
 
-**`.flatMap` is the exception**: it takes only a field path. `$unwind` puts each element back into a *named* field, so which field it is is part of what you mean. JSMQL cannot pick one for you:
+**`.flatMap` is the exception**: it takes only a field path. `$unwind` puts each element back into a *named* field, so the field is part of what you mean. JSMQL cannot pick one for you:
 
 ```js
 $.allTags = $.tags.concat($.extraTags);
@@ -4077,7 +4089,12 @@ $$.flatMap("allTags");
 
 #### The element after `.flatMap`
 
-In JavaScript, `orders.flatMap(o => o.items)` is a list of **items**, and every method after it works on an item. The stream reads the same way. After `.flatMap("items")`, each callback's parameter is the element, the unwound field. Its fields are paths under that field, a lodash shorthand names the element's fields, a comparator on the whole element sorts by the field, and a key-less `.countBy()` / `.groupBy()` / `.keyBy()` groups on the element:
+In JavaScript, `orders.flatMap(o => o.items)` is a list of **items**, and every method after it works on an item. The stream reads the same way. After `.flatMap("items")`, the parameter of each callback is the element: the unwound field. Then these rules apply:
+
+- the fields of the element are paths under that field
+- a lodash shorthand names fields of the element
+- a comparator on the whole element sorts by the field
+- a key-less `.countBy()`, `.groupBy()` or `.keyBy()` groups on the element
 
 ```js
 $$.flatMap("items").filter(i => i.qty > 1).sortBy("price").uniq().pick(["sku"]);
@@ -4124,17 +4141,19 @@ $$.difference([1, 2]);
 //   $$.flatMap("<field>").difference(<list>), or remove documents with .reject(<pred>).
 ```
 
-In a join, the same link on a stream of whole documents is not a stream link. It reads the joined array as a value — `$$$.orders.filter(p).difference(docs)` is `$setDifference` over the array — like any method with no stream form.
+In a join, the same link on a stream of whole documents is not a stream link. It reads the joined array as a value, like any method with no stream form: `$$$.orders.filter(p).difference(docs)` is `$setDifference` over the array.
 
-The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line, with `items` holding that line. To make the elements the documents, say so: `.map(item => item)` is `{ $replaceWith: "$items" }`. From that stage on, the document is the element again, as it is after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and changes nothing else: a callback after it still receives the whole document.
+The **documents** stay MongoDB's: `$unwind` keeps every other field. So the stream still carries one order for each line, and `items` holds that line. To make the elements into the documents, write that explicitly: `.map(item => item)` is `{ $replaceWith: "$items" }`. From that stage on, the document is the element again, as it is after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and changes nothing else: a callback after it still receives the whole document.
 
-In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order per line, and the value reads the line off each. So `.size()` counts lines (`{ $size: "$<the joined array>" }`, one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
+In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order for each line, and the value reads the line from each order. So `.size()` counts lines: `{ $size: "$<the joined array>" }`. There is one joined document for each line, so JSMQL takes nothing out first. `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
-On two methods, an object means something richer than a matcher, so JSMQL reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs.
+On two methods, an object means more than a matcher, and JSMQL reads it that way. `.orderBy({ field: -1 })`, and `.sort` or `.toSorted({ field: -1 })`, are direction specs.
 
-`.map(d => …)` / `.map("field")` replaces each document with the body through `$replaceWith`, so the **body must resolve to a document**, because MongoDB requires an object root. JSMQL rejects a provably non-document body at compile time — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`, and a computed value such as `.map(d => d.price * 2)`, because `*` never gives a document. A body that may be a document passes, for example `.map(d => d.flag ? d.sub : 0)`. A field reference that turns out to be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId, is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+`.map(d => …)` or `.map("field")` replaces each document with the body through `$replaceWith`. So the **body must resolve to a document**, because MongoDB requires an object root. JSMQL rejects a body at compile time when it can prove that the body is not a document. Examples are `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`, and a computed value such as `.map(d => d.price * 2)`, because `*` never gives a document. A body that can be a document passes, for example `.map(d => d.flag ? d.sub : 0)`.
 
-The methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are also deliberately not on this list. A MongoDB stream has no order except the one a `$sort` gives it, and no stage reverses one (`$reverseArray` is an *expression*, for an array inside a document). So "the last 3" has nothing to count back from. Say the order you want, and take from the **front**:
+A field reference can be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId. JSMQL emits it, but the server gives an error, exactly as for `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+
+The methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are also deliberately not on this list. A MongoDB stream has no order except the order that a `$sort` gives it, and no stage reverses a stream. (`$reverseArray` is an *expression*, for an array inside a document.) So "the last 3" has nothing to count back from. Write the order that you want, and take from the **front**:
 
 ```js
 $$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
@@ -4142,9 +4161,15 @@ $$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
 
 All four still work in value position on a real array (`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`). There, the array carries its own order, and each method means exactly what it means in JS.
 
-The methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list. A pipeline is an array, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated: that is a lookup-context shape, not a stream chain. See [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+The methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list. A pipeline is an array, and a chained single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated: that is a lookup-context shape, not a stream chain. See [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
-**A predicate is a predicate, wherever it sits.** `$$.filter(...)` / `$$.reject(...)` accept the same four spellings in every position where a `$$` predicate can appear: narrowing the current stream (`$$.filter(p)`), a `$facet` branch (`$ = { k: $$.filter(p) }`), and an `$out` write chain (`$$$.archive = $$.filter(p)`). Each spelling emits identical MQL, so picking one is purely a matter of taste:
+**A predicate is a predicate, wherever it is.** `$$.filter(...)` and `$$.reject(...)` accept the same four spellings in every position where a `$$` predicate can appear:
+
+- a filter on the current stream (`$$.filter(p)`)
+- a `$facet` branch (`$ = { k: $$.filter(p) }`)
+- an `$out` write chain (`$$$.archive = $$.filter(p)`)
+
+Each spelling emits identical MQL, so your choice is only a matter of taste:
 
 ```js
 jsmql(`$$$.archive = $$.filter({ status: "expired" });`)
@@ -4153,9 +4178,9 @@ jsmql(`$$$.archive = $$.filter(o => o.status === "expired");`)
 // all three → [{ $match: { status: "expired" } }, { $out: "archive" }]
 ```
 
-The one thing a predicate may not do in these positions is reference `$.<field>`. The parameter already *is* the current document, so `o.status` is the spelling. (Inside a `$$$.<coll>` lookup predicate, `$.<field>` means the *outer* document and JSMQL auto-extracts it into `let` — a different position, a different rule.)
+In these positions, a predicate must not refer to `$.<field>`. The parameter already *is* the current document, so `o.status` is the spelling. (Inside a `$$$.<coll>` lookup predicate, `$.<field>` means the *outer* document, and JSMQL extracts it into `let` automatically. That is a different position with a different rule.)
 
-A worked lodash-style chain: the newest 10 closed orders' distinct products:
+This lodash-style chain gives the distinct products of the 10 newest closed orders:
 
 ```js
 jsmql(`$$.filter({ status: "CLOSED" })
@@ -4172,7 +4197,7 @@ jsmql(`$$.filter({ status: "CLOSED" })
 
 #### Bare-statement stream operations
 
-When the receiver is the bare `$$` stream, you can drop the `$$ =` head entirely and write the chain as a plain statement. It reads like ordinary JS array work and lowers identically to the assignment form:
+When the receiver is the bare `$$` stream, you can omit the `$$ =` head and write the chain as a plain statement. It reads like ordinary JS array code, and it lowers to the same MQL as the assignment form:
 
 ```js
 jsmql(`
@@ -4182,7 +4207,7 @@ jsmql(`
 // → [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id", name: "$name" } }]
 ```
 
-Every stream method works this way, for example `.filter`, `.map`, `.toSorted`. Chaining and splitting are interchangeable: these three forms all produce the same MQL:
+Every stream method works this way, for example `.filter`, `.map`, `.toSorted`. A chain and separate statements are interchangeable. These three forms all give the same MQL:
 
 ```js
 $$.filter(p).map(f);        // chained
@@ -4190,11 +4215,11 @@ $$.filter(p); $$.map(f);    // split across statements
 $$.filter(p).map(f);   // explicit assignment
 ```
 
-This also holds for chained stage calls, so a chain may mix them freely: `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
+This is also true for chained stage calls, so a chain can mix them freely. `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
 
-> **Note.** In plain JS, `arr.filter(...)` as a bare statement throws away the result. In a JSMQL pipeline, a bare `$$.filter(...)` statement *transforms the running stream*: each statement is a stage. (This follows the same idea as `$$.push(...)`.) The bare `$$` receiver is required. For a source-switch, keep the explicit `$$ = $$$.<coll>.<chain>;` head.
+> **Note.** In plain JS, `arr.filter(...)` as a bare statement discards the result. In a JSMQL pipeline, a bare `$$.filter(...)` statement *transforms the current stream*: each statement is a stage. (This follows the same idea as `$$.push(...)`.) The bare `$$` receiver is required. For a source-switch, keep the explicit `$$ = $$$.<coll>.<chain>;` head.
 
-**`.reduce` is not a chain method either.** What a reducer returns in JS decides how you assign it. A reducer that returns a **scalar or object** (one value) must be **wrapped** into a stream-shaped right side. A reducer that returns an **array** is already a stream and is assigned directly (see the array-returning form below). Both scalar/object wraps lower to the same `$group` + `$replaceWith` pair. Pick whichever reads best at the call site:
+**`.reduce` is not a chain method either.** The return value of a reducer in JS decides how you assign it. Wrap a reducer that returns a **scalar or an object** (one value) in a right side with the shape of a stream. A reducer that returns an **array** is already a stream, so assign it directly (see the array-returning form below). Both wraps, for a scalar and for an object, lower to the same `$group` + `$replaceWith` pair. Use the wrap that reads best at the call site:
 
 **Scalar wrap** — one `$$.reduce(...)` per named field:
 
@@ -4229,11 +4254,18 @@ jsmql(`$$ = [$$.reduce(
 // → identical to the multi-aggregate scalar wrap above
 ```
 
-Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) lowers to `$sum`; `acc + 1` lowers to `$sum: 1` (count); `[acc, d.<field>].max()` lowers to `$max`; `[acc, d.<field>].min()` lowers to `$min`. In the object form, each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body. An extra or missing key on either side throws — in JS this would silently work, but it would mean something different.
+Both forms support the same reducer bodies for each key:
+
+- `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) lowers to `$sum`
+- `acc + 1` lowers to `$sum: 1` (a count)
+- `[acc, d.<field>].max()` lowers to `$max`
+- `[acc, d.<field>].min()` lowers to `$min`
+
+In the object form, each entry must refer to `acc.<sameKey>` as the accumulator side. The init object must declare the same set of keys as the body. An extra or missing key on either side throws. In JS this would silently work, but it would mean something different.
 
 The `init` value is required for JS faithfulness, but the MQL accumulators have their own neutral elements, so its actual value does not matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
 
-**Array-returning reducer** — for "flatten the stream by projecting each document to a sub-document, optionally filtered". A reducer seeded with `[]` already returns an array, a stream, so you assign it **directly**, without the surrounding `[ ]`:
+**Array-returning reducer** — to flatten the stream, with a projection of each document to a sub-document and an optional filter. A reducer that starts with `[]` already returns an array, which is a stream. So you assign it **directly**, without the surrounding `[ ]`:
 
 ```js
 // Filter active users with an email, project to their contactDetails sub-doc.
@@ -4248,9 +4280,9 @@ jsmql(`$$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
 // → [{ $replaceWith: "$contactDetails" }]
 ```
 
-This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) plus `$replaceWith` (when the projection is a field path on `d`). It is equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer; pick whichever reads better at the call site. The init must be `[]`, and the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. JSMQL does not recognise a spread-form variant (`[...acc, d.<x>]`, a multi-element wrapper).
+This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) plus `$replaceWith` (when the projection is a field path on `d`). It is equivalent to `$$.filter(d => cond).map(d => d.<field>)`, written as a single reducer. Use the form that reads better at the call site. The init must be `[]`. The body must be `acc.concat(d.<path>)`, or a ternary whose alternate branch is bare `acc`. JSMQL does not recognise a spread form (`[...acc, d.<x>]`, a multi-element wrapper).
 
-JSMQL **rejects** wrapping it in `[ ]` (`$$ = [$$.reduce(…, [])]`), because that would make a stream whose single document is itself an array. (The scalar and object reducer wraps above keep their `[ ]`, because those reducers return a single document, so `[ <doc> ]` is a legitimate one-document stream literal.)
+JSMQL **rejects** a wrap of it in `[ ]` (`$$ = [$$.reduce(…, [])]`), because that would make a stream whose single document is itself an array. (The wraps of a scalar reducer and of an object reducer above keep their `[ ]`. Those reducers return a single document, so `[ <doc> ]` is a correct stream literal with one document.)
 
 ---
 
