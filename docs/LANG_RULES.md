@@ -113,11 +113,19 @@ A method is a call after a dot, for example `.uniq()`. The value before the dot 
 
 The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`. Under a dot, the method gives a safe value wherever one exists, as lodash does, for every kind of receiver.
 
-**You wrote a dot.** The compiler replaces a missing or `null` receiver with an empty array or object, to match the kind of the method: `[]` for an array method, and `{}` for an object method. The method then runs on that empty array or object. The answer is what the MongoDB operator gives for it. So the answer always has the type that you expect, and it is never `null`.
+**You wrote a dot.** The compiler replaces a missing or `null` receiver with the safe value of the method's kind. The method then runs on that value, and the answer is what the MongoDB operator gives for it. So the answer has the type that you expect:
 
-A string method is the exception. On a missing or `null` string, a string method gives `null`. The reason is that JavaScript throws an error here, and MongoDB has no error to throw inside an expression.
+| Kind of the method | The safe value |
+|---|---|
+| array | `[]` |
+| object | `{}` |
+| string | `""` |
+| number | `0`, or `1` where the operator refuses `0`, for example `.log()` |
+| date | the epoch, `new Date(0)` |
 
-A number has no empty value to run on. The dot still gives a safe answer when the method has one. For example, `$.n.range()` reads a missing receiver as `0` and gives `[]`, and `$.x.clamp(0, 9)` gives `0`. A number method with no safe answer gives `null` on a missing or `null` receiver, in both spellings. A string method does the same. For example, `$.n.round()` gives `null`. The documentation of each number method states its answer.
+A method that works on every kind, for example `.toString()`, reads the safe value of the kind that it answers. A kind with no safe value, for example an ObjectId, gives `null`.
+
+The safe value of a number follows its operator, as lodash's `_.divide()` reads a missing operand as `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
 
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
@@ -133,7 +141,8 @@ $.a.uniq()          // → the same MQL as above                          → ["
 $.a?.uniq()         // → the same MQL as above                          → ["x"]
 
 // The document is {}. It has no field `s`.
-$.s.length()        // → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } }   → null
+$.s.length()        // → { $strLenCP: { $ifNull: ["$s", ""] } }       → 0
+$.s?.length()       // → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } }   → null
 
 // The document is { a: { c: 1 } }. The field `a` is there, but `a` has no field `b`.
 $.a?.b.uniq()       // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }   → []
@@ -142,7 +151,7 @@ $.a?.b.uniq()       // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, nul
 $.a?.b.uniq()       // → the same MQL as above                          → null
 ```
 
-When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
+When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the safe value. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
 
 Two more facts belong to this rule:
 
