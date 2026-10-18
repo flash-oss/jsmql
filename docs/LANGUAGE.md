@@ -1544,6 +1544,23 @@ $max(1, "a")             // → { $max: [1, "a"] }      the escape hatch passes 
 
 **This is a surprise for a JavaScript developer.** JavaScript adds `"a" + 1` and gives `"a1"`, and MongoDB accepts `{ $max: [1, "a"] }`. JSMQL refuses the first, and the second is yours to write with `$op(…)`. A value of unknown kind always passes, and a value that can have two or more kinds passes when one of them fits. A literal array is the exception: each element is certain, so one element of the wrong kind is enough to refuse it. See [docs/specs/types.md](specs/types.md#the-kind-check).
 
+A slot refuses `null` when it takes a value that is not `null`. This applies to three cases:
+
+- a `null` that you write
+- a value that JSMQL can prove is `null`
+- a `null` that your program passes in, as a `jsmql.compile` parameter or a template `${…}` value
+
+A slot where `null` is data keeps it. Examples are a membership test, the items of `.concat()`, the seed of `.reduce()`, `===`, `??` and `?:`. The escape hatch passes `null` as written.
+
+```js
+$.a.slice(null)          // ✗ the start of .slice() takes an integer, and null is no integer
+$.n + null               // ✗ + takes numbers or strings, and null is neither
+$.a.concat(null)         // → { $concatArrays: [{ $ifNull: ["$a", []] }, [null]] }   null is an item
+$slice($.a, null)        // → { $slice: ["$a", null] }   the escape hatch passes the value as written
+```
+
+For the kind of each argument of a string method, see [String Methods](#string-methods).
+
 ### A read that gives no value
 
 A field read that can give no value on the server is a compile error too. Only an object has fields, and a closed object has only the fields that it names:
@@ -1578,6 +1595,18 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')                         // 
 | `%` | `$mod` | `$.a % $.b` |
 | `**` | `$pow` | `$.base ** 2` |
 | `-x` | `$multiply` by -1 | `-$.amount` |
+
+**An arithmetic operator refuses a proven date.** JSMQL refuses `+`, `-`, `*`, `/`, `%` and `**` when it proves that an operand is a date. Use the date methods instead (see [Date Operations](#date-operations)):
+
+```js
+$.d.startOf("day") - 1                   // ✗ the operand is a date; move a date with .plus() or .minus()
+$.d.startOf("day").plus(1, "day")        // → { $dateAdd: { startDate: { $dateTrunc: { date: "$d", unit: "day" } }, unit: "day", amount: 1 } }
+$.end.diff($.start, "day")               // → { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+$.d - 1                                  // → { $subtract: ["$d", 1] }   the kind of a bare field is unknown, so the server decides
+$subtract($.end.startOf("day"), $.start) // → { $subtract: [{ $dateTrunc: { date: "$end", unit: "day" } }, "$start"] }   as written
+```
+
+**This is a surprise for a JavaScript developer.** JavaScript subtracts two dates and gives the milliseconds between them. In JSMQL, `.diff(other, "millisecond")` gives this number. The escape hatch `$add(…)` or `$subtract(…)` gives the server's own date arithmetic.
 
 **Flat operator chains:** The compiler flattens chained `&&`, `||`, `+`, `*`, and `??` operators into one MongoDB array. It does not nest them:
 ```js
@@ -2794,6 +2823,15 @@ Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
 Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
 
+A conversion takes a value of its own type, and the server gives the value back unchanged:
+
+```js
+$.x = 0x507f1f77bcf86cd799439011; $.r = ObjectId($.x);
+// → [{ $set: { x: new ObjectId("507f1f77bcf86cd799439011") } }, { $set: { r: { $toObjectId: "$x" } } }]
+```
+
+The compiler has one number type for the four BSON number types. So `Long(x)`, `Int32(x)`, `Double(x)` and `Decimal128(x)` each take any number.
+
 ### `.toString()`
 
 ```js
@@ -3124,7 +3162,7 @@ new Date().diff($._id, "day")      // how old is this document?
 
 **Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (it crosses one midnight), and 00:30 to 23:30 the same day is **0 days**.
 
-Moment's subtraction of elapsed time reports the opposite result in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+Moment's subtraction of elapsed time reports the opposite result in both cases. For the elapsed milliseconds, use the unit `"millisecond"`: `$.end.diff($.start, "millisecond")` → `{ $dateDiff: { startDate: "$start", endDate: "$end", unit: "millisecond" } }`. Each millisecond is a boundary, so this count is the elapsed time.
 
 **Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` needs:
 

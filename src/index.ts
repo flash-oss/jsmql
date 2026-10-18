@@ -503,8 +503,9 @@ function validateInput(
       const parsed = parseInput(src);
       // This checks the entry form with every parameter bound to a value of no known
       // kind. The shape of the program does not depend on the values. Only the
-      // document does. A `null` fails this check, because a slot that states a kind
-      // refuses `null` (HR7). The call can pass a value of that kind.
+      // document does. The check does not bind `null`, because each slot that takes a
+      // value other than `null` refuses `null` (HR7). The call can pass a value of the
+      // kind that the slot takes.
       const unknown = new Map(parsed.params.map((b) => [b.name, new ParameterValue()] as const));
       lowerMode("auto", "jsmql", parsed.program, unknown);
     }

@@ -14,7 +14,7 @@ import { stringify } from "../../stringify.ts";
 import { isPlainObject } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
-import { takesOf, wrongKind } from "./check.ts";
+import { hint, takesOf, wrongKind } from "./check.ts";
 import type { Selected } from "./select.ts";
 import type { KindFault, Proven } from "../kinds.ts";
 import { constantOf } from "../passes/evaluate.ts";
@@ -715,6 +715,7 @@ const ELEMENT_NOUN: Readonly<Record<string, string>> = {
   date: "dates",
   objectId: "ObjectIds",
   binData: "binary data",
+  null: "null",
 };
 
 const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => table[k] ?? `a ${k}`;
@@ -779,7 +780,8 @@ function shownName(spelled: string): string {
  * The refusal for a value whose proof shows a kind that its slot never takes. The wording
  * is the one function `wrongKind` of check.ts, as for a literal. The message states what is
  * wrong and names no conversion and no escape hatch, because no one spelling is the right
- * one. See docs/specs/types.md § The kind check.
+ * one. The one exception is the `hint` of check.ts: when a date fills a slot that takes a
+ * number, the message names the date methods. See docs/specs/types.md § The kind check.
  */
 function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos: number): CodegenError {
   const name = shownName(spelled);
@@ -792,6 +794,7 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
           slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+          hint(fault.expected, fault.got),
         ),
         e?.pos ?? pos,
       );

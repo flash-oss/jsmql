@@ -398,6 +398,7 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
+var ownValue = (v, convert) => bsonTagOf(v) !== void 0 || isDate(v) ? { [convert]: v } : null;
 var dateRow = (spelling) => global_({
   doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
   token: "Ident",
@@ -416,13 +417,14 @@ var dateRow = (spelling) => global_({
   expr: {
     byArgs: {
       none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-      // A date that the source spells never reaches this row: the constant engine reads it
-      // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
-      // date parser reads. The slot states its kinds, so a constant of another kind, for
-      // example `null`, gets the refusal of a wrong kind. `construct` builds no date.
+      // A date that the source spells with literal parts never reaches this row, because the
+      // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
+      // converts (see `ownValue`). The slot states its kinds, so a constant of another kind,
+      // for example `null`, gets the refusal of a wrong kind. The cell refuses a string that
+      // no date parser reads.
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
-        emit: ({ args, construct }) => construct(
+        emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toDate") ?? construct(
           spelling,
           `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
           args[0]
@@ -484,7 +486,7 @@ var bsonValue = (e) => global_({
     byArgs: {
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-        emit: ({ args, construct }) => construct(e.spelling, e.refuseConstant, args[0])
+        emit: ({ args, value, construct }) => ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])
       },
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
@@ -10325,15 +10327,15 @@ var NAMES = {
         // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
         // constant engine reads it and a query compares it as written.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
-          emit: ({ args, construct }) => construct(
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
+          emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toObjectId") ?? construct(
             "ObjectId",
             `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`,
             args[0]
           )
         },
         dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
           emit: ({ args, value }) => ({ $toObjectId: value(args[0]) })
         },
         otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
@@ -10397,7 +10399,7 @@ var NAMES = {
     convert: "$toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
-    takes: "string",
+    takes: ["string", "binData"],
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
   }),
   MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
@@ -10933,7 +10935,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gt")
     },
     expr: {
@@ -10955,7 +10957,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gte")
     },
     expr: {
@@ -10977,7 +10979,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lt")
     },
     expr: {
@@ -10999,7 +11001,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lte")
     },
     expr: {
@@ -11021,7 +11023,10 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    filter: {
+      args: { sig: "value, list", exact: 2, slotType: { 0: "element", 1: "array" } },
+      emit: (input) => membershipQuery(input)
+    },
     expr: inCode("src/compiler/emit/lower.ts", {
       sig: "value, list",
       exact: 2,
@@ -11031,7 +11036,7 @@ var PRODUCTIONS = {
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
   }),
   addition: production({
-    doc: "Adds numbers, or adds to a date.",
+    doc: "Adds numbers, or joins strings.",
     tokens: ["+"],
     spelling: "+",
     becomes: "BinaryExpr",
@@ -11040,8 +11045,10 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
-    // operand kinds gives a number, a date, null or an error.
+    // src/compiler/emit/prove.ts proves a string. A proven date is refused, because a date
+    // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
+    // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
+    // or an error. `$add` of a date and 1000 is the date one second later.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -11056,7 +11063,7 @@ var PRODUCTIONS = {
     statement: unsupported("'+' is not a statement \u2014 see its 'where'.")
   }),
   subtraction: production({
-    doc: "Subtracts numbers or dates.",
+    doc: "Subtracts the right number from the left.",
     tokens: ["-"],
     spelling: "-",
     becomes: "BinaryExpr",
@@ -11064,14 +11071,17 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
-    // an error. A date minus a date is a long, and a date minus a number is a date.
+    // A proven date is refused, because a date takes `.minus()` and `.diff()`. A field of
+    // unknown kind can still hold a date, so the result can be a date. MEASURED: `$subtract`
+    // over each pair of operand kinds gives a number, a date, null or an error. A date minus
+    // a date is a long, the milliseconds between them (86400000 for one day). A date minus
+    // 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -21317,11 +21327,15 @@ function proofOf(t) {
 }
 function elementProofOf(t) {
   const e = elementOf(t);
-  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+  if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
+  return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
 }
 function itemProofsOf(t) {
   if (!has2(t, "array") || t.items === void 0) return void 0;
-  return t.items.map((i) => i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]);
+  return t.items.map((i) => {
+    if (i.kinds === "any") return "unknown";
+    return i.absent ? [...i.kinds, "null"] : [...i.kinds];
+  });
 }
 function elementOf(t) {
   if (!has2(t, "array")) return NOTHING;
@@ -21869,6 +21883,8 @@ function matches(lit2, expected) {
       return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
     case "date":
     case "timestamp":
+    case "objectId":
+    case "binData":
     case "callback":
       return false;
   }
@@ -21887,6 +21903,8 @@ var TAKES = {
   object: "a document",
   date: "a date",
   timestamp: "a timestamp",
+  objectId: "an ObjectId",
+  binData: "binary data",
   any: "a value",
   value: "a value",
   callback: "a callback",
@@ -21905,7 +21923,13 @@ function refuseProvenNull(name2, slot, e, takes, proof) {
   throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, takes, "got null"), e.pos);
 }
 var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
-var hint = (expected) => {
+var hint = (expected, got = []) => {
+  if (Array.isArray(expected)) {
+    return expected.includes("number") ? hint("number", got) : "";
+  }
+  if (expected === "number" && got.includes("date")) {
+    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+  }
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
@@ -22536,7 +22560,8 @@ var ELEMENT_NOUN = {
   object: "documents",
   date: "dates",
   objectId: "ObjectIds",
-  binData: "binary data"
+  binData: "binary data",
+  null: "null"
 };
 var nounFor = (k, table) => table[k] ?? `a ${k}`;
 var orList = (items) => {
@@ -22578,7 +22603,8 @@ function kindRefusal(fault, spelled3, subjects, pos) {
           name2,
           slotName(subjects, fault.slot),
           takesOf(fault.expected),
-          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+          hint(fault.expected, fault.got)
         ),
         e?.pos ?? pos
       );
@@ -23419,6 +23445,8 @@ function kindFits(kind, expected, elements = "unknown") {
     case "array":
     case "object":
     case "date":
+    case "objectId":
+    case "binData":
       return kind === expected;
     case "element":
       return elements === "unknown" || elements.includes(kind);
@@ -23428,6 +23456,7 @@ function kindFits(kind, expected, elements = "unknown") {
   }
 }
 var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
 var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
 var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
 var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
@@ -23447,10 +23476,12 @@ function faultOf(name2, rule, proofs) {
     const via = proofs.viaElements?.[i] === true;
     spread = spread || proofs.packed === true && via;
     const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    const proof = proofs.args[i];
-    if (expected === void 0 || takesCallback(expected) || proof === "unknown") continue;
-    if (proofFits(proof, expected, proofs.elements)) continue;
-    const through = via ? { viaElements: true } : {};
+    if (expected === void 0 || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
+    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
     return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : { rule: "slot", slot: i, expected, got: proof, ...through };
   }
   if (rule.homogeneous === true) {
@@ -23600,12 +23631,7 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   };
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
-  const found2 = sourceType === null ? void 0 : itemProofsOf(sourceType);
-  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
-  const items = found2 === void 0 || elementNodes.length !== found2.length ? found2 : found2.map((p, i) => {
-    const el = elementNodes[i];
-    return el.type === "NullLiteral" ? ["null"] : p;
-  });
+  const items = sourceType === null ? void 0 : itemProofsOf(sourceType);
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   if (list !== null) {
     const own = (e) => e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);
@@ -23633,7 +23659,16 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   };
   const proofs = args.map(throughElements);
   const tuple = items === void 0 ? {} : { items };
-  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) } : { args: proofs, elements, ...tuple };
+  const asElement = args.map((a, i) => {
+    const p = plain[i];
+    if (isField === void 0 || a.type === "SpreadElement" || !isField(a) || p === "unknown") return void 0;
+    if (!p.every((k) => k === "array")) return void 0;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    return elements !== "unknown" && elements.includes("array") ? [.../* @__PURE__ */ new Set([...p, ...held])] : held;
+  });
+  const views = isField === void 0 ? {} : { whole: plain, asElement };
+  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true), ...views } : { args: proofs, elements, ...tuple, ...views };
 }
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
@@ -24933,6 +24968,7 @@ function leaf(node, env) {
   const proofs = escape ? UNPROVEN : proofsFor(args, env, true, source === void 0 ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
   const sel = select(verdict, receiver, shapeOf2(args), args.length, proofs);
   if (sel.kind === "wrongKind") {
+    operandsFirst(args, childEnv(env, node, "args"));
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, [], void 0, {
       ...recv === null ? {} : { receiver: recv },
       args

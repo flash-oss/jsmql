@@ -161,6 +161,38 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(jsmql.expr("$.x in [1, 2]")).toEqual({ $in: ["$x", [1, 2]] });
   });
 
+  it("a null element is an element of the list, so a null needle fits it", () => {
+    expect(jsmql.expr("[1, null].has(null)")).toBe(true);
+    expect(jsmql.expr("null in [1, null]")).toBe(true);
+    expect(jsmql.expr("[1, null].without(null)")).toEqual([1]);
+    expect(jsmql.expr("[1, null].lastIndexOf(null)")).toBe(1);
+    expect(jsmql.expr("null in [1, $.x]")).toEqual({ $in: [null, [1, "$x"]] });
+    expect(jsmql("$.a = [1, null]; $.r = $.a.has(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $in: [null, "$a"] } } },
+    ]);
+    expect(jsmql("$.a = [1, null]; $.r = $.a.indexOf(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $indexOfArray: ["$a", null] } } },
+    ]);
+    // A read that the proof shows is null is a null element too.
+    expect(jsmql("$.o = { b: null }; $.r = [1, $.o.b].has(null);")).toEqual([
+      { $set: { o: { $mergeObjects: [{ b: null }] } } },
+      { $set: { r: { $in: [null, [1, "$o.b"]] } } },
+    ]);
+  });
+
+  it("a null needle is refused where no element is null, and the message names a held null", () => {
+    expect(() => jsmql.expr("[1, 2].has(null)")).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.expr("[1, 2].without(null)")).toThrow(/'\.without\(\)' argument 1 takes an element/);
+    expect(() => jsmql("$.a = [1, 2]; $.r = $.a.has(null);")).toThrow(/'\.has\(\)' argument 1 takes an element/);
+    expect(() => jsmql.expr('[1, null].has("a")')).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got a string, and the array holds numbers or null.",
+    );
+  });
+
   it("a call that the program passes in is judged by its kind as a literal is", () => {
     const build = jsmql.compile(({ n }: { n: unknown }, { $ }: { $: any }) => $.s.trim() + n);
     expect(() => build({ n: 1 })).toThrow(/'\+' takes operands of one kind/);
@@ -185,6 +217,21 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(() => jsmql.pipeline('$.n = 1; $match($.n < "x");')).toThrow(/'<' takes operands of one kind/);
   });
 
+  it("a null needle fits a list that holds a null, and is refused by a list that holds none", () => {
+    expect(jsmql.filter("null in [1, null]")).toEqual({ $expr: true });
+    expect(jsmql.filter("null in [1, $.x]")).toEqual({ $expr: { $in: [null, [1, "$x"]] } });
+    expect(jsmql.pipeline("$.a = [1, null]; $match($.a.has(null));")).toEqual([
+      { $set: { a: [1, null] } },
+      { $match: { a: null } },
+    ]);
+    expect(() => jsmql.filter("null in [1, 2]")).toThrow(
+      "'in' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.pipeline("$.a = [1, 2]; $match($.a.has(null));")).toThrow(
+      /'\.has\(\)' argument 1 takes an element of the array, but got null/,
+    );
+  });
+
   it("a field of unknown kind passes, and the server decides", () => {
     expect(jsmql.pipeline('$match($.n === "x");')).toEqual([{ $match: { n: "x" } }]);
   });
@@ -201,6 +248,41 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags === ["a"]);')).toEqual([
       { $set: { tags: ["a"] } },
       { $match: { $expr: { $eq: ["$tags", ["a"]] } } },
+    ]);
+  });
+
+  // The query cell of an operator states the kinds of its value cell, so the two forms refuse alike.
+  for (const op of ["<", ">", "<=", ">="]) {
+    it(`'${op}' in a query takes the kinds of its value form`, () => {
+      for (const src of [`$.x = null; $.r = $.x ${op} 1;`, `$.x = null; $match($.x ${op} 1);`]) {
+        expect(() => jsmql.pipeline(src)).toThrow(
+          `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got null.`,
+        );
+      }
+      expect(() => jsmql.pipeline(`$.o = { a: 1 }; $match($.o ${op} 1);`)).toThrow(
+        `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got a document.`,
+      );
+    });
+  }
+
+  it("'in' in a query takes an element of its list, as its value form does", () => {
+    for (const src of ['$.n = 1; $.r = $.n in ["a"];', '$.n = 1; $match($.n in ["a"]);']) {
+      expect(() => jsmql.pipeline(src)).toThrow(
+        "'in' argument 1 takes an element of the array, but got a number, and the array holds strings.",
+      );
+    }
+    // A query tests each element of an array field against the list (SR2).
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in ["a", "b"]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: ["a", "b"] } } },
+    ]);
+    expect(() => jsmql.pipeline('$.tags = [1]; $match($.tags in ["a"]);')).toThrow(
+      "'in' argument 1 takes an element of the array, but got an element of 'tags' that is a number, and the array holds strings.",
+    );
+    // A list that holds an array also tests the whole field.
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in [["a"]]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: [["a"]] } } },
     ]);
   });
 
@@ -408,6 +490,15 @@ describe("kinds — a literal array is judged by each position, a computed array
     expect(() => jsmql.expr("[null].mean()")).toThrow(/'\.mean\(\)' takes numbers, but the array holds null\./);
   });
 
+  it("a null position is judged the same way in a written array and in a read that the proof shows", () => {
+    expect(() => jsmql("$.a = [1, null]; $.r = $.a.max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
+    expect(() => jsmql("$.o = { b: null }; $.r = [1, $.o.b].max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
+  });
+
   it("a null that the call supplies proves no kind", () => {
     expect(jsmql.validate(({ n }: { n: unknown }, { $ }: { $: any }) => [$.x, n].max())).toEqual({
       valid: true,
@@ -539,11 +630,13 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     );
   });
 
-  it("an ObjectId and a UUID convert a string alone", () => {
+  it("an ObjectId and a UUID convert a string, or a value of their own type", () => {
     expect(() => jsmql.expr("ObjectId($.s.length())")).toThrow(
-      /'ObjectId\(\)' argument 1 takes a string, but got a number\./,
+      /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got a number\./,
     );
-    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(/'UUID\(\)' argument 1 takes a string, but got a number\./);
+    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(
+      /'UUID\(\)' argument 1 takes a string or binary data, but got a number\./,
+    );
   });
 
   it("a date converts a string, a number or a date", () => {
