@@ -7,7 +7,8 @@
 // type, and there is exactly one constructor, so a renderer cannot be handed a
 // record with a service missing.
 
-import { regexValue } from "../../bson.ts";
+import { bsonConstant, bsonNullary, regexValue } from "../../bson.ts";
+import { constantOf, settled } from "../passes/evaluate.ts";
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth, Type } from "../../registry/vocabulary.ts";
 import { queryOrMissing, queryOwnValue } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
@@ -87,10 +88,14 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
  * An index or receiver parameter is a different lowering. No row that
  * reaches this constructor states one.
  */
-function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; ref: string; in: unknown } {
-  if (cb.type !== "Lambda" || cb.body === undefined) {
-    internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
-  }
+function callback(
+  cb: Expr,
+  env: Env,
+  read: (body: Expr, e: Env) => unknown,
+  /** The refusal for an argument that is no arrow. A row that states its iteratee slots never reaches the internal error. */
+  refusal: () => CodegenError,
+): { as: string; ref: string; in: unknown } {
+  if (cb.type !== "Lambda" || cb.body === undefined) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
@@ -290,9 +295,15 @@ export function exprInputs(
   present = false,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
-  const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
+  // The fold does not visit a node that the cell BUILT (`list.map(key)` from its arguments), so this code settles it.
+  const value = (e: Expr): unknown =>
+    overrides.has(e) ? overrides.get(e) : read.value(env.site.settling ? e : settled(e), argEnv);
   // What one element of the receiver is, for a sort by name.
   const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
+  // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
+  // rewrites each short spelling that the row accepts, so the refusal names the spellings left.
+  const notArrow = (cb: Expr, what: string): CodegenError =>
+    notAnArrow(name, what, slotFormsOf(name, "array", Math.max(0, args.indexOf(cb))), cb);
   return {
     name,
     recv,
@@ -304,8 +315,9 @@ export function exprInputs(
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     elementTruth: (ref) => truthOf(ref, elementOfRecv()),
-    iteratee: (cb) => callback(cb, argEnv, read.value),
-    predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
+    iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
+    predicate: (cb) =>
+      callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")) as { as: string; ref: string; in: Truth },
     callback: (cb, mode) =>
       arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
@@ -362,6 +374,17 @@ export function exprInputs(
       );
     },
     slot: () => env.chain.slot().path,
+    construct: (spelling, refusal, arg) => {
+      const given = arg === undefined ? null : constantOf(arg);
+      const built =
+        arg === undefined
+          ? bsonNullary(spelling)
+          : given !== null && given.ok
+            ? bsonConstant(spelling, given.value)
+            : null;
+      if (built === null) throw new CodegenError(refusal, (node as { pos: number }).pos);
+      return built;
+    },
   };
 }
 
@@ -616,7 +639,7 @@ export function stageInputs(
     name,
     args,
     keys,
-    value: (e) => read.value(e, argEnv),
+    value: (e) => read.value(env.site.settling ? e : settled(e), argEnv),
     truth: (e) => read.truth(e, argEnv),
     predicate: (cb) => {
       const b = body(cb, "a predicate");

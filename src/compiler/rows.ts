@@ -8,6 +8,7 @@
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
 import type {
+  Arity,
   Family,
   FieldFamily,
   IterateeSlots,
@@ -256,9 +257,12 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
-/** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array gives MongoDB's text, not JavaScript's. */
-export function elementsOf(name: string): "scalar" | undefined {
-  return (row(name) as { elements?: "scalar" } | undefined)?.elements;
+/**
+ * What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an
+ * array makes the server refuse, or the one kind that every element must have (HR7).
+ */
+export function elementsOf(name: string): "scalar" | Kind | undefined {
+  return (row(name) as { elements?: "scalar" | Kind } | undefined)?.elements;
 }
 
 /**
@@ -282,15 +286,14 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
   // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
   // by the count no rule states rather than accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
-  // A refusal states no count: a constant call is counted by the rule for its class,
-  // and the leftover by none. A counted refusal (`Long($.x)`) states the count of
-  // its class, so the fold still builds the constant of that count (`Long(5)`).
+  // The refusal keys state no count: a constant call is counted by the rule for its
+  // class, and the leftover by none.
   const byArgs = (cell as { byArgs?: Readonly<Record<string, { args?: ArgCount; unsupported?: string }>> }).byArgs;
   if (byArgs === undefined) return undefined;
   const allowed = new Set<number>();
   let atLeast: number | undefined;
   for (const branch of Object.values(byArgs)) {
-    if (branch.unsupported !== undefined && branch.args === undefined) continue;
+    if (branch.unsupported !== undefined) continue;
     const a = branch.args;
     if (a === undefined) return undefined; // a rule with no count accepts anything
     if (a.none === true) allowed.add(0);
@@ -333,6 +336,7 @@ export function lists(name: string, where: Position): boolean {
 import type { Binds, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
 import type { CallbackParams } from "../registry/vocabulary.ts";
 import { PRODUCTIONS } from "../registry/productions.ts";
+import { internalError } from "../errors.ts";
 
 type EmitRow = {
   returns?: TypeExpr;
@@ -753,6 +757,35 @@ export function productionForOperator(nodeType: "BinaryExpr" | "UnaryExpr", op: 
   return undefined;
 }
 
+/**
+ * The rule for the operand kinds of an operator, as the row of its production states
+ * it, with the key of that row. A pass that owns the lowering states the rule too
+ * (`inCode`), so this reads the value cell in both cases.
+ */
+export function operandRuleOf(
+  nodeType: "BinaryExpr" | "UnaryExpr",
+  op: string,
+): { key: string; rule: Arity } | undefined {
+  const key = productionForOperator(nodeType, op);
+  if (key === undefined) return undefined;
+  const cell = (PRODUCTIONS as Record<string, { expr?: { args?: Arity } }>)[key]?.expr;
+  return cell?.args === undefined ? undefined : { key, rule: cell.args };
+}
+
+/** The one production that builds a node of this type, for a node with no operator token. */
+export function productionBuilding(nodeType: string): string {
+  const keys = (Object.entries(PRODUCTIONS) as [string, { becomes: unknown }][])
+    .filter(([, p]) => p.becomes === nodeType)
+    .map(([k]) => k);
+  if (keys.length !== 1) internalError(`${keys.length} productions build a '${nodeType}'`);
+  return keys[0];
+}
+
+/** How a message spells a production: its `spelling`, for example `x[0]`. */
+export function productionSpelling(productionKey: string): string {
+  return ((PRODUCTIONS as Record<string, unknown>)[productionKey] as { spelling: string }).spelling;
+}
+
 /** Does this production state that a left-nested chain lowers as one operator? */
 export function flattensChain(productionKey: string): boolean {
   return (PRODUCTIONS as Record<string, { flattensChain?: true }>)[productionKey]?.flattensChain === true;
@@ -870,7 +903,7 @@ export function valueTerminalMethodNames(): string[] {
   });
 }
 
-/** Every method the rows know in value position — a rule or a refusal that names the alternative; the editor completes both. */
+/** Every method the rows know in value position — a rule or a refusal; the editor completes both. */
 export function valueMethodNames(): string[] {
   return methodRows().filter((n) => lists(n, "value") || (row(n) as { expr?: unknown }).expr !== undefined);
 }

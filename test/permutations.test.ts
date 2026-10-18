@@ -159,7 +159,9 @@ const STREAM_LOOKUP_RESHAPERS = [
   "sampleSize(2)",
   "shuffle()",
 ];
-// stream-mode: value-collapsing terminals (valid only in a value position)
+// stream-mode: value-collapsing terminals (valid only in a value position). No numeric
+// terminal (`.sum()`, `.mean()`, `.min()`, `.max()`) is here, because the elements of the
+// stream are documents (HR7). `.sumBy()` and `.meanBy()` read a number from each document.
 const STREAM_TERMINALS = [
   "head()",
   "first()",
@@ -172,7 +174,6 @@ const STREAM_TERMINALS = [
   "groupBy('userId')",
   "countBy('userId')",
   "partition(o => o.total > 10)",
-  "sum()",
   "sumBy('total')",
   "meanBy('total')",
   "maxBy('total')",

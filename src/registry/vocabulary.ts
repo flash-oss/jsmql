@@ -154,11 +154,39 @@ export type ArgType =
   | "int"
   | "int-or-long"
   | "number-or-date"
+  /**
+   * A value that a comparison operator orders: a number, a string, a date or an
+   * ObjectId. The two sentinels fit too, because they compare with every type.
+   */
+  | "orderable"
   | "date"
   | "timestamp"
   | "bool"
   | "object"
-  | "array";
+  | "array"
+  /**
+   * The slot takes a value of every kind, and a literal `null` too. A row states
+   * this on purpose, so that "no limit" and "not yet typed" are two different
+   * facts: a slot with no type is an open item that the audit reports.
+   */
+  | "any"
+  /**
+   * The slot takes a value of every kind, but never `null`. A conversion uses this kind:
+   *   String($.n)    → accepted
+   *   String(null)   → refused: a conversion of null has no meaning (HR7)
+   */
+  | "value"
+  /** The slot takes a callback: an arrow. A value that is proven to be a plain value does not fit. */
+  | "callback"
+  /** The slot takes a regular expression, or a string as the pattern. The row's other rules say which string. */
+  | "regex"
+  /**
+   * The slot takes a value of the kind of ONE element of the row's element source.
+   * The source is the receiver for a method, and the last operand for a production:
+   * `x in [ … ]` takes an `x` of the kind of the list's elements. The compiler
+   * refuses a value that is proven to be a kind the elements cannot be.
+   */
+  | "element";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. LEXICAL — the tokens the lexer can produce, and the nodes the parser builds
@@ -659,14 +687,31 @@ export type Arity = {
    * MEASURED on `$unset`: the server refuses `""` and `[]`.
    */
   nonEmpty?: Readonly<Record<number, { noun: string; instead: string }>>;
-  /** The literal type per slot. The compiler tests it only when the slot holds a literal. */
   /**
-   * The literal type a slot accepts, or the SET of types where a slot takes more
-   * than one shape. `$unionWith` takes a collection NAME or a body document, and
-   * the server refuses everything else, for example an int. One type is the common
-   * case, and it stays a bare `ArgType`.
+   * The kind a slot takes, or the SET of kinds where a slot takes more than one
+   * shape. `$unionWith` takes a collection NAME or a body document, and the server
+   * refuses everything else, for example an int. One type is the common case, and it
+   * stays a bare `ArgType`. HR7 reads it: the compiler refuses a value that is
+   * PROVEN to have another kind, even where the server accepts the MQL. A value of
+   * unknown kind passes. The index keys it, so a slot beyond the named ones takes
+   * `rest`.
    */
   slotType?: Readonly<Record<number, ArgType | readonly ArgType[]>>;
+  /**
+   * The kind of every slot that `slotType` does not name. A call can have more
+   * operands than a row can list (`atLeast`), and a slot with no stated kind would
+   * state no HR7 rule. `"any"` is the stated answer for a slot that takes every kind.
+   */
+  rest?: ArgType | readonly ArgType[];
+  /**
+   * Every operand has one kind. The first operand with a PROVEN kind sets it. A later
+   * operand with another proven kind is refused. This is the rule of `===` (the test
+   * is always false for two kinds) and of `+` (a number and a string never add). An
+   * operand of unknown kind, or of two or more possible kinds, sets no kind and is never
+   * refused by this rule. A literal `null` is not compared, because `x === null` is
+   * the test for a null or missing value.
+   */
+  homogeneous?: true;
   /**
    * Slots that hold an ARRAY LITERAL in which every element must have one type.
    * `.pick(["name", "email"])` lists field names, and `.pick([1, 2])` projects
@@ -1057,6 +1102,14 @@ export type ExprIn = {
   hoist: (stages: readonly Stage[], reads: string) => string;
   /** A new `__jsmql.tmp.<n>` scratch field path. */
   slot: () => string;
+  /**
+   * The live value that a constructor builds from a CONSTANT argument: a date, a BSON number,
+   * an ObjectId, or (with no argument) a sentinel such as `MinKey()`. The server has no
+   * expression that builds some of these values, so the value goes into the MQL as itself.
+   * `refusal` is the message for a constant that the type cannot hold. The compiler throws
+   * it at the call, and the cell never sees a null.
+   */
+  construct: (spelling: string, refusal: string, arg?: Expr) => unknown;
 };
 
 /**
@@ -1186,9 +1239,18 @@ export type Emit<In, Out> = (input: In) => Out;
  * states that the construct exists, and where it is legal. The code says how the
  * compiler builds it.
  */
-type InCode = { inCode: string };
+type InCode = {
+  inCode: string;
+  /**
+   * The rule for the kinds of the operands. A pass builds the MQL, but HR7 still
+   * judges each operand, so the row states the operand kinds here. The compiler reads
+   * no count from this field, because the pass owns the count.
+   */
+  args?: Arity;
+};
 
-export const inCode = (file: string): InCode => ({ inCode: file });
+export const inCode = (file: string, args?: Arity): InCode =>
+  args === undefined ? { inCode: file } : { inCode: file, args };
 
 /** A refusal that carries the message for the user to read. */
 export type Refusal = {
@@ -1281,13 +1343,6 @@ export type BsonType =
   | "maxKey"
   | "missing";
 
-/**
- * A refused class of arguments that still has a count. The row refuses `Long($.x)`, and
- * the name still takes one argument, so the fold builds `Long(5)`. The fold reads the count,
- * and the refusal answers the class.
- */
-export type CountedRefusal = Refusal & { args: Arity };
-
 export type Rule<In, Out> = { args: Arity; emit: Emit<In, Out> };
 
 /**
@@ -1325,8 +1380,8 @@ type ByArgs<In, Out> = {
    * server decides, which a rule sends to the server to convert.
    */
   constant?: Rule<In, Out> | Refusal;
-  /** A value that the document holds: a rule, or a refusal that still states its count. */
-  dynamic?: Rule<In, Out> | CountedRefusal;
+  /** A value that the document holds: a rule, or a refusal that names the conversion method. */
+  dynamic?: Rule<In, Out> | Refusal;
   /** Every class that no key above claims. The row states it, so what stays is a decision and not a hole. */
   otherwise: Refusal;
 };

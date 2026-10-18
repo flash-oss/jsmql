@@ -44,8 +44,8 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
   });
   it("a string that looks like a field reference stays a string", () => {
     expect(jsmql`$.a === ${"$b"}`).toEqual({ a: "$b" });
-    expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $add: ["$a", { $literal: "$b" }] });
-    expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $add: ["$a", { $literal: "$b" }] });
+    expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $concat: ["$a", { $literal: "$b" }] });
+    expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $concat: ["$a", { $literal: "$b" }] });
     // a pipeline evaluates its values too: a `$set` value, a stage body, a group key
     expect(jsmql.pipeline`$.x = ${"$b"};`).toEqual([{ $set: { x: { $literal: "$b" } } }]);
     expect(
@@ -119,7 +119,7 @@ describe("a developer-authored field name survives to the output", () => {
   it("every folding road that builds an object keeps the name", () => {
     for (const k of HOSTILE) {
       const q = JSON.stringify(k);
-      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a:1}).mapKeys(() => ${q});`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a:1}).mapKeys(v => ${q});`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = [[${q}, 1]].fromPairs();`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = ({a: ${q}}).invert();`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = [${q}].zipObject([1]);`))).toContain(k);

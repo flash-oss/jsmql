@@ -7,7 +7,7 @@
 // (TS2578), so a rule that stops firing fails this file in either direction.
 // test/registry-contracts.test.ts runs it.
 
-import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
+import type { Arity, Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
 import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
@@ -21,6 +21,20 @@ const A = { sig: "", none: true } as const;
 const R = { args: A, emit: () => 1 };
 
 type Value<F extends Family> = Cell<true, F, ExprIn, OutOf["value"]>;
+
+// ── the kind of a slot (HR7): `slotType`, `rest`, `homogeneous` ──────────────
+
+export const typedSlots: Arity = {
+  sig: "a, b[, …]",
+  atLeast: 2,
+  slotType: { 0: "element", 1: ["array", "object"] },
+  rest: ["number", "string"],
+  homogeneous: true,
+};
+// @ts-expect-error — a slot kind that no type names
+export const unnamedKind: Arity = { sig: "a", exact: 1, rest: "text" };
+// @ts-expect-error — `homogeneous` is a flag that is true or absent
+export const homogeneousOff: Arity = { sig: "a, b", exact: 2, homogeneous: false };
 
 // ── `perFamily`: a rule or a refusal per family ───────────────────────────────
 
@@ -127,3 +141,9 @@ export const exprOfValue = matchExpr("$a");
 export const andOfValues = and("$a", "$b");
 export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
 export const condOfBool = cond(boolTruth({ $gt: ["$a", 1] }), 1, 2);
+
+// ── "value": every kind, never null ──────────────────────────────────────────
+
+export const valueKind: Arity = { sig: "value", exact: 1, slotType: { 0: "value" } };
+// @ts-expect-error — "defined" is no kind; "value" is every kind but null
+export const definedKind: Arity = { sig: "value", exact: 1, slotType: { 0: "defined" } };

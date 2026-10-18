@@ -9,6 +9,7 @@
 // and nothing here reads a node: `prove.ts` does both and calls in here.
 
 import type { Family, Kind, Type, TypeExpr } from "../../registry/vocabulary.ts";
+import type { Proof } from "../kinds.ts";
 
 const has = (t: Type, k: Kind): boolean => t.kinds === "any" || t.kinds.has(k);
 
@@ -75,6 +76,30 @@ export function single(t: Type): Kind | "unknown" {
 
 /** The kinds as a list, or null for `ANY`. */
 export const kindsOf = (t: Type): readonly Kind[] | null => (t.kinds === "any" ? null : [...t.kinds]);
+
+/** The proof of a value, as the kind check reads it. Presence is not a kind, so it does not affect the proof. */
+export function proofOf(t: Type): Proof {
+  if (t.kinds === "any") return "unknown";
+  return t.kinds.size === 0 ? ["null"] : [...t.kinds];
+}
+
+/**
+ * The proof of ONE element of an array value. An array with no element, or with only
+ * null elements, proves nothing about them, so that `[].has(1)` stays legal.
+ */
+export function elementProofOf(t: Type): Proof {
+  const e = elementOf(t);
+  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+}
+
+/**
+ * The proof of EACH position of an array value of a fixed length, or undefined for an
+ * array of unknown length. A position that proves nothing, or only null, is unproven.
+ */
+export function itemProofsOf(t: Type): readonly Proof[] | undefined {
+  if (!has(t, "array") || t.items === undefined) return undefined;
+  return t.items.map((i) => (i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]));
+}
 
 /** What ONE element of an array value is. A value that may not be an array proves nothing of its elements. */
 export function elementOf(t: Type): Type {
