@@ -568,11 +568,13 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     );
   });
 
-  it("an ObjectId and a UUID convert a string alone", () => {
+  it("an ObjectId and a UUID convert a string, or a value of their own type", () => {
     expect(() => jsmql.expr("ObjectId($.s.length())")).toThrow(
-      /'ObjectId\(\)' argument 1 takes a string, but got a number\./,
+      /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got a number\./,
     );
-    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(/'UUID\(\)' argument 1 takes a string, but got a number\./);
+    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(
+      /'UUID\(\)' argument 1 takes a string or binary data, but got a number\./,
+    );
   });
 
   it("a date converts a string, a number or a date", () => {

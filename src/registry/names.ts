@@ -108,6 +108,7 @@ import type {
 } from "./vocabulary.ts";
 import {
   because,
+  bsonTagOf,
   escapeForRegex,
   GROUP_SLOT,
   isDate,
@@ -740,6 +741,17 @@ const mongo = <
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
 
 /**
+ * The conversion of a constant that is ALREADY a live value of the type of the row. It is
+ * null for a string or a JavaScript number, because the `constant` cell builds those. HR7
+ * lets a conversion take a value of its own type. The cell converts that value as it
+ * converts a runtime value, and it builds nothing. MEASURED on mongod 9.0: `$toObjectId`, `$toLong`, `$toDouble`,
+ * `$toDecimal`, `$toInt`, `$toUUID`, `$toDate`, `$toString` and `$toBool` each give a
+ * value of their own type back, with the same type and an equal value.
+ */
+const ownValue = (v: unknown, convert: string): Record<string, unknown> | null =>
+  bsonTagOf(v) !== undefined || isDate(v) ? { [convert]: v } : null;
+
+/**
  * One BSON value constructor, and its mongosh spelling where it has one.
  *
  * `spelling` is the name the row answers to, so every message names what the user
@@ -767,12 +779,19 @@ const dateRow = (spelling: string) =>
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-        // A date that the source spells never reaches this row: the constant engine reads it
-        // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
-        // date parser reads.
-        constant: unsupported(
-          `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
-        ),
+        // A date that the source spells with literal parts never reaches this row, because the
+        // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
+        // converts (see `ownValue`). The cell refuses a string that no date parser reads.
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+          emit: ({ args, value, construct }) =>
+            ownValue(value(args[0]), "$toDate") ??
+            construct(
+              spelling,
+              `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+              args[0],
+            ),
+        },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
           // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
@@ -824,8 +843,11 @@ const bsonValue = (e: {
   isA: string;
   compare: string;
   refuseConstant: string;
-  /** The kinds the `$to…` operator reads. MEASURED: a string or a number converts. Absent, both. */
-  takes?: ArgType;
+  /**
+   * The kinds the `$to…` operator reads. MEASURED: a string or a number converts. Absent, both.
+   * The list holds the kind of `returns`, because a conversion takes a value of its own type.
+   */
+  takes?: readonly ArgType[];
 }) =>
   global_({
     doc: e.doc,
@@ -842,7 +864,8 @@ const bsonValue = (e: {
       byArgs: {
         constant: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-          emit: ({ args, construct }: ExprIn) => construct(e.spelling, e.refuseConstant, args[0]),
+          emit: ({ args, value, construct }: ExprIn) =>
+            ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0]),
         },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
@@ -11580,8 +11603,9 @@ export const NAMES = {
         // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
         // constant engine reads it and a query compares it as written.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
-          emit: ({ args, construct }) =>
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
+          emit: ({ args, value, construct }) =>
+            ownValue(value(args[0]), "$toObjectId") ??
             construct(
               "ObjectId",
               "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
@@ -11589,7 +11613,7 @@ export const NAMES = {
             ),
         },
         dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
           emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }),
         },
         otherwise: unsupported("'ObjectId(…)' takes no argument (a new id) or one value to convert."),
@@ -11659,7 +11683,7 @@ export const NAMES = {
     convert: "$toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
-    takes: "string",
+    takes: ["string", "binData"],
     refuseConstant:
       "'UUID(<constant>)' — this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID(\"6ac24965-7917-4323-8d44-920ad1d69b94\")').",
   }),

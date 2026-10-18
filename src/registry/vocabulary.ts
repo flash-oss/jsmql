@@ -149,6 +149,9 @@ export type ArgType =
   | "bool"
   | "object"
   | "array"
+  | "objectId"
+  /** Binary data, for example a UUID. */
+  | "binData"
   /**
    * The slot takes a value of every kind, and a literal `null` too. A row states
    * this on purpose, so that "no limit" and "not yet typed" are two different

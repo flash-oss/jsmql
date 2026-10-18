@@ -2811,6 +2811,15 @@ Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
 Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
 
+A conversion takes a value of its own type, and the server gives the value back unchanged:
+
+```js
+$.x = 0x507f1f77bcf86cd799439011; $.r = ObjectId($.x);
+// → [{ $set: { x: new ObjectId("507f1f77bcf86cd799439011") } }, { $set: { r: { $toObjectId: "$x" } } }]
+```
+
+The compiler has one number type for the four BSON number types. So `Long(x)`, `Int32(x)`, `Double(x)` and `Decimal128(x)` each take any number.
+
 ### `.toString()`
 
 ```js

@@ -398,6 +398,7 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
+var ownValue = (v, convert) => bsonTagOf(v) !== void 0 || isDate(v) ? { [convert]: v } : null;
 var dateRow = (spelling) => global_({
   doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
   token: "Ident",
@@ -416,12 +417,17 @@ var dateRow = (spelling) => global_({
   expr: {
     byArgs: {
       none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-      // A date that the source spells never reaches this row: the constant engine reads it
-      // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
-      // date parser reads.
-      constant: unsupported(
-        `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
-      ),
+      // A date that the source spells with literal parts never reaches this row, because the
+      // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
+      // converts (see `ownValue`). The cell refuses a string that no date parser reads.
+      constant: {
+        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+        emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toDate") ?? construct(
+          spelling,
+          `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+          args[0]
+        )
+      },
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
         // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
@@ -478,7 +484,7 @@ var bsonValue = (e) => global_({
     byArgs: {
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-        emit: ({ args, construct }) => construct(e.spelling, e.refuseConstant, args[0])
+        emit: ({ args, value, construct }) => ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])
       },
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
@@ -10317,15 +10323,15 @@ var NAMES = {
         // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
         // constant engine reads it and a query compares it as written.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
-          emit: ({ args, construct }) => construct(
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
+          emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toObjectId") ?? construct(
             "ObjectId",
             `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`,
             args[0]
           )
         },
         dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
           emit: ({ args, value }) => ({ $toObjectId: value(args[0]) })
         },
         otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
@@ -10389,7 +10395,7 @@ var NAMES = {
     convert: "$toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
-    takes: "string",
+    takes: ["string", "binData"],
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
   }),
   MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
@@ -21865,6 +21871,8 @@ function matches(lit2, expected) {
       return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
     case "date":
     case "timestamp":
+    case "objectId":
+    case "binData":
     case "callback":
       return false;
   }
@@ -21883,6 +21891,8 @@ var TAKES = {
   object: "a document",
   date: "a date",
   timestamp: "a timestamp",
+  objectId: "an ObjectId",
+  binData: "binary data",
   any: "a value",
   value: "a value",
   callback: "a callback",
@@ -23405,6 +23415,8 @@ function kindFits(kind, expected, elements = "unknown") {
     case "array":
     case "object":
     case "date":
+    case "objectId":
+    case "binData":
       return kind === expected;
     case "element":
       return elements === "unknown" || elements.includes(kind);
