@@ -348,8 +348,11 @@ export function checkBody(
   }
 }
 
-/** How the source spells a name: a stage or an operator keeps its '$', a method gets its dot and parentheses. */
-const spell = (name: string): string => (name.startsWith("$") ? name : `.${name}()`);
+/**
+ * How the source spells a name. A method gets its dot and parentheses. A stage, an
+ * operator and an operator token (`|`) stay as written.
+ */
+const spell = (name: string): string => (/^[A-Za-z_]\w*$/.test(name) ? `.${name}()` : name);
 
 /** The slot types whose literal rule reads the source text, so that no kind can state it. */
 const SOURCE_CHECKED: ReadonlySet<ArgType> = new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
@@ -430,15 +433,16 @@ export function checkSlots(
   // The KIND of a slot is HR7's, and `select` judges it from the proof of each operand.
   // Only the checks that read the SOURCE of a literal stay here: a whole number, and a
   // field name or a field path, whose rules a kind cannot state.
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
+  // A slot that `slotType` names reads that type; every other operand reads `rest`.
+  operands.forEach((e, i) => {
+    const t = args.slotType?.[i] ?? args.rest;
+    if (t === undefined || (hasObjectForm && e.type === "ObjectLiteral")) return;
     // A type with a message of its own answers for itself, so the reason names the
     // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
     const own = (Array.isArray(t) ? (t as readonly ArgType[]) : [t as ArgType]).find((one) => SOURCE_CHECKED.has(one));
-    if (own === undefined) continue;
-    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, `argument ${Number(i) + 1}`, e, own);
-  }
+    if (own === undefined) return;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, `argument ${i + 1}`, e, own);
+  });
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
     if (e === undefined || e.type !== "ArrayLiteral") continue;

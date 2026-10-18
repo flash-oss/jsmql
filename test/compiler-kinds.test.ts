@@ -58,6 +58,13 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
+  it("a bitwise operator takes an integer, as the server does", () => {
+    expect(() => jsmql.expr("$.n | 1.5")).toThrow(/'\|' argument 2 takes an integer, but got a fraction\./);
+    expect(() => jsmql.expr("$.n & $.m & 2.5")).toThrow(/'&' argument 3 takes an integer, but got a fraction\./);
+    expect(() => jsmql.expr("~1.5")).toThrow(/'~' argument 1 takes an integer, but got a fraction\./);
+    expect(jsmql.expr("$.n | 1")).toEqual({ $bitOr: ["$n", 1] });
+  });
+
   it("x[i] takes a key of every kind but null", () => {
     expect(() => jsmql.expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
     expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow(

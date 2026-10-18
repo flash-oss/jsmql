@@ -10783,7 +10783,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitOr: args.map(value) })
     },
     stream: unsupported("'|' produces a value, not a stage."),
@@ -10804,7 +10804,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitXor: args.map(value) })
     },
     stream: unsupported("'^' produces a value, not a stage."),
@@ -10825,7 +10825,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitAnd: args.map(value) })
     },
     stream: unsupported("'&' produces a value, not a stage."),
@@ -11203,7 +11203,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
+      args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } },
       emit: ({ args, value }) => ({ $bitNot: value(args[0]) })
     },
     stream: unsupported("'~' produces a value, not a stage."),
@@ -22020,7 +22020,7 @@ function checkBody(name2, rule, args, keys, pos, proof) {
     }
   }
 }
-var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
+var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
 var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
 function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false, proof) {
   for (const i of args.integer ?? []) {
@@ -22071,13 +22071,13 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
       );
     }
   }
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
+  operands.forEach((e, i) => {
+    const t = args.slotType?.[i] ?? args.rest;
+    if (t === void 0 || hasObjectForm && e.type === "ObjectLiteral") return;
     const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
-    if (own === void 0) continue;
-    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${Number(i) + 1}`, e, own);
-  }
+    if (own === void 0) return;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${i + 1}`, e, own);
+  });
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
     if (e === void 0 || e.type !== "ArrayLiteral") continue;

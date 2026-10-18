@@ -434,7 +434,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitOr: args.map(value) }),
     },
     stream: unsupported("'|' produces a value, not a stage."),
@@ -456,7 +456,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitXor: args.map(value) }),
     },
     stream: unsupported("'^' produces a value, not a stage."),
@@ -478,7 +478,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "number" },
+      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
       emit: ({ args, value }) => ({ $bitAnd: args.map(value) }),
     },
     stream: unsupported("'&' produces a value, not a stage."),
@@ -874,7 +874,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
+      args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } },
       emit: ({ args, value }) => ({ $bitNot: value(args[0]) }),
     },
     stream: unsupported("'~' produces a value, not a stage."),

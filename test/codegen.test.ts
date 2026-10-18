@@ -4238,7 +4238,7 @@ describe("bitwise infix operators", () => {
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
     // HR7: `===` gives a boolean, and `&` takes numbers, so the refusal shows the grouping
-    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes a number");
+    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes an integer");
   });
   it("unary ~ has higher precedence than &", () => {
     expect(jsmql.expr("~$.flags & 255")).toEqual({ $bitAnd: [{ $bitNot: "$flags" }, 255] });
