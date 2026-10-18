@@ -58,6 +58,14 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
+  it("x[i] takes a key of every kind but null", () => {
+    expect(() => jsmql.expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
+    expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow(
+      "'x[0]' argument 1 takes a value, but got null.",
+    );
+    expect(jsmql.expr('$.o["k"]')).toEqual({ $getField: { field: "k", input: { $ifNull: ["$o", {}] } } });
+  });
+
   it("an option key and a list element refuse null, written or proven", () => {
     expect(() => jsmql.expr("$.d.set({ year: null })")).toThrow("'.set()' year takes an integer, but got null.");
     expect(() => jsmql.expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(

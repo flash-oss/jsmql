@@ -45,7 +45,7 @@ import {
 } from "../rows.ts";
 import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots, type SlotProof } from "./check.ts";
-import { operandShapeOf } from "../rows.ts";
+import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.ts";
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -686,6 +686,7 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
+  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"));
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);
@@ -1101,7 +1102,13 @@ function plainOperator(node: Extract<Expr, { type: "OperatorCall" }>, env: Env):
 
 /** A production as the developer wrote it: the operator token, never the registry key. */
 const spelledProduction = (node: Expr, key: string): string =>
-  node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
+  node.type === "BinaryExpr" || node.type === "UnaryExpr"
+    ? node.op
+    : node.type === "TernaryExpr"
+      ? "?:"
+      : node.type === "IndexAccess"
+        ? productionSpelling(key)
+        : key;
 
 /**
  * The answer of the dispatcher for a production over `operands`. The kind of each operand

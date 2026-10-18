@@ -11292,7 +11292,8 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts"),
+    // A key of any kind reads as its string, as JavaScript reads `o[k]`. A null key reads no field.
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "value" } }),
     stream: unsupported("'x[0]' produces a value, not a stage."),
     statement: unsupported("'x[0]' is not a statement \u2014 see its 'where'.")
   }),
@@ -11916,6 +11917,25 @@ var PRODUCTIONS = {
   })
 };
 
+// src/errors.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
+  }
+};
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier2, pos = 0) {
+    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier2;
+  }
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
+}
+
 // src/compiler/rows.ts
 var ROWS = Object.assign(/* @__PURE__ */ Object.create(null), NAMES);
 var row = (name2) => ROWS[name2];
@@ -12194,6 +12214,14 @@ function productionForOperator(nodeType, op) {
     if (p.becomes === nodeType && p.tokens[0] === op) return key;
   }
   return void 0;
+}
+function productionBuilding(nodeType) {
+  const keys = Object.entries(PRODUCTIONS).filter(([, p]) => p.becomes === nodeType).map(([k]) => k);
+  if (keys.length !== 1) internalError(`${keys.length} productions build a '${nodeType}'`);
+  return keys[0];
+}
+function productionSpelling(productionKey) {
+  return PRODUCTIONS[productionKey].spelling;
 }
 function flattensChain(productionKey) {
   return PRODUCTIONS[productionKey]?.flattensChain === true;
@@ -18145,25 +18173,6 @@ var Parser = class _Parser {
 };
 function bin(op, left, right) {
   return { type: "BinaryExpr", op: op.text, left, right, pos: op.pos };
-}
-
-// src/errors.ts
-var CodegenError = class extends Error {
-  constructor(message, pos = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-};
-var UnknownIdentifierError = class extends CodegenError {
-  constructor(identifier2, pos = 0) {
-    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier2;
-  }
-};
-function internalError(detail, pos = 0) {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
 
 // src/compiler/interpret/operand.ts
@@ -25955,6 +25964,7 @@ function refuseUnreadable(node, env) {
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
+  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"));
   if (node.index.type === "StringLiteral") {
     const name2 = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name2, false);
@@ -26239,7 +26249,7 @@ function plainOperator(node, env) {
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };
   return { [node.name]: args.map((a) => lowerValue(a, inner)) };
 }
-var spelledProduction = (node, key) => node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
+var spelledProduction = (node, key) => node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : node.type === "IndexAccess" ? productionSpelling(key) : key;
 function selectProduction(key, operands, env) {
   const last = operands[operands.length - 1];
   const proofs = proofsFor(operands, env, false, last === void 0 ? null : { node: last, env });

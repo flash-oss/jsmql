@@ -330,6 +330,7 @@ export function lists(name: string, where: Position): boolean {
 import type { Binds, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
 import type { CallbackParams } from "../registry/vocabulary.ts";
 import { PRODUCTIONS } from "../registry/productions.ts";
+import { internalError } from "../errors.ts";
 
 type EmitRow = {
   returns?: TypeExpr;
@@ -752,6 +753,20 @@ export function operandRuleOf(
   if (key === undefined) return undefined;
   const cell = (PRODUCTIONS as Record<string, { expr?: { args?: Arity } }>)[key]?.expr;
   return cell?.args === undefined ? undefined : { key, rule: cell.args };
+}
+
+/** The one production that builds a node of this type, for a node with no operator token. */
+export function productionBuilding(nodeType: string): string {
+  const keys = (Object.entries(PRODUCTIONS) as [string, { becomes: unknown }][])
+    .filter(([, p]) => p.becomes === nodeType)
+    .map(([k]) => k);
+  if (keys.length !== 1) internalError(`${keys.length} productions build a '${nodeType}'`);
+  return keys[0];
+}
+
+/** How a message spells a production: its `spelling`, for example `x[0]`. */
+export function productionSpelling(productionKey: string): string {
+  return ((PRODUCTIONS as Record<string, unknown>)[productionKey] as { spelling: string }).spelling;
 }
 
 /** Does this production state that a left-nested chain lowers as one operator? */

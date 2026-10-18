@@ -967,7 +967,8 @@ export const PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts"),
+    // A key of any kind reads as its string, as JavaScript reads `o[k]`. A null key reads no field.
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "value" } }),
     stream: unsupported("'x[0]' produces a value, not a stage."),
     statement: unsupported("'x[0]' is not a statement — see its 'where'."),
   }),
