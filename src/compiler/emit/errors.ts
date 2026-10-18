@@ -725,6 +725,8 @@ const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => ta
 export type Subjects = {
   readonly receiver?: { readonly pos: number };
   readonly args: readonly { readonly pos: number }[];
+  /** The name of each slot, where the source spells no argument list: the key of `x[k]`. Otherwise the name is `argument N`. */
+  readonly slots?: readonly string[];
 };
 
 /** "a, b or c", with each name once. */
@@ -763,6 +765,9 @@ function operandAt(subjects: Subjects, slot: number): { readonly pos: number } |
   return subjects.args[slot];
 }
 
+/** How a kind message names the slot: the subject's own name, or `argument N`. */
+const slotName = (subjects: Subjects, slot: number): string => subjects.slots?.[slot] ?? `argument ${slot + 1}`;
+
 /** The name of the call as a kind message shows it: `'.max()'`, `'+'`, `'$match'`. */
 function shownName(spelled: string): string {
   if (spelled.startsWith("'")) return spelled;
@@ -784,7 +789,7 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
       return new CodegenError(
         wrongKind(
           name,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
         ),
@@ -796,7 +801,7 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
       return new CodegenError(
         wrongKind(
           name,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf("element"),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`,
         ),
@@ -989,13 +994,26 @@ export const notAnArrow = (
   what: string,
   forms: readonly SlotForm[],
   got: { type: string; pos: number },
+  slot: number,
 ): CodegenError =>
-  new CodegenError(
-    `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
-      got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : (ARG_NOUN[got.type] ?? "something else")
-    }.`,
-    got.pos,
-  );
+  got.type === "NullLiteral"
+    ? nullCallback(name, slot, what, got.pos)
+    : new CodegenError(
+        `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
+          got.type === "Ident"
+            ? `the name '${(got as { name?: string }).name}'`
+            : (ARG_NOUN[got.type] ?? "something else")
+        }.`,
+        got.pos,
+      );
+
+/**
+ * `.map(null)` — a `null` in a slot that takes a callback. The compiler refuses it as it
+ * refuses every value of the wrong kind (HR7). A value of another kind keeps the message that names each
+ * spelling the slot takes. `takes` is the slot's own noun, for example "a key".
+ */
+export const nullCallback = (name: string, slot: number, takes: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind(`'.${name}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
 
 /** `.filter({})` — a matcher object that names no field to match. */
 export const emptyMatcherObject = (name: string, pos: number): CodegenError =>
@@ -1281,10 +1299,16 @@ export const unionNeedsSpread = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$.push(5)` — a stream holds documents. */
-export const unionArg = (noun: string, pos: number): CodegenError =>
+/** `$$.push(5)` — a stream holds documents. `noun` is the kind of the value, for example "a number". */
+export const unionArg = (verb: string, slot: number, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `A stream holds documents, and this is ${noun}. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').`,
+    wrongKind(
+      `'$$.${verb}()'`,
+      `argument ${slot + 1}`,
+      "a document",
+      `got ${noun}`,
+      " Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+    ),
     pos,
   );
 
@@ -1295,10 +1319,16 @@ export const outNeedsStream = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$$.c.push(5)` — one pushed value IS the document written. */
+/** `$$$.c.push(5)` — the pushed value becomes one document. `noun` is the kind of the value. */
 export const mergeNotADocument = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$$$.<coll>.push(<value>)' writes that value AS one document, and ${noun} is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').`,
+    wrongKind(
+      "'$$$.<coll>.push()'",
+      "argument 1",
+      "a document",
+      `got ${noun}`,
+      " The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+    ),
     pos,
   );
 

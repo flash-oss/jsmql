@@ -769,10 +769,17 @@ const dateRow = (spelling: string) =>
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A date that the source spells never reaches this row: the constant engine reads it
         // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
-        // date parser reads.
-        constant: unsupported(
-          `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
-        ),
+        // date parser reads. The slot states its kinds, so a constant of another kind, for
+        // example `null`, gets the refusal of a wrong kind. `construct` builds no date.
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+          emit: ({ args, construct }) =>
+            construct(
+              spelling,
+              `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+              args[0],
+            ),
+        },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
           // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),

@@ -227,10 +227,13 @@ an array of a fixed length, for example a literal. The `elements` rule then judg
 each position alone. See [types.md § The kind check](types.md#the-kind-check).
 
 One function gives the wording of every refusal of a wrong kind: `wrongKind` in
-[check.ts](../../src/compiler/emit/check.ts). The refusal of a literal and the
-refusal of a proof (`kindRefusal` in [errors.ts](../../src/compiler/emit/errors.ts))
-both call it. So each refusal names the call as the source spells it, the kind
-that the slot takes, and what the value is.
+[check.ts](../../src/compiler/emit/check.ts). Each site that refuses a value of the
+wrong kind calls it. A site is, for example, the check of a literal, or the refusal of
+a proof (`kindRefusal` in [errors.ts](../../src/compiler/emit/errors.ts)). So each
+refusal names the call as the source spells it, the slot, the kind that the slot
+takes, and what the value is. The slot is `argument N`, an option key, `element N`,
+or the key of `[…]`. A refusal can add a hint after this text, for example the forms
+that the slot takes.
 
 A `$op(…)` call and a `$stage(…)` call pass `UNPROVEN`, so no kind rule judges
 them. When a kind refusal and an error inside an operand both apply, the error

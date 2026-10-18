@@ -27,6 +27,7 @@ import {
   tooManyCallbackParams,
   notAFieldOfTheDocument,
   notAnArrow,
+  nullCallback,
   unfilledParam,
   valueWhereBlockExpected,
   reducerShape,
@@ -304,8 +305,14 @@ export function exprInputs(
   const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
   // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
   // rewrites each short spelling that the row accepts, so the refusal names the spellings left.
-  const notArrow = (cb: Expr, what: string): CodegenError =>
-    notAnArrow(name, what, slotFormsOf(name, "array", Math.max(0, args.indexOf(cb))), cb);
+  const notArrow = (cb: Expr, what: string): CodegenError => {
+    const slot = Math.max(0, args.indexOf(cb));
+    return notAnArrow(name, what, slotFormsOf(name, "array", slot), cb, slot);
+  };
+  // A `null` where the slot takes an arrow is a value of the wrong kind (HR7).
+  const refuseNull = (cb: Expr): void => {
+    if (cb.type === "NullLiteral") throw nullCallback(name, Math.max(0, args.indexOf(cb)), "a callback", cb.pos);
+  };
   return {
     name,
     recv,
@@ -320,13 +327,22 @@ export function exprInputs(
     iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
     predicate: (cb) =>
       callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")) as { as: string; ref: string; in: Truth },
-    callback: (cb, mode) =>
-      arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
-    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
-    elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
+    callback: (cb, mode) => {
+      refuseNull(cb);
+      return arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present);
+    },
+    reducer: (cb, seed) => {
+      refuseNull(cb);
+      return reducerCallback(cb, seed, recv, argEnv, read.value, name);
+    },
+    elements: (cb, count) => {
+      refuseNull(cb);
+      return elementsCallback(cb, count, argEnv, read.value, name);
+    },
     sortSpec: (e, objects) => readableSort(sortSpecOf(e, name, objects), elementOfRecv(), "the element", e.pos),
     orderBy: (keys, orders) => readableSort(orderBySpec(keys, orders, name), elementOfRecv(), "the element", keys.pos),
     objIteratee: (cb, mode) => {
+      refuseNull(cb);
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name, (cb as { pos: number }).pos);
       }
@@ -616,7 +632,7 @@ export function stageInputs(
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
       return badMatchesPropertyPair(written, cb.pos);
     }
-    return notAnArrow(written, what, forms, cb);
+    return notAnArrow(written, what, forms, cb, Math.max(0, args.indexOf(cb)));
   };
   /**
    * A callback's body and the env it is lowered under — the parameter IS the

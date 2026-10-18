@@ -418,10 +418,16 @@ var dateRow = (spelling) => global_({
       none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
       // A date that the source spells never reaches this row: the constant engine reads it
       // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
-      // date parser reads.
-      constant: unsupported(
-        `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
-      ),
+      // date parser reads. The slot states its kinds, so a constant of another kind, for
+      // example `null`, gets the refusal of a wrong kind. `construct` builds no date.
+      constant: {
+        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+        emit: ({ args, construct }) => construct(
+          spelling,
+          `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+          args[0]
+        )
+      },
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
         // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
@@ -11291,7 +11297,7 @@ var PRODUCTIONS = {
   indexAccess: production({
     doc: "Reads an element by index, or a field by computed name.",
     tokens: ["[", "]", "?."],
-    spelling: "x[0]",
+    spelling: "[\u2026]",
     becomes: "IndexAccess",
     precedence: 14,
     associativity: "left",
@@ -11302,8 +11308,8 @@ var PRODUCTIONS = {
     filter: viaFallback,
     // A key of any kind reads as its string, as JavaScript reads `o[k]`. A null key reads no field.
     expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "value" } }),
-    stream: unsupported("'x[0]' produces a value, not a stage."),
-    statement: unsupported("'x[0]' is not a statement \u2014 see its 'where'.")
+    stream: unsupported("'[\u2026]' produces a value, not a stage."),
+    statement: unsupported("'[\u2026]' is not a statement \u2014 see its 'where'.")
   }),
   call: production({
     doc: "Applies a callable to arguments.",
@@ -21919,10 +21925,7 @@ function checkType(name2, slot, e, expected) {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
       if (other === null) return;
-      throw new CodegenError(
-        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
-        e.pos
-      );
+      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, TAKES.fieldName, `got ${NOUN[other.kind]}`), e.pos);
     }
     const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
     if (bad === null) return;
@@ -22559,6 +22562,7 @@ function operandAt(subjects, slot) {
   }
   return subjects.args[slot];
 }
+var slotName = (subjects, slot) => subjects.slots?.[slot] ?? `argument ${slot + 1}`;
 function shownName(spelled3) {
   if (spelled3.startsWith("'")) return spelled3;
   if (spelled3.startsWith("$")) return `'${spelled3}'`;
@@ -22572,7 +22576,7 @@ function kindRefusal(fault, spelled3, subjects, pos) {
       return new CodegenError(
         wrongKind(
           name2,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`
         ),
@@ -22584,7 +22588,7 @@ function kindRefusal(fault, spelled3, subjects, pos) {
       return new CodegenError(
         wrongKind(
           name2,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf("element"),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`
         ),
@@ -22703,10 +22707,11 @@ var ARG_NOUN = {
   ObjectLiteral: "an object",
   ArrayLiteral: "an array"
 };
-var notAnArrow = (name2, what, forms, got) => new CodegenError(
+var notAnArrow = (name2, what, forms, got, slot) => got.type === "NullLiteral" ? nullCallback(name2, slot, what, got.pos) : new CodegenError(
   `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
   got.pos
 );
+var nullCallback = (name2, slot, takes, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
 var emptyMatcherObject = (name2, pos) => new CodegenError(
   `'.${name2}({ \u2026 })' matches a document by its fields, and '{}' names none. Write the field to match \u2014 '.${name2}({ status: "paid" })' \u2014 or an arrow \u2014 '.${name2}(d => d.status === "paid")'.`,
   pos
@@ -22858,8 +22863,14 @@ var unionNeedsSpread = (pos) => new CodegenError(
   "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it \u2014 '$$.push(...$$$.<coll>.filter(pred))' \u2014 to push every match, or write '.find(pred)' for the first one.",
   pos
 );
-var unionArg = (noun, pos) => new CodegenError(
-  `A stream holds documents, and this is ${noun}. Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)').`,
+var unionArg = (verb, slot, noun, pos) => new CodegenError(
+  wrongKind(
+    `'$$.${verb}()'`,
+    `argument ${slot + 1}`,
+    "a document",
+    `got ${noun}`,
+    " Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)')."
+  ),
   pos
 );
 var outNeedsStream = (pos) => new CodegenError(
@@ -22867,7 +22878,13 @@ var outNeedsStream = (pos) => new CodegenError(
   pos
 );
 var mergeNotADocument = (noun, pos) => new CodegenError(
-  `'$$$.<coll>.push(<value>)' writes that value AS one document, and ${noun} is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: \u2026 });').`,
+  wrongKind(
+    "'$$$.<coll>.push()'",
+    "argument 1",
+    "a document",
+    `got ${noun}`,
+    " The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: \u2026 });')."
+  ),
   pos
 );
 var writeToCollectionOp = (op, pos) => new CodegenError(
@@ -25283,7 +25300,13 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read3.value(env.site.settling ? e : settled(e), argEnv);
   const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
-  const notArrow = (cb, what) => notAnArrow(name2, what, slotFormsOf(name2, "array", Math.max(0, args.indexOf(cb))), cb);
+  const notArrow = (cb, what) => {
+    const slot = Math.max(0, args.indexOf(cb));
+    return notAnArrow(name2, what, slotFormsOf(name2, "array", slot), cb, slot);
+  };
+  const refuseNull = (cb) => {
+    if (cb.type === "NullLiteral") throw nullCallback(name2, Math.max(0, args.indexOf(cb)), "a callback", cb.pos);
+  };
   return {
     name: name2,
     recv,
@@ -25297,12 +25320,22 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
     boolean: (e) => read3.boolean(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read3.value, () => notArrow(cb, "a key")),
     predicate: (cb) => callback(cb, argEnv, read3.truth, () => notArrow(cb, "a predicate")),
-    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read3.value : read3.truth, name2, present2),
-    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read3.value, name2),
-    elements: (cb, count) => elementsCallback(cb, count, argEnv, read3.value, name2),
+    callback: (cb, mode) => {
+      refuseNull(cb);
+      return arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read3.value : read3.truth, name2, present2);
+    },
+    reducer: (cb, seed) => {
+      refuseNull(cb);
+      return reducerCallback(cb, seed, recv, argEnv, read3.value, name2);
+    },
+    elements: (cb, count) => {
+      refuseNull(cb);
+      return elementsCallback(cb, count, argEnv, read3.value, name2);
+    },
     sortSpec: (e, objects) => readableSort(sortSpecOf(e, name2, objects), elementOfRecv(), "the element", e.pos),
     orderBy: (keys2, orders) => readableSort(orderBySpec(keys2, orders, name2), elementOfRecv(), "the element", keys2.pos),
     objIteratee: (cb, mode) => {
+      refuseNull(cb);
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name2, cb.pos);
       }
@@ -25464,7 +25497,7 @@ function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 =
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
       return badMatchesPropertyPair(written2, cb.pos);
     }
-    return notAnArrow(written2, what, forms, cb);
+    return notAnArrow(written2, what, forms, cb, Math.max(0, args.indexOf(cb)));
   };
   const body = (cb, what) => {
     const e = bound(cb);
@@ -25973,7 +26006,7 @@ function refuseUnreadable(node, env) {
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
-  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"));
+  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"), ["key"]);
   if (node.index.type === "StringLiteral") {
     const name2 = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name2, false);
@@ -26158,7 +26191,8 @@ function dispatchBare(node, name2, args, env) {
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  throw refusalFor(sel, name2, "", position, node.pos, [], void 0, { args });
+  const spelled3 = node.type === "NewExpression" ? `'new ${name2}()'` : name2;
+  throw refusalFor(sel, spelled3, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda(lambda, args, env, pos, label, fnName) {
   if (lambda.body === void 0) throw lambdaAsValue(lambda.pos);
@@ -26271,12 +26305,13 @@ var slotProof = (env) => ({
 function operandsFirst(operands, env) {
   for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
 }
-function checkOperandKinds(node, key, operands, env) {
+function checkOperandKinds(node, key, operands, env, slots) {
   const sel = selectProduction(key, operands, env);
   if (sel.kind === "wrongKind") {
     operandsFirst(operands, env);
     throw refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], void 0, {
-      args: operands
+      args: operands,
+      slots
     });
   }
 }
@@ -26457,12 +26492,13 @@ function unionStages(args, env, node, S) {
   if (args.length === 0) throw unionNeedsArgument(node.pos);
   const out = [];
   let docs = [];
+  const verb = node.type === "MethodCall" ? node.name : "push";
   const flushDocs = () => {
     if (docs.length === 0) return;
     for (const boundary of env.site.boundaries) {
       if (!bansNestedOf(boundary.stage).includes(DOCUMENTS)) continue;
       throw bannedNested(
-        `.${node.type === "MethodCall" ? node.name : "push"}(<document>)`,
+        `.${verb}(<document>)`,
         DOCUMENTS,
         boundary.stage,
         "Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
@@ -26471,12 +26507,11 @@ function unionStages(args, env, node, S) {
     }
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
-    const verb = node.type === "MethodCall" ? node.name : "push";
     noStageInDocuments(body.chain, `.${verb}(${verb === "concat" ? "[{ \u2026 }]" : "{ \u2026 }"})`, node.pos);
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
     docs = [];
   };
-  for (const a of args) {
+  for (const [slot, a] of args.entries()) {
     if (a.type === "SpreadElement") {
       const spread = writtenDocuments(a.argument);
       if (spread !== null) {
@@ -26506,14 +26541,14 @@ function unionStages(args, env, node, S) {
       continue;
     }
     if (a.type === "NullLiteral" || a.type === "UndefinedLiteral")
-      throw unionArg(a.type === "NullLiteral" ? "null" : "undefined", a.pos);
+      throw unionArg(verb, slot, a.type === "NullLiteral" ? "null" : "undefined", a.pos);
     const asList = writtenDocuments(a);
     if (asList !== null && node.name === "concat") {
       docs.push(...asList);
       continue;
     }
     const t = typeOf(a, env);
-    if (cannotBe(t, "object")) throw unionArg(nounOfKinds(t), a.pos);
+    if (cannotBe(t, "object")) throw unionArg(verb, slot, nounOfKinds(t), a.pos);
     docs.push(a);
   }
   flushDocs();

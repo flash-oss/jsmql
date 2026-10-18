@@ -820,7 +820,7 @@ describe("compiler/emit/statement — the stream road", () => {
     // an unwind names a field
     expect(() => pipeline("$$ = $$.flatMap(d => 5);")).toThrow(/names the ARRAY FIELD/);
     // a projection lists field names
-    expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/names a field to WRITE/);
+    expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/takes a field NAME to write/);
     // an argument that is neither an arrow nor a shorthand
     expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
     // An unknown JavaScript link names the nearest one. A `$`-named link is your own MQL,

@@ -656,8 +656,8 @@ describe("types — a refusal reads the whole kind set", () => {
     );
     // a string keeps its own message, which names the character-wise spelling
     expect(() => jsmql('$.x = "abc"; $.y = [...$.x];')).toThrow("spreads a string into its characters");
-    expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("a number is not a document");
-    expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("this is a number or a boolean");
+    expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("takes a document, but got a number.");
+    expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("but got a number or a boolean.");
     expect(() => jsmql("$$ = $.tags.map(t => t.length());")).toThrow("these elements are numbers");
   });
 
@@ -675,8 +675,8 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql("$.y = [...($.a ** 2)];")).toThrow(
       "'...' in an array spreads an ARRAY, and this value is a number.",
     );
-    expect(() => jsmql("$$$.out.push($.a / 2);")).toThrow("a number is not a document");
-    expect(() => jsmql("$$.push(-$.a);")).toThrow("A stream holds documents, and this is a number.");
+    expect(() => jsmql("$$$.out.push($.a / 2);")).toThrow("takes a document, but got a number.");
+    expect(() => jsmql("$$.push(-$.a);")).toThrow("'$$.push()' argument 1 takes a document, but got a number.");
     expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow("has to return a document — a number is not one.");
     // One branch may be a document, so the value may be one, and it passes.
     expect(jsmql("$ = $.f ? $.sub : $.a * 2;")).toEqual([

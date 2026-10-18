@@ -191,13 +191,13 @@ describe("$$.push — error cases", () => {
 
   it("scalar literal arg → reject (collections only hold documents)", () => {
     expect(() => jsmql("$$.push(42)")).toThrow(
-      "A stream holds documents, and this is a number. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+      "'$$.push()' argument 1 takes a document, but got a number. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
     );
   });
 
   it("null arg → reject", () => {
     expect(() => jsmql("$$.push(null)")).toThrow(
-      "A stream holds documents, and this is null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+      "'$$.push()' argument 1 takes a document, but got null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
     );
   });
 

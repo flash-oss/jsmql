@@ -764,7 +764,7 @@ export function productionBuilding(nodeType: string): string {
   return keys[0];
 }
 
-/** How a message spells a production: its `spelling`, for example `x[0]`. */
+/** How a message spells a production: its `spelling`, for example `[…]`. */
 export function productionSpelling(productionKey: string): string {
   return ((PRODUCTIONS as Record<string, unknown>)[productionKey] as { spelling: string }).spelling;
 }

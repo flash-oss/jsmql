@@ -686,7 +686,7 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
-  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"));
+  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"), ["key"]);
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);
@@ -945,7 +945,9 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
-  throw E.refusalFor(sel, name, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
+  // A refusal names the call as the source spells it: `new Date(…)` or `Date(…)`.
+  const spelled = node.type === "NewExpression" ? `'new ${name}()'` : name;
+  throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 
 /** `((x) => …)(a)` and `f(a)`: each parameter bound once by `$let`, the body lowered under them. */
@@ -1141,12 +1143,20 @@ function operandsFirst(operands: readonly Expr[], env: Env): void {
  * operand kinds, and this call reads them through the same dispatcher as every other
  * production. The pass owns the count.
  */
-function checkOperandKinds(node: Expr, key: string, operands: readonly Expr[], env: Env): void {
+function checkOperandKinds(
+  node: Expr,
+  key: string,
+  operands: readonly Expr[],
+  env: Env,
+  /** The name of each operand in a message, where the source spells no argument list. */
+  slots?: readonly string[],
+): void {
   const sel = selectProduction(key, operands, env);
   if (sel.kind === "wrongKind") {
     operandsFirst(operands, env);
     throw E.refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], undefined, {
       args: operands,
+      slots,
     });
   }
 }

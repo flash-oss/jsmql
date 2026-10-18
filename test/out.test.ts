@@ -446,11 +446,11 @@ describe("$merge — adding to a collection", () => {
       "'$$$.<coll>.concat(<array>)' writes MANY documents into the collection — a string is one value.",
     );
     expect(() => jsmql("$$$.metrics.push(5);")).toThrow(
-      "'$$$.<coll>.push(<value>)' writes that value AS one document, and a number is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+      "'$$$.<coll>.push()' argument 1 takes a document, but got a number. The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
     );
     // the case the spread exists for: a LIST pushed without one would be a single document
     expect(() => jsmql("$$$.metrics.push([{ a: 1 }]);")).toThrow(
-      "'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'),",
+      "'$$$.<coll>.push()' argument 1 takes a document, but got an array. The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'),",
     );
   });
 });

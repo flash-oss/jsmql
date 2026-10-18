@@ -4021,7 +4021,7 @@ describe("new Date()", () => {
   });
   it("rejects more than 7 args", () => {
     expect(() => jsmql.expr("new Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(
-      "'Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "'new Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
     );
   });
 });
