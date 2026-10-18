@@ -4621,7 +4621,7 @@ export const NAMES = {
     // there) — no regex reaches: a regex literal is only an argument to `.match` and its
     // siblings, never an element of a written list.
     filter: {
-      args: { sig: "regexp", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regexp", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, pathOf, literal }) => {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
@@ -4632,7 +4632,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) })),
     },
@@ -4653,7 +4653,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) })),
     },
@@ -4676,7 +4676,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({
           $ifNull: [

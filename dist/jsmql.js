@@ -3707,7 +3707,7 @@ var NAMES = {
     // there) — no regex reaches: a regex literal is only an argument to `.match` and its
     // siblings, never an element of a written list.
     filter: {
-      args: { sig: "regexp", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regexp", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
@@ -3716,7 +3716,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
@@ -3735,7 +3735,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
@@ -3756,7 +3756,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
+      args: { sig: "regex", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $ifNull: [
           { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },

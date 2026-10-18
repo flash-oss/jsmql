@@ -65,6 +65,15 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(jsmql.expr("$.n | 1")).toEqual({ $bitOr: ["$n", 1] });
   });
 
+  it("a pattern slot names each kind it takes once", () => {
+    expect(() => jsmql.expr("$.s.match(5)")).toThrow(
+      "'.match()' argument 1 takes a regular expression or a string, but got a number.",
+    );
+    expect(jsmql.expr('$.s.matchAll("a.")')).toEqual({
+      $cond: [{ $lte: ["$s", null] }, null, { $regexFindAll: { input: "$s", regex: "a." } }],
+    });
+  });
+
   it("x[i] takes a key of every kind but null", () => {
     expect(() => jsmql.expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
     expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow(
