@@ -2882,16 +2882,17 @@ Two constant bounds decide the form at compile time. For a bound from a document
 `.range()` is lodash's `_.range`, and the receiver is lodash's first argument. With no argument, the receiver is lodash's `end`, and the range starts at 0. With one or two arguments, the receiver is lodash's `start`, and the arguments are `end` and `step`. The array holds the integers from `start` up to `end`, and it never holds `end`. `.rangeRight()` gives the same array in reverse order.
 
 ```js
-(0).range(4)             // { $range: [0, 4] }                 → [0, 1, 2, 3]
-(5).range(1)             // { $range: [5, 1, -1] }             → [5, 4, 3, 2]
-(0).range(20, 5)         // { $range: [0, 20, 5] }             → [0, 5, 10, 15]
+(0).range(4)             // [0, 1, 2, 3]   — a constant folds at compile time
+(5).range(1)             // [5, 4, 3, 2]
+(0).range(20, 5)         // [0, 5, 10, 15]
+(5).range($.e)           // { $range: [5, { $ifNull: ["$e", 0] }, { $cond: [{ $lt: [5, { $ifNull: ["$e", 0] }] }, 1, -1] }] }
 $.n.range()              // { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
                          //   n: 4 → [0, 1, 2, 3]   n: -3 → [0, -1, -2]   no n → []
 $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$to", 0] }, 2] }
-(1).rangeRight(5)        // { $reverseArray: { $range: [1, 5] } }   → [4, 3, 2, 1]
+(1).rangeRight(5)        // [4, 3, 2, 1]
 ```
 
-- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds the step `-1` for two constant bounds, and a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
+- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
 - **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
 - **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `.ceil()` and `.floor()`. The server refuses a fraction that it reads at run time.
 - **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `n.range().map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
