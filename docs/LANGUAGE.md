@@ -1544,6 +1544,23 @@ $max(1, "a")             // → { $max: [1, "a"] }      the escape hatch passes 
 
 **This is a surprise for a JavaScript developer.** JavaScript adds `"a" + 1` and gives `"a1"`, and MongoDB accepts `{ $max: [1, "a"] }`. JSMQL refuses the first, and the second is yours to write with `$op(…)`. A value of unknown kind always passes, and a value that can have two or more kinds passes when one of them fits. A literal array is the exception: each element is certain, so one element of the wrong kind is enough to refuse it. See [docs/specs/types.md](specs/types.md#the-kind-check).
 
+A slot refuses `null` when it takes a value that is not `null`. This applies to three cases:
+
+- a `null` that you write
+- a value that JSMQL can prove is `null`
+- a `null` that your program passes in, as a `jsmql.compile` parameter or a template `${…}` value
+
+A slot where `null` is data keeps it. Examples are a membership test, the items of `.concat()`, the seed of `.reduce()`, `===`, `??` and `?:`. The escape hatch passes `null` as written.
+
+```js
+$.a.slice(null)          // ✗ the start of .slice() takes an integer, and null is no integer
+$.n + null               // ✗ + takes numbers or strings, and null is neither
+$.a.concat(null)         // → { $concatArrays: [{ $ifNull: ["$a", []] }, [null]] }   null is an item
+$slice($.a, null)        // → { $slice: ["$a", null] }   the escape hatch passes the value as written
+```
+
+For the kind of each argument of a string method, see [String Methods](#string-methods).
+
 ### A read that gives no value
 
 A field read that can give no value on the server is a compile error too. Only an object has fields, and a closed object has only the fields that it names:
