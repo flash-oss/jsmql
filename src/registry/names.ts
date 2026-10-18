@@ -48,6 +48,7 @@ import {
   pairsToObject,
   normaliseSliceIndex,
   regexBody,
+  mongoRegexOptions,
   resolveSliceIndex,
   reverseArrayOf,
   setKey,
@@ -153,10 +154,11 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** Probed in declaration order, so precedence is visible. */
   on: O;
   /**
-   * What the method needs of its receiver's ELEMENTS. `"scalar"`: the server refuses
-   * an element that is an array (`$toString` of an array). So the compiler refuses a
-   * receiver that provably holds arrays — a literal of literals, `.partition(…)` — at
-   * compile time, and it names the flatten / map-each rewrite.
+   * What the method needs of its receiver's ELEMENTS. `"scalar"`: an element that is
+   * an array gives MongoDB's text (`$toString` of `[1, 2]` is `"[1,2]"`), not
+   * JavaScript's (`"1,2"`). So the compiler refuses a receiver that provably holds
+   * arrays, for example a literal of literals or `.partition(…)`. The refusal names
+   * two rewrites: flatten the array, or map each inner array to a string.
    *
    * A kind (`"number"`) says that every element of the receiver must have that kind.
    * HR7 reads it: the compiler refuses a receiver that is PROVEN to hold an element of
@@ -209,12 +211,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
-   * The value the cell reads a null or missing receiver as, so its answer is there
-   * whatever the receiver is. lodash's `_.range` reads a missing bound as 0.
-   * MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
+   * The value the cell reads a null or missing receiver as under a dot, so its answer
+   * is there whatever the receiver is. lodash's `_.range` reads a missing bound as 0,
+   * and `_.toString` reads null as "". The cell reads it only where the receiver can be
+   * absent, and HR5 adds no empty array or object of its own. MEASURED:
+   * `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
    * test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0;
+  nullReceiverAs?: 0 | "";
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -705,14 +709,6 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
-/**
- * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
- * as a value of its own (`nullReceiverAs`). One row cannot state both.
- */
-export type NullAnswer =
-  | { passesNull?: true; nullReceiverAs?: undefined }
-  | { passesNull?: undefined; nullReceiverAs?: 0 };
-
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -732,7 +728,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T> & NullAnswer,
+  e: NameSpec<W, O, T>,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -4768,39 +4764,22 @@ export const NAMES = {
   indexOf: name({
     doc: "'.indexOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    sibling: { string: "For the position of a substring, write '.indexOfSubstring(searchString)'." },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "element" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
-        },
-        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "string" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
+      args: {
+        sig: "searchValue",
+        exact: 1,
+        slotType: { 0: "element" },
+        noCallback: {
+          0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
         },
       },
-      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
-      uncertain: () => -1,
+      emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -4808,6 +4787,36 @@ export const NAMES = {
     ),
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string", 1: "int" } },
+      // MEASURED: `$indexOfCP` refuses a negative start. JavaScript reads a negative position
+      // as 0, the default. So a constant one drops, and a run-time one takes `$max`.
+      emit: ({ recv, args, value }) => {
+        const start = args.length === 2 ? literalIndexValue(args[1]) : 0;
+        if (start !== null && start <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), start ?? clampNonNegativeIndex(args[1], value(args[1]))] };
+      },
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'",
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
   }),
 
   includes: name({
@@ -5680,25 +5689,16 @@ export const NAMES = {
   lastIndexOf: name({
     doc: "'.lastIndexOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    // `$indexOfCP` searches forward only, so a string has the first match alone.
+    sibling: {
+      string: "A string has no search from the end. For the first match, write '.indexOfSubstring(searchString)'.",
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — a single flat cell hides the refusal, which is the useful fact.
-      perFamily: {
-        array: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
-        string: unsupported(
-          ".lastIndexOf() on strings isn't supported — MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.",
-        ),
-      },
-      // A receiver that cannot be proven takes the array form: this row refuses the
-      // string form on its own, so nothing is lost, and a string that reaches
-      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: lastIndexOfArray,
-    },
+    expr: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'",
@@ -5873,20 +5873,24 @@ export const NAMES = {
   toString: name({
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
+    nullReceiverAs: "",
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) },
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
+      // the receiver there, and `$toString` gives null for null by itself.
+      emit: ({ recv, present }) => {
+        const re = recv as { type?: string; pattern?: string; flags?: string };
+        if (re.type === "RegexLiteral")
+          return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
+        return { $toString: present ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
       },
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
@@ -6144,7 +6148,6 @@ export const NAMES = {
           "'Object.entries(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]),
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6174,7 +6177,6 @@ export const NAMES = {
           "'Object.keys(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`),
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6204,7 +6206,6 @@ export const NAMES = {
           "'Object.values(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`),
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(

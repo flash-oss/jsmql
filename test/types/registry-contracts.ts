@@ -10,7 +10,7 @@
 import type { Arity, Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
-import type { MongoRow, NullAnswer, StageFacts } from "../../src/registry/names.ts";
+import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { ANY } from "../../src/compiler/emit/type.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
@@ -36,21 +36,11 @@ export const unnamedKind: Arity = { sig: "a", exact: 1, rest: "text" };
 // @ts-expect-error — `homogeneous` is a flag that is true or absent
 export const homogeneousOff: Arity = { sig: "a, b", exact: 2, homogeneous: false };
 
-// ── `uncertain`: required with two field families, refused with one ──────────
-
-export const twoFamilies: Value<"array" | "string"> = { perFamily: { array: R, string: R }, uncertain: () => 1 };
-// @ts-expect-error — two field families and no `uncertain`: the unprovable receiver is undecided
-export const twoFamiliesUndecided: Value<"array" | "string"> = { perFamily: { array: R, string: R } };
+// ── `perFamily`: a rule or a refusal per family ───────────────────────────────
 
 export const oneFamily: Value<"array" | "Math"> = { perFamily: { array: R, Math: R } };
-// @ts-expect-error — one field family: the receiver IS that family by the row's own claim
-export const oneFamilyOverstated: Value<"array" | "Math"> = { perFamily: { array: R, Math: R }, uncertain: () => 1 };
-
-// A refusal is a decision too.
-export const uncertainRefused: Value<"array" | "string"> = {
-  perFamily: { array: R, string: R },
-  uncertain: unsupported("cannot tell"),
-};
+// @ts-expect-error — a family that `on` omits cannot appear
+export const strayFamily: Value<"array"> = { perFamily: { array: R, string: R } };
 
 // ── `byArgs`: keyed, `constant` never a rule, the leftover stated ─────────────
 
@@ -63,13 +53,6 @@ export const constantLowered: Value<"array"> = { byArgs: { constant: R, otherwis
 export const noLeftover: Value<"array"> = { byArgs: { dynamic: R } };
 // @ts-expect-error — an ordered list is not a partition
 export const ordered: Value<"array"> = { byArgs: [{ when: "dynamic", ...R }], otherwise: unsupported("no") };
-
-// ── a missing receiver: answered as null, or read as a value — never both ─────
-
-export const passesNull: NullAnswer = { passesNull: true };
-export const readsAsZero: NullAnswer = { nullReceiverAs: 0 };
-// @ts-expect-error — a cell that reads a missing receiver as 0 never answers null for it
-export const both: NullAnswer = { passesNull: true, nullReceiverAs: 0 };
 
 // ── filter: null only where a value form exists to fall back on ──────────────
 

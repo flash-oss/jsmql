@@ -754,6 +754,10 @@ describe("strings", () => {
     [{ $substr: ["abcd", 1, 2] }, "bc"],
     [{ $indexOfCP: ["😀a😀", "a"] }, 1],
     [{ $indexOfCP: [null, "a"] }, null],
+    // an empty search string: the start, or -1 at or past the end unless the start is 0
+    [{ $indexOfCP: ["abc", "", 1] }, 1],
+    [{ $indexOfCP: ["abc", "", 3] }, -1],
+    [{ $indexOfCP: ["", ""] }, 0],
     [{ $indexOfBytes: ["é😀a", "a"] }, 6],
     [{ $indexOfBytes: ["abc", "bc", 0, 2] }, -1],
     [{ $indexOfBytes: ["abc", "c", 2, 3] }, 2],
@@ -791,7 +795,6 @@ describe("strings", () => {
     ["a negative $substrBytes start", { $substrBytes: ["abc", -1, 1] }],
     ["an empty $split separator", { $split: ["abc", ""] }],
     ["an empty `find`", { $replaceAll: { input: "abc", find: "", replacement: "X" } }],
-    ["an empty search string", { $indexOfCP: ["abc", ""] }],
     ["an end bound of $indexOfCP", { $indexOfCP: ["abc", "bc", 0, 2] }],
     ["a negative $indexOfCP start", { $indexOfCP: ["abc", "a", -1] }],
     ["a $trim of null", { $trim: { input: null } }],

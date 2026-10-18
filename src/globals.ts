@@ -3628,6 +3628,8 @@ declare global {
     capitalize(): string;
     /** Escape HTML entities — `_.escape`. */
     escape(): string;
+    /** The index of the first `searchString` at or after `position`, in code points, or -1 — `String.prototype.indexOf`. */
+    indexOfSubstring(searchString: string, position?: number): number;
     /** `kebab-case` the string — `_.kebabCase`. */
     kebabCase(): string;
     /** `lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`. */

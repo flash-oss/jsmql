@@ -119,6 +119,8 @@ A string method is the exception. On a missing or `null` string, a string method
 
 A number method gives the safe value, as lodash does. On a missing or `null` number, a dot gives the safe value of the method where one exists. For example, `.clamp()` gives its lower bound. A method with no safe value gives `null`. Most arithmetic methods, for example `.round()`, have no safe value.
 
+`.toString()` takes a value of any kind, and it also gives the safe value of lodash. On a missing or `null` value, a dot gives `""`, as `_.toString()` does.
+
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
 ```js
@@ -145,16 +147,21 @@ $.a?.b.uniq()       // → the same MQL as above                          → nu
 // The document is {}. It has no field `n`.
 $.n.clamp(0, 9)     // → { $min: [{ $max: ["$n", 0] }, 9] }             → 0
 $.n.round(2)        // → { $round: ["$n", 2] }                          → null
+$.n.toString()      // → { $toString: { $ifNull: ["$n", ""] } }         → ""
+$.n?.toString()     // → { $toString: "$n" }                            → null: $toString gives null for null
 ```
 
 When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.
 
 Two more facts belong to this rule:
 
-1. `.indexOf()` works on a string and on an array, because JavaScript has no other spelling for the position of a value in a string. The compiler selects the operator in this sequence:
-   1. When the compiler knows the type of the receiver, that type selects the operator.
-   2. If not, the argument can select the operator. `$indexOfCP` searches only for a string, so an argument that is not a string selects the array operator.
-   3. If neither selects the operator, the emitted MQL tests the type when it runs.
+1. `.indexOf()` is an array method. A string takes `.indexOfSubstring()`. This is a JSMQL name (SR3) with the API of JavaScript's `String.prototype.indexOf`. The compiler never selects the operator from the type of the receiver or of the argument. The emitted MQL never tests the type when it runs. When the compiler proves that the receiver is a string, `.indexOf()` is a compile error, and the message names `.indexOfSubstring()`:
+
+   ```js
+   $.tags.indexOf("vip")          // → { $indexOfArray: [{ $ifNull: ["$tags", []] }, "vip"] }
+   $.title.indexOfSubstring(":")  // → { $indexOfCP: ["$title", ":"] }
+   $.title.trim().indexOf(":")    // ✗ the receiver is a string; write .indexOfSubstring(":")
+   ```
 2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
 
 **HR6 — Raw MQL can hold JSMQL. JSMQL cannot take raw MQL as an operand.**

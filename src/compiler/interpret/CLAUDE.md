@@ -131,7 +131,7 @@ A name in this directory is a key of a table. No branch tests the name of an ope
 - `$trim` removes a fixed list of code points by default. The documentation lists more
   of them than the server removes. A string with one of the disputed code points is a
   refusal, so the answer does not depend on the version of the server.
-- `$indexOfCP` has an end bound that the interpreter does not model, and an empty search string has answers that it does not model. Both are refusals.
+- `$indexOfCP` has an end bound that the interpreter does not model, so an end bound is a refusal. A start at or past the end gives -1, also for an empty search string, unless the start is 0.
 - A 32-bit integer that `$round` or `$trunc` takes past 32 bits wraps around on the server. That is a refusal.
 - A `timezone` operand runs only when it names UTC (`UTC`, `+00:00`, `+0000`). The server
   fails on `Z`. Every other zone is a refusal, because the interpreter holds no zone table.

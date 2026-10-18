@@ -1,21 +1,15 @@
 // Phase 5 of src/compiler/ — which rule of a row runs.
 //
-// This suite holds two static audits over the whole table: the argument partition,
-// and the byArgs routing on the five rows that state one. It also measures the
-// runtime guards on mongod. For every field family, the suite builds one document
-// per BSON type and asserts that the guard is true exactly for the types the family
-// covers.
+// This suite holds static audits over the whole table. It checks the argument
+// partition and the byArgs routing. It also checks that a row lowers on one field
+// family at most.
 
 import { describe, expect, it } from "vitest";
-import { MongoClient } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
-import { guardFor, select, shapeOf, type Receiver, kindFits, UNPROVEN } from "../src/compiler/emit/select.ts";
+import { select, shapeOf, type Receiver, kindFits, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { FIELD_FAMILY_TYPES, type FieldFamily } from "../src/registry/vocabulary.ts";
-import { liveClientNow, liveUp } from "./fixtures/live.ts";
-
-const up = await liveUp();
 
 /** The arguments of a parsed call `f(…)`. */
 const argsOf = (src: string): readonly never[] => (parseExpression(src) as { args: readonly never[] }).args;
@@ -84,28 +78,16 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     });
   });
 
-  it("dispatches an unprovable receiver across field families, with the row's default", () => {
-    const r = at("indexOf", OPAQUE, 1);
-    expect(r.kind).toBe("dispatch");
-    if (r.kind !== "dispatch") return;
-    expect(r.branches.map((b) => b.family)).toEqual(["array", "string"]);
-    // no branch admits null or missing: they fall to the row's `uncertain`, which answers -1
-    expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string"]] });
-    expect(r.branches[0].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["array"]] });
-    expect(typeof r.otherwise).toBe("function");
-  });
-
-  it("drops a branch whose slot cannot take a proven argument kind, and runs the one left alone", () => {
+  it("refuses a proven argument kind that the slot never takes, and runs a rule when the proof says nothing", () => {
     const pick = (kind: "number" | "string" | "unknown") =>
       select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, {
         args: [kind === "unknown" ? "unknown" : [kind]],
-        elements: "unknown",
+        elements: ["string"],
       });
-    // `$indexOfCP` takes a string: a number argument leaves the array branch
-    expect(pick("number").kind).toBe("rule");
-    // a string fits both branches, and so does an argument the proof says nothing about
-    expect(pick("string").kind).toBe("dispatch");
-    expect(pick("unknown").kind).toBe("dispatch");
+    // `.indexOf()` takes an element of the array, and the array holds strings
+    expect(pick("number")).toMatchObject({ kind: "wrongKind", fault: { rule: "element" } });
+    expect(pick("string").kind).toBe("rule");
+    expect(pick("unknown").kind).toBe("rule");
     expect(kindFits("number", "string")).toBe(false);
     expect(kindFits("unknown", "string")).toBe(true);
     expect(kindFits("date", "number-or-date")).toBe(true);
@@ -146,122 +128,32 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   });
 });
 
-describe("compiler/emit/select — the table audits", () => {
+describe("compiler/emit/select — the table audit", () => {
   type Row = { kind?: string; on?: string | readonly string[]; expr?: unknown };
-  const FIELD: readonly string[] = ["string", "array", "number", "object", "date", "regexp"];
+  const FIELD: readonly string[] = Object.keys(FIELD_FAMILY_TYPES);
   const fieldFamilies = (row: Row): readonly string[] =>
     row.on === undefined || row.on === "any"
       ? []
       : (Array.isArray(row.on) ? row.on : [row.on as string]).filter((f) => FIELD.includes(f));
 
-  it("dispatches an unprovable receiver exactly on the rows with two or more runtime tests over LOWERING families", () => {
-    // A family the row refuses cannot hold a receiver in a program that compiles, so it
-    // does not count: `.keys()` lists array and object, refuses array, and runs on object.
+  it("finds no row that lowers on two field families, so no query tests a receiver's type", () => {
+    // A family the row refuses does not count: `.keys()` lists array and object, refuses
+    // array, and runs on object.
     const lowers = (row: Row, f: string): boolean => {
       const branch = (row.expr as { perFamily: Record<string, unknown> }).perFamily[f];
       return !(typeof branch === "object" && branch !== null && "unsupported" in branch);
     };
-    // Each field family has a runtime test of its own (see the audit below), so a row
-    // has one test per field family that it lowers.
-    const tests = (row: Row): number => fieldFamilies(row).filter((f) => lowers(row, f)).length;
-    // Each row is probed with the first argument count it accepts, so a row that
-    // takes an argument is audited too, not passed as a count refusal.
-    const probes = [
-      { shape: { kind: "none" }, n: 0 },
-      { shape: { kind: "dynamic" }, n: 1 },
-      { shape: { kind: "multiple" }, n: 2 },
-      { shape: { kind: "multiple" }, n: 3 },
-    ] as const;
-    const wrong: string[] = [];
-    let rows = 0;
-    let audited = 0;
-    let dispatched = 0;
-    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
-      if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
-        continue;
-      rows++;
-      const answers = probes.map(({ shape, n }) => select(consult(name, "value"), OPAQUE, shape, n, UNPROVEN));
-      const r = answers.find((a) => a.kind !== "wrongCount" && a.kind !== "rejectedCount");
-      if (r === undefined) {
-        wrong.push(`${name}: refuses every argument count from 0 to 3`);
-        continue;
-      }
-      audited++;
-      if (r.kind === "dispatch") dispatched++;
-      if (tests(row) >= 2 !== (r.kind === "dispatch")) wrong.push(`${name}: ${r.kind}`);
-    }
-    expect(wrong).toEqual([]);
-    // Every `perFamily` row reached the audit, and the audit met both answers.
-    expect(audited).toBe(rows);
-    expect(rows).toBeGreaterThanOrEqual(15);
-    expect(dispatched).toBeGreaterThan(0);
-    expect(dispatched).toBeLessThan(rows);
-  });
-
-  it("holds a guard for every field family — the type keeps the table complete", () => {
-    for (const f of FIELD as readonly FieldFamily[]) expect(typeof guardFor(f)).toBe("function");
-  });
-
-  it("gives each field family a runtime test of its own, so a dispatch can tell each one apart", () => {
-    // A `$switch` separates only what `$type` separates. Two families with one test would
-    // leave a branch that no document can reach, and the dispatch has no rule for that.
-    const families = Object.keys(FIELD_FAMILY_TYPES) as FieldFamily[];
-    const guards = families.map((f) => JSON.stringify(guardFor(f)("$$v")));
-    expect(new Set(guards).size).toBe(families.length);
-    expect([...families].sort()).toEqual([...FIELD].sort());
-  });
-});
-
-describe.skipIf(!up)("compiler/emit/select — the guards, measured on mongod", () => {
-  it("is true exactly for the types each family covers, missing included", async () => {
-    const client = await liveClientNow();
-    try {
-      const coll = client.db("jsmql_select").collection("t");
-      await coll.deleteMany({});
-      // one document per BSON type the guards can meet, plus one with the field missing
-      const docs: Record<string, unknown>[] = [
-        { t: "string", v: "s" },
-        { t: "array", v: [1] },
-        { t: "int", v: 1 },
-        { t: "double", v: 1.5 },
-        { t: "object", v: { a: 1 } },
-        { t: "date", v: new Date(0) },
-        { t: "regex", v: /x/ },
-        { t: "bool", v: true },
-        { t: "null", v: null },
-        { t: "missing" },
-      ];
-      await coll.insertMany(docs);
-      const EXPECT: Record<FieldFamily, readonly string[]> = {
-        string: ["string"],
-        array: ["array"],
-        number: ["int", "double"],
-        object: ["object"],
-        date: ["date"],
-        regexp: ["regex"],
-      };
-      for (const family of Object.keys(EXPECT) as FieldFamily[]) {
-        const rows = await coll
-          .aggregate([{ $addFields: { g: guardFor(family)("$v") } }, { $sort: { t: 1 } }])
-          .toArray();
-        const trueFor = rows
-          .filter((r) => r.g === true)
-          .map((r) => r.t as string)
-          .sort();
-        expect(trueFor, family).toEqual([...EXPECT[family]].sort());
-      }
-      // the widening: `length.string` admits null and missing
-      const rows = await coll
-        .aggregate([{ $addFields: { g: guardFor("string", ["null", "missing"])("$v") } }])
-        .toArray();
-      expect(
-        rows
-          .filter((r) => r.g === true)
-          .map((r) => r.t)
-          .sort(),
-      ).toEqual(["missing", "null", "string"]);
-    } finally {
-      await client.close();
+    const perFamily = (Object.entries(NAMES) as [string, Row][]).filter(
+      ([, row]) => row.kind === "name" && typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr,
+    );
+    const two = perFamily.filter(([, row]) => fieldFamilies(row).filter((f) => lowers(row, f)).length >= 2);
+    expect(two.map(([name]) => name)).toEqual([]);
+    // the audit read the rows that state a cell per family
+    expect(perFamily.length).toBeGreaterThanOrEqual(15);
+    // and an unproven receiver selects the one lowering family on each of them
+    for (const [name] of perFamily) {
+      const r = select(consult(name, "value"), OPAQUE, { kind: "dynamic" }, 1, UNPROVEN);
+      expect(r.kind, name).not.toBe("unknown");
     }
   });
 });

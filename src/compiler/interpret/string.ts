@@ -139,12 +139,16 @@ const substrBytes = positional(3, 3, ([s, start, length]) => {
 
 // ── search ────────────────────────────────────────────────────────────────
 
-/** `$indexOfCP` counts code points. Its end bound differs on the server, so the rule refuses an end bound. */
+/**
+ * `$indexOfCP` counts code points. Its end bound differs on the server, so the rule refuses an end bound.
+ * MEASURED: a start at or past the end gives -1, also for the empty string, unless the start is 0.
+ */
 const indexOfCP = positional(2, 3, ([s, needle, from = 0]) => {
-  if (!isString(needle) || needle === "" || !isInt32(from) || from < 0) return NO;
+  if (!isString(needle) || !isInt32(from) || from < 0) return NO;
   if (s === null) return ok(null);
   if (!isString(s)) return NO;
   const text = points(s);
+  if (from > 0 && from >= text.length) return ok(-1);
   const find = points(needle);
   for (let i = from; i + find.length <= text.length; i++) {
     if (find.every((c, j) => text[i + j] === c)) return ok(i);

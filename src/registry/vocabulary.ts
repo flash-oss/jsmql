@@ -985,7 +985,7 @@ export type ExprIn = {
   value: (e: Expr) => unknown;
   /**
    * The kind that an expression PROVABLY has, or "unknown". It is the same proof
-   * that the receiver dispatch reads, and this cell offers it for an ARGUMENT. An
+   * that the receiver check reads, and this cell offers it for an ARGUMENT. An
    * operator that takes one BSON type reads it, and then renders an argument of
    * another type as JavaScript renders it. MEASURED: the optimiser of the server
    * folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays`,
@@ -1313,29 +1313,14 @@ export type BsonType =
   | "maxKey"
   | "missing";
 
-export type Rule<In, Out> = {
-  args: Arity;
-  /**
-   * The BSON types that the runtime test of this family admits, BESIDES the types
-   * of the family itself. This is a fact per row. The row states it where it is
-   * true, and nowhere else:
-   *   $.s.length  with s missing → 0,    because `length.string` claims null and missing
-   *   $.s.trim()  with s missing → null, because `trim.string` claims nothing more
-   * The dispatch for a receiver of unprovable family reads it. A general rule
-   * ("a string test admits null") gives `.trim()` a claim that its own emit does
-   * not keep.
-   */
-  alsoTypes?: readonly BsonType[];
-  emit: Emit<In, Out>;
-};
+export type Rule<In, Out> = { args: Arity; emit: Emit<In, Out> };
 
 /**
  * The families that the value of a DOCUMENT FIELD can have, each one with the
- * `$type` names it covers. It is the ONE table that the runtime guards, the
- * receiver readers and their tests read. A bare name reaches `Math`, `Object`,
- * `Number`, `Date`, `Array` and `cluster`, and no field reaches them. `stream` is
- * `$$`. So a receiver of unprovable family is one of these and no other. Each
- * family has its own `$type` names, so a runtime dispatch can tell them apart.
+ * `$type` names it covers. `FIELD_FAMILY_TYPES` is the ONE table that the receiver
+ * readers and their tests read. A bare name refers to `Math`, `Object`, `Number`,
+ * `Date`, `Array` and `cluster`, and no field refers to them. `stream` is `$$`. So a
+ * receiver of unproven family is one of these and no other.
  */
 export const FIELD_FAMILY_TYPES = {
   string: ["string"],
@@ -1348,25 +1333,6 @@ export const FIELD_FAMILY_TYPES = {
   Record<Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp">, readonly BsonType[]>
 >;
 export type FieldFamily = keyof typeof FIELD_FAMILY_TYPES;
-
-type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] extends [T] ? false : true) : never;
-
-/**
- * What a receiver whose family the compiler CANNOT PROVE gets — `$.x.length`
- * where `x` is a field of unknown type.
- *
- * It is NECESSARY when the row lists two or more field families. The answer is
- * then a decision that no rule implies. `length` says `$$REMOVE`, because a
- * two-way `$cond` that reads "not an array" as "string" stops the whole command.
- * `lastIndexOf` says the array form. A row with ONE field family refuses it.
- * There the receiver is that family by the claim of the row itself, exactly as
- * `$.price.ceil()` is a number because `.ceil()` is a number. An `uncertain` there
- * is a second answer to a question that has one.
- *
- * A `Refusal` is also an answer: "cannot tell which" is a decision.
- */
-type Uncertain<F extends Family, In, Out> =
-  IsUnion<Extract<F, FieldFamily>> extends true ? { uncertain: Emit<In, Out> | Refusal } : { uncertain?: never };
 
 /**
  * One answer per ARGUMENT class. See `ArgShape` for the partition. A key holds
@@ -1395,13 +1361,13 @@ type ByArgs<In, Out> = {
  * count of arguments can differ by receiver as well as by position: `$.n.round(2)`
  * takes a precision, the compiler refuses `Math.round(x)`, and both are the `round` entry. Every
  * family that `on` lists must appear, with a rule or with a refusal that says why.
- * No family that `on` omits can appear. `uncertain` answers a receiver whose family
- * the compiler cannot prove. See `Uncertain` for when a row must state it.
+ * No family that `on` omits can appear. A receiver whose family the compiler cannot
+ * prove is the one field family that holds a rule (test/compiler-select.test.ts).
  */
 export type Emitter<F extends Family, In, Out> =
   | Rule<In, Out>
   /** One answer per family: a rule where the method applies, and a refusal where it does not. */
-  | ({ perFamily: Record<F, Rule<In, Out> | Refusal> } & Uncertain<F, In, Out>)
+  | { perFamily: Record<F, Rule<In, Out> | Refusal> }
   /**
    * Dispatch on the ARGUMENT SHAPE, the third axis, beside position (`where`) and
    * receiver (`on`). `ObjectId()` mints one, `ObjectId("<hex>")` is a live BSON

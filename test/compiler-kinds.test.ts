@@ -22,9 +22,7 @@ function refusal(run: () => unknown): CodegenError {
 
 describe("kinds — an operator refuses operands of proven kinds that never combine", () => {
   it('"a" + 1 is refused, and the message names the operands', () => {
-    expect(() => jsmql.expr('"a" + 1')).toThrow(
-      /'\+' takes operands of one kind, but "a" is a string and 1 is a number\./,
-    );
+    expect(() => jsmql.expr('"a" + 1')).toThrow(/'\+' takes operands of one kind, but got a string and a number\./);
   });
 
   it("a field of unknown kind passes, and the server decides", () => {
@@ -49,9 +47,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("=== between constants of two kinds is refused, not folded", () => {
-    expect(() => jsmql.expr('1 === "a"')).toThrow(
-      /'===' takes operands of one kind, but 1 is a number and "a" is a string\./,
-    );
+    expect(() => jsmql.expr('1 === "a"')).toThrow(/'===' takes operands of one kind, but got a number and a string\./);
   });
 
   it("an ordering between two kinds is refused", () => {
@@ -59,7 +55,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("a null is no number: -null is refused", () => {
-    expect(() => jsmql.expr("-null")).toThrow(/'-' takes numbers, but this value is null\./);
+    expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
   it("x === null stays the test of a missing value", () => {
@@ -67,7 +63,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("a number slot refuses a proven boolean", () => {
-    expect(() => jsmql.expr("($.a > 1) * 2")).toThrow(/'\*' takes numbers, but this value is a boolean\./);
+    expect(() => jsmql.expr("($.a > 1) * 2")).toThrow(/'\*' argument 1 takes a number, but got a boolean\./);
   });
 
   it("a ternary and a logical operator take every kind", () => {
@@ -77,7 +73,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
 
   it("x in [ … ] takes an element of the list", () => {
     expect(() => jsmql.expr('1 in ["a", "b"]')).toThrow(
-      /'in' takes an element of this array, but 1 is a number and the array holds strings\./,
+      /'in' argument 1 takes an element of the array, but got a number, and the array holds strings\./,
     );
     expect(jsmql.expr("$.x in [1, 2]")).toEqual({ $in: ["$x", [1, 2]] });
   });
@@ -101,7 +97,7 @@ const tagOf = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsontype;
 describe("kinds — the query road obeys HR7 too", () => {
   it("a stage that proves a number refuses a string in a later $match", () => {
     expect(() => jsmql.pipeline('$.n = 1; $match($.n === "x");')).toThrow(
-      /'===' takes operands of one kind, but this value is a number and "x" is a string\./,
+      /'===' takes operands of one kind, but got a number and a string\./,
     );
     expect(() => jsmql.pipeline('$.n = 1; $match($.n < "x");')).toThrow(/'<' takes operands of one kind/);
   });
@@ -147,8 +143,10 @@ describe("kinds — the query road obeys HR7 too", () => {
   });
 
   it("a sentinel does no arithmetic", () => {
-    expect(() => jsmql.expr("$.a + MinKey()")).toThrow(/'\+' takes numbers or strings, but .* is a MinKey\./);
-    expect(() => jsmql.expr("$.a * MaxKey()")).toThrow(/'\*' takes numbers/);
+    expect(() => jsmql.expr("$.a + MinKey()")).toThrow(
+      /'\+' argument 2 takes a number or a string, but got a MinKey\./,
+    );
+    expect(() => jsmql.expr("$.a * MaxKey()")).toThrow(/'\*' argument 2 takes a number/);
   });
 });
 
@@ -251,7 +249,7 @@ describe("kinds — the dispatcher states each fault by the rule that broke", ()
 describe("kinds — a row can demand one kind of every element of its receiver", () => {
   it("refuses a receiver whose elements are proven to be another kind, and names what it holds", () => {
     const e = refusal(() => jsmql.expr("[{ a: 1 }].max()"));
-    expect(e.message).toMatch(/'\.max\(\)' takes numbers, but this array holds a document\./);
+    expect(e.message).toMatch(/'\.max\(\)' takes numbers, but the array holds a document\./);
     expect(e.pos).toBe(0);
   });
 
@@ -285,7 +283,7 @@ describe("kinds — a value of two or more possible kinds is refused only when N
 
   it("an array whose elements are proven documents is refused", () => {
     expect(() => jsmql.expr("$.xs.map(x => ({ v: x })).sum()")).toThrow(
-      /'\.sum\(\)' takes numbers, but this array holds a document\./,
+      /'\.sum\(\)' takes numbers, but the array holds a document\./,
     );
   });
 
@@ -302,7 +300,7 @@ describe("kinds — a value of two or more possible kinds is refused only when N
   it("two operands of one comparison fit when one possible kind of each is shared", () => {
     expect(() => jsmql.expr('($.a ? "x" : 1) === 1')).not.toThrow();
     expect(() => jsmql.expr('($.a ? "x" : 1) === true')).toThrow(
-      /'===' takes operands of one kind, but this value is a string or a number and true is a boolean\./,
+      /'===' takes operands of one kind, but got a string or a number and a boolean\./,
     );
   });
 });
@@ -310,7 +308,7 @@ describe("kinds — a value of two or more possible kinds is refused only when N
 describe("kinds — a literal array is judged by each position, a computed array by its set of kinds", () => {
   it("[1, 'a'].max() is refused, because the string can never be a number", () => {
     const e = refusal(() => jsmql.expr('[1, "a"].max()'));
-    expect(e.message).toMatch(/'\.max\(\)' takes numbers, but this array holds a number and a string\./);
+    expect(e.message).toMatch(/'\.max\(\)' takes numbers, but the array holds a number and a string\./);
     expect(() => jsmql.expr('[1, "a"].sum()')).toThrow(/'\.sum\(\)' takes numbers/);
   });
 
@@ -321,10 +319,10 @@ describe("kinds — a literal array is judged by each position, a computed array
 
   it("a null element is no number: it is judged as a null operand is", () => {
     expect(() => jsmql.expr("[1, null].sum()")).toThrow(
-      /'\.sum\(\)' takes numbers, but this array holds a number and null\./,
+      /'\.sum\(\)' takes numbers, but the array holds a number and null\./,
     );
     expect(() => jsmql.expr("[1, null].max()")).toThrow(/'\.max\(\)' takes numbers/);
-    expect(() => jsmql.expr("[null].mean()")).toThrow(/'\.mean\(\)' takes numbers, but this array holds null\./);
+    expect(() => jsmql.expr("[null].mean()")).toThrow(/'\.mean\(\)' takes numbers, but the array holds null\./);
   });
 
   it("a null that the call supplies proves no kind", () => {
@@ -388,16 +386,20 @@ describe("kinds — a spread argument is judged by the kind of its elements", ()
 
   it("refuses a spread whose elements are proven to be another kind", () => {
     expect(() => jsmql.expr("({}).assign(...[1])")).toThrow(
-      /'\.assign\(\)' takes documents, but the elements of this value are numbers\./,
+      /'\.assign\(\)' argument 1 takes a document, but got an element of an array that is a number\./,
     );
   });
 
   it("refuses a plain argument beside a spread", () => {
-    expect(() => jsmql.expr("$.o.assign(...$.docs, 5)")).toThrow(/'\.assign\(\)' takes documents, but 5 is a number\./);
+    expect(() => jsmql.expr("$.o.assign(...$.docs, 5)")).toThrow(
+      /'\.assign\(\)' argument 2 takes a document, but got a number\./,
+    );
   });
 
   it("refuses an array that is not spread, because the server cannot merge it", () => {
-    expect(() => jsmql.expr("({}).assign([1])")).toThrow(/'\.assign\(\)' takes documents, but \[1\] is an array\./);
+    expect(() => jsmql.expr("({}).assign([1])")).toThrow(
+      /'\.assign\(\)' argument 1 takes a document, but got an array\./,
+    );
   });
 
   it("the position is the offending element", () => {
@@ -420,15 +422,17 @@ describe("kinds — a precision is an integer", () => {
   it("a number that the program proves passes, and a string is refused", () => {
     expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
     expect(() => jsmql.expr("$.n.round($.s.trim())")).toThrow(
-      /'\.round\(\)' takes integers, but this value is a string\./,
+      /'\.round\(\)' argument 1 takes an integer, but got a string\./,
     );
-    expect(() => jsmql.expr("$.n.ceil($.s.trim())")).toThrow(/'\.ceil\(\)' takes integers/);
-    expect(() => jsmql.expr("$.n.floor($.s.trim())")).toThrow(/'\.floor\(\)' takes integers/);
-    expect(() => jsmql.expr("$.n.trunc($.s.trim())")).toThrow(/'\.trunc\(\)' takes integers/);
+    expect(() => jsmql.expr("$.n.ceil($.s.trim())")).toThrow(/'\.ceil\(\)' argument 1 takes an integer/);
+    expect(() => jsmql.expr("$.n.floor($.s.trim())")).toThrow(/'\.floor\(\)' argument 1 takes an integer/);
+    expect(() => jsmql.expr("$.n.trunc($.s.trim())")).toThrow(/'\.trunc\(\)' argument 1 takes an integer/);
   });
 
   it("a fractional literal is refused, because the server refuses it", () => {
-    expect(() => jsmql.expr("$.n.round(1.5)")).toThrow(/must be an integer|expects an integer/);
+    expect(() => jsmql.expr("$.n.round(1.5)")).toThrow(
+      /'\.round\(\)' argument 1 takes an integer, but got a fraction\./,
+    );
   });
 });
 
@@ -448,27 +452,27 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" },
     });
     expect(() => jsmql.expr("new Date($.s.trim(), 1, 1)")).toThrow(
-      /'Date\(\)' takes integers, but this value is a string\./,
+      /'Date\(\)' argument 1 takes an integer, but got a string\./,
     );
   });
 
   it("an ObjectId and a UUID convert a string alone", () => {
     expect(() => jsmql.expr("ObjectId($.s.length())")).toThrow(
-      /'ObjectId\(\)' takes strings, but this value is a number\./,
+      /'ObjectId\(\)' argument 1 takes a string, but got a number\./,
     );
-    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(/'UUID\(\)' takes strings, but this value is a number\./);
+    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(/'UUID\(\)' argument 1 takes a string, but got a number\./);
   });
 
   it("a date converts a string, a number or a date", () => {
     expect(() => jsmql.expr("new Date($.a === 1)")).toThrow(
-      /'Date\(\)' takes strings, numbers or dates, but this value is a boolean\./,
+      /'Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
     );
   });
 
   it("a numeric type converts a string or a number", () => {
     for (const name of ["Decimal128", "Long", "Int32", "Double", "NumberDecimal", "NumberLong", "NumberInt"]) {
       expect(() => jsmql.expr(`${name}($.a === 1)`)).toThrow(
-        new RegExp(`'${name}\\(\\)' takes strings or numbers, but this value is a boolean\\.`),
+        new RegExp(`'${name}\\(\\)' argument 1 takes a string or a number, but got a boolean\\.`),
       );
     }
   });
@@ -477,17 +481,15 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
 describe("kinds — a query names the elements of an array field", () => {
   it("says that the elements are the kind, not the field", () => {
     expect(() => jsmql.pipeline('$.tags = [1]; $match($.tags === "x");')).toThrow(
-      /'===' takes operands of one kind, but the elements of 'tags' are numbers and "x" is a string\./,
+      /'===' takes operands of one kind, but got an element of 'tags' that is a number and a string\./,
     );
     expect(() => jsmql.pipeline('$.tags = [1]; $match("x" < $.tags);')).toThrow(
-      /'<' takes operands of one kind, but "x" is a string and the elements of 'tags' are numbers\./,
+      /'<' takes operands of one kind, but got a string and an element of 'tags' that is a number\./,
     );
   });
 
   it("a field of a kind that is not an array keeps the plain wording", () => {
-    expect(() => jsmql.pipeline('$.n = 1; $match($.n === "x");')).toThrow(
-      /but this value is a number and "x" is a string\./,
-    );
+    expect(() => jsmql.pipeline('$.n = 1; $match($.n === "x");')).toThrow(/but got a number and a string\./);
   });
 
   it("an array whose elements can be two or more kinds passes when one of them fits", () => {

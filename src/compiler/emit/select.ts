@@ -5,8 +5,7 @@
 // and both need facts a row cannot see: the receiver's FAMILY (a proof the
 // lowering of the receiver produced) and the arguments' SHAPE (a partition over
 // the call's argument list). This module resolves both and hands back one closed
-// answer. Nothing here builds a document. A `dispatch` answer carries the guards
-// as functions of the bound receiver, and the caller assembles the `$switch`.
+// answer. Nothing here builds a document.
 //
 // The kinds of the arguments are PROVEN or they are not, in the same way (HR7). A
 // value proven to have a kind that its slot never takes is refused, even where the
@@ -14,22 +13,11 @@
 // § The kind check.
 //
 // The receiver's family is PROVEN or it is not. A literal proves it. A producing
-// row's measured `returns` proves it. A field path proves nothing. An unprovable
-// receiver on a row with one field family IS that family — `$.price.ceil()` is a
-// number because `.ceil()` is. On a row with two or more families it takes the runtime
-// dispatch, with the row's own `uncertain` as the default. A name never decides this.
+// row's measured `returns` proves it. A field path proves nothing. An unproven
+// receiver IS the one field family the row lowers on — `$.price.ceil()` is a number
+// because `.ceil()` is. Nothing tests the receiver's type when the query runs (HR5).
 
-import type {
-  Arity,
-  ArgType,
-  BsonType,
-  Emit,
-  Family,
-  FieldFamily,
-  Kind,
-  Refusal,
-  Rule,
-} from "../../registry/vocabulary.ts";
+import type { Arity, ArgType, Emit, Family, FieldFamily, Kind, Refusal, Rule } from "../../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
@@ -64,19 +52,14 @@ export type Receiver =
    * ObjectId). Every field-family row refuses this receiver.
    *
    * `possible` names the field families the value CAN be, when the proof shows
-   * several: `cond ? "a" : [1]` is a string or an array, and the dispatch runs over
-   * those two alone. `present` says the value is certainly there, so a dispatch
-   * that covers every possible kind needs no default. Absent, the value can be
-   * anything, and the dispatch runs over every family the row lists.
+   * two or more kinds: `cond ? "a" : [1]` is a string or an array. A row that takes none of
+   * them refuses the receiver. Absent, the value can be anything.
    */
   | {
       readonly kind: "opaque";
       readonly lowered: unknown;
       readonly proved?: string;
       readonly possible?: readonly FieldFamily[];
-      /** Does `possible` name EVERY kind the value can be? False when a kind no family covers is possible too. */
-      readonly exact?: boolean;
-      readonly present?: boolean;
     };
 
 /** The class of the argument list. A PARTITION — see `shapeOf` for the order. */
@@ -109,30 +92,10 @@ export function shapeOf(args: readonly Expr[]): Shaped {
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
 
-/** One runtime branch of a dispatch: the family, its test on the bound receiver, and its rule. */
-export type Branch = {
-  readonly family: FieldFamily;
-  readonly guard: (recv: unknown) => unknown;
-  readonly rule: AnyRule;
-};
-
-/** The one answer. Every variant is final, except `rule` and `dispatch`, which name what to run. */
+/** The one answer. Every variant is final, except `rule`, which names what to run. */
 export type Selected =
-  /** `family` is the FIELD family the rule runs on, when a per-family cell chose it: the receiver's proof, or the one branch left. */
+  /** `family` is the FIELD family the rule runs on, when a per-family cell chose it: the receiver's proof, or the row's one lowering family. */
   | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule; readonly family?: FieldFamily }
-  /**
-   * Two or more field families could hold the receiver: one `$switch`, with the
-   * row's `uncertain` as the default. `complete` says the branches cover every
-   * kind the receiver can be, and the value is there — so the default can never
-   * fire, and the consumer drops it. See docs/specs/types.md § The dispatch.
-   */
-  | {
-      readonly kind: "dispatch";
-      readonly name: string;
-      readonly branches: readonly Branch[];
-      readonly otherwise: AnyEmit | Refusal;
-      readonly complete: boolean;
-    }
   | { readonly kind: "refused"; readonly name: string; readonly message: string; readonly needsSubject: boolean }
   | { readonly kind: "fallback"; readonly name: string }
   | { readonly kind: "composedOnly"; readonly name: string; readonly owners: readonly string[] }
@@ -154,23 +117,7 @@ export type Selected =
   /** A value is proven to have a kind that the slot never takes (HR7). `fault` says which rule and which operand. */
   | { readonly kind: "wrongKind"; readonly name: string; readonly fault: KindFault };
 
-// ── the runtime guards: one per field family, held complete by the type ──────
-
-/** The `$type` names each field family covers — the one table of the vocabulary. */
-const TYPES: Readonly<Record<FieldFamily, readonly BsonType[]>> = FIELD_FAMILY_TYPES;
-
-/**
- * The runtime test that the bound receiver holds `family`, widened by the
- * rule's own `alsoTypes`. One shape serves every family: `$type` against a list.
- * `$type` answers "missing" for an absent field, so the widening reads
- * as list membership rather than as a second construct per family.
- */
-export function guardFor(family: FieldFamily, also: readonly BsonType[] = []): (recv: unknown) => unknown {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-
-const FIELD_FAMILIES = Object.keys(TYPES) as readonly FieldFamily[];
+const FIELD_FAMILIES = Object.keys(FIELD_FAMILY_TYPES) as readonly FieldFamily[];
 const isFieldFamily = (f: string): f is FieldFamily => (FIELD_FAMILIES as readonly string[]).includes(f);
 
 // ── reading a cell's parts ───────────────────────────────────────────────────
@@ -286,7 +233,6 @@ function kindFault(name: string, rule: Arity, proofs: Proofs): Selected | null {
 function fromPerFamily(
   name: string,
   branches: Readonly<Record<string, unknown>>,
-  uncertain: unknown,
   receiver: Receiver,
   shaped: Shaped,
   count: number,
@@ -306,11 +252,10 @@ function fromPerFamily(
       isFieldFamily(family as string) ? (family as FieldFamily) : undefined,
     );
   }
-  // An unprovable receiver. With one field family in `on`, the receiver IS that
-  // family. With two or more, the compiler runs the runtime dispatch, in the row's
-  // own order, over the families that hold a rule, with the row's `uncertain` as the
-  // default. A receiver whose proof names its possible families narrows the list to
-  // those; one that names none of the row's families is refused.
+  // An unproven receiver IS the one field family the row lowers on, by the row's
+  // claim, and the server judges any other value. A receiver whose proof names its
+  // possible families narrows the list to those. The compiler refuses a receiver
+  // that names none of the row's families.
   const accepted = (
     on === undefined || on === "any" ? FIELD_FAMILIES : on.filter(isFieldFamily)
   ) as readonly FieldFamily[];
@@ -322,58 +267,13 @@ function fromPerFamily(
   // A family the row REFUSES cannot be the family of a receiver in a program that
   // compiles, so `.keys()` on an unproven field is a call on an object. The refused
   // families stay only when nothing else is left, so that the refusal is what answers.
-  // Each field family has its own `$type` test, so each one is a branch of its own.
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const fieldFamilies = lowering.length > 0 ? lowering : listed;
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-  // A branch whose slot cannot take a PROVEN argument kind is not the branch the
-  // call means: `.indexOf(1)` searches an array, because `$indexOfCP` takes a string.
-  // The receiver's proof, then the argument's, then the runtime test — in that order.
-  // One branch left by the argument runs on its own, by the same claim a one-family
-  // row makes: the call is on that family, or the server raises an error. When no
-  // branch takes the argument, the call is wrong on every family (HR7).
-  const fault = (f: FieldFamily): Selected | null => {
-    const b = branches[f];
-    return isRule(b) ? kindFault(name, b.args, proofs) : null;
-  };
-  const fitting = fieldFamilies.filter((f) => fault(f) === null);
-  if (fitting.length === 0 && fieldFamilies.length > 1) return fault(fieldFamilies[0]) as Selected;
-  if (fitting.length === 1 && fieldFamilies.length > 1) {
-    const branch = branches[fitting[0]];
-    if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count, proofs, fitting[0]);
+  const families = lowering.length > 0 ? lowering : listed;
+  if (families.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
+  if (lowering.length > 1) {
+    internalError(`the row '${name}' lowers on ${lowering.join(" and ")}. A row lowers on one field family`);
   }
-  // Does the row take EVERY kind the value can be? Only then can a lone branch run
-  // with no test, and only then can a dispatch drop its default. A possible kind
-  // the row has no branch for — a number under `.indexOf` — falls to the default.
-  const covered = possible !== undefined && receiver.exact === true && possible.every((f) => listed.includes(f));
-  // One family left, and the value can be nothing else: the rule runs directly. So does
-  // a row with ONE field family and no `uncertain`: the call is on that family, or the
-  // server raises an error — the row's own claim, whatever else the value could be.
-  if (fieldFamilies.length === 1 && (possible === undefined || covered || uncertain === undefined)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count, proofs, fieldFamilies[0]);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out: Branch[] = [];
-  // A branch that the arguments rule out can never run, so the dispatch holds none of it.
-  for (const family of fitting) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === undefined) continue;
-    if (!isRule(branch)) internalError(`the row '${name}' holds an unreadable '${family}' branch`);
-    const bad =
-      shaped.kind === "spread" ? settle(name, branch, shaped, count, proofs) : countOf(name, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  // The default fires for a null or missing value, and for a possible kind no
-  // branch takes. Neither can happen when the value is there and every possible
-  // family has a branch.
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
-  return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal, complete };
+  return settle(name, branches[families[0]], shaped, count, proofs, families[0]);
 }
 
 /**
@@ -420,7 +320,7 @@ export function select(
       return (verdict.args === undefined ? null : kindFault(name, verdict.args, proofs)) ?? { kind: "noCell", name };
     }
     case "perFamily":
-      return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count, proofs);
+      return fromPerFamily(name, verdict.branches, receiver, shaped, count, proofs);
     case "lower": {
       const gate = receiverGate(name, receiver);
       if (gate !== null) return gate;

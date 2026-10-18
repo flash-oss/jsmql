@@ -804,6 +804,10 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $indexOfCP: [null, "a"] },
     { $indexOfCP: ["abc", "a", 10] },
     { $indexOfCP: ["abcabc", "bc", 2] },
+    { $indexOfCP: ["abc", "", 1] },
+    { $indexOfCP: ["abc", "", 3] },
+    { $indexOfCP: ["abc", "", 4] },
+    { $indexOfCP: ["", ""] },
   ],
   $indexOfBytes: [
     { $indexOfBytes: ["abcabc", "c"] },

@@ -543,9 +543,9 @@ export function productionPassesNullOf(key: string): boolean {
   return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
-/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
+/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0, `.toString()` as "")? */
 export function readsNullReceiverOf(name: string): boolean {
-  return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;
+  return (row(name) as { nullReceiverAs?: 0 | "" } | undefined)?.nullReceiverAs !== undefined;
 }
 
 /**
@@ -803,7 +803,7 @@ function isRuleCell(cell: unknown): boolean {
   if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily as Record<string, unknown>).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs as Record<string, unknown>).some(isRuleCell);
-  return "emit" in c || "uncertain" in c;
+  return "emit" in c;
 }
 
 /** The JavaScript-named method rows: callable, on a receiver family, neither a global nor a MongoDB operator. */

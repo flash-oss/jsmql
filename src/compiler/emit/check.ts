@@ -60,7 +60,7 @@ const NOUN: Record<Lit["kind"], string> = {
   bool: "a boolean",
   null: "null",
   array: "an array",
-  object: "an object",
+  object: "a document",
   regex: "a regular expression",
   bigint: "a bigint",
 };
@@ -99,25 +99,46 @@ function matches(lit: Lit, expected: ArgType): boolean {
   }
 }
 
-const EXPECTS: Record<ArgType, string> = {
-  number: "expects a number",
-  int: "expects an integer",
-  "int-or-long": "expects an integer",
-  "number-or-date": "expects a number or a date",
-  orderable: "expects a number, a string, a date or an ObjectId",
-  string: "expects a string",
-  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "expects a field PATH to read: a string that starts with '$'",
-  bool: "expects a boolean",
-  array: "expects an array",
-  object: "expects a document",
-  date: "expects a date",
-  timestamp: "expects a timestamp",
-  any: "expects a value",
-  callback: "expects a callback",
-  regex: "expects a regular expression or a string",
-  element: "expects an element of the array",
+/** The kind a slot takes, as a noun with its article. */
+const TAKES: Record<ArgType, string> = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  orderable: "a number, a string, a date or an ObjectId",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp",
+  any: "a value",
+  callback: "a callback",
+  regex: "a regular expression or a string",
+  element: "an element of the array",
 };
+
+/** The kind or kinds a slot takes, as one noun phrase: "a number", "a string or a number", "a string, a number or a date". */
+export const takesOf = (t: ArgType | readonly ArgType[]): string => {
+  if (!Array.isArray(t)) return TAKES[t as ArgType];
+  const nouns = (t as readonly ArgType[]).map((x) => TAKES[x]);
+  return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
+
+/** The hint for a fraction where the server takes a whole number. */
+const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+
+/**
+ * The one wording of a refusal for a value of the wrong kind. The literal checks and the
+ * kind check of `select` (see `kindRefusal` in errors.ts) all call it, so each one reads
+ * the same. `slot` names a key or an argument, or is "". `found` is the clause after
+ * "but", for example `got a string` or `the array holds a number and a string`. `shown` is
+ * the call as the source spells it: `'.max()'`, `'+'`, `'$match'`.
+ */
+export const wrongKind = (shown: string, slot: string, takes: string, found: string, hint = ""): string =>
+  `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found}.${hint}`;
 
 const hint = (expected: ArgType): string => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
@@ -135,7 +156,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell(name)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos,
       );
     }
@@ -146,7 +167,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
       );
     }
@@ -160,15 +181,23 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
             : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos,
     );
   }
   const lit = literal(e);
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
+  // A number in an integer slot is a fraction: the kind fits, and the value does not.
+  const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
-    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    wrongKind(
+      `'${spell(name)}'`,
+      slot,
+      TAKES[expected],
+      `got ${fraction ? "a fraction" : NOUN[lit.kind]}`,
+      fraction ? ROUND : hint(expected),
+    ),
     e.pos,
   );
 }
@@ -327,10 +356,7 @@ export function checkSlots(
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && !Number.isInteger(n)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(
-        `'${spell(name)}' ${what} must be an integer. The server takes whole numbers here. It got ${n}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
-        e!.pos,
-      );
+      throw new CodegenError(wrongKind(`'${spell(name)}'`, what, "an integer", "got a fraction", ROUND), e!.pos);
     }
   }
   for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
@@ -383,7 +409,7 @@ export function checkSlots(
     // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
     const own = (Array.isArray(t) ? (t as readonly ArgType[]) : [t as ArgType]).find((one) => SOURCE_CHECKED.has(one));
     if (own === undefined) continue;
-    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, "", e, own);
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, `argument ${Number(i) + 1}`, e, own);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];

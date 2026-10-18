@@ -196,7 +196,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
 
   it("answers in CODE POINTS, because that is what MongoDB counts and orders by", () => {
     // JavaScript counts UTF-16 units, and the two part company above U+D7FF.
-    expect(valueOf('"\u{1f600}a".indexOf("a")')).toBe(1);
+    expect(valueOf('"\u{1f600}a".indexOfSubstring("a")')).toBe(1);
     expect(valueOf('"\u{fb01}" < "\u{1f600}"')).toBe(true);
     // Padding by units both pads to the wrong width and can cut a character in
     // half, producing a string with no UTF-8 encoding at all.

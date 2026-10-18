@@ -75,10 +75,9 @@ interpret/     the interpreter for MQL expressions: `interpret(mql)` gives the v
                never the tree, and nothing in `emit/` or `passes/`. See interpret/CLAUDE.md.
 emit/          the lowerings, and the dispatcher that checks a row, then runs one.
   consult.ts   what a row says about one name in one position — a pure read.
-  select.ts    which rule runs: the receiver's proof (a closed Receiver), the
-               arguments' class (a closed partition) and the proof of each operand
-               against the row — a rule, a runtime dispatch over the field
-               families, or one of the closed refusals.
+  select.ts    which rule runs. It reads the proof of the receiver (a closed
+               Receiver), the class of the arguments (a closed partition) and the
+               proof of each operand. The answer is a rule, or a closed refusal.
   names.ts     every MongoDB variable name the compiler writes: the injective encoding, the
                brands (MongoVar / VarRef / FieldSlot), and Scope — what each
                JavaScript name stands for, and which names a mint must avoid.
@@ -97,7 +96,9 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
   inputs.ts    the one constructor of the `In` record a renderer receives.
   check.ts     the literal-gated argument checks on JSMQL code. Each check reads a
                stated rule. The kind of a slot is not here: `select` judges it.
-               A `$op(…)` or `$stage(…)` call meets none of them (HR3).
+               A `$op(…)` or `$stage(…)` call meets none of these checks (HR3).
+               The one function that gives the wording of a refusal of a wrong kind
+               is here.
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.

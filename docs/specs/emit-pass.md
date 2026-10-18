@@ -32,35 +32,29 @@ switch. Each case is one of three kinds.
 `lowerTruth(node, env)` is the second reading: `&&`/`||`/`!`/`?:` recurse as
 truths, and anything else is `truthOf(value, row says bool)`. See `mode.ts`.
 
-## The receiver's proof and the runtime dispatch
+## The receiver's proof
 
 `prove.ts` answers `typeOf(node, env)`, the receiver's proof: a literal, a
 binding's recorded `Type`, a row's `returns` term evaluated at the call site, a
 written field's recorded proof, and `ANY` for a field nothing wrote. The model,
-the sources of a proof and the four dispatch rules — branches for the possible
-families only, a default only where it can fire, a compile-time refusal only
-where no possible kind is accepted, the one-family claim for `ANY` — are the
-subject of [docs/specs/types.md](types.md). This section keeps what a CELL has to
-know about the proof it runs under.
+the sources of a proof and the two receiver rules are the subject of
+[docs/specs/types.md](types.md). This section keeps what a CELL has to know about
+the proof it runs under.
 
-An unprovable receiver on a row with ONE field family is that family, by the
-row's claim. On a row with two or more families, the compiler dispatches it at
-run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
-are the two such rows among the JavaScript methods: every other method reads one
-family, and its row states a `sibling` sentence per family it refuses. The
-refusal (`errors.ts`) puts that sentence after its head. For example, for
+An unproven receiver is the one field family that the row lowers on, by the
+row's claim. Nothing tests its type when the query runs (HR5). A JavaScript
+method reads one family, and its row states a `sibling` sentence per family it
+refuses. The refusal (`errors.ts`) puts that sentence after its head. For example, for
 `.length()` on an array, the message names `string` as the family that has the
-method. It also suggests `.size()` to count the elements. A branch whose
-`slotType` cannot take a PROVEN argument kind drops
-out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
-`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
-kind.
+method. It also suggests `.size()` to count the elements.
+
+`select` refuses a rule whose slot cannot take the proven kind. See [The kind of a slot](#the-kind-of-a-slot).
 
 ```js
 $.x.indexOf("a")
-// → { $switch: { branches: [ { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } } ], default: -1 } }
-$.x.indexOf(1)
-// → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
+// → { $indexOfArray: [{ $ifNull: ["$x", []] }, "a"] }
+$.x.trim().indexOf("a")
+// ✗ the receiver is a proven string; the sibling sentence names .indexOfSubstring()
 ```
 
 **HR5 — a dot runs an array or object method on `[]` or `{}`.**
@@ -87,11 +81,8 @@ test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
 row over present operands, a written field whose value was present, a path a
-`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped), or proven
-at run time by the `$type` test of the dispatch branch the cell runs under. A
-row that dispatches on the receiver's type (`.indexOf`) lets null and missing
-fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
-stated per row: `.map`, `.filter`, `.slice` and `.keys` answer null only
+`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped).
+Each row states its `neverNull` fact: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
 
@@ -134,19 +125,6 @@ can be, because a receiver of that family is not a program that compiles. So
 `.keys()` on an unproven field is a call on an object, and takes the `{}`. The
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
-
-A cell has to know one more thing about the proof. A cell that reads `present` answers a DIFFERENT
-document inside a dispatch branch, whose `$type` test proves the receiver,
-from the one it answers outside the branch. When a row's family cell and its
-`uncertain` are meant to be one answer, that difference makes the compiler
-emit a `$switch` the row does not want. So those cells share one body that
-does not read `present` at all (`lastIndexOfArray`, `pairsRead` in
-`src/registry/names.ts`).
-
-The branches are the field families that hold a rule, in the row's order. The
-guard is `$type` against the family's BSON types, widened by the rule's
-`alsoTypes`. The default is the row's required `uncertain`. The compiler binds
-a receiver that is not a path or a variable once, with `$let`.
 
 When a row states a REFUSAL for the position, that refusal is the answer even
 on a receiver the row's `on` does not admit. It is the more specific sentence,
@@ -232,7 +210,7 @@ against the `Proofs` that the call site passes. The rule itself is in
 rule from a JSMQL spelling passes the proofs, and `proofsFor` in
 [prove.ts](../../src/compiler/emit/prove.ts) is the one reader that builds them:
 
-- a method call, a named call and the receiver dispatch (`lower.ts`);
+- a method call and a named call (`lower.ts`);
 - a production, and the passes that own the lowering of `+` and `in` (`lower.ts`);
 - a query leaf (`filter.ts`). It tells `proofsFor` which operands are fields, so that a field
   which holds an array proves the kinds of its elements (SR2);
@@ -241,6 +219,12 @@ rule from a JSMQL spelling passes the proofs, and `proofsFor` in
 `proofsFor` also gives the proof of each position (`items`) when the element source is
 an array of a fixed length, for example a literal. The `elements` rule then judges
 each position alone. See [types.md § The kind check](types.md#the-kind-check).
+
+One function gives the wording of every refusal of a wrong kind: `wrongKind` in
+[check.ts](../../src/compiler/emit/check.ts). The refusal of a literal and the
+refusal of a proof (`kindRefusal` in [errors.ts](../../src/compiler/emit/errors.ts))
+both call it. So each refusal names the call as the source spells it, the kind
+that the slot takes, and what the value is.
 
 A `$op(…)` call and a `$stage(…)` call pass `UNPROVEN`, so no kind rule judges
 them. When a kind refusal and an error inside an operand both apply, the error

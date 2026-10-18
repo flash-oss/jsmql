@@ -1289,7 +1289,6 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
   const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
   const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
@@ -1356,7 +1355,6 @@ function streamLink(
   const args = link.args as readonly Expr[];
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
-  if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
@@ -1547,7 +1545,6 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   const verdict = consult(name, "statement");
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length, proofs);
-  if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
     // A name that no row knows is a stage of a newer server, or a typo: the server

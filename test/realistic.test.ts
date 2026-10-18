@@ -679,6 +679,28 @@ $.result = $.bool ? "R" : "OTHER";
   });
 });
 
+describe(
+  "find the VIP tag and the title prefix (`.indexOf` / `.indexOfSubstring`)",
+  { features: ["Pipelines"] },
+  () => {
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.tickets.aggregate(jsmql(...))" }, () => {
+      // Rank a ticket by the place of its "vip" tag, and find where the title's
+      // "Re:"-style prefix ends. `.indexOf` searches an array, and a missing `tags`
+      // reads as [], so the rank is -1. `.indexOfSubstring` searches a string, and
+      // the `?.` gives null for a ticket with no title.
+      expect(
+        jsmql`
+$.vipRank = $.tags.indexOf("vip");
+$.prefixEnd = $.title?.trim().indexOfSubstring(":", 1);
+      `,
+      ).toEqual([
+        { $set: { vipRank: { $indexOfArray: [{ $ifNull: ["$tags", []] }, "vip"] } } },
+        { $set: { prefixEnd: { $indexOfCP: [{ $trim: { input: "$title" } }, ":", 1] } } },
+      ]);
+    });
+  },
+);
+
 describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // An API response carries a few public fields of each active user and nothing

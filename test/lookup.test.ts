@@ -2135,7 +2135,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     });
     for (const terminal of ["min()", "max()", "mean()"]) {
       it(`refuses '.${terminal}' over documents`, () => {
-        expect(() => jsmql(`$.r = $$$.orders.${terminal};`)).toThrow(/takes numbers, but this array holds a document/);
+        expect(() => jsmql(`$.r = $$$.orders.${terminal};`)).toThrow(/takes numbers, but the array holds a document/);
       });
     }
 

@@ -90,17 +90,10 @@ export type Verdict =
   /**
    * The row answers PER FAMILY, and the caller did not supply the receiver's
    * family, or supplied one the row does not list. This is not an error on its
-   * own: a caller that cannot prove the family builds a runtime dispatch from
-   * the branches, with the row's own `uncertain` as its default. The code hands
-   * this on untouched, as it does `cell` for `lower`.
+   * own: a caller that cannot prove the family runs the row's one lowering family.
+   * The code leaves the answer unchanged, as it leaves `cell` for `lower`.
    */
-  | {
-      kind: "perFamily";
-      name: string;
-      position: Position;
-      branches: Readonly<Record<string, unknown>>;
-      uncertain: unknown;
-    }
+  | { kind: "perFamily"; name: string; position: Position; branches: Readonly<Record<string, unknown>> }
   /**
    * The row has no cell for this position, which is not the same as refusing it.
    * Only a MongoDB row has an `updateDoc` cell, because only a MongoDB operator
@@ -164,7 +157,7 @@ export function consult(name: string, position: Position, family?: Family): Verd
   if (isObj(cell) && isObj(cell.perFamily)) {
     const branches = cell.perFamily as Record<string, unknown>;
     if (family !== undefined && family in branches) return readCell(name, position, branches[family]);
-    return { kind: "perFamily", name, position, branches, uncertain: cell.uncertain };
+    return { kind: "perFamily", name, position, branches };
   }
   return readCell(name, position, cell);
 }

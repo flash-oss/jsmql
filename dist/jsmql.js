@@ -3837,39 +3837,22 @@ var NAMES = {
   indexOf: name({
     doc: "'.indexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    sibling: { string: "For the position of a substring, write '.indexOfSubstring(searchString)'." },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "element" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
-        },
-        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "string" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
+      args: {
+        sig: "searchValue",
+        exact: 1,
+        slotType: { 0: "element" },
+        noCallback: {
+          0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
         }
       },
-      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
-      uncertain: () => -1
+      emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -3877,6 +3860,35 @@ var NAMES = {
     ),
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string", 1: "int" } },
+      // MEASURED: `$indexOfCP` refuses a negative start. JavaScript reads a negative position
+      // as 0, the default. So a constant one drops, and a run-time one takes `$max`.
+      emit: ({ recv, args, value }) => {
+        const start = args.length === 2 ? literalIndexValue(args[1]) : 0;
+        if (start !== null && start <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), start ?? clampNonNegativeIndex(args[1], value(args[1]))] };
+      }
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'"
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
   }),
   includes: name({
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
@@ -4696,25 +4708,16 @@ var NAMES = {
   lastIndexOf: name({
     doc: "'.lastIndexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    // `$indexOfCP` searches forward only, so a string has the first match alone.
+    sibling: {
+      string: "A string has no search from the end. For the first match, write '.indexOfSubstring(searchString)'."
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — a single flat cell hides the refusal, which is the useful fact.
-      perFamily: {
-        array: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
-        string: unsupported(
-          ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
-        )
-      },
-      // A receiver that cannot be proven takes the array form: this row refuses the
-      // string form on its own, so nothing is lost, and a string that reaches
-      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: lastIndexOfArray
-    },
+    expr: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'"
@@ -4873,20 +4876,24 @@ var NAMES = {
   toString: name({
     doc: "'.toString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
+    nullReceiverAs: "",
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) }
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
+      // the receiver there, and `$toString` gives null for null by itself.
+      emit: ({ recv, present: present2 }) => {
+        const re = recv;
+        if (re.type === "RegexLiteral")
+          return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
+        return { $toString: present2 ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
       }
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
@@ -5130,8 +5137,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.entries(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`])
+      }
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5159,8 +5165,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.keys(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`)
+      }
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5188,8 +5193,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.values(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`)
+      }
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12218,7 +12222,7 @@ function isRuleCell(cell) {
   if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs).some(isRuleCell);
-  return "emit" in c || "uncertain" in c;
+  return "emit" in c;
 }
 var VALUE_FAMILIES = /* @__PURE__ */ new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
 function methodRows() {
@@ -19649,10 +19653,11 @@ var substrBytes = positional(3, 3, ([s, start, length]) => {
   return ok(decoder.decode(bytes.subarray(start, stop)));
 });
 var indexOfCP = positional(2, 3, ([s, needle, from = 0]) => {
-  if (!isString(needle) || needle === "" || !isInt32(from) || from < 0) return NO;
+  if (!isString(needle) || !isInt32(from) || from < 0) return NO;
   if (s === null) return ok(null);
   if (!isString(s)) return NO;
   const text = points(s);
+  if (from > 0 && from >= text.length) return ok(-1);
   const find = points(needle);
   for (let i = from; i + find.length <= text.length; i++) {
     if (find.every((c, j) => text[i + j] === c)) return ok(i);
@@ -21735,7 +21740,7 @@ function consult(name2, position, family) {
   if (isObj2(cell) && isObj2(cell.perFamily)) {
     const branches = cell.perFamily;
     if (family !== void 0 && family in branches) return readCell(name2, position, branches[family]);
-    return { kind: "perFamily", name: name2, position, branches, uncertain: cell.uncertain };
+    return { kind: "perFamily", name: name2, position, branches };
   }
   return readCell(name2, position, cell);
 }
@@ -21752,6 +21757,378 @@ function familiesFor(name2) {
 }
 function everyName() {
   return Object.keys(NAMES);
+}
+
+// src/compiler/emit/check.ts
+function literal(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return { kind: "number", value: e };
+    case "UnaryExpr":
+      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
+    case "StringLiteral":
+      return isFieldPathString(e) ? null : { kind: "string", value: e };
+    case "BooleanLiteral":
+      return { kind: "bool", value: e };
+    case "NullLiteral":
+      return { kind: "null", value: e };
+    case "ArrayLiteral":
+      return { kind: "array", value: e };
+    case "ObjectLiteral":
+      return { kind: "object", value: e };
+    case "RegexLiteral":
+      return { kind: "regex", value: e };
+    case "BigIntLiteral":
+      return { kind: "bigint", value: e };
+    default:
+      return null;
+  }
+}
+var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
+var NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  null: "null",
+  array: "an array",
+  object: "a document",
+  regex: "a regular expression",
+  bigint: "a bigint"
+};
+function matches(lit2, expected) {
+  switch (expected) {
+    case "number":
+    case "number-or-date":
+      return lit2.kind === "number" || lit2.kind === "bigint";
+    case "int":
+    case "int-or-long": {
+      if (lit2.kind === "bigint") return true;
+      const n2 = numberOf(lit2.value);
+      return n2 !== null && Number.isInteger(n2);
+    }
+    case "string":
+    case "bool":
+    case "array":
+    case "object":
+      return lit2.kind === expected;
+    case "fieldName":
+    case "fieldPath":
+      return false;
+    case "regex":
+      return lit2.kind === "regex" || lit2.kind === "string";
+    case "any":
+    case "element":
+      return true;
+    case "orderable":
+      return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
+    case "date":
+    case "timestamp":
+    case "callback":
+      return false;
+  }
+}
+var TAKES = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  orderable: "a number, a string, a date or an ObjectId",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp",
+  any: "a value",
+  callback: "a callback",
+  regex: "a regular expression or a string",
+  element: "an element of the array"
+};
+var takesOf = (t) => {
+  if (!Array.isArray(t)) return TAKES[t];
+  const nouns = t.map((x) => TAKES[x]);
+  return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
+var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
+var hint = (expected) => {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  return "";
+};
+function checkType(name2, slot, e, expected) {
+  if (expected === "fieldPath") {
+    if (e.type !== "StringLiteral") return;
+    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
+      throw new CodegenError(
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        e.pos
+      );
+    }
+    return;
+  }
+  if (expected === "fieldName") {
+    if (e.type !== "StringLiteral") {
+      const other = literal(e);
+      if (other === null || other.kind === "null") return;
+      throw new CodegenError(
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        e.pos
+      );
+    }
+    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
+    if (bad === null) return;
+    throw new CodegenError(
+      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      e.pos
+    );
+  }
+  const lit2 = literal(e);
+  if (lit2 === null || lit2.kind === "null") return;
+  if (matches(lit2, expected)) return;
+  const fraction = lit2.kind === "number" && (expected === "int" || expected === "int-or-long");
+  throw new CodegenError(
+    wrongKind(
+      `'${spell2(name2)}'`,
+      slot,
+      TAKES[expected],
+      `got ${fraction ? "a fraction" : NOUN[lit2.kind]}`,
+      fraction ? ROUND : hint(expected)
+    ),
+    e.pos
+  );
+}
+function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
+  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
+  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
+  if (allowed.includes(v)) return;
+  const near = didYouMean(v, allowed, (s) => s);
+  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
+}
+function checkBodyKeys(body) {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
+  }
+}
+function checkBody(name2, rule, args, keys, pos) {
+  if (args.length === 1 && args[0].type === "Injected") return;
+  let present2;
+  let valueOf;
+  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
+  if (body !== null) {
+    checkBodyKeys(body);
+    const byKey = /* @__PURE__ */ new Map();
+    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
+    present2 = [...byKey.keys()];
+    valueOf = (k) => byKey.get(k);
+  } else {
+    present2 = keys.slice(0, args.length);
+    valueOf = (k) => {
+      const i = keys.indexOf(k);
+      return i >= 0 && i < args.length ? args[i] : void 0;
+    };
+  }
+  const closed = [...rule.required, ...rule.optional];
+  if (body !== null && rule.closed) {
+    for (const k of present2) {
+      if (!closed.includes(k)) {
+        throw new CodegenError(
+          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
+          valueOf(k)?.pos ?? pos
+        );
+      }
+    }
+  }
+  for (const k of rule.required) {
+    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
+  }
+  for (const [a, b] of rule.notTogether ?? []) {
+    const inA = present2.filter((k) => a.includes(k));
+    const inB = present2.filter((k) => b.includes(k));
+    if (inA.length > 0 && inB.length > 0) {
+      throw new CodegenError(
+        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
+        pos
+      );
+    }
+  }
+  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
+  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+  }
+  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkType(name2, k, v, t);
+  }
+  for (const k of rule.constantKeys ?? []) {
+    const v = valueOf(k);
+    if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
+      throw new CodegenError(
+        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        v.pos
+      );
+    }
+  }
+}
+var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
+var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
+function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false) {
+  for (const i of args.integer ?? []) {
+    const e = i === -1 ? receiver : operands[i];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && !Number.isInteger(n2)) {
+      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, what, "an integer", "got a fraction", ROUND), e.pos);
+    }
+  }
+  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
+      throw new CodegenError(
+        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
+  }
+  for (const i of args.dateFormat ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
+  }
+  for (const [i, rule] of Object.entries(args.body ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
+  }
+  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0) continue;
+    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
+    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
+    if (own === void 0) continue;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${Number(i) + 1}`, e, own);
+  }
+  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0 || e.type !== "ArrayLiteral") continue;
+    for (const el of e.elements) {
+      if (el.type === "SpreadElement") continue;
+      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
+    }
+  }
+  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
+    const e = operands[Number(i)];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && (n2 < lo || n2 > hi)) {
+      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
+    }
+  }
+  for (const i of args.nonZero ?? []) {
+    const e = operands[i];
+    if (!settling && e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
+        e.pos
+      );
+    }
+  }
+  for (const i of args.constant ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
+      throw new CodegenError(
+        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
+  }
+}
+var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+var MOMENT_FORMAT_TOKENS = [
+  ["YYYY", "%Y"],
+  ["MMMM", null],
+  ["dddd", null],
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null],
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null],
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null]
+];
+var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+function momentFormatHint(fmt) {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token3, i)) continue;
+      out += spec ?? token3;
+      i += token3.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
+}
+function checkDateFormat(name2, fmt, pos) {
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
+      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        pos
+      );
+    }
+    i++;
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      pos
+    );
+  }
 }
 
 // src/compiler/emit/errors.ts
@@ -21819,7 +22196,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
     case "wrongKind":
-      return wrongKind(sel.fault, spelled3, subjects, pos);
+      return kindRefusal(sel.fault, spelled3, subjects, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
       const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
@@ -21835,7 +22212,6 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     case "noCell":
       return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
     case "rule":
-    case "dispatch":
       return new CodegenError(
         `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled3}`,
         pos
@@ -22105,25 +22481,6 @@ var ELEMENT_NOUN = {
   binData: "binary data"
 };
 var nounFor = (k, table) => table[k] ?? `a ${k}`;
-var TAKES = {
-  number: "numbers",
-  int: "integers",
-  "int-or-long": "integers",
-  "number-or-date": "numbers or dates",
-  orderable: "numbers, strings, dates or ObjectIds",
-  string: "strings",
-  fieldName: "strings",
-  fieldPath: "strings",
-  bool: "booleans",
-  object: "documents",
-  array: "arrays",
-  date: "dates",
-  timestamp: "timestamps",
-  any: "values",
-  callback: "callbacks",
-  regex: "regular expressions or strings",
-  element: "elements of the array"
-};
 var orList = (items) => {
   const once = [...new Set(items)];
   return once.length < 2 ? once[0] ?? "" : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
@@ -22131,24 +22488,14 @@ var orList = (items) => {
 var kindNoun = (k) => KIND_NOUN[k] ?? `a ${k}`;
 var kindsNoun = (ks, join3) => ks.map(kindNoun).join(join3);
 var pluralKind = (k) => ELEMENT_NOUN[k] ?? `${k}s`;
-function spellOperand(e) {
-  if (e === void 0) return "this value";
-  try {
-    const v = constantOf(e);
-    if (!v.ok || v.value === null || v.value === void 0) return "this value";
-    const text = stringify2(v.value);
-    return text.length > 24 ? "this value" : text;
-  } catch {
-    return "this value";
-  }
-}
 function spellArray(e) {
   const node = e;
   if (node?.type === "SpreadElement") return spellArray(node.argument);
-  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "this value";
+  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "an array";
 }
-function operandIs(e, kinds, viaElements) {
-  return viaElements ? `the elements of ${spellArray(e)} are ${orList(kinds.map(pluralKind))}` : `${spellOperand(e)} is ${kindsNoun(kinds, " or ")}`;
+function gotKinds(e, kinds, viaElements) {
+  const nouns = orList(kinds.map(kindNoun));
+  return viaElements ? `an element of ${spellArray(e)} that is ${nouns}` : nouns;
 }
 function operandAt(subjects, slot) {
   const only = subjects.args.length === 1 ? subjects.args[0] : null;
@@ -22162,34 +22509,47 @@ function shownName(spelled3) {
   if (spelled3.startsWith("$")) return `'${spelled3}'`;
   return `'${spelled3.replace(/\(\)$/, "")}()'`;
 }
-function wrongKind(fault, spelled3, subjects, pos) {
+function kindRefusal(fault, spelled3, subjects, pos) {
   const name2 = shownName(spelled3);
   switch (fault.rule) {
     case "slot": {
       const e = operandAt(subjects, fault.slot);
-      const types = Array.isArray(fault.expected) ? fault.expected : [fault.expected];
-      const takes = orList(types.map((t) => TAKES[t]));
       return new CodegenError(
-        `${name2} takes ${takes}, but ${operandIs(e, fault.got, fault.viaElements === true)}.`,
+        wrongKind(
+          name2,
+          `argument ${fault.slot + 1}`,
+          takesOf(fault.expected),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`
+        ),
         e?.pos ?? pos
       );
     }
     case "element": {
       const e = operandAt(subjects, fault.slot);
       return new CodegenError(
-        `${name2} takes an element of this array, but ${operandIs(e, fault.got, fault.viaElements === true)} and the array holds ${orList(fault.held.map(pluralKind))}.`,
+        wrongKind(
+          name2,
+          `argument ${fault.slot + 1}`,
+          takesOf("element"),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`
+        ),
         e?.pos ?? pos
       );
     }
     case "elements":
       return new CodegenError(
-        `${name2} takes ${pluralKind(fault.expected)}, but this array holds ${kindsNoun(fault.held, " and ")}.`,
+        wrongKind(name2, "", pluralKind(fault.expected), `the array holds ${kindsNoun(fault.held, " and ")}`),
         subjects.receiver?.pos ?? pos
       );
     case "homogeneous": {
       const e = operandAt(subjects, fault.slot);
       return new CodegenError(
-        `${name2} takes operands of one kind, but ${operandIs(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${operandIs(e, fault.got, fault.viaElements === true)}.`,
+        wrongKind(
+          name2,
+          "",
+          "operands of one kind",
+          `got ${gotKinds(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${gotKinds(e, fault.got, fault.viaElements === true)}`
+        ),
         e?.pos ?? pos
       );
     }
@@ -22959,367 +23319,6 @@ var Env = class _Env {
     return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain, this.documents) };
   }
 };
-
-// src/compiler/emit/check.ts
-function literal(e) {
-  switch (e.type) {
-    case "NumberLiteral":
-      return { kind: "number", value: e };
-    case "UnaryExpr":
-      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
-    case "StringLiteral":
-      return isFieldPathString(e) ? null : { kind: "string", value: e };
-    case "BooleanLiteral":
-      return { kind: "bool", value: e };
-    case "NullLiteral":
-      return { kind: "null", value: e };
-    case "ArrayLiteral":
-      return { kind: "array", value: e };
-    case "ObjectLiteral":
-      return { kind: "object", value: e };
-    case "RegexLiteral":
-      return { kind: "regex", value: e };
-    case "BigIntLiteral":
-      return { kind: "bigint", value: e };
-    default:
-      return null;
-  }
-}
-var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
-var NOUN = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  null: "null",
-  array: "an array",
-  object: "an object",
-  regex: "a regular expression",
-  bigint: "a bigint"
-};
-function matches(lit2, expected) {
-  switch (expected) {
-    case "number":
-    case "number-or-date":
-      return lit2.kind === "number" || lit2.kind === "bigint";
-    case "int":
-    case "int-or-long": {
-      if (lit2.kind === "bigint") return true;
-      const n2 = numberOf(lit2.value);
-      return n2 !== null && Number.isInteger(n2);
-    }
-    case "string":
-    case "bool":
-    case "array":
-    case "object":
-      return lit2.kind === expected;
-    case "fieldName":
-    case "fieldPath":
-      return false;
-    case "regex":
-      return lit2.kind === "regex" || lit2.kind === "string";
-    case "any":
-    case "element":
-      return true;
-    case "orderable":
-      return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
-    case "date":
-    case "timestamp":
-    case "callback":
-      return false;
-  }
-}
-var EXPECTS = {
-  number: "expects a number",
-  int: "expects an integer",
-  "int-or-long": "expects an integer",
-  "number-or-date": "expects a number or a date",
-  orderable: "expects a number, a string, a date or an ObjectId",
-  string: "expects a string",
-  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "expects a field PATH to read: a string that starts with '$'",
-  bool: "expects a boolean",
-  array: "expects an array",
-  object: "expects a document",
-  date: "expects a date",
-  timestamp: "expects a timestamp",
-  any: "expects a value",
-  callback: "expects a callback",
-  regex: "expects a regular expression or a string",
-  element: "expects an element of the array"
-};
-var hint = (expected) => {
-  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
-  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
-  return "";
-};
-function checkType(name2, slot, e, expected) {
-  if (expected === "fieldPath") {
-    if (e.type !== "StringLiteral") return;
-    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
-      throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
-        e.pos
-      );
-    }
-    return;
-  }
-  if (expected === "fieldName") {
-    if (e.type !== "StringLiteral") {
-      const other = literal(e);
-      if (other === null || other.kind === "null") return;
-      throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
-        e.pos
-      );
-    }
-    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
-    if (bad === null) return;
-    throw new CodegenError(
-      `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
-      e.pos
-    );
-  }
-  const lit2 = literal(e);
-  if (lit2 === null || lit2.kind === "null") return;
-  if (matches(lit2, expected)) return;
-  throw new CodegenError(
-    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit2.kind]}.${hint(expected)}`,
-    e.pos
-  );
-}
-function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
-  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
-  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
-  if (allowed.includes(v)) return;
-  const near = didYouMean(v, allowed, (s) => s);
-  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
-}
-function checkBodyKeys(body) {
-  if (body.type !== "ObjectLiteral") return;
-  for (const e of body.entries) {
-    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
-    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
-  }
-}
-function checkBody(name2, rule, args, keys, pos) {
-  if (args.length === 1 && args[0].type === "Injected") return;
-  let present2;
-  let valueOf;
-  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
-  if (body !== null) {
-    checkBodyKeys(body);
-    const byKey = /* @__PURE__ */ new Map();
-    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
-    present2 = [...byKey.keys()];
-    valueOf = (k) => byKey.get(k);
-  } else {
-    present2 = keys.slice(0, args.length);
-    valueOf = (k) => {
-      const i = keys.indexOf(k);
-      return i >= 0 && i < args.length ? args[i] : void 0;
-    };
-  }
-  const closed = [...rule.required, ...rule.optional];
-  if (body !== null && rule.closed) {
-    for (const k of present2) {
-      if (!closed.includes(k)) {
-        throw new CodegenError(
-          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
-          valueOf(k)?.pos ?? pos
-        );
-      }
-    }
-  }
-  for (const k of rule.required) {
-    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
-  }
-  for (const [a, b] of rule.notTogether ?? []) {
-    const inA = present2.filter((k) => a.includes(k));
-    const inB = present2.filter((k) => b.includes(k));
-    if (inA.length > 0 && inB.length > 0) {
-      throw new CodegenError(
-        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
-        pos
-      );
-    }
-  }
-  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
-  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
-    const v = valueOf(k);
-    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
-  }
-  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
-    const v = valueOf(k);
-    if (v !== void 0) checkType(name2, k, v, t);
-  }
-  for (const k of rule.constantKeys ?? []) {
-    const v = valueOf(k);
-    if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
-      throw new CodegenError(
-        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        v.pos
-      );
-    }
-  }
-}
-var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
-var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
-function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false) {
-  for (const i of args.integer ?? []) {
-    const e = i === -1 ? receiver : operands[i];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && !Number.isInteger(n2)) {
-      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(
-        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
-      throw new CodegenError(
-        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
-  }
-  for (const i of args.dateFormat ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
-  }
-  for (const [i, rule] of Object.entries(args.body ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
-  }
-  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0) continue;
-    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
-    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
-    if (own === void 0) continue;
-    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, "", e, own);
-  }
-  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0 || e.type !== "ArrayLiteral") continue;
-    for (const el of e.elements) {
-      if (el.type === "SpreadElement") continue;
-      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
-    }
-  }
-  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
-    const e = operands[Number(i)];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && (n2 < lo || n2 > hi)) {
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
-    }
-  }
-  for (const i of args.nonZero ?? []) {
-    const e = operands[i];
-    if (!settling && e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
-        e.pos
-      );
-    }
-  }
-  for (const i of args.constant ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
-      throw new CodegenError(
-        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
-  }
-}
-var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
-var MOMENT_FORMAT_TOKENS = [
-  ["YYYY", "%Y"],
-  ["MMMM", null],
-  ["dddd", null],
-  ["MMM", null],
-  ["ddd", null],
-  ["DDD", "%j"],
-  ["SSS", "%L"],
-  ["YY", null],
-  ["MM", "%m"],
-  ["DD", "%d"],
-  ["HH", "%H"],
-  ["hh", null],
-  ["ZZ", "%z"],
-  ["mm", "%M"],
-  ["ss", "%S"],
-  ["Do", null]
-];
-var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
-function momentFormatHint(fmt) {
-  let out = "";
-  let i = 0;
-  outer: while (i < fmt.length) {
-    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
-      if (!fmt.startsWith(token3, i)) continue;
-      out += spec ?? token3;
-      i += token3.length;
-      continue outer;
-    }
-    out += fmt[i];
-    i++;
-  }
-  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
-  if (missing === null) return ` Did you mean '${out}'?`;
-  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
-}
-function checkDateFormat(name2, fmt, pos) {
-  for (let i = 0; i < fmt.length; i++) {
-    if (fmt[i] !== "%") continue;
-    const spec = fmt[i + 1];
-    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
-      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
-      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
-      throw new CodegenError(
-        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
-        pos
-      );
-    }
-    i++;
-  }
-  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
-    throw new CodegenError(
-      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
-      pos
-    );
-  }
-}
 
 // src/compiler/kinds.ts
 var UNPROVEN = { args: [], elements: "unknown" };
@@ -24478,11 +24477,6 @@ var switchOn = (candidates, otherwise) => {
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
-var switchOver = (candidates) => {
-  const { kept: branches, decided } = liveBranches(candidates);
-  if (decided !== void 0) return switchOn(branches, decided);
-  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
-};
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
@@ -24508,12 +24502,7 @@ function shapeOf2(args) {
   const v = constantOf(args[0]);
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
+var FIELD_FAMILIES2 = Object.keys(FIELD_FAMILY_TYPES);
 var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
 var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
 var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
@@ -24583,7 +24572,7 @@ function kindFault(name2, rule, proofs) {
   const fault = faultOf(name2, rule, proofs);
   return fault === null ? null : { kind: "wrongKind", name: name2, fault };
 }
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, proofs) {
+function fromPerFamily(name2, branches, receiver, shaped, count, proofs) {
   const on = familiesFor(name2);
   if (receiver.kind !== "opaque") {
     const family = familyOf2(receiver);
@@ -24605,39 +24594,12 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, proo
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
   const lowering2 = listed.filter((f) => !isRefusal(branches[f]));
-  const fieldFamilies = lowering2.length > 0 ? lowering2 : listed;
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const fault = (f) => {
-    const b = branches[f];
-    return isRule(b) ? kindFault(name2, b.args, proofs) : null;
-  };
-  const fitting = fieldFamilies.filter((f) => fault(f) === null);
-  if (fitting.length === 0 && fieldFamilies.length > 1) return fault(fieldFamilies[0]);
-  if (fitting.length === 1 && fieldFamilies.length > 1) {
-    const branch = branches[fitting[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle2(name2, branch, shaped, count, proofs, fitting[0]);
+  const families2 = lowering2.length > 0 ? lowering2 : listed;
+  if (families2.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  if (lowering2.length > 1) {
+    internalError(`the row '${name2}' lowers on ${lowering2.join(" and ")}. A row lowers on one field family`);
   }
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle2(name2, branch, shaped, count, proofs, fieldFamilies[0]);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fitting) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle2(name2, branch, shaped, count, proofs) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+  return settle2(name2, branches[families2[0]], shaped, count, proofs, families2[0]);
 }
 function select(verdict, receiver, shaped, count, proofs) {
   const name2 = verdict.name;
@@ -24660,7 +24622,7 @@ function select(verdict, receiver, shaped, count, proofs) {
       return (verdict.args === void 0 ? null : kindFault(name2, verdict.args, proofs)) ?? { kind: "noCell", name: name2 };
     }
     case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, proofs);
+      return fromPerFamily(name2, verdict.branches, receiver, shaped, count, proofs);
     case "lower": {
       const gate = receiverGate(name2, receiver);
       if (gate !== null) return gate;
@@ -26015,7 +25977,7 @@ function receiverOf(recv, env) {
   }
   const possible = kinds.map(familyOfKind).filter((f) => f !== null);
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
-  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
+  return { kind: "opaque", lowered, possible };
 }
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
@@ -26055,7 +26017,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
     checkSlots(name2, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
-    const empty = emptyValueOf(name2, family);
+    const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
     const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
     const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);
@@ -26076,10 +26038,6 @@ function dispatchOn(node, name2, recvNode, args, env) {
       )
     );
   }
-  if (sel.kind === "dispatch") {
-    if (receiver.kind !== "opaque") internalError("the select pass chose a dispatch for a proven receiver");
-    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container);
-  }
   const format = receiver.kind === "namespace" ? (c) => `${receiver.name}.${c}` : (c) => `.${c}()`;
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
     const on = familiesFor(n2);
@@ -26095,47 +26053,6 @@ function arraysHolder(recv) {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
-}
-function cheapToRepeat(lowered) {
-  if (typeof lowered === "string") return lowered.startsWith("$");
-  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
-  const keys = Object.keys(lowered);
-  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
-  const operands = lowered.$ifNull;
-  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
-}
-function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) {
-  const position = positionIn(env);
-  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
-  const ref = bound === null ? lowered : bound.ref;
-  const bodyEnv = bound === null ? env : bound.env;
-  const run = (rule) => {
-    checkSlots(name2, rule.args, args, true, void 0, env.site.settling);
-    const present2 = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
-    return rule.emit(
-      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present2)
-    );
-  };
-  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
-  if (sel.complete && branches.length >= 2) {
-    const doc2 = switchOver(branches);
-    return bound === null ? doc2 : letOne(bound.as, lowered, doc2);
-  }
-  const otherwise = sel.otherwise;
-  let fallback;
-  if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
-  else
-    throw refusalFor(
-      { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
-      spelled3,
-      container,
-      position,
-      node.pos,
-      []
-    );
-  const doc = switchOn(branches, fallback);
-  return bound === null ? doc : letOne(bound.as, lowered, doc);
 }
 function callExpression(node, env) {
   const { callee } = node;
@@ -26173,7 +26090,6 @@ function dispatchBare(node, name2, args, env) {
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  if (sel.kind === "dispatch") internalError(`a bare call to '${name2}' selected a receiver dispatch`);
   throw refusalFor(sel, name2, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda(lambda, args, env, pos, label, fnName) {
@@ -26217,7 +26133,6 @@ function operatorCall(node, env) {
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count, UNPROVEN);
   if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
-  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
   if (sel.kind !== "rule") return plainOperator(node, env);
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
@@ -26297,7 +26212,6 @@ function production2(node, key, operands, env) {
   const sel = selectProduction(key, operands, env);
   const spelled3 = spelledProduction(node, key);
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
     if (sel.kind === "wrongKind") operandsFirst(operands, env);
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, [], void 0, { args: operands });
   }
@@ -27420,7 +27334,6 @@ function refStatement(node, ref, env, first) {
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
   const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
@@ -27460,7 +27373,6 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   const args = link.args;
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
-  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
@@ -27570,7 +27482,6 @@ function stageStatement(node, env, first) {
   const verdict = consult(name2, "statement");
   const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length, proofs);
-  if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
