@@ -9626,6 +9626,33 @@ describe("jsmql.compile()", () => {
     });
   });
 
+  it("validates a parameterised arrow that passes the parts of .set()", () => {
+    expect(jsmql.validate(({ parts }: { parts: object }, { $ }) => $.d.set(parts))).toEqual({
+      valid: true,
+      errors: [],
+    });
+    const set = jsmql.expr.compile(({ parts }: { parts: unknown }, { $ }) => $.d.set(parts));
+    expect(set({ parts: { year: 2020 } })).toEqual({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$d" } } },
+        in: {
+          $dateFromParts: {
+            year: 2020,
+            month: "$$jsmqlParts.month",
+            day: "$$jsmqlParts.day",
+            hour: "$$jsmqlParts.hour",
+            minute: "$$jsmqlParts.minute",
+            second: "$$jsmqlParts.second",
+            millisecond: "$$jsmqlParts.millisecond",
+          },
+        },
+      },
+    });
+    // A document that reads as MQL is a value, and the server judges its parts.
+    expect(() => set({ parts: { year: "$y" } })).not.toThrow();
+    expect(() => set({ parts: "$x" })).toThrow("'.set()' argument 1 takes a document, but got a string.");
+  });
+
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);

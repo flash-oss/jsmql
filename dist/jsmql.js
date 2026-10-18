@@ -6095,8 +6095,13 @@ var NAMES = {
       },
       emit: ({ recv, args, value, bind }) => {
         const given = /* @__PURE__ */ new Map();
-        for (const e of args[0].entries) {
-          if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+        const body = args[0];
+        if (body.type === "ObjectLiteral") {
+          for (const e of body.entries) {
+            if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+          }
+        } else if (body.type === "Injected" && typeof body.value === "object" && body.value !== null) {
+          for (const [k, v] of Object.entries(body.value)) given.set(k, { type: "Injected", value: v, pos: body.pos });
         }
         const iso = [...given.keys()].some((k) => DATE_PARTS_ISO_MARKERS.includes(k));
         const family = iso ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
@@ -6108,6 +6113,7 @@ var NAMES = {
           const v = given.get(key);
           rebuilt[key] = v !== void 0 ? value(v) : `${parts.ref}.${key}`;
         }
+        for (const [key, v] of given) if (!family.includes(key)) rebuilt[key] = value(v);
         const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
         if (parts === null) return fromParts;
         const toParts = { date: recv, ...tz };
@@ -22706,16 +22712,16 @@ var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf"
 var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
   if (typeof v === "number" || typeof v === "bigint") return of("number");
-  if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
+  if (typeof v === "string") return of("string");
   if (typeof v === "boolean") return of("bool");
   if (isDate(v)) return of("date");
-  if (Array.isArray(v)) return isMqlShaped(v) ? ANY : of("array");
+  if (Array.isArray(v)) return of("array");
   const tag = bsonTagOf(v);
   if (tag !== void 0) {
     const k = BSON_KIND[tag];
     return k === void 0 ? ANY : of(k);
   }
-  if (isPlainObject(v)) return isMqlShaped(v) ? ANY : of("object");
+  if (isPlainObject(v)) return of("object");
   return ANY;
 }
 function typeOf(node, env) {
