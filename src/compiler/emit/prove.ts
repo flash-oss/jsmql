@@ -253,7 +253,8 @@ export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(t
  * field proves the kinds of its elements in place of `array`, and this rule lives in one
  * place, in this function. The array itself stays a possible kind when another operand can be an
  * array too, because `{ tags: ["a"] }` compares the whole array. An element of unknown
- * kind makes the field unproven.
+ * kind makes the field unproven. An `element` slot reads its own view (`asElement`), and a
+ * slot that takes an array reads the operand as one value (`whole`). See `Proofs`.
  */
 export function proofsFor(
   args: readonly CallArg[],
@@ -314,9 +315,20 @@ export function proofsFor(
   };
   const proofs = args.map(throughElements);
   const tuple = items === undefined ? {} : { items };
+  // An element slot tests each element of a field that holds an array, whatever the other
+  // operands are. The whole array stays a kind only when the source can hold an array.
+  const asElement = args.map((a, i): Proof | undefined => {
+    const p = plain[i];
+    if (isField === undefined || a.type === "SpreadElement" || !isField(a) || p === "unknown") return undefined;
+    if (!p.every((k) => k === "array")) return undefined;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    return elements !== "unknown" && elements.includes("array") ? [...new Set([...p, ...held])] : held;
+  });
+  const views = isField === undefined ? {} : { whole: plain, asElement };
   return via.some(Boolean)
-    ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) }
-    : { args: proofs, elements, ...tuple };
+    ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true), ...views }
+    : { args: proofs, elements, ...tuple, ...views };
 }
 
 /** The receiver family a node has, for a row's per-family `returns`: a source family, else its kind's. */

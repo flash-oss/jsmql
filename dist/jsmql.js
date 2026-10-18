@@ -10925,7 +10925,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gt")
     },
     expr: {
@@ -10947,7 +10947,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gte")
     },
     expr: {
@@ -10969,7 +10969,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lt")
     },
     expr: {
@@ -10991,7 +10991,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lte")
     },
     expr: {
@@ -11013,7 +11013,10 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    filter: {
+      args: { sig: "value, list", exact: 2, slotType: { 0: "element", 1: "array" } },
+      emit: (input) => membershipQuery(input)
+    },
     expr: inCode("src/compiler/emit/lower.ts", {
       sig: "value, list",
       exact: 2,
@@ -23409,6 +23412,7 @@ function kindFits(kind, expected, elements = "unknown") {
   }
 }
 var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
 var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
 var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
 var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
@@ -23428,10 +23432,12 @@ function faultOf(name2, rule, proofs) {
     const via = proofs.viaElements?.[i] === true;
     spread = spread || proofs.packed === true && via;
     const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    const proof = proofs.args[i];
-    if (expected === void 0 || takesCallback(expected) || proof === "unknown") continue;
-    if (proofFits(proof, expected, proofs.elements)) continue;
-    const through = via ? { viaElements: true } : {};
+    if (expected === void 0 || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
+    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
     return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : { rule: "slot", slot: i, expected, got: proof, ...through };
   }
   if (rule.homogeneous === true) {
@@ -23614,7 +23620,16 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   };
   const proofs = args.map(throughElements);
   const tuple = items === void 0 ? {} : { items };
-  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) } : { args: proofs, elements, ...tuple };
+  const asElement = args.map((a, i) => {
+    const p = plain[i];
+    if (isField === void 0 || a.type === "SpreadElement" || !isField(a) || p === "unknown") return void 0;
+    if (!p.every((k) => k === "array")) return void 0;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    return elements !== "unknown" && elements.includes("array") ? [.../* @__PURE__ */ new Set([...p, ...held])] : held;
+  });
+  const views = isField === void 0 ? {} : { whole: plain, asElement };
+  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true), ...views } : { args: proofs, elements, ...tuple, ...views };
 }
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
@@ -24912,6 +24927,7 @@ function leaf(node, env) {
   const proofs = escape ? UNPROVEN : proofsFor(args, env, true, source === void 0 ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
   const sel = select(verdict, receiver, shapeOf2(args), args.length, proofs);
   if (sel.kind === "wrongKind") {
+    operandsFirst(args, childEnv(env, node, "args"));
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, [], void 0, {
       ...recv === null ? {} : { receiver: recv },
       args

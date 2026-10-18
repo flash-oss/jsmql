@@ -338,9 +338,8 @@ function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | nul
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 
-// A `filter` cell of a comparison states the `homogeneous` rule of its `expr` cell, and
-// takes every kind of operand. A comparison that falls to `$expr` also meets the
-// `expr` cell. A query reads an array field through its elements: see `proofsFor`.
+// A `filter` cell of a comparison states the kinds of its `expr` cell, so the two forms
+// refuse the same operands. A query reads an array field through its elements: see `proofsFor`.
 export const PRODUCTIONS = {
   conditional: production({
     doc: "Chooses between two values on a condition.",
@@ -577,7 +576,7 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gt"),
     },
     expr: {
@@ -600,7 +599,7 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gte"),
     },
     expr: {
@@ -623,7 +622,7 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lt"),
     },
     expr: {
@@ -646,7 +645,7 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lte"),
     },
     expr: {
@@ -669,7 +668,10 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    filter: {
+      args: { sig: "value, list", exact: 2, slotType: { 0: "element", 1: "array" } },
+      emit: (input) => membershipQuery(input),
+    },
     expr: inCode("src/compiler/emit/lower.ts", {
       sig: "value, list",
       exact: 2,

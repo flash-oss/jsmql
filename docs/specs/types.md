@@ -448,14 +448,19 @@ $.a = "x"; $.b = $.a + 1;  // ✗ the stage proved that `a` is a string
 $max(1, "a")               // → { $max: [1, "a"] }   the escape hatch passes each value as written
 ```
 
-The query road obeys the same rule. The query cell of a comparison states
-`homogeneous`, as its value cell does. One addition comes from SR2: a query
+The query road obeys the same rule. The query cell of an operator states the
+kinds of its value cell, so the two forms refuse the same operands. One addition comes from SR2: a query
 compares a FIELD that holds an array through the elements of the array, so
 `{ tags: "x" }` tests a string against the elements of `tags`. In a query, a
 field that the proof shows to be an array proves the kinds of its elements in
 place of `array`. A field with elements of unknown kind proves nothing. The array
 stays a possible kind when another operand can be an array too, because
 `{ tags: ["a"] }` compares the whole array.
+
+A membership test reads each element
+of the field against the elements of the list, whatever the other operand is. So
+`{ tags: { $in: ["a"] } }` tests a string. The array stays a possible kind only
+when the list can hold an array.
 
 `proofsFor` states this once, for every query cell. The refusal then says that the elements of the field are the
 kind, because the value of the field is an array.
@@ -464,6 +469,8 @@ kind, because the value of the field is an array.
 $.tags = ["a"]; $match($.tags === "x");   // → { $match: { tags: "x" } }   a string meets the string elements
 $.tags = [1];   $match($.tags === "x");   // ✗ the elements are numbers
 $.n = 1;        $match($.n === "x");      // ✗ the stage proved that `n` is a number
+$.tags = ["a"]; $match($.tags in ["a"]);  // → { $match: { tags: { $in: ["a"] } } }
+$.n = 1;        $match($.n in ["a"]);     // ✗ the list holds strings, and `n` is a number
 ```
 
 The ordering operators take an `"orderable"` operand: a number, a string, a date
