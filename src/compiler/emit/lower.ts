@@ -44,7 +44,7 @@ import {
   takesNoReceiver,
 } from "../rows.ts";
 import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
-import { checkBodyKeys, checkSlots } from "./check.ts";
+import { checkBodyKeys, checkSlots, type SlotProof } from "./check.ts";
 import { operandShapeOf } from "../rows.ts";
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
@@ -832,7 +832,15 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(name, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
+    checkSlots(
+      name,
+      sel.rule.args,
+      exprArgs,
+      true,
+      recvNode,
+      env.site.settling,
+      slotProof(childEnv(env, node, "args")),
+    );
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
@@ -1106,6 +1114,12 @@ function selectProduction(key: string, operands: readonly Expr[], env: Env): Sel
   return select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length, proofs);
 }
 
+/** The proof that the slot check reads for an option key or a list element under `env`. */
+export const slotProof = (env: Env): SlotProof => ({
+  isNull: (e) => isNothing(typeOf(e, env)),
+  read: (e) => lowerValue(e, env),
+});
+
 /**
  * A kind refusal is the final check on a call. An error inside an operand has a message
  * of its own, and that one comes first: this lowers each operand and drops the result.
@@ -1138,7 +1152,7 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     if (sel.kind === "wrongKind") operandsFirst(operands, env);
     throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, [], undefined, { args: operands });
   }
-  checkSlots(spelled, sel.rule.args, operands, true, undefined, env.site.settling);
+  checkSlots(spelled, sel.rule.args, operands, true, undefined, env.site.settling, slotProof(env));
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }

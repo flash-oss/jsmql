@@ -30,7 +30,7 @@ import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
-import { holderOf, lowerTruth, lowerValue, readablePath } from "./lower.ts";
+import { holderOf, lowerTruth, lowerValue, readablePath, slotProof } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
 import { proofsFor, typeOf } from "./prove.ts";
@@ -436,7 +436,9 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) checkSlots(name, sel.rule.args, args, true, undefined, env.site.settling);
+  if (!escape) {
+    checkSlots(name, sel.rule.args, args, true, undefined, env.site.settling, slotProof(childEnv(env, node, "args")));
+  }
   const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {
     lowerValue,
     lowerFilter,

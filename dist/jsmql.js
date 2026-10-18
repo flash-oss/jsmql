@@ -5674,7 +5674,7 @@ var NAMES = {
             required: [],
             optional: ["timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -5710,7 +5710,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6002,7 +6002,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6044,7 +6044,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6088,7 +6088,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6209,7 +6209,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -21876,6 +21876,11 @@ var takesOf = (t) => {
   return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
 };
 var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+function refuseProvenNull(name2, slot, e, takes, proof) {
+  if (proof === void 0 || e.type === "NullLiteral" || !proof.isNull(e)) return;
+  proof.read(e);
+  throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, takes, "got null"), e.pos);
+}
 var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
@@ -21896,7 +21901,7 @@ function checkType(name2, slot, e, expected) {
   if (expected === "fieldName") {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
-      if (other === null || other.kind === "null") return;
+      if (other === null) return;
       throw new CodegenError(
         `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos
@@ -21910,8 +21915,7 @@ function checkType(name2, slot, e, expected) {
     );
   }
   const lit2 = literal(e);
-  if (lit2 === null || lit2.kind === "null") return;
-  if (matches(lit2, expected)) return;
+  if (lit2 === null || matches(lit2, expected)) return;
   const fraction = lit2.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
     wrongKind(
@@ -21938,7 +21942,7 @@ function checkBodyKeys(body) {
     if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
   }
 }
-function checkBody(name2, rule, args, keys, pos) {
+function checkBody(name2, rule, args, keys, pos, proof) {
   if (args.length === 1 && args[0].type === "Injected") return;
   let present2;
   let valueOf;
@@ -21989,6 +21993,14 @@ function checkBody(name2, rule, args, keys, pos) {
     const v = valueOf(k);
     if (v !== void 0) checkType(name2, k, v, t);
   }
+  for (const k of present2) {
+    const v = valueOf(k);
+    if (v === void 0) continue;
+    const t = rule.keyTypes?.[k];
+    const takes = t === void 0 ? "a value" : TAKES[t];
+    if (v.type === "NullLiteral") throw new CodegenError(wrongKind(`'${spell2(name2)}'`, k, takes, "got null"), v.pos);
+    refuseProvenNull(name2, k, v, takes, proof);
+  }
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
     if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
@@ -22001,7 +22013,7 @@ function checkBody(name2, rule, args, keys, pos) {
 }
 var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
 var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
-function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false) {
+function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false, proof) {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
     const n2 = e === void 0 ? null : numberOf(e);
@@ -22038,7 +22050,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos, proof);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -22062,7 +22074,9 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     if (e === void 0 || e.type !== "ArrayLiteral") continue;
     for (const el of e.elements) {
       if (el.type === "SpreadElement") continue;
-      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
+      const slot = `element ${e.elements.indexOf(el) + 1}`;
+      checkType(name2, slot, el, t);
+      refuseProvenNull(name2, slot, el, TAKES[t], proof);
     }
   }
   for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
@@ -24895,7 +24909,9 @@ function leaf(node, env) {
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) checkSlots(name2, sel.rule.args, args, true, void 0, env.site.settling);
+  if (!escape) {
+    checkSlots(name2, sel.rule.args, args, true, void 0, env.site.settling, slotProof(childEnv(env, node, "args")));
+  }
   const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
     lowerValue,
     lowerFilter,
@@ -26039,7 +26055,15 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
+    checkSlots(
+      name2,
+      sel.rule.args,
+      exprArgs,
+      true,
+      recvNode,
+      env.site.settling,
+      slotProof(childEnv(env, node, "args"))
+    );
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
@@ -26221,6 +26245,10 @@ function selectProduction(key, operands, env) {
   const proofs = proofsFor(operands, env, false, last === void 0 ? null : { node: last, env });
   return select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length, proofs);
 }
+var slotProof = (env) => ({
+  isNull: (e) => isNothing(typeOf(e, env)),
+  read: (e) => lowerValue(e, env)
+});
 function operandsFirst(operands, env) {
   for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
 }
@@ -26240,7 +26268,7 @@ function production2(node, key, operands, env) {
     if (sel.kind === "wrongKind") operandsFirst(operands, env);
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, [], void 0, { args: operands });
   }
-  checkSlots(spelled3, sel.rule.args, operands, true, void 0, env.site.settling);
+  checkSlots(spelled3, sel.rule.args, operands, true, void 0, env.site.settling, slotProof(env));
   const read3 = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read3, [], env, node, READ));
 }
@@ -27368,7 +27396,7 @@ function refStatement(node, ref, env, first) {
     if (sel.kind !== "rule") {
       throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, [], void 0, { args });
     }
-    checkSlots(node.name, sel.rule.args, args, false);
+    checkSlots(node.name, sel.rule.args, args, false, void 0, false, slotProof(childEnv(env, node, "args")));
     stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
   const out = [];
@@ -27407,7 +27435,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     if (sel.kind !== "rule") {
       throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], void 0, { args });
     }
-    checkSlots(link.name, sel.rule.args, args, false);
+    checkSlots(link.name, sel.rule.args, args, false, void 0, false, slotProof(childEnv(env, link, "args")));
     stages = sel.rule.emit(
       stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
     );
@@ -27520,7 +27548,7 @@ function stageStatement(node, env, first) {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s, { args });
   }
-  checkSlots(name2, sel.rule.args, args, false);
+  checkSlots(name2, sel.rule.args, args, false, void 0, false, slotProof(childEnv(env, node, "args")));
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   return landed(
     stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),

@@ -58,6 +58,21 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
+  it("an option key and a list element refuse null, written or proven", () => {
+    expect(() => jsmql.expr("$.d.set({ year: null })")).toThrow("'.set()' year takes an integer, but got null.");
+    expect(() => jsmql.expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(
+      "'.startOf()' startOfWeek takes a string, but got null.",
+    );
+    expect(() => jsmql.expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
+    expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
+      "'.startOf()' timezone takes a string, but got null.",
+    );
+    // A read of a field that no stage wrote keeps its own refusal.
+    expect(() => jsmql('$.o = {}; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
+      /reads a field that '\$\.o' does not have/,
+    );
+  });
+
   it("a conversion and the condition of assert() take every kind but null", () => {
     expect(() => jsmql.expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
     expect(() => jsmql.expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");

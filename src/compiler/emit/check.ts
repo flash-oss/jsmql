@@ -134,6 +134,20 @@ export const takesOf = (t: ArgType | readonly ArgType[]): string => {
 const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
 
 /**
+ * What the slot check may ask of an option key or a list element: is the value proven
+ * null, and the value's own reading. The reading runs before the refusal, so a read of
+ * a field that no stage wrote gives its own refusal, which names the field.
+ */
+export type SlotProof = { readonly isNull: (e: Expr) => boolean; readonly read: (e: Expr) => unknown };
+
+/** A value that the proof shows is null, in a key or an element that takes no null (HR7). */
+function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, proof: SlotProof | undefined): void {
+  if (proof === undefined || e.type === "NullLiteral" || !proof.isNull(e)) return;
+  proof.read(e);
+  throw new CodegenError(wrongKind(`'${spell(name)}'`, slot, takes, "got null"), e.pos);
+}
+
+/**
  * The one wording of a refusal for a value of the wrong kind. The literal checks and the
  * kind check of `select` (see `kindRefusal` in errors.ts) all call it, so each one reads
  * the same. `slot` names a key or an argument, or is "". `found` is the clause after
@@ -168,7 +182,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   if (expected === "fieldName") {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
-      if (other === null || other.kind === "null") return;
+      if (other === null) return;
       throw new CodegenError(
         `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
@@ -189,8 +203,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     );
   }
   const lit = literal(e);
-  if (lit === null || lit.kind === "null") return;
-  if (matches(lit, expected)) return;
+  if (lit === null || matches(lit, expected)) return;
   // A number in an integer slot is a fraction: the kind fits, and the value does not.
   const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
@@ -255,6 +268,7 @@ export function checkBody(
   args: readonly Expr[],
   keys: readonly string[],
   pos: number,
+  proof?: SlotProof,
 ): void {
   // A body the call supplied whole (`.set(${parts})`) is a value, and its keys are the server's to judge.
   if (args.length === 1 && args[0].type === "Injected") return;
@@ -311,6 +325,15 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
+  // `null` is no option value. A key with a stated kind names that kind.
+  for (const k of present) {
+    const v = valueOf(k);
+    if (v === undefined) continue;
+    const t = rule.keyTypes?.[k];
+    const takes = t === undefined ? "a value" : TAKES[t];
+    if (v.type === "NullLiteral") throw new CodegenError(wrongKind(`'${spell(name)}'`, k, takes, "got null"), v.pos);
+    refuseProvenNull(name, k, v, takes, proof);
+  }
   // A key the server reads at compile time must hold a constant. The server refuses a
   // field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
@@ -353,6 +376,8 @@ export function checkSlots(
   receiver?: Expr,
   /** Does the lowering only ask for a value? See `Site.settling`. */
   settling = false,
+  /** The proof of an option key or a list element. A site with no scope passes none. */
+  proof?: SlotProof,
 ): void {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
@@ -390,7 +415,7 @@ export function checkSlots(
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos);
+    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos, proof);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -419,7 +444,9 @@ export function checkSlots(
     if (e === undefined || e.type !== "ArrayLiteral") continue;
     for (const el of e.elements) {
       if (el.type === "SpreadElement") continue;
-      checkType(name, `element ${e.elements.indexOf(el) + 1}`, el as Expr, t as ArgType);
+      const slot = `element ${e.elements.indexOf(el) + 1}`;
+      checkType(name, slot, el as Expr, t as ArgType);
+      refuseProvenNull(name, slot, el as Expr, TAKES[t as ArgType], proof);
     }
   }
   for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {

@@ -51,7 +51,7 @@ import { bindingSlot, JSMQL_NS } from "../../namespace.ts";
 import * as E from "./errors.ts";
 import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
-import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
+import { locate, lowerValue, provideJoin, lowerTruth, slotProof } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { documentAfter, kindOf, proofsFor, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
@@ -1302,7 +1302,7 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
     if (sel.kind !== "rule") {
       throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, [], undefined, { args });
     }
-    checkSlots(node.name, sel.rule.args, args, false);
+    checkSlots(node.name, sel.rule.args, args, false, undefined, false, slotProof(childEnv(env, node, "args")));
     stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
   const out: Stage[] = [];
@@ -1368,7 +1368,7 @@ function streamLink(
     if (sel.kind !== "rule") {
       throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], undefined, { args });
     }
-    checkSlots(link.name, sel.rule.args, args, false);
+    checkSlots(link.name, sel.rule.args, args, false, undefined, false, slotProof(childEnv(env, link, "args")));
     // `name` is the row that runs; `link.name` is what the developer typed. A message
     // that swaps them tells the reader about a method they did not write.
     stages = sel.rule.emit(
@@ -1567,7 +1567,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s, { args });
   }
-  checkSlots(name, sel.rule.args, args, false);
+  checkSlots(name, sel.rule.args, args, false, undefined, false, slotProof(childEnv(env, node, "args")));
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact

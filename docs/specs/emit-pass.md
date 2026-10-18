@@ -199,6 +199,12 @@ field path, an expression or a spread. The checks run on every rule of a
 method, a global and a production, and `test/registry-fields-read.test.ts`
 makes sure that every stated rule field has a reader.
 
+An option key and an element of a list refuse `null` (HR7). A key with a stated
+type names that type in the refusal. A site with a scope also passes a
+`SlotProof`, so the check refuses a key or an element that the proof shows is null.
+The proof first reads the value, so a read of a field that no stage wrote gives
+its own refusal.
+
 ### The kind of a slot
 
 The KIND of each operand is not a literal check. HR7 judges it from the proof of
