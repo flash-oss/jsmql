@@ -1,9 +1,10 @@
 // Phase 5 — EMIT, and the fold before it. The kind check of HR7: what a value is
 // PROVEN to be against what its slot takes. See docs/specs/types.md § The kind check.
 //
-// One module holds the whole rule, so that the dispatcher (emit/select.ts) and the
-// constant evaluator (passes/evaluate.ts) answer the same question the same way. A
-// constant whose kinds break a rule is not folded, and the emitter then refuses it.
+// One module holds the whole rule. The dispatcher (emit/select.ts) reads it, and the
+// constant fold lowers each constant through the dispatcher. So a constant gets the same
+// answer as a computed value. The fold skips a constant whose kinds break a rule, and the
+// emitter then refuses it.
 // A row states each rule. Nothing here names a row.
 
 import type { ArgType, Arity, Kind } from "../registry/vocabulary.ts";
@@ -155,7 +156,7 @@ const concreteKinds = (proof: Proof): readonly Proven[] | null =>
  * names. A tuple proof breaks the rule when ANY position has no fitting kind. A set proof
  * breaks it only when NO kind fits, because its one proof stands for every position.
  */
-export function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
+function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
   const need = elementsOf(name);
   if (need === undefined || need === "scalar") return null;
   const takes = (p: Proof): boolean => p === "unknown" || p.includes(need);
@@ -230,37 +231,4 @@ export function kindOfValue(v: unknown): Kind | null {
   const tag = bsonTagOf(v);
   if (tag !== undefined) return BSON_KIND[tag] ?? null;
   return isPlainObject(v) ? "object" : null;
-}
-
-/** The proof that a known value gives. A null or an undefined proves the kind `"null"`. */
-const proofOfValue = (v: unknown): Proof => {
-  if (v === null || v === undefined) return ["null"];
-  const k = kindOfValue(v);
-  return k === null ? "unknown" : [k];
-};
-
-/**
- * The proofs of a list of known values, as the evaluator reads them. The last value
- * is the element source: a list proves the kinds of its elements.
- */
-export function proofsOfValues(values: readonly unknown[]): Proofs {
-  const last = values[values.length - 1];
-  const kinds = new Set<Kind>();
-  let holdsNull = false;
-  // A known value that is an array is of a fixed length, so each position has a proof of its own.
-  const items: Proof[] = [];
-  if (Array.isArray(last)) {
-    for (const el of last) {
-      const k = el === null || el === undefined ? null : kindOfValue(el);
-      if (k !== null) kinds.add(k);
-      holdsNull = holdsNull || el === null || el === undefined;
-      // A null element proves the kind `null`, as a null operand does: it fits only a slot that takes any.
-      items.push(el === null || el === undefined ? ["null"] : k === null ? "unknown" : [k]);
-    }
-  }
-  // A null element is one of the kinds of the elements. Only null elements prove nothing, as in emit/type.ts.
-  const elements: Proof = kinds.size === 0 ? "unknown" : holdsNull ? [...kinds, "null"] : [...kinds];
-  return Array.isArray(last)
-    ? { args: values.map(proofOfValue), elements, items }
-    : { args: values.map(proofOfValue), elements };
 }
