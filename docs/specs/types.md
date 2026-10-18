@@ -398,8 +398,9 @@ $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind 
 
 HR7 says that a value that is PROVEN to have a kind its slot never takes is
 refused, even where the server accepts the MQL. A value of unknown kind passes.
-The rule lives in [kinds.ts](../../src/compiler/kinds.ts), and the fold and the
-dispatcher both read it, so a constant gets the same answer as a computed value.
+The rule lives in [kinds.ts](../../src/compiler/kinds.ts). The dispatcher reads it,
+and the fold lowers each constant through the dispatcher. So a constant gets the same
+answer as a computed value.
 
 A row states the rule, never the compiler:
 
@@ -416,7 +417,10 @@ A row states the rule, never the compiler:
   a method, the last operand of a production. An element that can be null adds
   the kind `null` to the proof of the elements. So `[1, null].has(null)` passes,
   and `[1, 2].has(null)` is refused. A source that holds only null elements
-  proves nothing about them.
+  proves nothing about them. An element of unknown kind makes the proof of the
+  elements unknown, as a field path does. This holds for a value that the call
+  supplies and that has no kind that the registry names, for example a regular
+  expression.
 - `homogeneous` says that every operand has one kind. The first operand of one
   proven kind sets it. An operand of unknown kind, or of two or more kinds, sets no
   kind and breaks no rule.

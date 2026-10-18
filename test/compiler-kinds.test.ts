@@ -3,7 +3,7 @@
 // hatch passes every value as written. See docs/LANG_RULES.md and docs/specs/types.md.
 
 import { describe, expect, it } from "vitest";
-import { MinKey, ObjectId } from "mongodb";
+import { MinKey, ObjectId, Timestamp } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
 import { select, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { CodegenError } from "../src/errors.ts";
@@ -166,6 +166,26 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     );
   });
 
+  it("an element of unknown kind makes the elements unknown, as a field path does", () => {
+    // A regular expression and a Timestamp have no kind that the registry names.
+    for (const v of [/a/, new Timestamp({ t: 1, i: 1 })]) {
+      expect(jsmql.expr`[1, ${v}].has("x")`).toEqual({ $in: ["x", [1, v]] });
+      expect(jsmql.expr`"x" in [1, ${v}]`).toEqual({ $in: ["x", [1, v]] });
+      expect(jsmql.expr`[1, ${v}].indexOf("x")`).toEqual({ $indexOfArray: [[1, v], "x"] });
+      expect(jsmql.expr`[1, ${v}].without("x")`).toEqual({
+        $filter: { input: [1, v], as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", ["x"]] }] } },
+      });
+      expect(jsmql`$.a = [1, ${v}]; $.r = $.a.has("x");`).toEqual([
+        { $set: { a: [1, v] } },
+        { $set: { r: { $in: ["x", "$a"] } } },
+      ]);
+      const build = jsmql.compile(({ e }: { e: unknown }, { $ }: { $: any }) => [1, e].has("x"));
+      expect(build({ e: v })).toEqual({ $expr: { $in: ["x", [1, v]] } });
+    }
+    // The compiler still judges an element of a kind that the registry names.
+    expect(() => jsmql.expr`[1, ${new MinKey()}].has("x")`).toThrow(/'\.has\(\)' argument 1 takes an element/);
+  });
+
   it("a call that the program passes in is judged by its kind as a literal is", () => {
     const build = jsmql.compile(({ n }: { n: unknown }, { $ }: { $: any }) => $.s.trim() + n);
     expect(() => build({ n: 1 })).toThrow(/'\+' takes operands of one kind/);
@@ -203,6 +223,16 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(() => jsmql.pipeline("$.a = [1, 2]; $match($.a.has(null));")).toThrow(
       /'\.has\(\)' argument 1 takes an element of the array, but got null/,
     );
+  });
+
+  it("an element of unknown kind makes the elements of a list or a field unknown", () => {
+    const re = /a/;
+    expect(jsmql.filter`"x" in [1, ${re}]`).toEqual({ $expr: { $in: ["x", [1, re]] } });
+    expect(jsmql.filter`[1, ${re}].has("x")`).toEqual({ $expr: { $in: ["x", [1, re]] } });
+    expect(jsmql.pipeline`$.a = [1, ${re}]; $match($.a === "x");`).toEqual([
+      { $set: { a: [1, re] } },
+      { $match: { a: "x" } },
+    ]);
   });
 
   it("a field of unknown kind passes, and the server decides", () => {
@@ -470,6 +500,13 @@ describe("kinds — a literal array is judged by each position, a computed array
     expect(() => jsmql("$.o = { b: null }; $.r = [1, $.o.b].max();")).toThrow(
       /'\.max\(\)' takes numbers, but the array holds a number and null\./,
     );
+  });
+
+  it("a position of a kind that the registry does not name fits, as a field path does", () => {
+    const ts = new Timestamp({ t: 1, i: 1 });
+    expect(jsmql.expr`[1, ${ts}].max()`).toEqual({ $max: [1, ts] });
+    expect(jsmql.expr`[1, ${/a/}].max()`).toEqual({ $max: [1, /a/] });
+    expect(() => jsmql.expr`["a", ${ts}].max()`).toThrow(/'\.max\(\)' takes numbers/);
   });
 
   it("a null that the call supplies proves no kind", () => {

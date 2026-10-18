@@ -43,8 +43,9 @@ rows.ts        the registry readers every phase shares: one question about a nam
                one answer from a row, spelled out once.
 objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
 kinds.ts       the kind check of HR7: the fit rule, the fault a call can break, and
-               the proof of a known value. The dispatcher and the constant
-               evaluator both read it. See docs/specs/types.md § The kind check.
+               the kind of a known value. The dispatcher reads it, and the
+               constant fold reaches it through the dispatcher. See
+               docs/specs/types.md § The kind check.
 
 lex/
   token.ts     the Token record and the source-position helpers.
