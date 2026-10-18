@@ -4174,6 +4174,7 @@ export const NAMES = {
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
     // MEASURED: { $unset: 1 } → refused: the body must be a string or an array; { $unset: [] } → refused: the array must name at least one field
+    // MEASURED: { $unset: [null] } → refused: each entry of the array must be a string
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -4186,6 +4187,7 @@ export const NAMES = {
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
+    // MEASURED: { $unwind: null } → refused: the body must be a string or a document
     document: "element",
     evaluates: [],
     bodyPositions: { "": "value" },

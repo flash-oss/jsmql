@@ -716,6 +716,8 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
       return out;
     }
     case "element": {
+      // A `$stage(…)` body passes as written (HR2), so a body of another shape proves nothing.
+      if (typeof body !== "string" && !isPlainObject(body)) return DOCUMENT;
       const spec =
         typeof body === "string" ? { path: body } : (body as { path?: string; preserveNullAndEmptyArrays?: boolean });
       const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
@@ -733,8 +735,9 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
 /** A `keeps` stage: its output fields land on the document, its removed fields leave it. */
 function keptDocument(name: string, body: unknown, doc: Type): Type {
   if (name === "$unset") {
-    const paths = typeof body === "string" ? [body] : Array.isArray(body) ? (body as string[]) : [];
-    return paths.reduce((d, p) => removed(d, p), doc);
+    const paths: unknown[] = typeof body === "string" ? [body] : Array.isArray(body) ? body : [];
+    if (!paths.every((p) => typeof p === "string")) return DOCUMENT;
+    return paths.reduce<Type>((d, p) => removed(d, p as string), doc);
   }
   if (!isPlainObject(body)) return doc;
   // `$set` / `$addFields`: every key is a written path. `$lookup` / `$graphLookup`

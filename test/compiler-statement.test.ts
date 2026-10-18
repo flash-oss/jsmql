@@ -13,7 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
-import { statementBodyOf } from "../src/compiler/rows.ts";
+import { everyStageName, statementBodyOf } from "../src/compiler/rows.ts";
+import { jsmql } from "../src/index.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -515,6 +516,22 @@ describe("compiler/emit/statement — a stage body that you write passes through
     expect(pipeline('$bucketAuto({ groupBy: $.a, buckets: 2, granularity: "nope" });')).toEqual([
       { $bucketAuto: { groupBy: "$a", buckets: 2, granularity: "nope" } },
     ]);
+  });
+
+  it("takes a body that no reading can prove, at every stage", () => {
+    // DELIBERATELY invalid: mongod refuses each of these bodies. The document proof
+    // reads such a body as an unknown document, and the stage passes as written.
+    expect(pipeline("$unwind(null); $.b = $.a;")).toEqual([{ $unwind: null }, { $set: { b: "$a" } }]);
+    expect(pipeline("$unset([null]); $.b = $.a;")).toEqual([{ $unset: [null] }, { $set: { b: "$a" } }]);
+    for (const stage of everyStageName()) {
+      expect(() => pipeline(`${stage}(null);`), stage).not.toThrow();
+      // A stage between two writes can break a place rule. That refusal points at the stage.
+      const src = `$.a = 1; ${stage}(null); $.b = $.a;`;
+      for (const e of jsmql.validate(src).errors) {
+        expect(e.code, `${stage}: ${e.message}`).toBe("CODEGEN_ERROR");
+        expect(e.pos, `${stage}: ${e.message}`).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

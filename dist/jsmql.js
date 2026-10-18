@@ -3287,6 +3287,7 @@ var NAMES = {
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
     // MEASURED: { $unset: 1 } → refused: the body must be a string or an array; { $unset: [] } → refused: the array must name at least one field
+    // MEASURED: { $unset: [null] } → refused: each entry of the array must be a string
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -3298,6 +3299,7 @@ var NAMES = {
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
+    // MEASURED: { $unwind: null } → refused: the body must be a string or a document
     document: "element",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -23914,6 +23916,7 @@ function documentAfter(stage, doc) {
       return out;
     }
     case "element": {
+      if (typeof body !== "string" && !isPlainObject(body)) return DOCUMENT;
       const spec = typeof body === "string" ? { path: body } : body;
       const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
@@ -23929,6 +23932,7 @@ function documentAfter(stage, doc) {
 function keptDocument(name2, body, doc) {
   if (name2 === "$unset") {
     const paths = typeof body === "string" ? [body] : Array.isArray(body) ? body : [];
+    if (!paths.every((p) => typeof p === "string")) return DOCUMENT;
     return paths.reduce((d, p) => removed(d, p), doc);
   }
   if (!isPlainObject(body)) return doc;
