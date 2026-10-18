@@ -98,9 +98,17 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("a conversion and the condition of assert() take every kind but null", () => {
-    // A conversion is the value's own method, and a null receiver has no value to convert.
+    // A conversion is the value's own method, and a null receiver has no value to convert:
+    // written, after `?.`, passed in, or proven by a write. Each one is a compile error.
     expect(() => jsmql.expr("null.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
     expect(() => jsmql.expr("null.toString()")).toThrow(/always null or missing here, so '\.toString\(\)'/);
+    expect(() => jsmql.expr("null?.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
+    expect(() => jsmql.expr`${null}.toBool()`).toThrow(/always null or missing here, so '\.toBool\(\)'/);
+    expect(() => jsmql.filter("null.toLong() > 1")).toThrow(/always null or missing here, so '\.toLong\(\)'/);
+    expect(() => jsmql("$.o = { b: null }; $.r = $.o.b.toDate();")).toThrow(
+      /'\$\.o\.b' is always null or missing here, so '\.toDate\(\)'/,
+    );
+    expect(jsmql.validate("null.toDouble()").valid).toBe(false);
     expect(() => jsmql("assert(null);")).toThrow("'assert()' argument 1 takes a value, but got null.");
     expect(jsmql.expr("$.n?.toString()")).toEqual({ $toString: "$n" });
   });
