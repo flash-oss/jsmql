@@ -21,8 +21,7 @@ Two directories carry the compiler:
   reference), per CONSTRUCT (`productions.ts`: the operators and statement
   forms), and per LEXEME (`tokens.ts`, `keywords.ts`), in one vocabulary
   (`vocabulary.ts`). A row states what the language HAS: the positions where a
-  name is valid (`where`), a cell for each position (a rule, or a refusal that
-  names the alternative), its receiver families, its arguments rule, and what
+  name is valid (`where`), a cell for each position (a rule, or a refusal), its receiver families, its arguments rule, and what
   it returns. No row here builds MQL for a construct that needs its
   neighbours. `mql.ts` holds the pure MQL builders the cells share; `ast.ts`
   holds the node shapes. See [src/registry/CLAUDE.md](../../src/registry/CLAUDE.md).

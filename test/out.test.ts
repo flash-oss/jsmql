@@ -149,7 +149,7 @@ describe("$out — RHS shape errors", () => {
   });
 
   // A method the stream deliberately lacks says so on its own row: the `stream` cell is a
-  // refusal that names the alternative (src/registry/names.ts). A method the stream DOES
+  // refusal (src/registry/names.ts). A method the stream DOES
   // carry states a rule there instead, so no refusal can suggest a workaround for something
   // that already works. These are the two that genuinely have no chain form.
   it("names the stage equivalent for a JS method a stream chain deliberately lacks", () => {

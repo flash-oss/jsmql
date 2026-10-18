@@ -15,7 +15,7 @@ import { fold } from "./compiler/passes/fold.ts";
 import { desugar } from "./compiler/passes/desugar.ts";
 import { inject, replaceIdents, spellValue } from "./compiler/passes/inject.ts";
 import { rawMqlBoundary } from "./compiler/passes/raw-mql.ts";
-import { evaluate } from "./compiler/passes/evaluate.ts";
+import { constantOf } from "./compiler/passes/evaluate.ts";
 import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./compiler/passes/position.ts";
 import { isBareAssign, isStageList, shapeOf } from "./compiler/passes/shape.ts";
 import { namedRow } from "./compiler/passes/naming.ts";
@@ -329,7 +329,7 @@ function expressionOf(program: Program): Expr {
         );
       }
       const init = replaceIdents(s.value, nodes);
-      const v = evaluate(init, new Map());
+      const v = constantOf(init);
       nodes.set(s.name, v.ok ? spellValue(v.value, s.pos) : init);
       continue;
     }

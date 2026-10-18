@@ -1076,7 +1076,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // have a stream lowering, so they're valid as a `$$ =` pivot too (asserted below).
     // Each row: the terminal, the `$$ =` refusal, and the MQL of the same chain in a
     // value position. The aggregates collapse the stream to one scalar, so the same
-    // rule applies to them.
+    // rule applies to them. `.sum()` and `.max()` are not here: they take numbers, and the
+    // elements of the joined slot are documents (HR7). `.sumBy()` and `.minBy()` stand for them.
     const TERMINALS: [string, string, unknown][] = [
       [
         "head()",
@@ -1189,29 +1190,11 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
         ],
       ],
       [
-        "sum()",
-        "'.sum()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….sum()'.",
-        [
-          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-          { $set: { f: { $sum: "$__jsmql.tmp.0" } } },
-          { $unset: "__jsmql" },
-        ],
-      ],
-      [
         'sumBy("total")',
         "'.sumBy()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….sumBy()'.",
         [
           { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
           { $set: { f: { $sum: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.total" } } } } },
-          { $unset: "__jsmql" },
-        ],
-      ],
-      [
-        "max()",
-        "'.max()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….max()'.",
-        [
-          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-          { $set: { f: { $max: "$__jsmql.tmp.0" } } },
           { $unset: "__jsmql" },
         ],
       ],

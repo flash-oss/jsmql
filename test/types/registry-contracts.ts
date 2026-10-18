@@ -8,7 +8,7 @@
 // test/registry-contracts.test.ts runs it.
 
 import type { Arity, Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
-import { inCode, unsupported } from "../../src/registry/vocabulary.ts";
+import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
 import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
@@ -21,6 +21,20 @@ const A = { sig: "", none: true } as const;
 const R = { args: A, emit: () => 1 };
 
 type Value<F extends Family> = Cell<true, F, ExprIn, OutOf["value"]>;
+
+// ── the kind of a slot (HR7): `slotType`, `rest`, `homogeneous` ──────────────
+
+export const typedSlots: Arity = {
+  sig: "a, b[, …]",
+  atLeast: 2,
+  slotType: { 0: "element", 1: ["array", "object"] },
+  rest: ["number", "string"],
+  homogeneous: true,
+};
+// @ts-expect-error — a slot kind that no type names
+export const unnamedKind: Arity = { sig: "a", exact: 1, rest: "text" };
+// @ts-expect-error — `homogeneous` is a flag that is true or absent
+export const homogeneousOff: Arity = { sig: "a, b", exact: 2, homogeneous: false };
 
 // ── `perFamily`: a rule or a refusal per family ───────────────────────────────
 
@@ -127,25 +141,3 @@ export const exprOfValue = matchExpr("$a");
 export const andOfValues = and("$a", "$b");
 export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
 export const condOfBool = cond(boolTruth({ $gt: ["$a", 1] }), 1, 2);
-
-// ── an operand's kind: `rest`, "any", "regex", and the rule of a road ────────
-
-export const restKind: Arity = { sig: "operands", atLeast: 2, rest: ["number", "string", "date"] };
-// @ts-expect-error — `rest` names an ArgType, and "integer" is not one
-export const restNotAKind: Arity = { sig: "operands", atLeast: 2, rest: "integer" };
-export const anyKind: Arity = { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } };
-// @ts-expect-error — "any" is the one spelling of every kind; "unknown" is a proof, not a slot kind
-export const unknownKind: Arity = { sig: "left, right", exact: 2, slotType: { 0: "unknown" } };
-export const regexKind: Arity = { sig: "regex", exact: 1, slotType: { 0: "regex" } };
-// @ts-expect-error — "regexp" is the family of a receiver; a slot states "regex"
-export const regexpKind: Arity = { sig: "regex", exact: 1, slotType: { 0: "regexp" } };
-export const roadRule = inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } });
-// @ts-expect-error — the rule of a road is an Arity, so it states its signature
-export const roadRuleNoSig = inCode("src/compiler/emit/lower.ts", { exact: 1 });
-
-// ── `takesNull`: the slots where null is data ────────────────────────────────
-
-export const nullAsData: Arity = { sig: "value", exact: 1, takesNull: [0] };
-export const nullEverywhere: Arity = { sig: "...items", atLeast: 0, takesNull: "every" };
-// @ts-expect-error — "every" is the one word for all slots
-export const nullAll: Arity = { sig: "...items", atLeast: 0, takesNull: "all" };

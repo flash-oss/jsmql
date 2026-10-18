@@ -1,12 +1,12 @@
 // test/fold-consistency.test.ts — the HR3 gate for constant folding.
 //
-// A folded method (src/compiler/passes/fold-methods.ts) has TWO implementations of the same
+// A folded method (the constant engine, src/compiler/passes/evaluate.ts) has TWO readings of the same
 // semantics: the compile-time JS fold, and the server-side MQL lowering that a
 // runtime receiver would take. If they disagree, folding would emit a value the
 // server never would. This suite proves they agree: for each foldable method ×
 // a battery of inputs it compares the compile-time fold to the MQL lowering run
 // on a real mongod (through `$documents`, so no collection write). Any method/shape
-// that cannot be proven equal must be removed from fold-methods.ts (→ runtime
+// that cannot be proven equal must be refused by the interpreter (→ runtime
 // fallback), never shipped.
 //
 // It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
@@ -16,6 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
+import { CodegenError } from "../src/errors.ts";
 import { announceSkip, liveClient } from "./fixtures/live.ts";
 import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
@@ -94,9 +95,19 @@ for (const v of NUMBER_SAMPLES) {
 
 const ARRAY_SAMPLES: unknown[][] = [[], [1, 2, 3, 4, 5], [3, 1, 2], ["a", "b", "c"], [1, 2, 2, 3]];
 const arrayCases: Case[] = [];
+// HR7: a row that takes numbers refuses an array of strings, and a comparison takes operands
+// of one kind. So the string sample runs these calls in a form that matches its elements.
+const NUMBERS_ONLY = new Set([".sum()", ".mean()", ".min()", ".max()"]);
+const FOR_STRINGS: Record<string, string> = {
+  ".filter(x => x !== 2)": '.filter(x => x !== "b")',
+  ".find(x => x === 2)": '.find(x => x === "b")',
+  ".some(x => x === 2)": '.some(x => x === "b")',
+  ".every(x => x > 0)": '.every(x => x > "a")',
+};
 for (const v of ARRAY_SAMPLES) {
   const lit = JSON.stringify(v);
-  for (const call of [
+  const strings = v.some((x) => typeof x === "string");
+  for (const written of [
     ".map(x => x)",
     ".filter(x => x !== 2)",
     // array `.slice` — full matrix: 1-arg pos/neg/0/out-of-range, 2-arg
@@ -178,7 +189,8 @@ for (const v of ARRAY_SAMPLES) {
     ".zipWith([10, 20, 30], (a, b) => a + b)",
     ".zipObject([10, 20, 30, 40])",
   ]) {
-    arrayCases.push({ lit, val: v, call });
+    if (strings && NUMBERS_ONLY.has(written)) continue;
+    arrayCases.push({ lit, val: v, call: strings ? (FOR_STRINGS[written] ?? written) : written });
   }
 }
 // pairs arrays for unzip / fromPairs
@@ -335,12 +347,23 @@ const NOT_FOLDED = Symbol("not-folded");
 
 /** The compile-time folded value of `<lit><call>`, or NOT_FOLDED if it stayed runtime. */
 function foldedValue(lit: string, call: string): unknown {
-  const stages = jsmql.pipeline(`const __k = ${lit}${call}; $project({ v: __k })`) as Record<string, unknown>[];
+  let stages: Record<string, unknown>[];
+  try {
+    stages = jsmql.pipeline(`const __k = ${lit}${call}; $project({ v: __k })`) as Record<string, unknown>[];
+  } catch (e) {
+    // An input that the emitter refuses (HR7) has no value to compare.
+    if (e instanceof CodegenError) return NOT_FOLDED;
+    throw e;
+  }
   // A fold produces exactly one `$project` stage; a runtime binding produces a
   // leading `$set` on `__jsmql.var.__k` (and a trailing `$unset`).
   const only = stages.length === 1 ? (stages[0].$project as { v: unknown } | undefined) : undefined;
   return only && "v" in only ? only.v : NOT_FOLDED;
 }
+
+/** The fold of a document with index-like keys: an `$arrayToObject` call over the pairs. */
+const isOrderedFold = (v: unknown): boolean =>
+  typeof v === "object" && v !== null && Object.keys(v).length === 1 && "$arrayToObject" in v;
 
 describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering on mongod", () => {
   let db: Db;
@@ -359,12 +382,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   // be skipped. Eight `.concat("!", "?")` cases hid behind that skip for exactly as long
   // as it was silent. Each refusal is therefore named here, with the reason it is
   // allowed to stand, and a shape that is not on this list turns the suite red.
-  const SERVER_REFUSES: Readonly<Record<string, string>> = {
-    // lodash pads the shorter list with `undefined`; `$arrayToObject` refuses the pair
-    // that has no value, because each pair must be an array of two items. The same
-    // unequal-length reading the `zipWith` fold is withheld for.
-    "[1,2,3,4,5].zipObject([10, 20, 30, 40])": "unequal lengths — the missing pair has no value",
-  };
+  const SERVER_REFUSES: Readonly<Record<string, string>> = {};
   const SERVER_ERROR = Symbol("server-error");
   /**
    * The MQL of `$.s<call>`, and the value that the server gives for it.
@@ -398,6 +416,18 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
         return;
       }
       compared += 1;
+      if (isOrderedFold(folded)) {
+        // The fold wrote a document whose keys read as array indexes as `$arrayToObject` over the pairs. A driver
+        // reads a document into an object and loses the key order, so both sides give their pairs through `$objectToArray`.
+        const pairs = async (m: unknown): Promise<unknown> => {
+          const [row] = await db
+            .aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: { $objectToArray: m } } }])
+            .toArray();
+          return (row as { v: unknown }).v;
+        };
+        expect(await pairs(folded)).toEqual(await pairs(mql));
+        return;
+      }
       if (answersSet(mql)) {
         // Each order of a set answer is valid. The fold must give the same values,
         // and each value as many times as the server gives it.

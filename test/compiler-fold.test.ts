@@ -12,7 +12,11 @@ import { desugar } from "../src/compiler/passes/desugar.ts";
 import { evaluate } from "../src/compiler/passes/evaluate.ts";
 import { fold } from "../src/compiler/passes/fold.ts";
 import { asLiteral, isSpellable } from "../src/compiler/passes/literal.ts";
+import { OrderedDocument } from "../src/compiler/interpret/values.ts";
 import { shapeOf } from "../src/compiler/passes/shape.ts";
+import { filter, pipeline } from "../src/compiler/index.ts";
+// The fold asks the emitter for the lowering of a constant, which the emitter lends at load.
+import "../src/compiler/emit/lower.ts";
 
 const EMPTY = new Map<string, unknown>();
 
@@ -125,9 +129,9 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     expect(valueOf('"hello".charAt()')).toBe("(not constant)");
   });
 
-  it("refuses rather than letting a built-in throw", () => {
-    // A raw `RangeError` reaches the user with no position and no guidance.
-    expect(valueOf('"hello".repeat(-1)')).toBe("(not constant)");
+  it("settles to the server's answer, and a built-in never throws", () => {
+    // JavaScript throws a `RangeError` here. The lowering answers "", as the server does.
+    expect(valueOf('"hello".repeat(-1)')).toBe("");
   });
 
   it("reads a predicate's answer the way the emitted condition does", () => {
@@ -159,7 +163,8 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   it("refuses arithmetic JavaScript cannot hold exactly", () => {
     // MongoDB multiplies two integers exactly, in 64 bits; JavaScript rounds.
     expect(valueOf("123456789 * 987654321")).toBe("(not constant)");
-    expect(valueOf("9007199254740992 + 1")).toBe("(not constant)");
+    // A number past 2^31 is a double on both sides, so the two languages round alike.
+    expect(valueOf("9007199254740992 + 1")).toBe(9007199254740992);
     // Within range it folds as usual.
     expect(valueOf("123456 * 654321")).toBe(80779853376);
   });
@@ -167,7 +172,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   it("refuses an operator whose two languages disagree", () => {
     expect(valueOf('"a" + 1')).toBe("(not constant)"); // $concat takes strings
     expect(valueOf("1 == 1")).toBe("(not constant)"); // loose equality coerces
-    expect(valueOf("typeof 1")).toBe("(not constant)"); // $type has its own names
+    expect(valueOf("typeof 1")).toBe("int"); // the lowering is $type, which answers with its own names
     expect(valueOf('1 < "a"')).toBe("(not constant)"); // BSON orders across types
   });
 
@@ -437,8 +442,8 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf('Number("42")')).toBe("(not constant)");
     // `$convert` with no `onError` fails on a string it cannot parse.
     expect(valueOf('Number("nope")')).toBe("(not constant)");
-    // A conversion refuses `null` (HR7), so no fold answers it: the slot check refuses it.
-    expect(valueOf("String(null)")).toBe("(not constant)");
+    // `$toString(null)` is null, not the four letters.
+    expect(valueOf("String(null)")).toBe(null);
     // An integer below 10^16 is written digit for digit by `$toString` and by
     // JavaScript; from there the server uses an exponent where JavaScript does not,
     // a fraction's threshold differs, and `-0` keeps its sign on the server only.
@@ -508,12 +513,14 @@ describe("compiler/passes/fold — a date's arithmetic is the server's", () => {
     expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ week: 1 })')).toBe("(not constant)");
   });
 
-  it("leaves every form that names a timezone or an option to the server", () => {
+  it("leaves every form that names a zone other than UTC to the server, and folds the forms that UTC decides", () => {
     const d = 'new Date("2026-09-16T13:45:30.123Z")';
     expect(valueOf(`${d}.plus(1, "month", "Europe/Kyiv")`)).toBe("(not constant)");
-    expect(valueOf(`${d}.startOf("week", { startOfWeek: "monday" })`)).toBe("(not constant)");
-    expect(valueOf(`${d}.diff(${d}, "day", "UTC")`)).toBe("(not constant)");
-    expect(valueOf(`${d}.format("%Y", "UTC")`)).toBe("(not constant)");
+    expect(valueOf(`${d}.diff(${d}, "day", "Europe/Kyiv")`)).toBe("(not constant)");
+    expect(valueOf(`${d}.format("%Y", "Europe/Kyiv")`)).toBe("(not constant)");
+    expect(iso(`${d}.startOf("week", { startOfWeek: "monday" })`)).toBe("2026-09-14T00:00:00.000Z");
+    expect(valueOf(`${d}.diff(${d}, "day", "UTC")`)).toBe(0);
+    expect(valueOf(`${d}.format("%Y", "UTC")`)).toBe("2026");
     // a non-integer amount and a unit the server has no name for keep the row's refusals
     expect(valueOf(`${d}.plus(1.5, "day")`)).toBe("(not constant)");
     expect(valueOf(`${d}.plus(1, "days")`)).toBe("(not constant)");
@@ -603,5 +610,196 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
     // by the second statement, and folds.
     const out = JSON.stringify(desugar(parse("$match($.items.some(k => k > 1)); const k = 5; $match($.y === k);")));
     expect(out).not.toContain("LetDecl");
+  });
+});
+
+describe("compiler/passes/evaluate — a constant is what its lowered MQL says", () => {
+  it("settles a callback over a range to the list itself", () => {
+    expect(pipeline("const a = (3).range().map(() => 7); $.x = a;")).toEqual([{ $set: { x: [7, 7, 7] } }]);
+  });
+
+  it("settles a chain of list methods, then arithmetic over the results", () => {
+    expect(
+      pipeline("const xs = (5).range().map(i => i * i).filter(x => x % 2 === 0); $.total = xs.sum() + xs.size();"),
+    ).toEqual([{ $set: { total: 23 } }]);
+  });
+
+  it("never folds an escape hatch, even inside a constant", () => {
+    expect(pipeline('$.x = $map({ input: $range(0, 3), as: "i", in: 7 });')).toEqual([
+      { $set: { x: { $map: { input: { $range: [0, 3] }, as: "i", in: 7 } } } },
+    ]);
+  });
+
+  it("leaves a read of the clock or of a random number to the server", () => {
+    expect(pipeline("$.x = Math.random(); $.y = Date.now();")).toEqual([
+      { $set: { x: { $rand: {} } } },
+      { $set: { y: { $toLong: "$$NOW" } } },
+    ]);
+  });
+
+  it("calls a declared function with constants", () => {
+    expect(pipeline("function sq(n) { return n * n; } $.x = sq(4);")).toEqual([{ $set: { x: 16 } }]);
+  });
+
+  it("keeps a call whose callback reads the document, and settles the constant inside it", () => {
+    expect(pipeline("$.x = (3).range().map(() => $.k);")).toEqual([
+      { $set: { x: { $map: { input: [0, 1, 2], as: "jsmqlUnused", in: "$k" } } } },
+    ]);
+  });
+
+  it("reports a constant with no literal at its position", () => {
+    expect(() => pipeline("$.x = 1 / 0;")).toThrow(/evaluates to Infinity/);
+    try {
+      pipeline("$.x = 1 / 0;");
+    } catch (e) {
+      expect((e as { pos: number }).pos).toBe("$.x = 1 / 0;".indexOf("/"));
+    }
+  });
+
+  it("writes a computed Date back as a value that a query compares", () => {
+    expect(filter('$.t > new Date("2026-01-01")')).toEqual({ t: { $gt: new Date("2026-01-01T00:00:00.000Z") } });
+  });
+
+  it("reads a date that the source spells before any lowering", () => {
+    expect(pipeline("$.x = new Date(0);")).toEqual([{ $set: { x: new Date(0) } }]);
+    expect(pipeline("$.x = new Date(Date.UTC(2026, 1, 1));")).toEqual([
+      { $set: { x: new Date("2026-02-01T00:00:00.000Z") } },
+    ]);
+    expect(pipeline("$.x = new Date($.n);")).toEqual([
+      { $set: { x: { $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } } } },
+    ]);
+  });
+});
+
+describe("compiler/passes/evaluate — a constant document with index-like keys", () => {
+  // A JavaScript object lists a key that reads as an array index first, and BSON compares a document key by key.
+  // So the fold writes such a document as the pairs that keep the order.
+  it("folds keyBy to $arrayToObject over the pairs in order", () => {
+    expect(pipeline("$.x = [3, 1, 2].keyBy(n => n % 2);")).toEqual([
+      {
+        $set: {
+          x: {
+            $arrayToObject: [
+              [
+                ["1", 1],
+                ["0", 2],
+              ],
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("writes a document whose keys keep their order as it did", () => {
+    expect(pipeline('$.x = ["b", "a"].keyBy(k => k);')).toEqual([
+      { $set: { x: { $mergeObjects: [{ b: "b", a: "a" }] } } },
+    ]);
+    expect(pipeline("$.x = [3, 1, 2].groupBy(n => n % 2);")).toEqual([
+      { $set: { x: { $mergeObjects: [{ "0": [2], "1": [3, 1] }] } } },
+    ]);
+  });
+
+  it("writes the pairs at every level of a value", () => {
+    expect(pipeline("$.x = { a: [3, 1, 2].keyBy(n => n % 2), b: [[3, 1].keyBy(n => n % 2)] };")).toEqual([
+      {
+        $set: {
+          x: {
+            $mergeObjects: [
+              {
+                a: {
+                  $arrayToObject: [
+                    [
+                      ["1", 1],
+                      ["0", 2],
+                    ],
+                  ],
+                },
+                b: [{ "1": 1 }],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("keeps a string with a dollar as text in the pairs", () => {
+    expect(pipeline('$.x = [["1", "$a"], ["0", "b"]].fromPairs();')).toEqual([
+      {
+        $set: {
+          x: {
+            $arrayToObject: [
+              [
+                ["1", { $literal: "$a" }],
+                ["0", "b"],
+              ],
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("writes the pairs of a nested document", () => {
+    const nested = new OrderedDocument([
+      [
+        "1",
+        new OrderedDocument([
+          ["1", 1],
+          ["0", 2],
+        ]),
+      ],
+      ["0", 5],
+    ]);
+    // The value of the first pair is the inner document, an `$arrayToObject` call again.
+    const outer = asLiteral(nested, 0, true) as {
+      type: string;
+      args: { elements: { elements: { elements: { type: string }[] }[] }[] }[];
+    };
+    expect(outer.type).toBe("OperatorCall");
+    expect(outer.args[0].elements[0].elements[0].elements[1].type).toBe("OperatorCall");
+  });
+
+  it("leaves a method call on such a document to the server", () => {
+    expect(pipeline("$.x = [3, 1, 2].keyBy(n => n % 2).keys();")).toEqual([
+      {
+        $set: {
+          x: {
+            $map: {
+              input: {
+                $objectToArray: {
+                  $arrayToObject: [
+                    [
+                      ["1", 1],
+                      ["0", 2],
+                    ],
+                  ],
+                },
+              },
+              in: "$$this.k",
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("compares a field with such a document through $expr, never as a constant document", () => {
+    expect(filter("$.doc === [3, 1, 2].keyBy(n => n % 2)")).toEqual({
+      $expr: {
+        $eq: [
+          "$doc",
+          {
+            $arrayToObject: [
+              [
+                ["1", 1],
+                ["0", 2],
+              ],
+            ],
+          },
+        ],
+      },
+    });
   });
 });

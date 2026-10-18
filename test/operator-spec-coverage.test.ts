@@ -110,7 +110,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
       throw new Error(
         `Operators present in mongodb/mql-specifications but with no row in src/registry/names.ts:\n` +
           missing.map((n) => `  - ${n}`).join("\n") +
-          `\n\nAdd a row for each. A name jsmql does not support still needs one: state an empty 'where' and a refusal that names the alternative.`,
+          `\n\nAdd a row for each. A name jsmql does not support still needs one: state an empty 'where' and a refusal.`,
       );
     }
   });

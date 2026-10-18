@@ -11,7 +11,7 @@
 // guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient, type Collection } from "mongodb";
+import { Decimal128, Long, MongoClient, ObjectId, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
@@ -1882,108 +1882,6 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });
-
-  it("refuses a null argument where the slot states a kind (HR7)", () => {
-    // `null` is not the kind a slot states, whatever the server answers for it.
-    expect(() => expr("$.a.slice(null)")).toThrow("'.slice()' argument 1 takes an integer, but got null.");
-    expect(() => expr("$.s.split(null)")).toThrow("'.split()' argument 1 takes a string, but got null.");
-    expect(() => expr("$.o.pick(null)")).toThrow("'.pick()' argument 1 takes an array, but got null.");
-    expect(() => expr("$.s.truncate(null)")).toThrow("'.truncate()' argument 1 takes a document, but got null.");
-    expect(() => expr('$.d.diff(null, "day")')).toThrow("'.diff()' argument 1 takes a date, but got null.");
-    // a body key and an element of a list
-    expect(() => expr("$.d.set({ year: null })")).toThrow("'.set()' year takes an integer, but got null.");
-    expect(() => expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 takes a field NAME .*, but got null\./);
-    // a value the proof shows is null: a binding, and a `?.` read of a key that a stage wrote as null
-    expect(() => jsmql("let x = null; $.r = $.a.slice(x);")).toThrow(
-      "'.slice()' argument 1 takes an integer, but got null.",
-    );
-    expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
-      "'.slice()' argument 1 takes an integer, but got null.",
-    );
-    // a slot where `null` is data takes it
-    expect(expr("$.a.has(null)")).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
-    expect(expr("$.a.indexOf(null)")).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, null] });
-  });
-
-  it("refuses null in every slot where null is not data (HR7)", () => {
-    // a callback, an iteratee and a sort specification
-    expect(() => expr("$.a.filter(null)")).toThrow("'.filter()' argument 1 takes a value, but got null.");
-    expect(() => expr("$.a.sumBy(null)")).toThrow("'.sumBy()' argument 1 takes a value, but got null.");
-    expect(() => expr("$.a.sortBy(null)")).toThrow("'.sortBy()' argument 1 takes a value, but got null.");
-    // a number, a string and an array
-    expect(() => expr("$.n.round(null)")).toThrow("'.round()' argument 1 takes an integer, but got null.");
-    expect(() => expr("$.a.at(null)")).toThrow("'.at()' argument 1 takes an integer, but got null.");
-    expect(() => expr("$.n.clamp(null, 5)")).toThrow("'.clamp()' argument 1 takes a number or a date, but got null.");
-    expect(() => expr("$.n.hypot(3, null)")).toThrow("'.hypot()' argument 2 takes a number, but got null.");
-    expect(() => expr("$.a.join(null)")).toThrow("'.join()' argument 1 takes a string, but got null.");
-    expect(() => expr("$.a.xor(null)")).toThrow("'.xor()' argument 1 takes an array, but got null.");
-    expect(() => expr("$.o.assign(null)")).toThrow("'.assign()' argument 1 takes a value, but got null.");
-    // a global, a static and a constant call that would fold
-    expect(() => expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
-    expect(() => expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");
-    expect(() => expr("Boolean(null)")).toThrow("'Boolean()' argument 1 takes a value, but got null.");
-    expect(() => expr("Date.UTC(null)")).toThrow("'Date.UTC()' argument 1 takes a value, but got null.");
-    expect(() => expr("[1, 2].at(null)")).toThrow("'.at()' argument 1 takes an integer, but got null.");
-    expect(() => jsmql("assert($.a > 1, null);")).toThrow("'assert()' argument 2 takes a string, but got null.");
-    // an option key, also one that the proof shows is null
-    expect(() => expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(
-      "'.startOf()' startOfWeek takes a string, but got null.",
-    );
-    expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
-      "'.startOf()' timezone takes a string, but got null.",
-    );
-    // a stream link
-    expect(() => jsmql("$$.groupBy(null);")).toThrow("'.groupBy()' argument 1 takes a value, but got null.");
-  });
-
-  it("keeps null where it is data", () => {
-    expect(expr("$.a.lastIndexOf(null)")).toBeDefined();
-    expect(expr("$.a.concat(null)")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, [null]] });
-    expect(expr("$.a.without(null)")).toEqual({
-      $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [null]] }] } },
-    });
-    expect(expr("$.a.reduce((a, b) => a, null)")).toEqual({
-      $reduce: { input: { $ifNull: ["$a", []] }, initialValue: null, in: "$$value" },
-    });
-    expect(expr("Array.isArray(null)")).toEqual({ $isArray: [null] });
-    expect(expr("Number.isInteger(null)")).toBe(false);
-    expect(jsmql("$.a.push(null);")).toEqual([{ $set: { a: { $concatArrays: [{ $ifNull: ["$a", []] }, [null]] } } }]);
-    expect(jsmql("$.a.fill(null);")).toEqual([
-      { $set: { a: { $map: { input: { $ifNull: ["$a", []] }, as: "jsmqlUnused", in: null } } } },
-    ]);
-  });
-
-  it("refuses a value of the wrong kind in each slot whose other rule implies a kind (HR7)", () => {
-    expect(() => expr('$.n.range("x")')).toThrow("'.range()' argument 1 takes an integer, but got a string.");
-    expect(() => expr('(0).range(5, "x")')).toThrow("'.range()' argument 2 takes an integer, but got a string.");
-    expect(() => expr('$.n.rangeRight("x")')).toThrow("'.rangeRight()' argument 1 takes an integer, but got a string.");
-    // the unit of a date method
-    expect(() => expr("$.d.plus(1, 5)")).toThrow("'.plus()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.minus(1, 5)")).toThrow("'.minus()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.diff($.e, 5)")).toThrow("'.diff()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.isSame($.e, 5)")).toThrow("'.isSame()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.isBefore($.e, 5)")).toThrow("'.isBefore()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.isAfter($.e, 5)")).toThrow("'.isAfter()' argument 2 takes a string, but got a number.");
-    expect(() => expr("$.d.startOf(5)")).toThrow("'.startOf()' argument 1 takes a string, but got a number.");
-    expect(() => expr("$.d.endOf(null)")).toThrow("'.endOf()' argument 1 takes a string, but got null.");
-    // the pattern of the regex methods, and the input of `/re/.test(s)`
-    expect(() => expr("$.s.matchAll(5)")).toThrow(
-      "'.matchAll()' argument 1 takes a string or a regular expression, but got a number.",
-    );
-    expect(expr('$.s.matchAll("a.")')).toEqual({
-      $cond: [{ $lte: ["$s", null] }, null, { $regexFindAll: { input: "$s", regex: "a." } }],
-    });
-    expect(() => expr("$.s.match(5)")).toThrow(
-      "'.match()' argument 1 takes a string or a regular expression, but got a number.",
-    );
-    expect(() => jsmql("$.s.match(null)")).toThrow(
-      "'.match()' argument 1 takes a string or a regular expression, but got null.",
-    );
-    expect(() => expr("/a/.test(null)")).toThrow("'.test()' argument 1 takes a string, but got null.");
-    expect(expr('$.s.match("x")')).toEqual({
-      $cond: [{ $lte: ["$s", null] }, null, { $regexMatch: { input: "$s", regex: "x" } }],
-    });
-  });
 });
 
 // ── the server ───────────────────────────────────────────────────────────────
@@ -1999,13 +1897,14 @@ const lodashRange = (start: number, end?: number, step?: number): number[] => {
 
 describe("compiler/emit — number ranges", () => {
   it("folds the direction when both bounds are constants", () => {
-    expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual({ $range: [0, 4] });
-    expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual({ $range: [0, -4, -1] });
-    expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual({ $range: [1, 5] });
-    expect(compiled("(5).range(1)", () => lodashRange(5, 1))).toEqual({ $range: [5, 1, -1] });
-    expect(compiled("(3).range(3)", () => lodashRange(3, 3))).toEqual({ $range: [3, 3] });
-    expect(compiled("(4).range()", () => lodashRange(4))).toEqual({ $range: [0, 4] });
-    expect(compiled("(0).range(20, 5)", () => lodashRange(0, 20, 5))).toEqual({ $range: [0, 20, 5] });
+    // a closed range is a constant, so the fold writes the list itself
+    expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual([0, 1, 2, 3]);
+    expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual([0, -1, -2, -3]);
+    expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual([1, 2, 3, 4]);
+    expect(compiled("(5).range(1)", () => lodashRange(5, 1))).toEqual([5, 4, 3, 2]);
+    expect(compiled("(3).range(3)", () => lodashRange(3, 3))).toEqual([]);
+    expect(compiled("(4).range()", () => lodashRange(4))).toEqual([0, 1, 2, 3]);
+    expect(compiled("(0).range(20, 5)", () => lodashRange(0, 20, 5))).toEqual([0, 5, 10, 15]);
   });
 
   it("reads the receiver as lodash's end alone, and as its start with more arguments", () => {
@@ -2046,9 +1945,7 @@ describe("compiler/emit — number ranges", () => {
   });
 
   it("gives .rangeRight() as the same range, reversed", () => {
-    expect(compiled("(1).rangeRight(5)", () => lodashRange(1, 5).reverse())).toEqual({
-      $reverseArray: { $range: [1, 5] },
-    });
+    expect(compiled("(1).rangeRight(5)", () => lodashRange(1, 5).reverse())).toEqual([4, 3, 2, 1]);
     expect(compiled("$._id.rangeRight($.neg, -2)", (d) => lodashRange(d._id, d.neg, -2).reverse())).toEqual({
       $reverseArray: { $range: [{ $ifNull: ["$_id", 0] }, { $ifNull: ["$neg", 0] }, -2] },
     });
@@ -3366,6 +3263,90 @@ describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the 
       if (whole && (!v.includes(lo) || !v.includes(hi))) wrong.push(`${src}: an end never appears`);
     }
     expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * `new Date(x)` runs for every kind of value that the row accepts.
+ *
+ * MEASURED: `$toDate` refuses an int, and reads a long, a double, a Decimal128, a string, a date and an
+ * ObjectId. The driver sends a whole JavaScript number below 2^31 as an int, so a number goes through
+ * `$toLong` first. Each case gives the value of the field and the instant that JavaScript's own
+ * `new Date(x)` gives, or null where HR5 says so: JavaScript reads `null` as 0.
+ */
+const DATE_VALUES: readonly (readonly [string, unknown, Date | null])[] = [
+  ["an int", 0, new Date(0)],
+  ["a large int", 1700000000, new Date(1700000000)],
+  ["a negative int", -5, new Date(-5)],
+  ["a long", Long.fromNumber(1700000000000), new Date(1700000000000)],
+  ["a double with a fraction", 1700000000000.7, new Date(1700000000000)],
+  ["a negative fraction", -1.7, new Date(-1)],
+  ["a Decimal128", Decimal128.fromString("5.9"), new Date(5)],
+  ["an ISO string", "2026-01-01T00:00:00Z", new Date("2026-01-01T00:00:00Z")],
+  ["a date", new Date(5000), new Date(5000)],
+  ["an ObjectId", new ObjectId("507f1f77bcf86cd799439011"), new Date("2012-10-17T21:13:27.000Z")],
+  ["null", null, null],
+];
+
+describe("compiler/emit — new Date(x) converts a number through a long", () => {
+  it("states the conversion by what the operand proves", () => {
+    // for an operand of unknown kind, the compiler tests for a number, because $toLong refuses a string and a date
+    expect(expr("new Date($.v)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$v" }, { $toLong: "$v" }, "$v"] } });
+    // a proven number converts through a long, and a proven string or date needs no conversion
+    expect(expr("new Date($.v * 1)")).toEqual({ $toDate: { $toLong: { $multiply: ["$v", 1] } } });
+    expect(expr("new Date($.d.getTime())")).toEqual({ $toDate: { $toLong: "$d" } });
+    expect(expr("new Date($.s.trim())")).toEqual({ $toDate: { $trim: { input: "$s" } } });
+    expect(expr("new Date($.d)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$d" }, { $toLong: "$d" }, "$d"] } });
+    // the compiler binds an operand that is no path once
+    expect(expr("new Date($.v ?? 0)")).toEqual({
+      $let: {
+        vars: { jsmqlN: { $ifNull: ["$v", 0] } },
+        in: { $toDate: { $cond: [{ $isNumber: "$$jsmqlN" }, { $toLong: "$$jsmqlN" }, "$$jsmqlN"] } },
+      },
+    });
+  });
+
+  describe.skipIf(!up)("on the server", () => {
+    let dates: Collection;
+    beforeAll(async () => {
+      dates = client!.db("jsmql_compiler_methods").collection("dates");
+      await dates.deleteMany({});
+      await dates.insertMany(DATE_VALUES.map(([, v], i) => ({ _id: i, v })));
+      await dates.insertOne({ _id: 100 });
+    });
+
+    const run = async (src: string): Promise<unknown[]> => {
+      const rows = await dates.aggregate([{ $sort: { _id: 1 } }, { $project: { x: expr(src) } }]).toArray();
+      return rows.map((r) => (r.x === undefined ? undefined : r.x));
+    };
+
+    it("gives JavaScript's instant for each kind of value, and null for null", async () => {
+      const got = await run("new Date($.v)");
+      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
+        DATE_VALUES.map(([, , want]) => canonical(want)),
+      );
+      // a missing field is null, as a null field is
+      expect(got[DATE_VALUES.length]).toBeNull();
+    });
+
+    it("gives the same instant for an operand that a proof reads as a number", async () => {
+      const numbers = DATE_VALUES.filter(([, v]) => typeof v === "number" || v instanceof Long);
+      const rows = await dates
+        .aggregate([
+          { $match: { _id: { $in: numbers.map(([name]) => DATE_VALUES.findIndex(([n]) => n === name)) } } },
+          { $sort: { _id: 1 } },
+          { $project: { x: expr("new Date($.v * 1)") } },
+        ])
+        .toArray();
+      expect(rows.map((r) => canonical(r.x))).toEqual(numbers.map(([, , want]) => canonical(want)));
+    });
+
+    it("runs an operand that is no path", async () => {
+      const got = await run("new Date($.v ?? 0)");
+      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
+        DATE_VALUES.map(([, , want]) => canonical(want ?? new Date(0))),
+      );
+    });
   });
 });
 

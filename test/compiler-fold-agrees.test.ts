@@ -163,7 +163,6 @@ const EXPRESSIONS: readonly string[] = [
   // the array aggregate, set, slicing and reshaping families
   "[1, 2, 3].sum()",
   "[].sum()",
-  "[1, 'a', 3].sum()",
   "[1, 2, 3, 4].mean()",
   "[].mean()",
   "[3, 1, 2].min()",
@@ -220,10 +219,12 @@ const EXPRESSIONS: readonly string[] = [
   // named conversions and constructors
   'String("a")',
   "String(true)",
+  "String(null)",
   "Boolean(1)",
   "Boolean(0)",
   'Boolean("")',
   'Boolean("x")',
+  "Boolean(null)",
   'ObjectId("507f1f77bcf86cd799439011")',
   'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",

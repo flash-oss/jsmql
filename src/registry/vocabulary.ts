@@ -139,23 +139,33 @@ export type ArgType =
   | "int"
   | "int-or-long"
   | "number-or-date"
+  /**
+   * A value that a comparison operator orders: a number, a string, a date or an
+   * ObjectId. The two sentinels fit too, because they compare with every type.
+   */
+  | "orderable"
   | "date"
   | "timestamp"
   | "bool"
   | "object"
   | "array"
   /**
-   * A value of every kind, never `null`. An ordered comparison takes any value, and
-   * a `null` operand compares by the BSON order, which no JavaScript reader expects:
-   *   $.n > 1      → accepted
-   *   $.n > null   → refused (HR7)
+   * The slot takes a value of every kind, and a literal `null` too. A row states
+   * this on purpose, so that "no limit" and "not yet typed" are two different
+   * facts: a slot with no type is an open item that the audit reports.
    */
   | "any"
+  /** The slot takes a callback: an arrow. A value that is proven to be a plain value does not fit. */
+  | "callback"
+  /** The slot takes a regular expression, or a string as the pattern. The row's other rules say which string. */
+  | "regex"
   /**
-   * A regular expression. A regex literal fills it. `regexp` is a family the source
-   * spells, not a `Kind` the proof shows, so the proof judges only a `null` here.
+   * The slot takes a value of the kind of ONE element of the row's element source.
+   * The source is the receiver for a method, and the last operand for a production:
+   * `x in [ … ]` takes an `x` of the kind of the list's elements. The compiler
+   * refuses a value that is proven to be a kind the elements cannot be.
    */
-  | "regex";
+  | "element";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. LEXICAL — the tokens the lexer can produce, and the nodes the parser builds
@@ -648,21 +658,6 @@ export type Arity = {
   spread?: true;
   /** A count that the parser accepts, but which is wrong for a reason the message must give. */
   reject?: Readonly<Record<number, string>>;
-  /**
-   * The kind of each operand beyond the slots that `slotType` states. A production
-   * that flattens a chain (`a + b + c`) has no fixed count of slots:
-   *   $.a * $.b * 2      → accepted
-   *   $.a * $.b * null   → refused: argument 3 takes a number
-   */
-  rest?: ArgType | readonly ArgType[];
-  /**
-   * The slots where `null` is data, not a mistake. Every other slot refuses a written
-   * `null`, an injected `null` and a value the proof shows is null (HR7). `"every"` names
-   * every slot; a slot that states a `slotType` still refuses `null` through that kind.
-   *   $.a.has(null)     → accepted: `.has` looks for the value `null`
-   *   $.n.round(null)   → refused: the precision is a number
-   */
-  takesNull?: readonly number[] | "every";
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
   /**
@@ -671,14 +666,31 @@ export type Arity = {
    * MEASURED on `$unset`: the server refuses `""` and `[]`.
    */
   nonEmpty?: Readonly<Record<number, { noun: string; instead: string }>>;
-  /** The literal type per slot. The compiler tests it only when the slot holds a literal. */
   /**
-   * The literal type a slot accepts, or the SET of types where a slot takes more
-   * than one shape. `$unionWith` takes a collection NAME or a body document, and
-   * the server refuses everything else, for example an int. One type is the common
-   * case, and it stays a bare `ArgType`.
+   * The kind a slot takes, or the SET of kinds where a slot takes more than one
+   * shape. `$unionWith` takes a collection NAME or a body document, and the server
+   * refuses everything else, for example an int. One type is the common case, and it
+   * stays a bare `ArgType`. HR7 reads it: the compiler refuses a value that is
+   * PROVEN to have another kind, even where the server accepts the MQL. A value of
+   * unknown kind passes. The index keys it, so a slot beyond the named ones takes
+   * `rest`.
    */
   slotType?: Readonly<Record<number, ArgType | readonly ArgType[]>>;
+  /**
+   * The kind of every slot that `slotType` does not name. A call can have more
+   * operands than a row can list (`atLeast`), and a slot with no stated kind would
+   * state no HR7 rule. `"any"` is the stated answer for a slot that takes every kind.
+   */
+  rest?: ArgType | readonly ArgType[];
+  /**
+   * Every operand has one kind. The first operand with a PROVEN kind sets it. A later
+   * operand with another proven kind is refused. This is the rule of `===` (the test
+   * is always false for two kinds) and of `+` (a number and a string never add). An
+   * operand of unknown kind, or of two or more possible kinds, sets no kind and is never
+   * refused by this rule. A literal `null` is not compared, because `x === null` is
+   * the test for a null or missing value.
+   */
+  homogeneous?: true;
   /**
    * Slots that hold an ARRAY LITERAL in which every element must have one type.
    * `.pick(["name", "email"])` lists field names, and `.pick([1, 2])` projects
@@ -1002,6 +1014,11 @@ export type ExprIn = {
   present: boolean;
   /** Lower an expression as a CONDITION, with the JavaScript truth rules. See `Truth`. */
   truth: (e: Expr) => Truth;
+  /**
+   * The JavaScript boolean of an expression as a VALUE. `truth` reads a condition, and a
+   * condition takes a number as it stands. A value must be `true` or `false`: `Boolean(1)`.
+   */
+  boolean: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`. The parameter binds as `$$as` (`ref`). */
   iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
   /**
@@ -1055,6 +1072,14 @@ export type ExprIn = {
   hoist: (stages: readonly Stage[], reads: string) => string;
   /** A new `__jsmql.tmp.<n>` scratch field path. */
   slot: () => string;
+  /**
+   * The live value that a constructor builds from a CONSTANT argument: a date, a BSON number,
+   * an ObjectId, or (with no argument) a sentinel such as `MinKey()`. The server has no
+   * expression that builds some of these values, so the value goes into the MQL as itself.
+   * `refusal` is the message for a constant that the type cannot hold. The compiler throws
+   * it at the call, and the cell never sees a null.
+   */
+  construct: (spelling: string, refusal: string, arg?: Expr) => unknown;
 };
 
 /**
@@ -1187,8 +1212,9 @@ export type Emit<In, Out> = (input: In) => Out;
 type InCode = {
   inCode: string;
   /**
-   * The argument rule that the code reads, where the code runs the slot check itself.
-   * The `+` road states the kinds of its operands here, because its MQL is code.
+   * The rule for the kinds of the operands. A pass builds the MQL, but HR7 still
+   * judges each operand, so the row states the operand kinds here. The compiler reads
+   * no count from this field, because the pass owns the count.
    */
   args?: Arity;
 };

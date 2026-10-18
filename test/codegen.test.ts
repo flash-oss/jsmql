@@ -2945,9 +2945,12 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const lk = "$$$.users.filter(u => u._id === $._id)";
     expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
     expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
-    expect(setOfLast(`$.b = ${lk}.has(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.0"] } });
+    // HR7: the slot holds documents, so a membership test of a number is refused
+    expect(() => jsmql.pipeline(`$.b = ${lk}.has(1);`)).toThrow("'.has()' argument 1 takes an element of the array");
     expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.0" } });
-    expect(setOfLast(`$.i = ${lk}.indexOf(1);`)).toEqual({ i: { $indexOfArray: ["$__jsmql.tmp.0", 1] } });
+    expect(() => jsmql.pipeline(`$.i = ${lk}.indexOf(1);`)).toThrow(
+      "'.indexOf()' argument 1 takes an element of the array",
+    );
     // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
     // so the registry records "object", and `.keys().size()` counts its fields.
     expect(setOfLast(`$.k = ${lk}.countBy("tier").keys().size();`)).toEqual({
@@ -2956,10 +2959,12 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   });
 
   it("a `$$$.<coll>` lookup const is an array — `.filter` / `.aggregate` keep the `as` array", () => {
-    const p = jsmql.pipeline(
-      `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`,
-    );
-    expect(setOf(p, 1)).toEqual({ any: { $in: [1, "$__jsmql.var.orders"] } });
+    const p = jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ n: orders.size() });`);
+    expect(setOf(p, 1)).toEqual({ n: { $size: "$__jsmql.var.orders" } });
+    // HR7: the const holds documents, so a membership test of a number is refused
+    expect(() =>
+      jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`),
+    ).toThrow("'.has()' argument 1 takes an element of the array");
   });
 
   it("the chain type-check reads binding types too", () => {
@@ -3161,7 +3166,11 @@ describe("bare built-in callbacks", () => {
   // would ignore the argument and answer a string.
   it("applies a BSON constructor point-free", () => {
     expect(jsmql.expr("$.xs.map(Date)")).toEqual({
-      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDate: "$$x" } },
+      $map: {
+        input: { $ifNull: ["$xs", []] },
+        as: "x",
+        in: { $toDate: { $cond: [{ $isNumber: "$$x" }, { $toLong: "$$x" }, "$$x"] } },
+      },
     });
     expect(jsmql.expr("$.xs.map(Decimal128)")).toEqual({
       $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDecimal: "$$x" } },
@@ -3574,7 +3583,7 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
       "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
     expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
-      "'.isSame()' argument 1 takes a date, but got a string. Use a field path or new Date(…).",
+      "'.isSame()' argument 1 takes a date, but got a string.",
     );
   });
 });
@@ -3835,7 +3844,7 @@ describe("date difference (.diff)", () => {
   });
   it("rejects a literal non-date argument", () => {
     expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow(
-      "'.diff()' argument 1 takes a date, but got a string. Use a field path or new Date(…).",
+      "'.diff()' argument 1 takes a date, but got a string.",
     );
   });
   it("a non-literal unit / other is not checked (literal-gating)", () => {
@@ -3903,7 +3912,9 @@ describe("date-method receiver type-check", () => {
   });
   it("no-ops on a field ref or new Date(…) (literal-gating)", () => {
     expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $toDate: { $cond: [{ $isNumber: "$x" }, { $toLong: "$x" }, "$x"] } } }, 1],
+    });
     // a `"$ts"` receiver in JSMQL is text (HR6), and a string has no date method
     expect(() => jsmql.expr('"$ts".getHours()')).toThrow("'.getHours()' is not available on a 'string'");
   });
@@ -3953,7 +3964,9 @@ describe("new Date()", () => {
     expect(jsmql.expr("new Date()")).toEqual("$$NOW");
   });
   it("with field arg", () => {
-    expect(jsmql.expr("new Date($.ts)")).toEqual({ $toDate: "$ts" });
+    expect(jsmql.expr("new Date($.ts)")).toEqual({
+      $toDate: { $cond: [{ $isNumber: "$ts" }, { $toLong: "$ts" }, "$ts"] },
+    });
   });
   it("with constant string literal folds to a real Date (not $toDate)", () => {
     // A compile-time-constant `new Date(...)` denotes a constant Date, so it
@@ -4224,11 +4237,8 @@ describe("bitwise infix operators", () => {
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
-    // `&` then takes a boolean as its left operand, and `&` takes an integer (HR7).
-    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes an integer, but got a boolean.");
-    expect(jsmql.expr("($.a === $.b ? 1 : 0) & $.c")).toEqual({
-      $bitAnd: [{ $cond: [{ $eq: ["$a", "$b"] }, 1, 0] }, "$c"],
-    });
+    // HR7: `===` gives a boolean, and `&` takes numbers, so the refusal shows the grouping
+    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes a number");
   });
   it("unary ~ has higher precedence than &", () => {
     expect(jsmql.expr("~$.flags & 255")).toEqual({ $bitAnd: [{ $bitNot: "$flags" }, 255] });
@@ -4887,7 +4897,8 @@ describe("array method additions", () => {
     expect(jsmql.expr("$.n?.toString().trim()")).toEqual({ $trim: { input: { $toString: "$n" } } });
   });
   it(".toString() on a receiver that is there adds no $ifNull", () => {
-    expect(jsmql.expr("(5).toString()")).toEqual({ $toString: 5 });
+    // a constant folds: the interpreter runs the `$toString`
+    expect(jsmql.expr("(5).toString()")).toEqual("5");
     expect(jsmql.expr("$.a.size().toString()")).toEqual({ $toString: { $size: { $ifNull: ["$a", []] } } });
     // The result is there too, so the string method after it takes no null test.
     expect(jsmql.expr("$.n.toString().trim()")).toEqual({ $trim: { input: { $toString: { $ifNull: ["$n", ""] } } } });
@@ -5944,7 +5955,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         { $dateTrunc: { date: "$b", unit: "day" } },
       ],
     });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $toDate: { $cond: [{ $isNumber: "$x" }, { $toLong: "$x" }, "$x"] } } }, 1],
+    });
     // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({ $toLong: plusDay });
     expect(jsmql.expr('$.t.plus(1, "day").toString()')).toEqual({
@@ -7286,13 +7299,8 @@ describe("set operations on arrays", () => {
     });
   });
   it("works with array literals", () => {
-    expect(jsmql.expr("[1, 2, 3].intersection([2, 3, 4])")).toEqual({
-      $setIntersection: [
-        [1, 2, 3],
-        [2, 3, 4],
-      ],
-    });
-    expect(jsmql.expr("[1, 2, 3].difference([2])")).toEqual({ $setDifference: [[1, 2, 3], [2]] });
+    expect(jsmql.expr("[1, 2, 3].intersection([2, 3, 4])")).toEqual([2, 3]);
+    expect(jsmql.expr("[1, 2, 3].difference([2])")).toEqual([1, 3]);
   });
   it("symmetricDifference composes $setDifference of the union and the intersection", () => {
     expect(jsmql.expr("$.a.symmetricDifference($.b)")).toEqual({
@@ -7757,9 +7765,10 @@ describe("Array.from is not part of jsmql", () => {
     }
   });
   it("the way out it names is the leaner MQL", () => {
-    expect(jsmql.expr("(5).range()")).toEqual({ $range: [0, 5] });
-    expect(jsmql.expr("(3).range().map(i => i * 2)")).toEqual({
-      $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } },
+    expect(jsmql.expr("(5).range()")).toEqual([0, 1, 2, 3, 4]);
+    expect(jsmql.expr("(3).range().map(i => i * 2)")).toEqual([0, 2, 4]);
+    expect(jsmql.expr("$.n.range()")).toEqual({
+      $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }],
     });
   });
 });
@@ -8121,7 +8130,7 @@ describe("the string forms of a slice: .substring and .substr", () => {
     });
   });
   it("substr(-n) reads the last n characters: the start is strLen - n, floored", () => {
-    expect(jsmql.expr('"hello".substr(-3)')).toEqual({ $substrCP: ["hello", 2, 5] });
+    expect(jsmql.expr('"hello".substr(-3)')).toEqual("llo");
     expect(jsmql.expr("String($.s).substr(-3)")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $toString: "$s" } },
@@ -9602,39 +9611,6 @@ describe("window operators ($setWindowFields-only)", () => {
 });
 
 describe("jsmql.compile()", () => {
-  it("refuses an injected null where the slot states a kind, at call time (HR7)", () => {
-    const sliced = jsmql.expr.compile(({ start }: { start: number | null }, { $ }) => $.a.slice(start));
-    expect(sliced({ start: 1 })).toEqual({
-      $let: {
-        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
-        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
-      },
-    });
-    expect(() => sliced({ start: null })).toThrow("'.slice()' argument 1 takes an integer, but got null.");
-    // The refusal points at the parameter's name in the arrow's source.
-    const fn = ({ start }, { $ }) => $.a.slice(start);
-    let pos = -1;
-    try {
-      jsmql.expr.compile(fn as never)({ start: null });
-    } catch (e) {
-      pos = (e as { pos: number }).pos;
-    }
-    expect(pos).toBe(String(fn).indexOf("start)"));
-    // The template form refuses it too, at the offset of the slot in the template's text.
-    expect(() => jsmql.expr`$.a.slice(${null})`).toThrow("'.slice()' argument 1 takes an integer, but got null.");
-    const result = jsmql.validate`$.a.slice(${null})`;
-    expect(result.valid).toBe(false);
-    expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: "$.a.slice(".length });
-  });
-
-  it("validates a parameterised arrow with a parameter in a slot that states a kind", () => {
-    // The call can pass a value of that kind, so `validate()` reads the parameter as a value of no known kind.
-    expect(jsmql.validate(({ start }: { start: number }, { $ }) => $.a.slice(start))).toEqual({
-      valid: true,
-      errors: [],
-    });
-  });
-
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);

@@ -119,7 +119,7 @@ describe("a developer-authored field name survives to the output", () => {
   it("every folding road that builds an object keeps the name", () => {
     for (const k of HOSTILE) {
       const q = JSON.stringify(k);
-      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a:1}).mapKeys(() => ${q});`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a:1}).mapKeys(v => ${q});`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = [[${q}, 1]].fromPairs();`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = ({a: ${q}}).invert();`))).toContain(k);
       expect(JSON.stringify(jsmql.pipeline(`$.r = [${q}].zipObject([1]);`))).toContain(k);

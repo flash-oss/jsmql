@@ -26,8 +26,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   answers.
 - **A human can read the registry.** Repetition is fine. An abstraction that
   hides which rows state which facts is not fine.
-- **A refusal names the alternative.** The `unsupported("…")` text tells the
-  developer what to write instead, in JSMQL terms. A method row or global row
+- **A refusal is an `unsupported("…")` cell.** Its text obeys the rejection rule
+  of the root `CLAUDE.md` § developer experience. A method row or global row
   may add an `updateDoc` cell for this reason alone. The update document holds
   constants only, so this cell is always a refusal. A row adds this cell when
   the general sentence for the position (`NO_CELL` in

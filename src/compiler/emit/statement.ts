@@ -20,7 +20,7 @@ import type { BodyPath } from "../rows.ts";
 import type { Family } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import {
   bansNestedOf,
   diagnosticOf,
@@ -53,7 +53,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { documentAfter, kindOf, typeOf, type Known } from "./prove.ts";
+import { documentAfter, kindOf, proofsFor, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import {
@@ -65,7 +65,7 @@ import {
   takesLetOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
+import { select, UNPROVEN, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
@@ -479,9 +479,15 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   if (list.elements.length === 0) return [dropAll];
   // The sugar IS the stage call, so the row judges the list: `$$ = [{ a: 1 }, 5]`
   // meets the same element rule `$documents([{ a: 1 }, 5])` meets.
-  const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  const sel = select(
+    consult(DOCUMENTS, "statement"),
+    { kind: "none" },
+    { kind: "multiple" },
+    1,
+    proofsFor([list], env, false),
+  );
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
-  checkSlots(written, sel.rule.args, [list], (e) => kindOf(e, env), false);
+  checkSlots(written, sel.rule.args, [list], false);
   // The documents run inside the `$unionWith`, with NO input document.
   // So the compiler lowers the list under that boundary — the same one
   // `unionStages` enters. Lowered outside it, `$$ = [{ n: $.a }]` read
@@ -1141,12 +1147,6 @@ function refuseUnbuiltSugar(value: Expr): void {
 
 // ── the stream road ──────────────────────────────────────────────────────────
 
-/** What an argument of a stage call or a stream link PROVABLY is, for the slot check. */
-const proofOf = (env: Env, node: object): ((e: Expr) => Known) => {
-  const argEnv = childEnv(env, node, "args");
-  return (e) => kindOf(e, argEnv);
-};
-
 /**
  * `$.pick(…).omit(…)` — a chain on the whole DOCUMENT whose every link is
  * a row spelled on BOTH the object and the stream. This function returns
@@ -1179,7 +1179,7 @@ function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
     // A stage reads its field list before any document, so the stream cell takes a list
     // the SOURCE spells. `$ = $.pick($.keys)` names a list only the server knows, and
     // the value cell reads it at query time — under `$replaceWith`, as any root value.
-    if (!link.args.every((a) => a.type !== "SpreadElement" && evaluate(a, new Map()).ok)) return null;
+    if (!link.args.every((a) => a.type !== "SpreadElement" && constantOf(a).ok)) return null;
   }
   return links;
 }
@@ -1282,12 +1282,13 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
       : ref === "ClusterRef"
         ? { kind: "namespace", name: "cluster" }
         : { kind: "none" };
-  const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
   const args = node.args as readonly Expr[];
   // A `$`-named stage on a reference is the developer's own MQL, as the bare stage
   // call is: no body is checked, and its place stays checked.
   const escape = node.name.startsWith("$");
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
+  const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
@@ -1298,8 +1299,10 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
         ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
         : [plainStage(name, node, args, env)];
   } else {
-    if (sel.kind !== "rule") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
-    checkSlots(node.name, sel.rule.args, args, proofOf(env, node), false);
+    if (sel.kind !== "rule") {
+      throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, [], undefined, { args });
+    }
+    checkSlots(node.name, sel.rule.args, args, false);
     stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
   const out: Stage[] = [];
@@ -1349,8 +1352,9 @@ function streamLink(
       [],
     );
   }
-  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
   const args = link.args as readonly Expr[];
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
+  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
@@ -1361,8 +1365,10 @@ function streamLink(
         ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name)) as Stage[])
         : [plainStage(name, link, args, env)];
   } else {
-    if (sel.kind !== "rule") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    checkSlots(link.name, sel.rule.args, args, proofOf(env, link), false);
+    if (sel.kind !== "rule") {
+      throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], undefined, { args });
+    }
+    checkSlots(link.name, sel.rule.args, args, false);
     // `name` is the row that runs; `link.name` is what the developer typed. A message
     // that swaps them tells the reader about a method they did not write.
     stages = sel.rule.emit(
@@ -1537,7 +1543,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   // is the bare call. The stage document of `$.items.$sort(…);` has no place for `$.items`.
   if (node.type === "MethodCall" && takesNoReceiver(name)) throw E.noReceiver(name, node.pos);
   const verdict = consult(name, "statement");
-  const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length, proofs);
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
     // A name that no row knows is a stage of a newer server, or a typo: the server
@@ -1558,11 +1565,9 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
-    throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s);
+    throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s, { args });
   }
-  // A bare call spells its own parentheses: `assert(…)`, not a method.
-  const spelled = node.type === "CallExpression" || node.type === "NewExpression" ? `${name}()` : name;
-  checkSlots(spelled, sel.rule.args, args, proofOf(env, node), false);
+  checkSlots(name, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact

@@ -106,9 +106,8 @@ export type Verdict =
    * A cell the row hands to a PASS — `inCode(<file>)`. There is nothing here to
    * lower: the pass either rewrote the node already or left it, and a caller that
    * meets this verdict must read the node the way its other cells describe.
-   * `args` is the argument rule that the code checks, when the row states one.
    */
-  | { kind: "inCode"; name: string; position: Position; file: string; args?: Arity };
+  | { kind: "inCode"; name: string; position: Position; file: string; args: Arity | undefined };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -132,8 +131,7 @@ function readCell(name: string, position: Position, cell: unknown): Verdict {
     };
   }
   if (typeof cell.inCode === "string") {
-    const args = isObj(cell.args) ? (cell.args as Arity) : undefined;
-    return { kind: "inCode", name, position, file: cell.inCode, ...(args === undefined ? {} : { args }) };
+    return { kind: "inCode", name, position, file: cell.inCode, args: cell.args as Arity | undefined };
   }
   if (cell.fallback === "expr") return { kind: "fallback", name, position };
   if (Array.isArray(cell.composedInto)) {

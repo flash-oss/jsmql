@@ -12,12 +12,11 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
-import { objectIdTypo } from "../objectid-guard.ts";
+import { bigIntToLong, ObjectId, regexValue } from "../../bson.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf, provideLowering } from "../passes/evaluate.ts";
 import {
   bindsOf,
   callbackParamsOf,
@@ -46,23 +45,23 @@ import {
 } from "../rows.ts";
 import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots } from "./check.ts";
-import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.ts";
-import type { Env } from "./env.ts";
+import { operandShapeOf } from "../rows.ts";
+import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, boolTruth, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
-import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
-import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
+import { select, shapeOf, UNPROVEN, type Receiver, type Selected } from "./select.ts";
+import { chainHasOptional, familyOfKind, isPresent, kindOf, proofsFor, sourceFamily, typeOf } from "./prove.ts";
 import { ANY, cannotBe, isNothing, isOnly, kindsOf, maybeAbsent, unreadable, unreadableAt } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
-const READ: Reader = { value: lowerValue, truth: lowerTruth };
+const READ: Reader = { value: lowerValue, truth: lowerTruth, boolean: lowerBoolean };
 
 /** The position the Env stands in, or `value` when phase 4 named a waypoint (a raw `{ $op: … }` in a value slot is a document). */
 const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value";
@@ -78,35 +77,6 @@ const NOT_EXPR: ReadonlySet<Exclude<CallArg | ArrayElement, Expr>["type"]> = new
 const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlySet<string>).has(a.type);
 
 // ── the value reading ────────────────────────────────────────────────────────
-
-/**
- * The node types whose VALUE is not their document: a BigInt spells `$toLong`.
- * `undefined` and a regex have no value position. A lambda is not a value, and a
- * string literal is itself already. Each has its own case below.
- */
-const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
-  "StringLiteral",
-  "BigIntLiteral",
-  "UndefinedLiteral",
-  "RegexLiteral",
-  "Lambda",
-  // A literal's own case lowers its parts and holds the list-operand rule for a
-  // raw `{ $op: … }`. Settling the whole literal would skip both.
-  "ObjectLiteral",
-  "ArrayLiteral",
-]);
-const hasOwnCase = (type: Expr["type"]): boolean => OWN_CASE.has(type);
-
-/**
- * A settled value with every BigInt inside it as a `Long`, or the refusal for the
- * first that does not fit 64 bits. A BigInt literal IS an int64 in MQL. This function
- * builds the value here, so the server never parses it from a string per document.
- */
-function settledValue(value: unknown, pos: number): unknown {
-  const converted = longsWithin(value);
-  if (!converted.ok) throw E.bigIntTooLarge(converted.tooBig.toString(), pos);
-  return converted.value;
-}
 
 /**
  * The join road, lent by statement.ts at load: a chain on another collection in a
@@ -126,23 +96,6 @@ export function lowerValue(node: Expr, env: Env): unknown {
   ) {
     if (joinRoad === null) internalError("statement.ts did not lend the join road before lower.ts read it");
     return joinRoad(node, env);
-  }
-  // A constant is its VALUE, before any row is read. The fold writes back what has
-  // a source spelling. A Date or an ObjectId has none and stays a node, so
-  // the evaluator is asked here — with its own exclusions (an operator call is the
-  // developer's MQL and is never evaluated).
-  if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
-    const settled = evaluate(node, new Map());
-    if (settled.ok) {
-      // `ObjectId("…")` settles to a live id: the same plausibility rule the
-      // literal has, because the same typo is possible.
-      if (isObjectId(settled.value)) {
-        const hex = objectIdHex(settled.value);
-        const typo = hex === null ? null : objectIdTypo(hex);
-        if (typo !== null) throw new E.CodegenError(typo, node.pos);
-      }
-      return settledValue(settled.value, node.pos);
-    }
   }
   const stopped = stoppedChain(node);
   // a `?.` on a receiver that is certainly there — the document, a `$lookup`'s array — asks nothing
@@ -237,6 +190,15 @@ export function lowerValue(node: Expr, env: Env): unknown {
 }
 
 // ── the truth reading ────────────────────────────────────────────────────────
+
+/** The JavaScript boolean of `node` as a VALUE: `Boolean(x)` and `!!x`. See `truthOf`. */
+export function lowerBoolean(node: Expr, env: Env): Truth {
+  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
+  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
+    return lowerTruth(node, env);
+  }
+  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env), true);
+}
 
 export function lowerTruth(node: Expr, env: Env): Truth {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
@@ -510,7 +472,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
 function rootAsValue(node: Expr, env: Env): never {
   const name = rowForNodeType(node.type);
   if (name === undefined) internalError(`no root row builds a '${node.type}'`);
-  const sel = select(consult(name, positionIn(env)), { kind: "none" }, { kind: "none" }, 0);
+  const sel = select(consult(name, positionIn(env)), { kind: "none" }, { kind: "none" }, 0, UNPROVEN);
   throw E.refusalFor(sel, name, "", positionIn(env), node.pos, []);
 }
 
@@ -724,8 +686,6 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
-  const key = productionBuilding("IndexAccess");
-  checkRoad(key, productionSpelling(key), [node.index], env);
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);
@@ -753,7 +713,7 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   // JavaScript's `arr["p"]` is `undefined`.
   if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
   const isString = (o: unknown) => boolTruth({ $eq: [{ $type: o }, "string"] });
-  const literal = evaluate(node.index, new Map());
+  const literal = constantOf(node.index);
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
     const i = literal.value;
     if (i < 0) throw E.negativeIndex(i, node.pos);
@@ -858,9 +818,11 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     throw E.noReceiver(name, node.pos);
   }
   const exprArgs = args.filter(isExpr);
-  // What each argument PROVABLY is. The compiler refuses a rule whose slot cannot take it.
+  // What each argument PROVABLY is, and what the elements of the receiver are. The
+  // compiler refuses a rule whose slot cannot take it (HR7).
   const argEnv = childEnv(env, node, "args");
-  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
+  const proofs = proofsFor(args, argEnv, true, { node: recvNode, env: recvEnv });
+  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length, proofs);
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -870,15 +832,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(
-      receiver.kind === "namespace" ? `${receiver.name}.${name}()` : name,
-      sel.rule.args,
-      exprArgs,
-      (e) => kindOf(e, argEnv),
-      true,
-      recvNode,
-      (e) => lowerValue(e, argEnv),
-    );
+    checkSlots(name, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
@@ -926,7 +880,11 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
           return on !== undefined && on !== "any" && on.includes(receiver.name) && lowersOn(n, receiver.name);
         })
       : JS_NAMES;
-  throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);
+  if (sel.kind === "wrongKind") operandsFirst(exprArgs, argEnv);
+  throw E.refusalFor(sel, spelled, container, position, node.pos, near, format, {
+    receiver: recvNode,
+    args: args as readonly Expr[],
+  });
 }
 
 /** A receiver that PROVABLY holds arrays: a literal with an array element, or `.partition(…)`, whose two halves are arrays. */
@@ -975,19 +933,10 @@ function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env)
 function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: Env): unknown {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr);
-  const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length);
-  if (sel.kind !== "rule") throw E.refusalFor(sel, name, "", position, node.pos, []);
-  const argEnv = childEnv(env, node, "args");
-  checkSlots(
-    `${name}()`,
-    sel.rule.args,
-    exprArgs,
-    (e) => kindOf(e, argEnv),
-    true,
-    undefined,
-    (e) => lowerValue(e, argEnv),
-  );
-  return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
+  const proofs = proofsFor(args, childEnv(env, node, "args"), true);
+  const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
+  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
+  throw E.refusalFor(sel, name, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 
 /** `((x) => …)(a)` and `f(a)`: each parameter bound once by `$let`, the body lowered under them. */
@@ -1053,7 +1002,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr);
-  const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
+  // The call is the developer's own MQL, so no kind rule judges it (HR7).
+  const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count, UNPROVEN);
   if (sel.kind === "spreadRefused") throw E.refusalFor(sel, node.name, "", position, node.pos, []);
   if (sel.kind !== "rule") return plainOperator(node, env);
   // A body of named keys: a JavaScript spread or computed key has no lowering there.
@@ -1145,44 +1095,52 @@ function plainOperator(node: Extract<Expr, { type: "OperatorCall" }>, env: Env):
 const spelledProduction = (node: Expr, key: string): string =>
   node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
 
-/** A production's own renderer, run over `operands`. */
-function production(node: Expr, key: string, operands: readonly Expr[], env: Env): unknown {
-  const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
-  const spelled = spelledProduction(node, key);
-  if (sel.kind !== "rule") {
-    throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, []);
-  }
-  const argEnv = childEnv(env, node, "args");
-  checkSlots(
-    spelled,
-    sel.rule.args,
-    operands,
-    (e) => kindOf(e, argEnv),
-    true,
-    undefined,
-    (e) => lowerValue(e, argEnv),
-  );
-  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
-  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
+/**
+ * The answer of the dispatcher for a production over `operands`. The kind of each operand
+ * is HR7's: the operands prove it, and the row states what each slot takes. The elements
+ * are those of the last operand, as `x in [ … ]` reads them.
+ */
+function selectProduction(key: string, operands: readonly Expr[], env: Env): Selected {
+  const last = operands[operands.length - 1];
+  const proofs = proofsFor(operands, env, false, last === undefined ? null : { node: last, env });
+  return select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length, proofs);
 }
 
 /**
- * The slot check of a road that a production hands to this file, with the rule that
- * its `inCode(file, args)` cell states. `env` is the scope that the operands read.
+ * A kind refusal is the final check on a call. An error inside an operand has a message
+ * of its own, and that one comes first: this lowers each operand and drops the result.
+ * An arrow is not a value, so it is left alone.
  */
-function checkRoad(key: string, spelled: string, operands: readonly Expr[], env: Env): void {
-  const verdict = consult(key, "value");
-  if (verdict.kind !== "inCode") internalError(`'${key}' hands its value cell to no road`);
-  if (verdict.args === undefined) return;
-  checkSlots(
-    spelled,
-    verdict.args,
-    operands,
-    (e) => kindOf(e, env),
-    true,
-    undefined,
-    (e) => lowerValue(e, env),
-  );
+function operandsFirst(operands: readonly Expr[], env: Env): void {
+  for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
+}
+
+/**
+ * The kind check of a production whose MQL a pass builds (`+`, `in`). The row states the
+ * operand kinds, and this call reads them through the same dispatcher as every other
+ * production. The pass owns the count.
+ */
+function checkOperandKinds(node: Expr, key: string, operands: readonly Expr[], env: Env): void {
+  const sel = selectProduction(key, operands, env);
+  if (sel.kind === "wrongKind") {
+    operandsFirst(operands, env);
+    throw E.refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], undefined, {
+      args: operands,
+    });
+  }
+}
+
+/** A production's own renderer, run over `operands`. */
+function production(node: Expr, key: string, operands: readonly Expr[], env: Env): unknown {
+  const sel = selectProduction(key, operands, env);
+  const spelled = spelledProduction(node, key);
+  if (sel.kind !== "rule") {
+    if (sel.kind === "wrongKind") operandsFirst(operands, env);
+    throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, [], undefined, { args: operands });
+  }
+  checkSlots(spelled, sel.rule.args, operands, true, undefined, env.site.settling);
+  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
+  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
 
 /** Every operand of a left-nested chain of `op`, outermost-left first. */
@@ -1201,7 +1159,7 @@ function chainOf(node: Expr, op: string): Expr[] {
 function unary(node: Extract<Expr, { type: "UnaryExpr" }>, env: Env): unknown {
   // `!!x` is `Boolean(x)`: the truth of x, as a value.
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return asValue(lowerTruth(node.argument.argument, childEnv(env, node, "argument")));
+    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a unary '${node.op}'`);
@@ -1213,12 +1171,7 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
   switch (node.op) {
     case "+": {
       const operands = chainOf(node, "+");
-      checkRoad(
-        productionForOperator("BinaryExpr", "+") ?? internalError("no production builds '+'"),
-        "+",
-        operands,
-        inner,
-      );
+      checkOperandKinds(node, productionKeyOf(node), operands, inner);
       if (operands.some((e) => kindOf(e, inner) === "string")) {
         return {
           $concat: operands.map((e) => (chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))),
@@ -1251,9 +1204,15 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
       break;
     }
   }
+  const key = productionKeyOf(node);
+  return production(node, key, flattensChain(key) ? chainOf(node, node.op) : [node.left, node.right], env);
+}
+
+/** The key of the production that builds a binary operator. */
+function productionKeyOf(node: Extract<Expr, { type: "BinaryExpr" }>): string {
   const key = productionForOperator("BinaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a binary '${node.op}'`);
-  return production(node, key, flattensChain(key) ? chainOf(node, node.op) : [node.left, node.right], env);
+  return key;
 }
 
 /** `typeof x === "t"`, either way round, through the predicate vocabulary's alias table. */
@@ -1324,6 +1283,7 @@ function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): un
 function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown {
   const { left, right } = node;
   if (right.type !== "ArrayLiteral") throw E.inNeedsList(node.pos);
+  checkOperandKinds(node, productionKeyOf(node), [left, right], env);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 
@@ -1370,3 +1330,24 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
 
 /** The callback parameter kinds a row states, for a caller binding them. Unused parameters bind as "unknown". */
 export { callbackParamsOf };
+
+// ── the lowering that the constant engine asks for ───────────────────────────
+
+/**
+ * A closed expression as MQL, so the interpreter can give its value. The declared functions
+ * are bound as a declaration binds them (statement.ts), and each call inlines its body. The
+ * lowering only asks for a value, so `settling` is set: see `Site.settling`. The engine
+ * reads a throw as "not constant", and the real emit pass reports the error at the real site.
+ */
+provideLowering((node, functions) => {
+  let env = Env.root({ node, functions: [...functions.values()] }, "value", undefined, true);
+  for (const [name, lambda] of functions) {
+    env = env.bind(name, {
+      ref: { kind: "function", lambda, expanding: lambda.body === undefined },
+      type: ANY,
+      mutable: false,
+      pos: lambda.pos,
+    });
+  }
+  return lowerValue(node, env);
+});

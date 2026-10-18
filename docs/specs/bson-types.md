@@ -122,7 +122,7 @@ banned tests.
 | `src/registry/vocabulary.ts` | `bsonTagOf` and the realm-independent recognisers — `isDate`, `isRegExp`, `isBytes`, `isPlainObject` |
 | `src/bson.ts` | the classes, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex`, `regexValue`; re-exports the vocabulary's recognisers |
 | `src/compiler/passes/literal.ts` | a value ⇄ the AST literal that spells it |
-| `src/compiler/passes/fold-methods.ts` | the exact reads a fold may run on a constant |
+| `src/compiler/passes/evaluate.ts` | the constant engine: it settles a constant, and writes the value back as a node |
 | `src/compiler/emit/prove.ts` | the type a value proves |
 | `src/compiler/emit/filter.ts` | whether the query language compares it as written |
 | `src/compiler/emit/lower.ts` | a literal to the value the driver sends |
@@ -164,10 +164,10 @@ The rows come from two factories in `src/registry/names.ts` — `bsonValue` and
 
 ## Constant, and what the fold may do with it
 
-The FOLD builds every constant it can (`bsonConstant` in `src/bson.ts`, reached from
-`src/compiler/passes/fold-methods.ts`). A row's `constant` cell is reached ONLY by a
-constant the type cannot hold, so that cell is a refusal that names the type that
-fits.
+The `constant` cell of a row builds the value (`bsonConstant` in `src/bson.ts`, through the
+`construct` service of the cell). The server has no expression for some of these values, so the
+value goes into the MQL as itself, and the constant engine reads it. A constant that the type
+cannot hold is a refusal that names the type that fits.
 
 `bson` does not refuse what it cannot hold. The team measured this against 7.2.0:
 
