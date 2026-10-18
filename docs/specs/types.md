@@ -405,7 +405,10 @@ A row states the rule, never the compiler:
 - `slotType` gives the kind of one slot, or a set of kinds. `rest` gives the
   kind of every other slot. `"any"` is the stated answer for a slot that takes
   every kind, so "takes every kind" and "not yet typed" are different facts.
-  `test/registry-slot-kinds.test.ts` reports each slot that has neither.
+  `"any"` takes `null` too, because `null` is data there, for example in
+  `.has(null)`. `"value"` takes every kind but `null`, for example the operand
+  of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
+  neither.
 - `"element"` is the kind of one element of the element source: the receiver of
   a method, the last operand of a production.
 - `homogeneous` says that every operand has one kind. The first operand of one

@@ -155,6 +155,12 @@ export type ArgType =
    * facts: a slot with no type is an open item that the audit reports.
    */
   | "any"
+  /**
+   * The slot takes a value of every kind, but never `null`. A conversion uses this kind:
+   *   String($.n)    → accepted
+   *   String(null)   → refused: a conversion of null has no meaning (HR7)
+   */
+  | "value"
   /** The slot takes a callback: an arrow. A value that is proven to be a plain value does not fit. */
   | "callback"
   /** The slot takes a regular expression, or a string as the pattern. The row's other rules say which string. */

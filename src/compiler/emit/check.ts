@@ -90,6 +90,8 @@ function matches(lit: Lit, expected: ArgType): boolean {
     case "any":
     case "element":
       return true;
+    case "value":
+      return lit.kind !== "null";
     case "orderable":
       return lit.kind === "number" || lit.kind === "bigint" || lit.kind === "string";
     case "date":
@@ -115,6 +117,7 @@ const TAKES: Record<ArgType, string> = {
   date: "a date",
   timestamp: "a timestamp",
   any: "a value",
+  value: "a value",
   callback: "a callback",
   regex: "a regular expression or a string",
   element: "an element of the array",

@@ -10438,7 +10438,7 @@ export const NAMES = {
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
-      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 0: "any", 1: "string" } },
+      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 0: "value", 1: "string" } },
       // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
       emit: ({ args, truth, value }) => {
         const prefix = "jsmql assertion failed";
@@ -10683,7 +10683,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+      args: { sig: "value", exact: 1, slotType: { 0: "value" } },
       emit: ({ args, value }) => ({ $toString: value(args[0]) }),
     },
     stream: unsupported("'String()' produces a value, not a stream of documents."),
@@ -10702,7 +10702,7 @@ export const NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1, slotType: { 0: "any" } }, emit: ({ args, boolean }) => boolean(args[0]) },
+    expr: { args: { sig: "value", exact: 1, slotType: { 0: "value" } }, emit: ({ args, boolean }) => boolean(args[0]) },
     stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(…);'",
@@ -11704,11 +11704,11 @@ export const NAMES = {
         // `3` would be an int. The constant converts like anything else, and a string the
         // server cannot parse is the server's own error.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
           emit: ({ args, value }) => ({ $toDouble: value(args[0]) }),
         },
         dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
           emit: ({ args, value }) => ({ $toDouble: value(args[0]) }),
         },
         otherwise: unsupported("'Number(x)' takes exactly one value."),

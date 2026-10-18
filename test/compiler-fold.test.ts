@@ -442,8 +442,8 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf('Number("42")')).toBe("(not constant)");
     // `$convert` with no `onError` fails on a string it cannot parse.
     expect(valueOf('Number("nope")')).toBe("(not constant)");
-    // `$toString(null)` is null, not the four letters.
-    expect(valueOf("String(null)")).toBe(null);
+    // A conversion refuses `null` (HR7), so no fold answers it: the kind check refuses it.
+    expect(valueOf("String(null)")).toBe("(not constant)");
     // An integer below 10^16 is written digit for digit by `$toString` and by
     // JavaScript; from there the server uses an exponent where JavaScript does not,
     // a fraction's threshold differs, and `-0` keeps its sign on the server only.

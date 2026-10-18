@@ -103,6 +103,8 @@ export function kindFits(
   switch (expected as ArgType) {
     case "any":
       return true;
+    case "value":
+      return kind !== "null";
     case "number":
     case "int":
     case "int-or-long":

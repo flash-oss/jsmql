@@ -141,3 +141,9 @@ export const exprOfValue = matchExpr("$a");
 export const andOfValues = and("$a", "$b");
 export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
 export const condOfBool = cond(boolTruth({ $gt: ["$a", 1] }), 1, 2);
+
+// ── "value": every kind, never null ──────────────────────────────────────────
+
+export const valueKind: Arity = { sig: "value", exact: 1, slotType: { 0: "value" } };
+// @ts-expect-error — "defined" is no kind; "value" is every kind but null
+export const definedKind: Arity = { sig: "value", exact: 1, slotType: { 0: "defined" } };

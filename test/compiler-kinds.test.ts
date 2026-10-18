@@ -58,6 +58,14 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
+  it("a conversion and the condition of assert() take every kind but null", () => {
+    expect(() => jsmql.expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
+    expect(() => jsmql.expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");
+    expect(() => jsmql.expr("Boolean(null)")).toThrow("'Boolean()' argument 1 takes a value, but got null.");
+    expect(() => jsmql("assert(null);")).toThrow("'assert()' argument 1 takes a value, but got null.");
+    expect(jsmql.expr("String($.n)")).toEqual({ $toString: "$n" });
+  });
+
   it("a null that the call passes in, or that the proof shows, is refused too", () => {
     expect(() => jsmql.expr`-${null}`).toThrow(/'-' argument 1 takes a number, but got null\./);
     expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
