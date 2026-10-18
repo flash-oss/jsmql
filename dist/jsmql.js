@@ -3702,7 +3702,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),

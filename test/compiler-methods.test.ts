@@ -1919,9 +1919,12 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.d.startOf(5)")).toThrow("'.startOf()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.d.endOf(null)")).toThrow("'.endOf()' argument 1 takes a string, but got null.");
     // the pattern of the regex methods, and the input of `/re/.test(s)`
-    expect(() => expr('$.s.matchAll("x")')).toThrow(
-      "'.matchAll()' argument 1 takes a regular expression, but got a string.",
+    expect(() => expr("$.s.matchAll(5)")).toThrow(
+      "'.matchAll()' argument 1 takes a string or a regular expression, but got a number.",
     );
+    expect(expr('$.s.matchAll("a.")')).toEqual({
+      $cond: [{ $lte: ["$s", null] }, null, { $regexFindAll: { input: "$s", regex: "a." } }],
+    });
     expect(() => expr("$.s.match(5)")).toThrow(
       "'.match()' argument 1 takes a string or a regular expression, but got a number.",
     );

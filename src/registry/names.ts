@@ -4611,7 +4611,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) })),
     },

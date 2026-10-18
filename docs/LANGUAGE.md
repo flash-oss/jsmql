@@ -1864,7 +1864,7 @@ gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s` and `x`. The JavaScript-only flags have no MongoDB equivalent: `g` (global), `u` and `v` (unicode), `y` (sticky), `d` (indices). So JSMQL removes them from the emitted `options`, and keeps only `i`, `m` and `s`. The removal of `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch` or `$regexFind`.
 
-`.matchAll()` still *requires* a `/g` regex, as JS does, because JS throws without one. But `g` itself does not appear in the output.
+`.matchAll()` takes a string or a regex, as JS does. A regex must carry `g`, because JS throws without it. But `g` itself does not appear in the output.
 
 #### lodash string methods (ASCII-only)
 
