@@ -809,7 +809,7 @@ const dateRow = (spelling: string) =>
         constant: unsupported(
           `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
         ),
-        dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate"),
+        dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate", MILLIS_TO_DATE),
         // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
         // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
         // integer: the server refuses 2024.5 as a year.
@@ -1506,13 +1506,22 @@ const parseFloatIsNotJsmql = unsupported(
 );
 /**
  * A BSON type name over a value of the document: the value's own conversion method says
- * the same thing.
+ * the same thing. `also` is one more sentence for the row's own case.
  */
-const convertsWith = (spelling: string, method: string): Refusal =>
+const convertsWith = (spelling: string, method: string, also = ""): Refusal =>
   unsupported(
     `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` +
-      afterStringMethod(method),
+      afterStringMethod(method) +
+      also,
   );
+
+/**
+ * The date refusal names the two steps for a number of milliseconds. MEASURED: `$toDate`
+ * refuses an int, and a driver sends a whole JavaScript number below 2^31 as an int.
+ * `$toLong` reads every number, and it cuts a fraction toward zero, as `new Date(x)` does.
+ */
+const MILLIS_TO_DATE =
+  " For a number of milliseconds, write '$.x.toLong().toDate()': the server cannot convert an int to a date.";
 
 /** `new Set(…)` in every position but an accumulator's. MongoDB has no set type, and an array method does each set operation. */
 const setIsNotJsmql = unsupported(

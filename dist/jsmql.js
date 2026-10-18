@@ -454,7 +454,7 @@ var dateRow = (spelling) => global_({
       constant: unsupported(
         `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
       ),
-      dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate"),
+      dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate", MILLIS_TO_DATE),
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
       // integer: the server refuses 2024.5 as a year.
@@ -796,9 +796,10 @@ var parseIntIsNotJsmql = unsupported(
 var parseFloatIsNotJsmql = unsupported(
   `'parseFloat()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'.` + afterStringMethod("toDouble")
 );
-var convertsWith = (spelling, method) => unsupported(
-  `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` + afterStringMethod(method)
+var convertsWith = (spelling, method, also = "") => unsupported(
+  `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` + afterStringMethod(method) + also
 );
+var MILLIS_TO_DATE = " For a number of milliseconds, write '$.x.toLong().toDate()': the server cannot convert an int to a date.";
 var setIsNotJsmql = unsupported(
   "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
 );

@@ -11,7 +11,7 @@
 // guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient, type Collection } from "mongodb";
+import { Decimal128, Long, MongoClient, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
@@ -2877,6 +2877,48 @@ describe.skipIf(!up)("compiler/emit — the `?.` that a conversion refusal names
       await expect(run(src.replace("?.", ".")), src).rejects.toThrow();
       expect([src, (await run(src)).map((d) => d.__v)]).toEqual([src, [null, null]]);
     }
+  });
+});
+
+/**
+ * A number of milliseconds converts with `.toLong().toDate()`. MEASURED: `$toDate` refuses an
+ * int, and a driver sends a whole JavaScript number below 2^31 as an int. `$toLong` reads every
+ * number and cuts a fraction toward zero. Each case gives the field and the instant that
+ * JavaScript's own `new Date(x)` gives.
+ */
+const MILLIS: readonly (readonly [string, unknown, Date])[] = [
+  ["an int", 1700000000, new Date(1700000000)],
+  ["a negative int", -5, new Date(-5)],
+  ["a long", Long.fromNumber(1700000000000), new Date(1700000000000)],
+  ["a double with a fraction", 1700000000000.7, new Date(1700000000000)],
+  ["a negative fraction", -1.7, new Date(-1)],
+  ["a Decimal128", Decimal128.fromString("5.9"), new Date(5)],
+];
+
+describe.skipIf(!up)("compiler/emit — a number of milliseconds converts with .toLong().toDate()", () => {
+  let millis: Collection;
+  beforeAll(async () => {
+    millis = client!.db("jsmql_compiler_methods").collection("millis");
+    await millis.deleteMany({});
+    await millis.insertMany(MILLIS.map(([, v], i) => ({ _id: i, v })));
+  });
+  const run = (src: string) => millis.aggregate([{ $sort: { _id: 1 } }, { $project: { x: expr(src) } }]).toArray();
+
+  it("gives JavaScript's instant for each kind of number", async () => {
+    const got = await run("$.v.toLong().toDate()");
+    expect(got.map((r) => canonical(r.x))).toEqual(MILLIS.map(([, , want]) => canonical(want)));
+  });
+
+  it("is the spelling that the refusal of new Date(x) names, because .toDate() alone stops on an int", async () => {
+    let message = "";
+    try {
+      expr("new Date($.v)");
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(/a number of milliseconds, write '([^']+)'/.exec(message)?.[1], message).toBe("$.x.toLong().toDate()");
+    // DELIBERATELY refused by the server: `$toDate` cannot convert an int.
+    await expect(run("$.v.toDate()")).rejects.toThrow();
   });
 });
 

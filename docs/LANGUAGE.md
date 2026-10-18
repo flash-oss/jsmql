@@ -2928,6 +2928,13 @@ $.price.trim().toDouble()          // { $toDouble: { $trim: { input: { $ifNull: 
 $.price?.trim().toDouble()         // { $toDouble: { $trim: { input: "$price" } } }   — null for a missing price
 ```
 
+**An int field needs `.toLong()` before `.toDate()`.** `.toDate()` is MongoDB's `$toDate`. It reads a long, a double, a Decimal128, a string, a date and an ObjectId, but it stops the command on an int. A driver stores a whole JavaScript number below 2^31 as an int. JavaScript's `new Date(ms)` takes any number. For a number of milliseconds, write `.toLong().toDate()`. `$toLong` cuts a fraction toward zero, as `new Date(ms)` does:
+
+```js
+$.ms.toDate()                      // { $toDate: { $ifNull: ["$ms", new Date("1970-01-01T00:00:00.000Z")] } }   — an int field stops the command
+$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }
+```
+
 ### MongoDB Type Conversion Utilities
 
 ```js
@@ -3053,6 +3060,7 @@ new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 new Date()                         // "$$NOW"  (current date/time)
 Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
 $.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not new Date($.dateString)
+$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }  — a number of milliseconds, not new Date($.ms)
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)

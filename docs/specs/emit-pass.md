@@ -1006,7 +1006,9 @@ kind that it gives (`nullReceiverAs`). Each row also states `passesNull`, becaus
 so the dot and `?.` emit one document. Each conversion except `.toBool()` and `.toString()`
 stops the command on `""`, which a string method under a dot gives for a missing string.
 So each refusal that names one of them also names the `?.` right after the field
-(`afterStringMethod` in `src/registry/names.ts`). See docs/LANGUAGE.md § Type conversion methods.
+(`afterStringMethod` in `src/registry/names.ts`). `.toDate()` is the bare `$toDate`, which
+stops the command on an int, so the refusal of `new Date(x)` also names `.toLong().toDate()`
+for a number of milliseconds (`MILLIS_TO_DATE`). See docs/LANGUAGE.md § Type conversion methods.
 
 ```
 (5).range(1)          → {"$range":[5,1,-1]}
