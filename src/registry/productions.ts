@@ -682,7 +682,7 @@ export const PRODUCTIONS = {
   }),
 
   addition: production({
-    doc: "Adds numbers, or adds to a date.",
+    doc: "Adds numbers, or joins strings.",
     tokens: ["+"],
     spelling: "+",
     becomes: "BinaryExpr",
@@ -691,8 +691,10 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
-    // operand kinds gives a number, a date, null or an error.
+    // src/compiler/emit/prove.ts proves a string. A proven date is refused, because a date
+    // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
+    // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
+    // or an error. `$add` of a date and 1000 is the date one second later.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -708,7 +710,7 @@ export const PRODUCTIONS = {
   }),
 
   subtraction: production({
-    doc: "Subtracts numbers or dates.",
+    doc: "Subtracts the right number from the left.",
     tokens: ["-"],
     spelling: "-",
     becomes: "BinaryExpr",
@@ -716,14 +718,17 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
-    // an error. A date minus a date is a long, and a date minus a number is a date.
+    // A proven date is refused, because a date takes `.minus()` and `.diff()`. A field of
+    // unknown kind can still hold a date, so the result can be a date. MEASURED: `$subtract`
+    // over each pair of operand kinds gives a number, a date, null or an error. A date minus
+    // a date is a long, the milliseconds between them (86400000 for one day). A date minus
+    // 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'-' produces a value, not a stage."),

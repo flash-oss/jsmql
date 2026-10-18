@@ -571,8 +571,8 @@ function kindsOf(node: Expr, env: Env): Type {
     case "BinaryExpr": {
       if (node.op === "+") {
         // The result is `$concat` when either operand is a string, and `$add`
-        // otherwise. `$add` of a date returns a date. So only two numbers
-        // prove a number, and the row states what the rest of the `$add` road gives.
+        // otherwise. `$add` of a field that holds a date returns a date. So only two
+        // numbers prove a number, and the row states what the rest of the `$add` road gives.
         const l = kindOf(node.left, env);
         const r = kindOf(node.right, env);
         if (l === "string" || r === "string") return of("string");

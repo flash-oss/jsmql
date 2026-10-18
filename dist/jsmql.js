@@ -11026,7 +11026,7 @@ var PRODUCTIONS = {
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
   }),
   addition: production({
-    doc: "Adds numbers, or adds to a date.",
+    doc: "Adds numbers, or joins strings.",
     tokens: ["+"],
     spelling: "+",
     becomes: "BinaryExpr",
@@ -11035,8 +11035,10 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
-    // operand kinds gives a number, a date, null or an error.
+    // src/compiler/emit/prove.ts proves a string. A proven date is refused, because a date
+    // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
+    // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
+    // or an error. `$add` of a date and 1000 is the date one second later.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -11051,7 +11053,7 @@ var PRODUCTIONS = {
     statement: unsupported("'+' is not a statement \u2014 see its 'where'.")
   }),
   subtraction: production({
-    doc: "Subtracts numbers or dates.",
+    doc: "Subtracts the right number from the left.",
     tokens: ["-"],
     spelling: "-",
     becomes: "BinaryExpr",
@@ -11059,14 +11061,17 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
-    // an error. A date minus a date is a long, and a date minus a number is a date.
+    // A proven date is refused, because a date takes `.minus()` and `.diff()`. A field of
+    // unknown kind can still hold a date, so the result can be a date. MEASURED: `$subtract`
+    // over each pair of operand kinds gives a number, a date, null or an error. A date minus
+    // a date is a long, the milliseconds between them (86400000 for one day). A date minus
+    // 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -21900,7 +21905,13 @@ function refuseProvenNull(name2, slot, e, takes, proof) {
   throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, takes, "got null"), e.pos);
 }
 var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
-var hint = (expected) => {
+var hint = (expected, got = []) => {
+  if (Array.isArray(expected)) {
+    return expected.includes("number") ? hint("number", got) : "";
+  }
+  if (expected === "number" && got.includes("date")) {
+    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+  }
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
@@ -22575,7 +22586,8 @@ function kindRefusal(fault, spelled3, subjects, pos) {
           name2,
           `argument ${fault.slot + 1}`,
           takesOf(fault.expected),
-          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+          hint(fault.expected, fault.got)
         ),
         e?.pos ?? pos
       );

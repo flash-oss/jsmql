@@ -150,8 +150,9 @@ generator can turn it into a TypeScript signature. A row whose result no term
 describes states `"unknown"`.
 
 **An operator production states its result in the same way.** `*` lowers to
-`$multiply`, so its row states a number. `-` states a number or a date (`oneOf`),
-because a date minus a number is a date. `+` has two roads: a string operand makes
+`$multiply`, so its row states a number. `-` states a number or a date (`oneOf`).
+The operands of `-` refuse a proven date. A field of unknown kind can hold a date,
+and a date minus a number is a date. `+` has two roads: a string operand makes
 it `$concat`, and `kindsOf` in [prove.ts](../../src/compiler/emit/prove.ts) proves
 that road a string. Its row states the `$add` road, a number or a date, and two
 numbers prove a number. An operator that gives one of its operands, e.g. `??`,
@@ -439,12 +440,14 @@ holds for a written `null`, for a `null` that the call supplies, and for a read 
 proof shows is null. A read of a field that no stage wrote keeps its own refusal, which
 names the field. The caller lowers the operands before a kind refusal.
 `jsmql.validate` binds each parameter to a value of no known kind, so a parameter proves
-no kind there.
+no kind there. A refusal of a date in a slot that takes a number names the date methods,
+because each of them is the one spelling for its task.
 
 ```js
 $.str + 1                  // → { $add: ["$str", 1] }   the kind of `$.str` is unknown
 $.str.trim() + 1           // ✗ `.trim()` gives a string, and `+` takes operands of one kind
 $.a = "x"; $.b = $.a + 1;  // ✗ the stage proved that `a` is a string
+$.d.startOf("day") - 1     // ✗ `-` takes numbers; move a date with `.plus()` or `.minus()`
 $max(1, "a")               // → { $max: [1, "a"] }   the escape hatch passes each value as written
 ```
 
