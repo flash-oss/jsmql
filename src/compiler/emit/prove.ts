@@ -347,19 +347,22 @@ function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], 
 const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 
-/** A runtime value carried in: its proof, as deep as a plain value can show. */
+/**
+ * The proof of a value that the call supplies, as deep as a plain value can show it. A
+ * value that reads as MQL is still a value (HR1), so `"$x"` is a string.
+ */
 function injectedType(v: unknown): Type {
   if (typeof v === "number" || typeof v === "bigint") return of("number");
-  if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
+  if (typeof v === "string") return of("string");
   if (typeof v === "boolean") return of("bool");
   if (isDate(v)) return of("date");
-  if (Array.isArray(v)) return isMqlShaped(v) ? ANY : of("array");
+  if (Array.isArray(v)) return of("array");
   const tag = bsonTagOf(v);
   if (tag !== undefined) {
     const k = BSON_KIND[tag];
     return k === undefined ? ANY : of(k);
   }
-  if (isPlainObject(v)) return isMqlShaped(v) ? ANY : of("object");
+  if (isPlainObject(v)) return of("object");
   return ANY;
 }
 

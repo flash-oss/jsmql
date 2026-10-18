@@ -44,8 +44,8 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
   });
   it("a string that looks like a field reference stays a string", () => {
     expect(jsmql`$.a === ${"$b"}`).toEqual({ a: "$b" });
-    expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $add: ["$a", { $literal: "$b" }] });
-    expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $add: ["$a", { $literal: "$b" }] });
+    expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $concat: ["$a", { $literal: "$b" }] });
+    expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $concat: ["$a", { $literal: "$b" }] });
     // a pipeline evaluates its values too: a `$set` value, a stage body, a group key
     expect(jsmql.pipeline`$.x = ${"$b"};`).toEqual([{ $set: { x: { $literal: "$b" } } }]);
     expect(
