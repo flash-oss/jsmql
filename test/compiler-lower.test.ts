@@ -75,6 +75,24 @@ describe("compiler/emit/lower — operators", () => {
     expect(expr('$.s + "x"')).toEqual({ $concat: ["$s", "x"] });
   });
 
+  it("refuses a proven date in an arithmetic operator, and names the date methods", () => {
+    const methods =
+      " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+    const day = '$.d.startOf("day")';
+    expect(() => expr(`${day} + 1`)).toThrow(`'+' argument 1 takes a number or a string, but got a date.${methods}`);
+    expect(() => expr(`1 + ${day}`)).toThrow(`'+' argument 2 takes a number or a string, but got a date.${methods}`);
+    expect(() => expr(`${day} - 1`)).toThrow(`'-' argument 1 takes a number, but got a date.${methods}`);
+    expect(() => expr(`${day} - $.e`)).toThrow(`'-' argument 1 takes a number, but got a date.${methods}`);
+    expect(() => expr(`$.e - ${day}`)).toThrow(`'-' argument 2 takes a number, but got a date.${methods}`);
+    for (const op of ["*", "/", "%", "**"]) {
+      expect(() => expr(`${day} ${op} 2`)).toThrow(`'${op}' argument 1 takes a number, but got a date.${methods}`);
+    }
+    // A bare field has an unknown kind, so the server decides (HR7).
+    expect(expr("$.d - 1")).toEqual({ $subtract: ["$d", 1] });
+    // A comparison of dates is not arithmetic.
+    expect(expr(`${day} > $.e`)).toEqual({ $gt: [{ $dateTrunc: { date: "$d", unit: "day" } }, "$e"] });
+  });
+
   it("lowers the unary operators", () => {
     expect(expr("-$.a")).toEqual({ $multiply: ["$a", -1] });
     expect(expr("~$.a")).toEqual({ $bitNot: "$a" });

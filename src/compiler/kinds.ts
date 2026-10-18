@@ -69,6 +69,11 @@ export type KindFault =
  * for example a literal, and `items[i]` is the proof of position `i`. Each position holds a
  * value that is certain, so the `elements` rule judges each position alone. Without `items`,
  * `elements` is a SET proof: one proof for every position.
+ *
+ * Two more views are for the query road only (SR2). `whole[i]` is the proof of operand `i`
+ * as one value, and a slot that takes an array reads it. `asElement[i]` is the proof of a
+ * field that holds an array, as an `element` slot reads it. The query tests each element of
+ * the field against the element source, so the other operands do not matter there.
  */
 export type Proofs = {
   readonly args: readonly Proof[];
@@ -76,6 +81,8 @@ export type Proofs = {
   readonly items?: readonly Proof[];
   readonly viaElements?: readonly boolean[];
   readonly packed?: true;
+  readonly whole?: readonly Proof[];
+  readonly asElement?: readonly (Proof | undefined)[];
 };
 
 /** No proof at all. A call that no kind rule judges passes this: a `$op(…)` call is the developer's own MQL. */
@@ -136,6 +143,10 @@ export function kindFits(
 /** MinKey and MaxKey. They sit at the two ends of the BSON order. */
 const isSentinel = (kind: Proven): boolean => kind === "minKey" || kind === "maxKey";
 
+/** Does the slot take an array as one of its kinds? */
+const takesArray = (expected: ArgType | readonly ArgType[]): boolean =>
+  Array.isArray(expected) ? (expected as readonly ArgType[]).includes("array") : expected === "array";
+
 /** Does a proof fit the slot? A value that can have two or more kinds fits when ONE of them fits. */
 const proofFits = (proof: Proof, expected: ArgType | readonly ArgType[], elements: Proof): boolean =>
   proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
@@ -183,10 +194,12 @@ export function faultOf(name: string, rule: Arity, proofs: Proofs): KindFault | 
     // slots, so the slots after it are the rest of the row.
     spread = spread || (proofs.packed === true && via);
     const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    const proof = proofs.args[i];
-    if (expected === undefined || takesCallback(expected) || proof === "unknown") continue;
-    if (proofFits(proof, expected, proofs.elements)) continue;
-    const through = via ? ({ viaElements: true } as const) : {};
+    if (expected === undefined || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : undefined;
+    const whole = asElement === undefined && takesArray(expected) ? proofs.whole?.[i] : undefined;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== undefined || (whole === undefined && via) ? ({ viaElements: true } as const) : {};
     return expected === "element" && proofs.elements !== "unknown"
       ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through }
       : { rule: "slot", slot: i, expected, got: proof, ...through };

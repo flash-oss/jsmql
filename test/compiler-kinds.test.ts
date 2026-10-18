@@ -224,6 +224,41 @@ describe("kinds — the query road obeys HR7 too", () => {
     ]);
   });
 
+  // The query cell of an operator states the kinds of its value cell, so the two forms refuse alike.
+  for (const op of ["<", ">", "<=", ">="]) {
+    it(`'${op}' in a query takes the kinds of its value form`, () => {
+      for (const src of [`$.x = null; $.r = $.x ${op} 1;`, `$.x = null; $match($.x ${op} 1);`]) {
+        expect(() => jsmql.pipeline(src)).toThrow(
+          `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got null.`,
+        );
+      }
+      expect(() => jsmql.pipeline(`$.o = { a: 1 }; $match($.o ${op} 1);`)).toThrow(
+        `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got a document.`,
+      );
+    });
+  }
+
+  it("'in' in a query takes an element of its list, as its value form does", () => {
+    for (const src of ['$.n = 1; $.r = $.n in ["a"];', '$.n = 1; $match($.n in ["a"]);']) {
+      expect(() => jsmql.pipeline(src)).toThrow(
+        "'in' argument 1 takes an element of the array, but got a number, and the array holds strings.",
+      );
+    }
+    // A query tests each element of an array field against the list (SR2).
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in ["a", "b"]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: ["a", "b"] } } },
+    ]);
+    expect(() => jsmql.pipeline('$.tags = [1]; $match($.tags in ["a"]);')).toThrow(
+      "'in' argument 1 takes an element of the array, but got an element of 'tags' that is a number, and the array holds strings.",
+    );
+    // A list that holds an array also tests the whole field.
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in [["a"]]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: [["a"]] } } },
+    ]);
+  });
+
   it("an ObjectId is ordered, in a query and in an expression", () => {
     const id = new ObjectId("64b7f9c2e1a2b3c4d5e6f7a8");
     expect(jsmql.filter('$.id > ObjectId("64b7f9c2e1a2b3c4d5e6f7a8")')).toEqual({ id: { $gt: id } });

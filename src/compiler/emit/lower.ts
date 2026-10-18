@@ -1132,7 +1132,7 @@ export const slotProof = (env: Env): SlotProof => ({
  * of its own, and that one comes first: this lowers each operand and drops the result.
  * An arrow is not a value, so it is left alone.
  */
-function operandsFirst(operands: readonly Expr[], env: Env): void {
+export function operandsFirst(operands: readonly Expr[], env: Env): void {
   for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
 }
 

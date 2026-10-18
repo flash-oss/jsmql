@@ -161,7 +161,18 @@ function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, pr
 export const wrongKind = (shown: string, slot: string, takes: string, found: string, hint = ""): string =>
   `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found}.${hint}`;
 
-const hint = (expected: ArgType): string => {
+/**
+ * The hint after a refusal of a wrong kind: the spelling to write in place of the value.
+ * `got` holds the refused kinds. When a date fills a slot that takes a number, the hint
+ * names the date methods.
+ */
+export const hint = (expected: ArgType | readonly ArgType[], got: readonly string[] = []): string => {
+  if (Array.isArray(expected)) {
+    return (expected as readonly ArgType[]).includes("number") ? hint("number", got) : "";
+  }
+  if (expected === "number" && got.includes("date")) {
+    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+  }
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
