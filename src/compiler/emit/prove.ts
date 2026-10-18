@@ -264,26 +264,24 @@ export function proofsFor(
 ): Proofs {
   const proven = (a: CallArg): Proof => {
     if (a.type === "SpreadElement" || (objectForm && a.type === "ObjectLiteral")) return "unknown";
-    // Only a `null` that the source wrote proves the kind "null". A read that the proof
-    // shows gives no value has its own refusal, and that one names the field. A value
-    // that the call supplies is not source.
+    // A value that is null proves the kind "null": a written `null`, a `null` that the call
+    // supplies, and a read that the proof shows is null (HR7). A read of a field that no
+    // stage wrote keeps its own refusal: the caller lowers the operands before a kind refusal.
     const t = typeOf(a, env);
-    const written = a.type === "NullLiteral" && a.injected !== true;
-    return isNothing(t) && !written ? "unknown" : proofOf(t);
+    return isNothing(t) ? ["null"] : proofOf(t);
   };
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
   // An element source of a fixed length, such as a literal, proves each position on its own.
   const found = sourceType === null ? undefined : itemProofsOf(sourceType);
-  // A `null` element that the source wrote proves the kind `null`, as a `null` operand does.
-  // A `null` that the call supplies proves no kind.
+  // A `null` element proves the kind `null`, as a `null` operand does.
   const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
   const items =
     found === undefined || elementNodes.length !== found.length
       ? found
       : found.map((p, i) => {
           const el = elementNodes[i];
-          return el.type === "NullLiteral" && el.injected !== true ? (["null"] as const) : p;
+          return el.type === "NullLiteral" ? (["null"] as const) : p;
         });
   // A call with a spread passes its arguments as ONE packed list (the desugar pass). Each
   // element of the list is an argument, and a spread proves the kinds of its elements.

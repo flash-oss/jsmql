@@ -9611,6 +9611,41 @@ describe("window operators ($setWindowFields-only)", () => {
 });
 
 describe("jsmql.compile()", () => {
+  it("refuses an injected null where the slot takes no null, at call time (HR7)", () => {
+    const sliced = jsmql.expr.compile(({ start }: { start: number | null }, { $ }) => $.a.slice(start));
+    expect(sliced({ start: 1 })).toEqual({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
+    });
+    expect(() => sliced({ start: null })).toThrow("'.slice()' argument 1 takes an integer, but got null.");
+    // The refusal points at the parameter's name in the arrow's source.
+    const fn = ({ start }, { $ }) => $.a.slice(start);
+    let pos = -1;
+    try {
+      jsmql.expr.compile(fn as never)({ start: null });
+    } catch (e) {
+      pos = (e as { pos: number }).pos;
+    }
+    expect(pos).toBe(String(fn).indexOf("start)"));
+    // The template form refuses it too, at the offset of the slot in the template's text.
+    expect(() => jsmql.expr`$.a.slice(${null})`).toThrow("'.slice()' argument 1 takes an integer, but got null.");
+    const result = jsmql.validate`$.a.slice(${null})`;
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: "$.a.slice(".length });
+    // A slot that takes null keeps an injected null.
+    expect(jsmql.expr`$.a.has(${null})`).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
+  });
+
+  it("validates a parameterised arrow with a parameter in a slot that takes no null", () => {
+    // The call can pass a value of that kind, so `validate()` reads the parameter as a value of no known kind.
+    expect(jsmql.validate(({ start }: { start: number }, { $ }) => $.a.slice(start))).toEqual({
+      valid: true,
+      errors: [],
+    });
+  });
+
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);

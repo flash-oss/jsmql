@@ -136,7 +136,7 @@ export type Expr =
   | { type: "StringLiteral"; value: string; pos: number; text?: true }
   | { type: "BooleanLiteral"; value: boolean; pos: number }
   /** `injected`: the value came from the call, not from the source, so the kind check (HR7) does not judge it. */
-  | { type: "NullLiteral"; pos: number; injected?: true }
+  | { type: "NullLiteral"; pos: number }
   | { type: "UndefinedLiteral"; pos: number }
   | { type: "RegexLiteral"; pattern: string; flags: string; injected?: RegExp; pos: number }
   /** `0x` and exactly 24 hex digits. A re-reading of a Number token. */

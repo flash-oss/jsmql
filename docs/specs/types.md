@@ -423,7 +423,7 @@ Each position of such an array is certain, so the proof of the elements is a TUP
 one proof per position. A tuple breaks the `elements` rule when ANY position has no
 fitting kind. A set of kinds breaks it only when NO kind fits. So `[1, "a"].max()` is
 refused, and `$.nums.map(x => x + 1).max()` passes, because a computed array has one
-proof for all its positions. A position of unknown kind fits. A `null` that the source wrote proves the kind `null`, so it fits no position that needs numbers. The constant fold reads
+proof for all its positions. A position of unknown kind fits. A `null` element proves the kind `null`, so it fits no position that needs numbers. The constant fold reads
 the same rule, so `[1, "a"].sum()` is not folded.
 
 A slot that takes a callback is not judged here, because the lowering of the callback
@@ -431,10 +431,12 @@ names every spelling that the slot takes. A call with a spread passes its argume
 one packed list. The compiler judges the kind of each element of that list against its
 slot.
 
-A `null` that the source wrote proves the kind `null`, and that kind fits only `"any"`.
-A read that the proof shows to give no value keeps its own refusal, which names the
-field. A `null` that the call supplies proves no kind, because `jsmql.validate` binds
-every parameter to `null`.
+A value that is `null` proves the kind `null`, and that kind fits only `"any"`. This
+holds for a written `null`, for a `null` that the call supplies, and for a read that the
+proof shows is null. A read of a field that no stage wrote keeps its own refusal, which
+names the field. The caller lowers the operands before a kind refusal.
+`jsmql.validate` binds each parameter to a value of no known kind, so a parameter proves
+no kind there.
 
 ```js
 $.str + 1                  // → { $add: ["$str", 1] }   the kind of `$.str` is unknown

@@ -31,8 +31,6 @@ export function spellValue(value: unknown, pos: number): Expr {
   // A RegExp the CALL supplies is the developer's own MongoDB regex. A query slot takes it as written,
   // and a value slot passes it through, where one typed in the source is a pattern for the regex methods.
   if (literal !== null && literal.type === "RegexLiteral" && isRegExp(value)) return { ...literal, injected: value };
-  // A null that the call supplies proves no kind: `jsmql.validate` binds every parameter to null.
-  if (literal !== null && literal.type === "NullLiteral") return { ...literal, injected: true };
   return literal ?? { type: "Injected", value, pos };
 }
 

@@ -16654,7 +16654,6 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
 function spellValue(value, pos) {
   const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
   if (literal2 !== null && literal2.type === "RegexLiteral" && isRegExp(value)) return { ...literal2, injected: value };
-  if (literal2 !== null && literal2.type === "NullLiteral") return { ...literal2, injected: true };
   return literal2 ?? { type: "Injected", value, pos };
 }
 function inject(root2, values) {
@@ -23544,8 +23543,7 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   const proven = (a) => {
     if (a.type === "SpreadElement" || objectForm && a.type === "ObjectLiteral") return "unknown";
     const t = typeOf(a, env);
-    const written2 = a.type === "NullLiteral" && a.injected !== true;
-    return isNothing(t) && !written2 ? "unknown" : proofOf(t);
+    return isNothing(t) ? ["null"] : proofOf(t);
   };
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
@@ -23553,7 +23551,7 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
   const items = found2 === void 0 || elementNodes.length !== found2.length ? found2 : found2.map((p, i) => {
     const el = elementNodes[i];
-    return el.type === "NullLiteral" && el.injected !== true ? ["null"] : p;
+    return el.type === "NullLiteral" ? ["null"] : p;
   });
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   if (list !== null) {

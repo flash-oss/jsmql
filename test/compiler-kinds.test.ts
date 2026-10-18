@@ -58,6 +58,15 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("-null")).toThrow(/'-' argument 1 takes a number, but got null\./);
   });
 
+  it("a null that the call passes in, or that the proof shows, is refused too", () => {
+    expect(() => jsmql.expr`-${null}`).toThrow(/'-' argument 1 takes a number, but got null\./);
+    expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
+      "'.slice()' argument 1 takes an integer, but got null.",
+    );
+    // A read of a field that no stage wrote keeps its own refusal, which names the field.
+    expect(() => jsmql("$.o = {}; $.r = $.a.slice($.o?.b);")).toThrow(/reads a field that '\$\.o' does not have/);
+  });
+
   it("x === null stays the test of a missing value", () => {
     expect(jsmql.expr("$.s.trim() === null")).toEqual({ $eq: [{ $trim: { input: "$s" } }, null] });
   });
