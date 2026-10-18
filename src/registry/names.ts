@@ -1454,6 +1454,15 @@ const fromIsNotJsmql = unsupported(
 );
 
 /**
+ * The hint that a refusal adds when it names a conversion that stops the command on "".
+ * A dot reads a missing string as "" (HR5), so the `?.` must stop the chain at the field,
+ * before the string method runs. MEASURED: `$toDouble`, `$toInt`, `$toLong`, `$toDecimal`,
+ * `$toDate`, `$toObjectId` and `$toUUID` stop the command on "". `$toString` and `$toBool` take it.
+ */
+const afterStringMethod = (method: string): string =>
+  ` If a string method gives the value, write the '?.' right after the field: '$.x?.trim().${method}()'. A dot reads a missing string as "", and the server cannot convert "".`;
+
+/**
  * A type name as a conversion function. The value's own method says the same thing, and one
  * capability gets one spelling. See docs/LANGUAGE.md § Type conversion methods.
  */
@@ -1461,16 +1470,19 @@ const stringIsNotJsmql = unsupported(
   "'String(x)' is not part of JSMQL — the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toString()': '$.x?.toString()'. In a callback, write 'x => x.toString()'.",
 );
 const numberIsNotJsmql = unsupported(
-  "'Number(x)' is not part of JSMQL — the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toDouble()': '$.x?.toDouble()'. In a callback, write 'x => x.toDouble()'.",
+  "'Number(x)' is not part of JSMQL — the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toDouble()': '$.x?.toDouble()'. In a callback, write 'x => x.toDouble()'." +
+    afterStringMethod("toDouble"),
 );
 const booleanIsNotJsmql = unsupported(
   "'Boolean(x)' is not part of JSMQL — it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'.",
 );
 const parseIntIsNotJsmql = unsupported(
-  "'parseInt()' is not part of JSMQL — '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.",
+  "'parseInt()' is not part of JSMQL — '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number." +
+    afterStringMethod("toDouble"),
 );
 const parseFloatIsNotJsmql = unsupported(
-  "'parseFloat()' is not part of JSMQL — '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'.",
+  "'parseFloat()' is not part of JSMQL — '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'." +
+    afterStringMethod("toDouble"),
 );
 /**
  * A BSON type name over a value of the document: the value's own conversion method says
@@ -1478,7 +1490,8 @@ const parseFloatIsNotJsmql = unsupported(
  */
 const convertsWith = (spelling: string, method: string): CountedRefusal => ({
   ...unsupported(
-    `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.`,
+    `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` +
+      afterStringMethod(method),
   ),
   args: { sig: "value", exact: 1 },
 });

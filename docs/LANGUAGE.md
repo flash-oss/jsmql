@@ -2904,6 +2904,13 @@ Under a dot, a missing or `null` value reads as the safe value of the kind that 
 
 **`.toBool()` is MongoDB's `$toBool`, not JavaScript's truthiness.** `$toBool` reads every string as `true`, the empty string too. JavaScript's `Boolean("")` is `false`. For JavaScript's truthiness, write `!!$.x`.
 
+**A conversion of `""` stops the command.** `.toBool()` and `.toString()` take `""`. Each other conversion method stops the whole command on `""`, because its MongoDB operator cannot convert it. JavaScript's `Number("")` is `0`. Under a dot, a string method reads a missing string as `""`. So a conversion after a string method stops the command when one document has no such field. Write the `?.` right after the field, before the string method:
+
+```js
+$.price.trim().toDouble()          // { $toDouble: { $trim: { input: { $ifNull: ["$price", ""] } } } }   — a document with no price stops the command
+$.price?.trim().toDouble()         // { $toDouble: { $trim: { input: "$price" } } }   — null for a missing price
+```
+
 ### MongoDB Type Conversion Utilities
 
 ```js

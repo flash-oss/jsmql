@@ -963,7 +963,10 @@ operator over the receiver. `conversion` in `src/registry/names.ts` builds each 
 conversion works on every kind (`on: "any"`), so its row states the safe value of the
 kind that it gives (`nullReceiverAs`). Each row also states `passesNull`, because each
 `$to…` operator gives null for null. `.toObjectId()` and `.toUUID()` state no safe value,
-so the dot and `?.` emit one document.
+so the dot and `?.` emit one document. Each conversion except `.toBool()` and `.toString()`
+stops the command on `""`, which a string method under a dot gives for a missing string.
+So each refusal that names one of them also names the `?.` right after the field
+(`afterStringMethod` in `src/registry/names.ts`). See docs/LANGUAGE.md § Type conversion methods.
 
 ```
 (5).range(1)          → {"$range":[5,1,-1]}

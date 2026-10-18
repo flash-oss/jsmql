@@ -2142,6 +2142,9 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(() => expr("String($.n)")).toThrow(/'\$\.x\?\.toString\(\)'/);
     expect(() => expr("Boolean($.neg)")).toThrow(/'!!\$\.x'/);
     expect(() => expr("Number($.n)")).toThrow(/'\$\.x\?\.toDouble\(\)'/);
+    // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
+    expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
+    expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);
     expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
@@ -2831,6 +2834,45 @@ describe.skipIf(!up)("compiler/emit — the spelling a refusal names runs on eve
       const docs = await hinted.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
       // JavaScript throws for a missing or a null receiver; the spelling answers the empty list
       expect([src, docs.map((d) => d.__v)]).toEqual([src, [[], [], "".split(""), "abc".split("")]]);
+    }
+  });
+});
+
+describe.skipIf(!up)("compiler/emit — the `?.` that a conversion refusal names runs on a missing string", () => {
+  let converted: Collection;
+  beforeAll(async () => {
+    converted = client!.db("jsmql_compiler_methods").collection("converted");
+    await converted.deleteMany({});
+    await converted.insertMany([{ _id: 1 }, { _id: 2, s: null }]);
+  });
+
+  it('gives null for a missing or a null field, where a dot stops the command on ""', async () => {
+    const run = (src: string) =>
+      converted.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
+    for (const refused of [
+      "Number($.s.trim())",
+      "parseInt($.s)",
+      "parseFloat($.s)",
+      "Long($.s)",
+      "Int32($.s)",
+      "Double($.s)",
+      "Decimal128($.s)",
+      "UUID($.s)",
+      "new Date($.s)",
+      "ObjectId($.s)",
+    ]) {
+      let message = "";
+      try {
+        expr(refused);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      const hint = /right after the field: '([^']+)'/.exec(message)?.[1];
+      expect(hint, `${refused} names no '?.': ${message}`).toBeDefined();
+      const src = hint!.split("$.x").join("$.s");
+      // DELIBERATELY refused by the server: the dot reads the missing `s` as "", and the conversion stops on it.
+      await expect(run(src.replace("?.", ".")), src).rejects.toThrow();
+      expect([src, (await run(src)).map((d) => d.__v)]).toEqual([src, [null, null]]);
     }
   });
 });
