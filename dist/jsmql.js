@@ -16224,17 +16224,16 @@ function spellValue(value, pos) {
 }
 function inject(root2, values) {
   if (values.size === 0) return root2;
-  const nodes = /* @__PURE__ */ new Map();
-  for (const [name2, value] of values) nodes.set(name2, spellValue(value, 0));
-  return replaceIdents(root2, nodes);
+  return replaceRefs(root2, values, (name2, pos) => spellValue(values.get(name2), pos));
 }
 function replaceIdents(root2, nodes) {
-  if (nodes.size === 0) return root2;
-  const spell4 = (name2, pos) => {
+  return replaceRefs(root2, nodes, (name2, pos) => {
     const n2 = nodes.get(name2);
     return n2.type === "Injected" ? { ...n2, pos } : n2;
-  };
-  const values = nodes;
+  });
+}
+function replaceRefs(root2, values, spell4) {
+  if (values.size === 0) return root2;
   const walk2 = (node, shadow) => {
     if (Array.isArray(node)) return node.map((n3) => walk2(n3, shadow));
     if (node === null || typeof node !== "object") return node;

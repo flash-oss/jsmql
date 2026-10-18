@@ -9611,11 +9611,20 @@ describe("jsmql.compile()", () => {
       },
     });
     expect(() => sliced({ start: null })).toThrow("'.slice()' argument 1 takes an integer, but got null.");
-    // The template form refuses it too. A template has no single source offset, so `.pos` is 0.
+    // The refusal points at the parameter's name in the arrow's source.
+    const fn = ({ start }, { $ }) => $.a.slice(start);
+    let pos = -1;
+    try {
+      jsmql.expr.compile(fn as never)({ start: null });
+    } catch (e) {
+      pos = (e as { pos: number }).pos;
+    }
+    expect(pos).toBe(String(fn).indexOf("start)"));
+    // The template form refuses it too, at the offset of the slot in the template's text.
     expect(() => jsmql.expr`$.a.slice(${null})`).toThrow("'.slice()' argument 1 takes an integer, but got null.");
     const result = jsmql.validate`$.a.slice(${null})`;
     expect(result.valid).toBe(false);
-    expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: 0 });
+    expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: "$.a.slice(".length });
   });
 
   it("validates a parameterised arrow with a parameter in a slot that states a kind", () => {
