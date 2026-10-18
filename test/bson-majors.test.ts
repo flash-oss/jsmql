@@ -126,7 +126,11 @@ describe.each(MAJORS)("%s — a value from this copy flows through the compiler"
   it("prints as the constructor call that rebuilds it", () => {
     expect(jsmql.stringify({ v: new B.ObjectId(HEX) })).toBe(`{ v: new ObjectId("${HEX}") }`);
     expect(jsmql.stringify({ v: B.Decimal128.fromString("1.50") })).toBe('{ v: new Decimal128("1.50") }');
-    expect(jsmql.stringify({ v: B.Long.fromString("5") })).toBe('{ v: Long.fromString("5") }');
+    expect(jsmql.stringify({ v: B.Long.fromString("5") })).toBe('{ v: new Long("5") }');
+    // the printed text rebuilds the whole value in this major too, past 2^31 and at the ends of the range
+    for (const text of ["9007199254740993", "9223372036854775807", "-9223372036854775808"]) {
+      expect(new B.Long(text).toString()).toBe(text);
+    }
     expect(jsmql.stringify({ v: new B.UUID(UUID_TEXT) })).toBe(`{ v: new UUID("${UUID_TEXT}") }`);
     expect(jsmql.stringify({ v: new B.MinKey() })).toBe("{ v: new MinKey() }");
   });

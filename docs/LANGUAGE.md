@@ -242,17 +242,17 @@ An underscore must sit between two digits. `1_`, `_1`, and `1__0` are errors.
 **BigInt literals.** An integer literal with an `n` suffix is a MongoDB 64-bit integer. JSMQL builds the value itself, and the server does not parse a value for each document:
 
 ```js
-123n           // Long.fromString("123")
--123n          // Long.fromString("-123")
-1_000_000n     // Long.fromString("1000000")   (separators allowed)
+123n           // new Long("123")
+-123n          // new Long("-123")
+1_000_000n     // new Long("1000000")   (separators allowed)
 $.timestamp - 1000n
-               // { $subtract: ["$timestamp", Long.fromString("1000")] }
+               // { $subtract: ["$timestamp", new Long("1000")] }
 ```
 
 The value is a real `Long`, so a comparison stays a query that an index serves. The value matches an **element** of an array field, as any other query value does:
 
 ```js
-$.n === 9007199254740993n   // { n: Long.fromString("9007199254740993") }
+$.n === 9007199254740993n   // { n: new Long("9007199254740993") }
 ```
 
 The `n` suffix works on an integer only. `1.5n` and `1e2n` are syntax errors, as in JS. JSMQL refuses a BigInt outside the 64-bit range at compile time, and names `Decimal128` as the type that holds it.
@@ -2996,7 +2996,7 @@ Eight more BSON types have the same three-way spelling. A constant is a live BSO
 
 ```js
 $.price === Decimal128("9.99")     // → { price: new Decimal128("9.99") }
-$.n === Long("9007199254740993")   // → { n: Long.fromString("9007199254740993") }
+$.n === Long("9007199254740993")   // → { n: new Long("9007199254740993") }
 $.count === Int32(3)               // → { count: new Int32(3) }
 $.ratio === Double(1)              // → { ratio: new Double(1) }
 $.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")

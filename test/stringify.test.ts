@@ -64,8 +64,8 @@ describe("stringify: the BSON classes", () => {
     rebuilds(new mongodb.Decimal128("1.50"), 'new Decimal128("1.50")');
   });
 
-  it("writes a Long through fromString, which a reader can check", () => {
-    rebuilds(mongodb.Long.fromString("9007199254740993"), 'Long.fromString("9007199254740993")');
+  it("writes a Long as new Long of its decimal string, so a value past 2^31 does not wrap", () => {
+    rebuilds(mongodb.Long.fromString("9007199254740993"), 'new Long("9007199254740993")');
   });
 
   it("writes an Int32", () => {
