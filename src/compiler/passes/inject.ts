@@ -34,22 +34,35 @@ export function spellValue(value: unknown, pos: number): Expr {
   return literal ?? { type: "Injected", value, pos };
 }
 
-/** The tree with every reference to a bound name replaced by its value. A lambda parameter with the same name shadows it. */
+/**
+ * The tree that replaces every reference to a bound name with its value. A lambda
+ * parameter with the same name shadows the bound name. `inject` spells each value at the
+ * position of its reference, so a refusal points at the name in the source.
+ */
 export function inject<T extends Program | Expr>(root: T, values: ReadonlyMap<string, unknown>): T {
   if (values.size === 0) return root;
-  const nodes = new Map<string, Expr>();
-  for (const [name, value] of values) nodes.set(name, spellValue(value, 0));
-  return replaceIdents(root, nodes);
+  return replaceRefs(root, values, (name, pos) => spellValue(values.get(name), pos));
 }
 
-/** The tree with every reference to a name replaced by the node given for it, at the reference's own position. */
+/**
+ * The tree that replaces every reference to a name with the node that `nodes` gives for it.
+ * A node from the source keeps its own positions. An `Injected` node takes the position of
+ * the reference.
+ */
 export function replaceIdents<T extends object>(root: T, nodes: ReadonlyMap<string, Expr>): T {
-  if (nodes.size === 0) return root;
-  const spell = (name: string, pos: number): Expr => {
+  return replaceRefs(root, nodes, (name, pos) => {
     const n = nodes.get(name) as Expr;
     return n.type === "Injected" ? { ...n, pos } : n;
-  };
-  const values = nodes;
+  });
+}
+
+/** The tree that replaces every reference to a key of `values` with `spell(name, pos)`. */
+function replaceRefs<T extends object>(
+  root: T,
+  values: ReadonlyMap<string, unknown>,
+  spell: (name: string, pos: number) => Expr,
+): T {
+  if (values.size === 0) return root;
   const walk = (node: unknown, shadow: ReadonlySet<string>): unknown => {
     if (Array.isArray(node)) return node.map((n) => walk(n, shadow));
     if (node === null || typeof node !== "object") return node;

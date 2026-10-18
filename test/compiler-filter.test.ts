@@ -255,14 +255,6 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
 });
 
 describe("compiler/emit/filter — methods and operators", () => {
-  it("refuses a null argument where the slot states a kind, and keeps null where it is a value", () => {
-    expect(() => filter("$.s.includes(null)")).toThrow("'.includes()' argument 1 takes a string, but got null.");
-    expect(filter("$.a.has(null)")).toEqual({ a: null });
-    expect(filter("$.n === null")).toEqual({ n: { $type: "null" } });
-    // an ordered comparison takes a value of any kind, never null (HR7)
-    expect(() => filter("$.n > null")).toThrow("'>' argument 2 takes a value, but got null.");
-  });
-
   it("lowers the boolean methods to their indexable forms", () => {
     // A query document is read through an INDEX. `.has` is membership in an array:
     // MongoDB's own "equals, or is an array containing", and `$in` for a constant list.

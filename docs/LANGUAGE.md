@@ -1453,10 +1453,11 @@ These stages are **Pipeline-mode only**, like `$$.push(...)` and the sugar for a
 
 ## Mistakes caught at compile time
 
-JSMQL checks two things at compile time:
+JSMQL checks these things at compile time:
 
 - **Where each stage is in the pipeline.** A source stage, for example `$collStats`, `$geoNear` or `$changeStream`, must be the first stage. `$out` and `$merge` must be the last stage. A sub-pipeline of `$facet`, `$lookup` or `$unionWith` can hold only the stages that the server allows in it. `$text` must be in the first `$match` of the pipeline, at any depth of its body. An aggregation `$match` cannot hold `$near`, `$nearSphere` or `$where`. Use these operators in a `find()` filter.
 - **A method on the wrong type of value.** See [A method chained on the wrong type](#a-method-chained-on-the-wrong-type) below.
+- **A value of the wrong kind.** See [A value of the wrong kind](#a-value-of-the-wrong-kind) below.
 
 JSMQL checks the place of each stage, also of each stage that you write yourself:
 
@@ -1526,22 +1527,22 @@ When JSMQL does not know the type, it rejects nothing and emits the MQL. These v
 
 **This check follows JavaScript, not the coercions of MongoDB.** MongoDB runs `$toUpper` on a date with no error, and gives back the date as a string. JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it passes through with no change, because raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
 
-An argument slot or an operator that states a kind refuses `null`, because `null` is not that kind. This applies to three cases:
-
-- a written `null`
-- a value that JSMQL can show is always `null` or missing
-- a `null` that your program passes in
-
-A slot that takes any value keeps `null` as a value:
-
-```js
-jsmql.expr("$.a.slice(null)")     // ✗ .slice() takes an integer
-jsmql.expr("$.n + null")          // ✗ + takes a number, a string or a date
-jsmql.expr("$.a.has(null)")       // → { $in: [null, { $ifNull: ["$a", []] }] }
-```
-
 JSMQL leaves each constraint that depends on your deployment to the server, for example
 sharding, transactions, memory limits and Atlas availability.
+
+### A value of the wrong kind
+
+Each method, operator and argument slot takes a kind of value: a number, a string, an array, a date or a document. When JSMQL can prove that a value has another kind, it refuses the program. It refuses it even when the server would accept the MQL. This is rule [HR7](LANG_RULES.md).
+
+```js
+"a" + 1                  // ✗ + takes operands of one kind
+[1, "a"].max()           // ✗ .max() takes numbers, and the array holds a string
+$.str.trim() + 1         // ✗ .trim() gives a string
+$.str + 1                // → { $add: ["$str", 1] }   the kind of a bare field is unknown, so the server decides
+$max(1, "a")             // → { $max: [1, "a"] }      the escape hatch passes the values as written
+```
+
+**This is a surprise for a JavaScript developer.** JavaScript adds `"a" + 1` and gives `"a1"`, and MongoDB accepts `{ $max: [1, "a"] }`. JSMQL refuses the first, and the second is yours to write with `$op(…)`. A value of unknown kind always passes, and a value that can have two or more kinds passes when one of them fits. A literal array is the exception: each element is certain, so one element of the wrong kind is enough to refuse it. See [docs/specs/types.md](specs/types.md#the-kind-check).
 
 ### A read that gives no value
 
@@ -2404,7 +2405,7 @@ $.counts.keys().map(ObjectId)         // object keys are strings — cast them b
 $.scores.map(x => x.floor())    // round each element down
 
 $.stamps.map(Date)              // convert each element to a date
-// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
+// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: { $cond: [{ $isNumber: "$$x" }, { $toLong: "$$x" }, "$$x"] } } } }
 
 [$.first, $.middle, $.last].filter(Boolean).join(" ")
 // composed display name, skipping missing parts
@@ -2461,7 +2462,7 @@ $.a.isDisjointFrom($.b)       // → { $eq: [{ $size: { $setIntersection: [{ $if
 
 Three facts differ from a JavaScript `Set`:
 
-- **The order is MongoDB's.** A JavaScript `Set` keeps the order of insertion. MongoDB's manual states that the order of a set operator's output is unspecified. So above, `$.a.uniq()` gave `[1, 2, 3]` and `$.a.difference($.b)` gave `[3, 1]`. When the order matters, sort the answer: `$.a.uniq().toSorted()`.
+- **The order is MongoDB's.** A JavaScript `Set` keeps the order of insertion. MongoDB's manual states that the order of a set operator's output is unspecified. So above, `$.a.uniq()` gave `[1, 2, 3]` and `$.a.difference($.b)` gave `[3, 1]`. When the order matters, sort the answer: `$.a.uniq().toSorted()`. A set answer that is a constant folds at compile time, in the order of first occurrence. A value that JSMQL builds from such an answer, one element at a time, has the same unspecified order, for example the object of `.groupBy()`.
 - **`.difference()` is the set difference, not lodash's.** It gives each value once, as `Set.prototype.difference` does. lodash's `_.difference` keeps the duplicates of the receiver, and gives `[3, 1, 3, 1]` here.
 - **A missing field is the empty list.** A dot runs the method on `[]`, and a missing list argument also reads as `[]`. So each relation gives a real boolean, and each operation gives an array (see [Type-aware dispatch](#type-aware-dispatch)).
 
@@ -2798,7 +2799,8 @@ Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } 
 ```js
 $.n.toString()               // { $toString: { $ifNull: ["$n", ""] } }    — "" for a missing or null n
 $.n?.toString()              // { $toString: "$n" }                       — null for a missing or null n
-(5).toString()               // { $toString: 5 }                          — a value that is there takes no $ifNull
+$.a.size().toString()        // { $toString: { $size: { $ifNull: ["$a", []] } } } — a value that is there takes no $ifNull
+(5).toString()               // "5"                                       — a constant folds
 $._id.toString()             // { $toString: { $ifNull: ["$_id", ""] } }  — an ObjectId gives its 24 hex digits
 $.tags.toString()            // { $toString: { $ifNull: ["$tags", ""] } } — MongoDB's text: '["a","b"]'
 $.tags.join()                // the text JavaScript gives for an array: "a,b"
@@ -3018,8 +3020,10 @@ new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // "$$NOW"  (current date/time)
 Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
-new Date($.dateString)             // { $toDate: "$dateString" }
-Date($.dateString)                 // { $toDate: "$dateString" }  — the same as `new Date($.dateString)`
+new Date($.value)                  // { $toDate: { $cond: [{ $isNumber: "$value" }, { $toLong: "$value" }, "$value"] } }
+Date($.value)                      // the same as `new Date($.value)`
+new Date($.ms * 1)                 // { $toDate: { $toLong: { $multiply: ["$ms", 1] } } }  — a proven number
+new Date($.text.trim())            // { $toDate: { $trim: { input: "$text" } } }  — a proven string
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
@@ -3028,6 +3032,10 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 ```
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
+
+**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a fraction toward zero, as `new Date(1.7)` does in JavaScript, so the instant is the same.
+
+The compiler writes the shorter form when the operand proves its kind. A proven string or date needs no `$toLong`. A proven number needs no `$isNumber` test.
 
 **Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
 
@@ -4723,7 +4731,7 @@ $$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));      
 
 ### Compile-time constants (folding)
 
-When the right side of a `const` / `let` is a **compile-time constant** — a value that does not depend on the document or the environment — JSMQL evaluates it once at compile time and **inlines the value** everywhere it names it. There is no `$set` stage, no `__jsmql` namespace, and no `$unset`. Because the declaration emits no stage, a preamble of constants does not force Pipeline mode. So a constant plus a predicate compiles to a clean, indexable **Filter**:
+A **constant** is an expression that reads nothing from the document, the clock or the random generator. When the right side of a `const` or `let` is a constant, JSMQL computes it once at compile time, the way the server would. It **inlines the value** everywhere the name appears. There is no `$set` stage, no `__jsmql` namespace, and no `$unset`. Because the declaration emits no stage, a preamble of constants does not force Pipeline mode. So a constant plus a predicate compiles to a clean, indexable **Filter**:
 
 ```js
 jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");
@@ -4733,7 +4741,17 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-A "compile-time constant" is any pure, deterministic expression over literals and earlier constants: arithmetic, `new Date("2020-01-01")` and the date methods on it, an ObjectId literal and its `.toString()`, an array or object literal, a constant computed key (`{ [k]: 1 }`), and (see the method sections) a string or array transform. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. So a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile), where a constant built from a parameter folds against each call's arguments.
+The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `new Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
+
+```js
+jsmql("const a = (3).range().map(() => 7); $.x = a;");
+// → [{ $set: { x: [7, 7, 7] } }]
+
+jsmql("const xs = (5).range().map(i => i * i).filter(x => x % 2 === 0); $.total = xs.sum() + xs.size();");
+// → [{ $set: { total: 23 } }]
+```
+
+In the second example `xs` is `[0, 4, 16]`, so `xs.sum() + xs.size()` is `20 + 3`.
 
 An escape-hatch call `$op(…)` is your own MQL, so JSMQL does not fold it. The JavaScript spelling folds: `[1, 2, 3].size()` is `3`. `.size()` of an array literal counts its entries even when they read the document, because each entry is one element: `[$.a, $.b].size()` is `2`. The escape hatch `$size([[1, 2, 3]])` stays as you wrote it.
 
@@ -4760,7 +4778,22 @@ jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day:
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
-JSMQL does **not** fold a date method called with a `timezone` or another option (`.plus(1, "month", "Europe/Kyiv")`, `.startOf("week", { startOfWeek: "monday" })`). A named zone shifts with daylight saving, and that table belongs to the server, so it stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number of sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` never folds: `$toDouble` yields a double on the server, where a written `42` is an int.
+A constant document keeps the order of its keys. BSON compares a document key by key. A JavaScript object moves a key that reads as an array index (`"1"`) before the other keys. So JSMQL writes such a document as `$arrayToObject` over the pairs, in the order that the server keeps. A method call on that document stays a runtime expression.
+
+```js
+jsmql("$.x = [3, 1, 2].keyBy(n => n % 2);");
+// → [{ $set: { x: { $arrayToObject: [[["1", 1], ["0", 2]]] } } }]
+```
+
+A constant stays a runtime expression when the server does not specify its answer exactly, because JSMQL then cannot know the value. This covers five cases:
+
+- an operator whose answer the server leaves open, for example transcendental math
+- a date in a zone other than UTC, because the zone table belongs to the server
+- a read of the clock or of the random generator
+- a conversion that changes the BSON numeric type
+- a statistical accumulator
+
+An `$op(…)` call never folds, so `$stdDevPop([1, 2, 3])` stays as you wrote it. A date method that names UTC, or that gives an option which UTC decides (`.startOf("week", { startOfWeek: "monday" })`), folds. A call with a named zone such as `.plus(1, "month", "Europe/Kyiv")` stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number with sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` stays `$toDouble`: the server gives a double, where a written `42` is an int. The full rule, and the operators that the compiler refuses to compute, are in [specs/constant-engine.md](specs/constant-engine.md).
 
 > A constant expression that JSMQL cannot represent as a MongoDB literal — for example, one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error, not silently broken MQL.
 

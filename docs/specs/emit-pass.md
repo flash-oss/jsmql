@@ -48,7 +48,7 @@ refuses. The refusal (`errors.ts`) puts that sentence after its head. For exampl
 `.length()` on an array, the message names `string` as the family that has the
 method. It also suggests `.size()` to count the elements.
 
-`checkSlots` (`check.ts`) refuses a rule whose slot cannot take the proven kind of its argument.
+`select` refuses a rule whose slot cannot take the proven kind. See [The kind of a slot](#the-kind-of-a-slot).
 
 ```js
 $.x.indexOf("a")
@@ -182,47 +182,53 @@ carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
 `check.ts` holds the literal-gated checks for JSMQL code: a method, a global
 and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
 refusals for a spread or a computed key inside an object body
-(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
-reads an `Arity` field the row states — slot types, ranges, enums, `constant`
-slots, a non-empty or non-zero slot, a zero with an alternative of its own
-(`zeroRefused`), an integer slot or receiver (`integer`, where `-1` is the
-receiver) — or a `BodyRule` field of a method's
-options document (`args.body`): required and closed keys (with a suggestion),
-enums, key types, `constantKeys`, and keys that never come together
-(`notTogether`). A method row's `elements: "scalar"`
+(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check reads an `Arity` field that the row states:
+
+- whole-number, field-name and field-path slots, ranges and enums;
+- `constant` slots, and a non-empty or non-zero slot;
+- a zero with an alternative of its own (`zeroRefused`);
+- an integer slot or receiver (`integer`, where `-1` is the receiver);
+- a `BodyRule` field of a method's options document (`args.body`): required and
+  closed keys (with a suggestion), enums, key types, `constantKeys`, and keys that
+  never come together (`notTogether`).
+
+A method row's `elements: "scalar"`
 refuses a receiver that provably holds arrays (a literal of literals,
 `.partition(…)`) before its rule runs. The checks never judge a slot that is a
 field path, an expression or a spread. The checks run on every rule of a
 method, a global and a production, and `test/registry-fields-read.test.ts`
 makes sure that every stated rule field has a reader.
 
-`checkSlots` is the one slot check. Each site gives it the proof of each
-operand as a required parameter, so no site can skip the proof. A slot that
-states a kind refuses an operand that the proof shows is another kind. The
-refusal names the slot: `argument N` for a positional operand, the key for a
-body key, and `element N` for an element of a list. A slot that states a kind
-refuses `null`: a written `null`, an injected `null`, and a value that the
-proof shows is absent. See [types.md § The slot check](types.md#the-slot-check).
+### The kind of a slot
 
-Each operator production states the kinds of its operands, as a method row does.
-Three facts on `Arity` serve the operators:
+The KIND of each operand is not a literal check. HR7 judges it from the proof of
+the operand, so a value that an earlier statement computed is judged like a
+literal. `select` in [select.ts](../../src/compiler/emit/select.ts) reads the
+rule of the row (`slotType`, `rest`, `homogeneous`, and `elements` on the row)
+against the `Proofs` that the call site passes. The rule itself is in
+[types.md § The kind check](types.md#the-kind-check). Every site that selects a
+rule from a JSMQL spelling passes the proofs, and `proofsFor` in
+[prove.ts](../../src/compiler/emit/prove.ts) is the one reader that builds them:
 
-- `"any"` is a slot of every kind, never `null`. An ordered comparison states it.
-- `"regex"` is a slot that a regex literal fills. The proof judges only a `null` there,
-  because `regexp` is a family of the source, not a kind of the proof.
-- `rest` is the kind of each operand beyond the stated slots. A flattened chain
-  (`a * b * c`) states it.
+- a method call and a named call (`lower.ts`);
+- a production, and the passes that own the lowering of `+` and `in` (`lower.ts`);
+- a query leaf (`filter.ts`). It tells `proofsFor` which operands are fields, so that a field
+  which holds an array proves the kinds of its elements (SR2);
+- a stage call, a stream link and the `$$ = [ … ]` sugar (`statement.ts`).
 
-A road that lowers in code states its rule as `inCode(file, args)`. The `+` road and
-the `x[i]` road read that rule and run `checkSlots` with it. A proven `null` operand
-first lowers, so that a read of a field that no stage wrote gives its own refusal.
+`proofsFor` also gives the proof of each position (`items`) when the element source is
+an array of a fixed length, for example a literal. The `elements` rule then judges
+each position alone. See [types.md § The kind check](types.md#the-kind-check).
 
-```js
-$.n + 1          // → { $add: ["$n", 1] }
-$.n + null       // ✗ '+' takes a number, a string or a date
-$.a * $.b * 2    // → { $multiply: ["$a", "$b", 2] }
-$.s.trim() * 2   // ✗ the proof shows a string, and '*' takes a number
-```
+One function gives the wording of every refusal of a wrong kind: `wrongKind` in
+[check.ts](../../src/compiler/emit/check.ts). The refusal of a literal and the
+refusal of a proof (`kindRefusal` in [errors.ts](../../src/compiler/emit/errors.ts))
+both call it. So each refusal names the call as the source spells it, the kind
+that the slot takes, and what the value is.
+
+A `$op(…)` call and a `$stage(…)` call pass `UNPROVEN`, so no kind rule judges
+them. When a kind refusal and an error inside an operand both apply, the error
+inside the operand comes first, because that message names the real cause.
 
 ## Truthiness
 

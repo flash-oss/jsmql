@@ -338,6 +338,9 @@ function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | nul
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 
+// A `filter` cell of a comparison states the `homogeneous` rule of its `expr` cell, and
+// takes every kind of operand. A comparison that falls to `$expr` also meets the
+// `expr` cell. A query reads an array field through its elements: see `proofsFor`.
 export const PRODUCTIONS = {
   conditional: production({
     doc: "Chooses between two values on a condition.",
@@ -352,7 +355,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "test, then, else", exact: 3 },
+      args: { sig: "test, then, else", exact: 3, slotType: { 0: "any", 1: "any", 2: "any" } },
       emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2])),
     },
     stream: unsupported("'?:' produces a value, not a stage."),
@@ -374,7 +377,10 @@ export const PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $ifNull: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "any" },
+      emit: ({ args, value }) => ({ $ifNull: args.map(value) }),
+    },
     stream: unsupported("'??' produces a value, not a stage."),
     statement: unsupported("'??' is not a statement — see its 'where'."),
   }),
@@ -390,8 +396,8 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'||' produces a value, not a stage."),
     statement: unsupported("'||' is not a statement — see its 'where'."),
   }),
@@ -407,8 +413,8 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'&&' produces a value, not a stage."),
     statement: unsupported("'&&' is not a statement — see its 'where'."),
   }),
@@ -428,7 +434,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitOr: args.map(value) }),
     },
     stream: unsupported("'|' produces a value, not a stage."),
@@ -450,7 +456,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitXor: args.map(value) }),
     },
     stream: unsupported("'^' produces a value, not a stage."),
@@ -472,7 +478,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitAnd: args.map(value) }),
     },
     stream: unsupported("'&' produces a value, not a stage."),
@@ -490,9 +496,12 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, false) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, false),
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $eq: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'===' produces a value, not a stage."),
@@ -510,9 +519,12 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, true) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, true),
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $ne: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'!==' produces a value, not a stage."),
@@ -530,8 +542,8 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, false) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, false) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'==' produces a value, not a stage."),
     statement: unsupported("'==' is not a statement — see its 'where'."),
   }),
@@ -547,8 +559,8 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, true) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, true) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'!=' produces a value, not a stage."),
     statement: unsupported("'!=' is not a statement — see its 'where'."),
   }),
@@ -565,11 +577,11 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gt"),
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gt: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'>' produces a value, not a stage."),
@@ -588,11 +600,11 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gte"),
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gte: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'>=' produces a value, not a stage."),
@@ -611,11 +623,11 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lt"),
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lt: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'<' produces a value, not a stage."),
@@ -634,11 +646,11 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lte"),
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lte: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'<=' produces a value, not a stage."),
@@ -657,8 +669,12 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "value, list",
+      exact: 2,
+      slotType: { 0: "element", 1: "array" },
+    }),
     stream: unsupported("'x in [ … ]' produces a value, not a stage."),
     statement: unsupported("'x in [ … ]' is not a statement — see its 'where'."),
   }),
@@ -679,7 +695,12 @@ export const PRODUCTIONS = {
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: ["number", "string", "date"] }),
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "operands",
+      atLeast: 2,
+      rest: ["number", "string"],
+      homogeneous: true,
+    }),
     stream: unsupported("'+' produces a value, not a stage."),
     statement: unsupported("'+' is not a statement — see its 'where'."),
   }),
@@ -700,7 +721,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: ["number", "date"], 1: ["number", "date"] } },
+      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -745,7 +766,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $divide: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'/' produces a value, not a stage."),
@@ -767,7 +788,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $mod: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'%' produces a value, not a stage."),
@@ -790,7 +811,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'**' produces a value, not a stage."),
@@ -809,7 +830,10 @@ export const PRODUCTIONS = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, truth }) => ({ $not: truth(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, truth }) => ({ $not: truth(args[0]) }),
+    },
     stream: unsupported("'!' produces a value, not a stage."),
     statement: unsupported("'!' is not a statement — see its 'where'."),
   }),
@@ -850,7 +874,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } },
+      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
       emit: ({ args, value }) => ({ $bitNot: value(args[0]) }),
     },
     stream: unsupported("'~' produces a value, not a stage."),
@@ -870,7 +894,10 @@ export const PRODUCTIONS = {
     returns: "string",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $type: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $type: value(args[0]) }),
+    },
     stream: unsupported("'typeof' produces a value, not a stage."),
     statement: unsupported("'typeof' is not a statement — see its 'where'."),
   }),
@@ -940,9 +967,7 @@ export const PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    // A key of any kind reads as its string, as JavaScript reads `o[k]`: an ObjectId key
-    // reads the field its hex names. A null key reads no field.
-    expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } }),
+    expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x[0]' produces a value, not a stage."),
     statement: unsupported("'x[0]' is not a statement — see its 'where'."),
   }),

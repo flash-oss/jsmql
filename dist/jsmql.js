@@ -144,8 +144,8 @@ function literalIndexValue(node) {
   return null;
 }
 var clampNonNegativeIndex = (node, lowered) => {
-  const lit = literalIndexValue(node);
-  return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
+  const lit2 = literalIndexValue(node);
+  return lit2 === null ? { $max: [0, lowered] } : Math.max(0, lit2);
 };
 function strLenOf(value, present2 = false) {
   const text = constantText(value);
@@ -153,8 +153,8 @@ function strLenOf(value, present2 = false) {
   return { $strLenCP: present2 || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 function normaliseSliceIndex(node, lowered, recv, present2 = false) {
-  const lit = literalIndexValue(node);
-  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit));
+  const lit2 = literalIndexValue(node);
+  if (lit2 !== null) return lit2 >= 0 ? lit2 : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit2));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present2)] }), lowered);
 }
 var strTail = (s, from, present2 = false) => ({
@@ -284,14 +284,14 @@ function takeDropWhile(arrExpr, pred, drop, mint2) {
     }
   };
 }
-function resolveSliceIndex(node, lowered, size) {
-  const lit = literalIndexValue(node);
-  if (lit !== null) {
-    if (lit === 0) return 0;
-    if (lit > 0) return { $min: [lit, size] };
-    return { $max: [{ $subtract: [size, -lit] }, 0] };
+function resolveSliceIndex(node, lowered, size2) {
+  const lit2 = literalIndexValue(node);
+  if (lit2 !== null) {
+    if (lit2 === 0) return 0;
+    if (lit2 > 0) return { $min: [lit2, size2] };
+    return { $max: [{ $subtract: [size2, -lit2] }, 0] };
   }
-  return { $cond: [{ $lt: [lowered, 0] }, { $max: [{ $add: [lowered, size] }, 0] }, { $min: [lowered, size] }] };
+  return { $cond: [{ $lt: [lowered, 0] }, { $max: [{ $add: [lowered, size2] }, 0] }, { $min: [lowered, size2] }] };
 }
 function sliceArray(recv, args, value, mint2) {
   if (args.length === 0) return recv;
@@ -416,17 +416,39 @@ var dateRow = (spelling) => global_({
   expr: {
     byArgs: {
       none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-      // A valid date spelling never reaches this row — the fold makes it a Date value first.
-      // A constant the fold could evaluate never reaches this row; one that stays
-      // is a string `Date.parse` refuses.
+      // A date that the source spells never reaches this row: the constant engine reads it
+      // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
+      // date parser reads.
       constant: unsupported(
         `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
       ),
-      dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
+      dynamic: {
+        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+        // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
+        // a Decimal128, a string, a date and an ObjectId. A driver sends a whole JavaScript number
+        // below 2^31 as an int, so a number goes through `$toLong` first. `$toLong` cuts a fraction the
+        // same way, so the instant is the one that `$toDate` of the plain number gives. The emitter
+        // tests `$isNumber` for a value of unknown kind, because `$toLong` refuses a string and a date.
+        emit: ({ args, value, type: type2, bind }) => {
+          const x = value(args[0]);
+          const kinds = type2(args[0]).kinds;
+          if (kinds !== "any" && !kinds.has("number")) return { $toDate: x };
+          if (kinds !== "any" && kinds.size === 1) {
+            const long = typeof x === "object" && x !== null && Object.keys(x).join() === "$toLong";
+            return { $toDate: long ? x : { $toLong: x } };
+          }
+          const cheap = typeof x === "string" && x.startsWith("$");
+          const v = cheap ? null : bind("n");
+          const ref = v === null ? x : v.ref;
+          const doc = { $toDate: { $cond: [{ $isNumber: ref }, { $toLong: ref }, ref] } };
+          return v === null ? doc : { $let: { vars: { [v.as]: x }, in: doc } };
+        }
+      },
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
-      // an eighth argument. Months are 1-BASED here, unlike JavaScript.
+      // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
+      // integer: the server refuses 2024.5 as a year.
       multiple: {
-        args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
+        args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7], rest: "int" },
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
       },
       otherwise: unsupported(
@@ -454,9 +476,12 @@ var bsonValue = (e) => global_({
   ),
   expr: {
     byArgs: {
-      constant: unsupported(e.refuseConstant),
+      constant: {
+        args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
+        emit: ({ args, construct }) => construct(e.spelling, e.refuseConstant, args[0])
+      },
       dynamic: {
-        args: { sig: "value", exact: 1 },
+        args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
         emit: ({ args, value }) => ({ [e.convert]: value(args[0]) })
       },
       otherwise: unsupported(`'${e.spelling}(\u2026)' takes one value to convert, or one constant.`)
@@ -477,9 +502,17 @@ var bsonSentinel = (spelling, doc, compare) => global_({
   neverNull: true,
   where: ["value"],
   filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
-  // The fold builds the value — there is no MQL expression that produces one, so
-  // no rule here could. MEASURED: the server refuses `{ $minKey: 1 }`.
-  expr: inCode("src/compiler/passes/fold-methods.ts"),
+  // There is no MQL expression that produces the value, so the value goes into the MQL as
+  // itself. MEASURED: the server refuses `{ $minKey: 1 }`.
+  expr: {
+    byArgs: {
+      none: {
+        args: { sig: "", none: true },
+        emit: ({ construct }) => construct(spelling, `'${spelling}()' builds the sentinel value.`)
+      },
+      otherwise: unsupported(`'${spelling}()' takes no argument.`)
+    }
+  },
   stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
   statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
   group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
@@ -553,10 +586,10 @@ var collapse = (key, acc) => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } }
 ];
 function padded(side, recv, args, value, bind) {
-  const target = value(args[0]);
+  const target2 = value(args[0]);
   const pad2 = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
-  const need = { $subtract: [target, { $strLenCP: v.ref }] };
+  const need = { $subtract: [target2, { $strLenCP: v.ref }] };
   const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad2] } } };
   const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
   const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
@@ -587,9 +620,9 @@ var arrayOrEmpty = (recv) => {
   if (inner !== null && inner.length === 2 && inner[1] === null) return { $ifNull: [inner[0], []] };
   return { $ifNull: [recv, []] };
 };
-var listArgument = (value, type, arg) => {
+var listArgument = (value, type2, arg) => {
   const lowered = value(arg);
-  return type(arg).absent ? arrayOrEmpty(lowered) : lowered;
+  return type2(arg).absent ? arrayOrEmpty(lowered) : lowered;
 };
 var mayBeArray = (t) => t.kinds === "any" || t.kinds.has("array");
 var onlyArray = (t) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has("array");
@@ -601,23 +634,23 @@ function concatOperand(v, t, bind) {
   const item = bind("item");
   return { $let: { vars: { [item.as]: v }, in: arrayOrOne(item.ref) } };
 }
-function concatSpread(list, element2) {
-  if (element2 !== void 0 && !mayBeArray(element2)) return list;
-  const each = element2 !== void 0 && onlyArray(element2) && !element2.absent ? "$$this" : arrayOrOne("$$this");
+function concatSpread(list, element) {
+  if (element !== void 0 && !mayBeArray(element)) return list;
+  const each = element !== void 0 && onlyArray(element) && !element.absent ? "$$this" : arrayOrOne("$$this");
   return { $reduce: { input: list, initialValue: [], in: { $concatArrays: ["$$value", each] } } };
 }
 var lastIndexOfArray = ({ recv, args, value, bind }) => {
   const needle = value(args[0]);
   const arr = bind("arr");
   const rev = bind("revIdx");
-  const size = sizeOf(arrayOrEmpty(arr.ref));
+  const size2 = sizeOf(arrayOrEmpty(arr.ref));
   return {
     $let: {
       vars: { [arr.as]: recv },
       in: {
         $let: {
           vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
-          in: cond({ $eq: [rev.ref, -1] }, -1, { $subtract: [{ $subtract: [size, 1] }, rev.ref] })
+          in: cond({ $eq: [rev.ref, -1] }, -1, { $subtract: [{ $subtract: [size2, 1] }, rev.ref] })
         }
       }
     }
@@ -668,7 +701,7 @@ var orZero = (v, there) => v === null ? 0 : typeof v === "number" || there ? v :
 function randomOf({ recv, args, value, bind, present: present2 }) {
   const self = orZero(recv, present2);
   const [a, b] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
-  const from = (lo2, step) => lo2 === 0 ? step : { $add: [lo2, step] };
+  const from = (lo2, step2) => lo2 === 0 ? step2 : { $add: [lo2, step2] };
   const whole = (lo2, span2) => from(lo2, { $floor: { $multiply: [{ $rand: {} }, span2] } });
   const fraction = (lo2, span2) => from(lo2, { $multiply: [{ $rand: {} }, span2] });
   if (typeof a === "number" && typeof b === "number") {
@@ -692,16 +725,16 @@ function randomOf({ recv, args, value, bind, present: present2 }) {
 var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
-  slotType: { 0: "int", 1: "int" },
   integer: [-1, 0, 1],
+  slotType: { 0: "int", 1: "int" },
   zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." }
 };
 function rangeOf({ recv, args, value, bind, present: present2 }) {
   const self = orZero(recv, present2);
-  const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
-  if (args.length === 2) return { $range: [start, end, value(args[1])] };
-  if (typeof start === "number" && typeof end === "number") {
-    return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
+  const [start, end2] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
+  if (args.length === 2) return { $range: [start, end2, value(args[1])] };
+  if (typeof start === "number" && typeof end2 === "number") {
+    return start > end2 ? { $range: [start, end2, -1] } : { $range: [start, end2] };
   }
   const cheap = (v) => typeof v === "number" || isIfNullWrappedPath(v) || isPath(v);
   const vars = {};
@@ -711,7 +744,7 @@ function rangeOf({ recv, args, value, bind, present: present2 }) {
     vars[b.as] = v;
     return b.ref;
   };
-  const [s, e] = [once(start, "start"), once(end, "end")];
+  const [s, e] = [once(start, "start"), once(end2, "end")];
   const out = { $range: [s, e, { $cond: [{ $lt: [s, e] }, 1, -1] }] };
   return Object.keys(vars).length === 0 ? out : { $let: { vars, in: out } };
 }
@@ -3454,8 +3487,8 @@ var NAMES = {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
-          const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+          const end2 = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
+          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end2, start))] };
         });
       }
     },
@@ -3479,10 +3512,10 @@ var NAMES = {
     expr: {
       args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
-        const lit = literalIndexValue(args[0]);
-        if (lit !== null && lit < 0) return "";
+        const lit2 = literalIndexValue(args[0]);
+        if (lit2 !== null && lit2 < 0) return "";
         return nullOr(recv, present2, bind, (r) => {
-          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          if (lit2 !== null) return { $substrCP: [r, lit2, 1] };
           const index = value(args[0]);
           return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
         });
@@ -3702,7 +3735,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
@@ -3723,7 +3756,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $ifNull: [
           { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
@@ -3814,6 +3847,7 @@ var NAMES = {
       args: {
         sig: "searchValue",
         exact: 1,
+        slotType: { 0: "element" },
         noCallback: {
           0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
         }
@@ -3909,7 +3943,7 @@ var NAMES = {
     // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "element" } },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         if (recv === null) return null;
         const path = pathOf3(recv);
@@ -3919,21 +3953,22 @@ var NAMES = {
           return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
-        const target = pathOf3(args[0]);
-        if (target === null) return null;
+        const target2 = pathOf3(args[0]);
+        if (target2 === null) return null;
         const values = [];
         for (const el of recv.elements) {
           const c = el.type === "SpreadElement" || el.type === "FuncDecl" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "UpdateFilter" ? null : constant(el);
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target, { $in: values });
+        return queryOwnValue(target2, { $in: values });
       }
     },
     expr: {
       args: {
         sig: "value",
         exact: 1,
+        slotType: { 0: "element" },
         noCallback: {
           0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
         }
@@ -3957,7 +3992,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
@@ -4036,15 +4071,15 @@ var NAMES = {
         // constant operands during the optimisation and raises there on a wrong type. So
         // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
-          args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, type, bind }) => {
+          args: { sig: "...items", atLeast: 1, spread: true, rest: "any" },
+          emit: ({ recv, args, value, type: type2, bind }) => {
             const first = args[0];
             const list = args.length === 1 && first.type === "ArrayLiteral" && first.packed === true ? first.elements : args;
             return {
               $concatArrays: [
                 recv,
                 ...list.map(
-                  (a) => a.type === "SpreadElement" ? concatSpread(value({ type: "ArrayLiteral", elements: [a], pos: a.pos }), type(a.argument).element) : concatOperand(value(a), type(a), bind)
+                  (a) => a.type === "SpreadElement" ? concatSpread(value({ type: "ArrayLiteral", elements: [a], pos: a.pos }), type2(a.argument).element) : concatOperand(value(a), type2(a), bind)
                 )
               ]
             };
@@ -4124,7 +4159,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator', allowed: [0, 1] },
+      args: {
+        sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       emit: ({ recv, args, sortSpec, callback: callback2, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0]);
@@ -4147,9 +4186,13 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | { field: dir } | comparator]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // No key: the natural order of the unwound values.
-      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
+      emit: ({ args, sortSpec, slot, reshape, element }) => args.length === 0 ? [{ $sort: { [element().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
     statement: unsupported(
       "'.toSorted()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toSorted();'"
@@ -4182,7 +4225,12 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] },
+      // An object is lodash's matcher, so the kind is welcome here and the cell's own refusal names `.orderBy()`.
+      args: {
+        sig: '["field" | keyFn | [fields]]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       emit: ({ recv, args, sortSpec, callback: callback2, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0], false);
@@ -4205,10 +4253,14 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '["field" | [fields] | keyFn]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | keyFn]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // An object here is a lodash matcher, not directions — the reader refuses it.
       // No key: the natural order of the unwound values.
-      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0], false), slot, reshape)
+      emit: ({ args, sortSpec, slot, reshape, element }) => args.length === 0 ? [{ $sort: { [element().path]: 1 } }] : sortStages(sortSpec(args[0], false), slot, reshape)
     },
     statement: unsupported(
       "'.sortBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortBy();'"
@@ -4235,7 +4287,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      args: {
+        sig: "keys[, orders] | { field: dir }",
+        allowed: [1, 2],
+        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
+      },
       emit: ({ recv, args, orderBy, callback: callback2, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
@@ -4257,7 +4313,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      args: {
+        sig: "keys[, orders] | { field: dir }",
+        allowed: [1, 2],
+        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
+      },
       emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape)
     },
     statement: unsupported(
@@ -4280,6 +4340,7 @@ var NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
+        rest: "any",
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
         // typo far more often than an intent, so the count stays closed but the start opens.
         slotRange: { 1: [0, Infinity] }
@@ -4289,9 +4350,9 @@ var NAMES = {
         const start = bind("start");
         const tail = bind("tailStart");
         const items = args.slice(2).map((a) => value(a));
-        const size = { $size: arr.ref };
-        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : size;
-        const rest = { $subtract: [size, tail.ref] };
+        const size2 = { $size: arr.ref };
+        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : size2;
+        const rest = { $subtract: [size2, tail.ref] };
         return {
           $let: {
             vars: { [arr.as]: recv },
@@ -4300,7 +4361,7 @@ var NAMES = {
               // the server refuses the read), and a start counted from the end reads the
               // receiver's length, so each binding sits one level inside the last.
               $let: {
-                vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size) },
+                vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size2) },
                 in: {
                   $let: {
                     vars: { [tail.as]: tailStart },
@@ -4341,7 +4402,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index, value", exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      args: { sig: "index, value", exact: 2, slotType: { 0: "int", 1: "any" }, slotRange: { 0: [0, Infinity] } },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const idx = bind("idx");
@@ -4396,7 +4457,7 @@ var NAMES = {
     stream: {
       args: { sig: "", none: true },
       // The element is an array: unwind it once more, in place.
-      emit: ({ element: element2 }) => [{ $unwind: element2().ref }]
+      emit: ({ element }) => [{ $unwind: element().ref }]
     },
     statement: unsupported(
       "'.flat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flat();'"
@@ -4420,7 +4481,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return {
@@ -4433,7 +4494,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string"] } },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
       // Its elements are what the links after it work on — a later callback's
       // parameter is the unwound field, and the documents keep their other fields.
@@ -4468,14 +4529,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return { $map: { input: cb.input, as: cb.as, in: cb.in } };
       }
     },
     stream: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string"] } },
       emit: ({ args, document }) => [{ $replaceWith: document(args[0]) }]
     },
     statement: unsupported(
@@ -4502,7 +4563,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2, bind }) => {
         const cb = callback2(args[0], "truth");
         const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
@@ -4511,7 +4572,10 @@ var NAMES = {
         return { $map: { input: kept, as: p.as, in: { $arrayElemAt: [p.ref, 1] } } };
       }
     },
-    stream: { args: { sig: "predicate", exact: 1 }, emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }] },
+    stream: {
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }]
+    },
     statement: unsupported(
       "'.filter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.filter();'"
     ),
@@ -4531,7 +4595,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, 0] };
@@ -4558,7 +4622,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
@@ -4590,7 +4654,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, -1] };
@@ -4619,7 +4683,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
@@ -4653,7 +4717,7 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
+    expr: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'"
@@ -4675,7 +4739,7 @@ var NAMES = {
     // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
     // whole body has a native form against the element as root. Otherwise the expression form.
     filter: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, pathOf: pathOf3, elementQuery }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
@@ -4689,7 +4753,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         return nullOr(recv, present2, bind, (r) => ({
@@ -4715,7 +4779,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         return nullOr(recv, present2, bind, (r) => ({
@@ -4742,7 +4806,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", exact: 2, slotType: { 0: "callback", 1: "any" } },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: r.input, initialValue: value(args[1]), in: r.in } };
@@ -4769,7 +4833,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", exact: 2, slotType: { 0: "callback", 1: "any" } },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: { $reverseArray: r.input }, initialValue: value(args[1]), in: r.in } };
@@ -4797,7 +4861,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", allowed: [0, 1] },
+      args: { sig: "separator", allowed: [0, 1], slotType: { 0: "string" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
@@ -4869,9 +4933,13 @@ var NAMES = {
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
     stream: {
-      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | { field: dir } | comparator]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // No key: the natural order of the unwound values.
-      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
+      emit: ({ args, sortSpec, slot, reshape, element }) => args.length === 0 ? [{ $sort: { [element().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
     statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.sort()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -6156,13 +6224,13 @@ var NAMES = {
       },
       emit: ({ recv, args, value }) => {
         const opts = dateOptions(args[1], value);
-        const step = {
+        const step2 = {
           startDate: { $dateTrunc: { date: recv, unit: value(args[0]), ...opts } },
           unit: value(args[0]),
           amount: opts.binSize ?? 1
         };
-        if (opts.timezone !== void 0) step.timezone = opts.timezone;
-        return { $dateSubtract: { startDate: { $dateAdd: step }, unit: "millisecond", amount: 1 } };
+        if (opts.timezone !== void 0) step2.timezone = opts.timezone;
+        return { $dateSubtract: { startDate: { $dateAdd: step2 }, unit: "millisecond", amount: 1 } };
       }
     },
     stream: unsupported("'.endOf()' has no stream form: it produces a value, not a stream of documents."),
@@ -6176,6 +6244,7 @@ var NAMES = {
     doc: "'.sum()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "number",
     returns: "number",
     neverNull: true,
     readsNullAsEmpty: true,
@@ -6193,6 +6262,7 @@ var NAMES = {
     doc: "'.mean()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "number",
     returns: "number",
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6210,6 +6280,7 @@ var NAMES = {
     call: true,
     passesNull: true,
     on: ["array", "Math"],
+    elements: "number",
     returns: { array: "element" },
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6236,6 +6307,7 @@ var NAMES = {
     call: true,
     passesNull: true,
     on: ["array", "Math"],
+    elements: "number",
     returns: { array: "element" },
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6269,7 +6341,7 @@ var NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $sum: { $map: { input: recv, as: it.as, in: it.in } } };
@@ -6280,7 +6352,7 @@ var NAMES = {
       "'.sumBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sumBy();'"
     ),
     group: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // the accumulator of each document's own value: '$sum' of the per-document '$sum' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
@@ -6300,7 +6372,7 @@ var NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $avg: { $map: { input: recv, as: it.as, in: it.in } } };
@@ -6311,7 +6383,7 @@ var NAMES = {
       "'.meanBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.meanBy();'"
     ),
     group: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // the accumulator of each document's own value: '$avg' of the per-document '$avg' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
@@ -6330,7 +6402,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = iteratee(args[0]);
         const sorted = bind("sorted");
@@ -6366,7 +6438,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = iteratee(args[0]);
         const sorted = bind("sorted");
@@ -6407,7 +6479,7 @@ var NAMES = {
     stream: {
       args: { sig: "", none: true },
       // One document per distinct ELEMENT: the whole document, or the unwound field after `.flatMap`.
-      emit: ({ element: element2 }) => keepFirstPer(element2().ref)
+      emit: ({ element }) => keepFirstPer(element().ref)
     },
     statement: unsupported(
       "'.uniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniq();'"
@@ -6432,11 +6504,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind)
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // "First" follows the stream's current order; sort first when it matters.
       emit: ({ args, reshape }) => keepFirstPer(reshape(args[0]))
     },
@@ -6457,7 +6529,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
-    stream: { args: { sig: "", none: true }, emit: ({ element: element2 }) => keepFirstPer(element2().ref) },
+    stream: { args: { sig: "", none: true }, emit: ({ element }) => keepFirstPer(element().ref) },
     statement: unsupported(
       "'.sortedUniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniq();'"
     ),
@@ -6483,10 +6555,13 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind)
     },
-    stream: { args: { sig: "iteratee", exact: 1 }, emit: ({ args, reshape }) => keepFirstPer(reshape(args[0])) },
+    stream: {
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ args, reshape }) => keepFirstPer(reshape(args[0]))
+    },
     statement: unsupported(
       "'.sortedUniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniqBy();'"
     ),
@@ -6509,7 +6584,7 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", atLeast: 1, rest: "element" },
       emit: ({ recv, args, value, bind }) => {
         const values = args.map((a) => value(a));
         const item = bind("item");
@@ -6517,7 +6592,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", atLeast: 1, rest: "element" },
       // `.difference([...values])`: the same predicate over the values as a list.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -6542,9 +6617,9 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, type }) => {
-        const other = listArgument(value, type, args[0]);
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, type: type2 }) => {
+        const other = listArgument(value, type2, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       }
     },
@@ -6575,21 +6650,29 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind, type }) => {
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
+      emit: ({ recv, args, value, iteratee, bind, type: type2 }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type2, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } }
           }
         };
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       // The element's key against the keys of `other`.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6626,21 +6709,29 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind, type }) => {
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
+      emit: ({ recv, args, value, iteratee, bind, type: type2 }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type2, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: inOther } }
           }
         };
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       // The element's key against the keys of `other`, one document per distinct key kept.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6668,8 +6759,12 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind, type }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind)
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
+      emit: ({ recv, args, value, iteratee, bind, type: type2 }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type2, args[0])] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -6690,10 +6785,14 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind, type }) => {
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
+      emit: ({ recv, args, value, iteratee, bind, type: type2 }) => {
         const it = iteratee(args[1]);
-        const other = listArgument(value, type, args[0]);
+        const other = listArgument(value, type2, args[0]);
         const a = bind("a");
         const b = bind("b");
         const aKeys = bind("aKeys");
@@ -6743,7 +6842,7 @@ var NAMES = {
     stream: {
       args: { sig: "", none: true },
       // JavaScript's falsy values (NaN aside — jsmql has none). MEASURED: `null` in a `$nin` list drops a missing field too.
-      emit: ({ element: element2 }) => [{ $match: { [element2().path]: { $nin: [null, 0, false, ""] } } }]
+      emit: ({ element }) => [{ $match: { [element().path]: { $nin: [null, 0, false, ""] } } }]
     },
     statement: unsupported(
       "'.compact()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.compact();'"
@@ -6790,10 +6889,10 @@ var NAMES = {
     expr: {
       args: { sig: "size", exact: 1, constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, Infinity] } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
-        const size = value(args[0]);
+        const size2 = value(args[0]);
         const i = bind("i");
         const n2 = sizeOf(present2 ? recv : arrayOrEmpty(recv));
-        return { $map: { input: { $range: [0, n2, size] }, as: i.as, in: { $slice: [recv, i.ref, size] } } };
+        return { $map: { input: { $range: [0, n2, size2] }, as: i.as, in: { $slice: [recv, i.ref, size2] } } };
       }
     },
     stream: because(
@@ -7027,7 +7126,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[n=0]", allowed: [0, 1] },
+      args: { sig: "[n=0]", allowed: [0, 1], slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
@@ -7101,21 +7200,21 @@ var NAMES = {
     only: ["afterSort"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return takeDropWhile(recv, p, false, bind);
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
-      emit: ({ args, condition, sortedBy, slot }) => {
+      emit: ({ args, condition, sortedBy: sortedBy2, slot }) => {
         const flag = slot();
         return [
           {
             $setWindowFields: {
-              sortBy: sortedBy(),
+              sortBy: sortedBy2(),
               output: {
                 [flag]: {
                   $max: { $cond: [condition(args[0]), 0, 1] },
@@ -7155,21 +7254,21 @@ var NAMES = {
     only: ["afterSort"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return takeDropWhile(recv, p, true, bind);
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
-      emit: ({ args, condition, sortedBy, slot }) => {
+      emit: ({ args, condition, sortedBy: sortedBy2, slot }) => {
         const flag = slot();
         return [
           {
             $setWindowFields: {
-              sortBy: sortedBy(),
+              sortBy: sortedBy2(),
               output: {
                 [flag]: {
                   $max: { $cond: [condition(args[0]), 0, 1] },
@@ -7202,7 +7301,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, false, bind));
@@ -7229,7 +7328,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, true, bind));
@@ -7343,7 +7442,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "values", exact: 1 },
+      args: { sig: "values", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const values = value(args[0]);
         const i = bind("i");
@@ -7377,7 +7476,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays", atLeast: 1 },
+      args: { sig: "...arrays", atLeast: 1, rest: "array" },
       emit: ({ recv, args, value }) => ({
         $zip: { inputs: [recv, ...args.map((a) => value(a))], useLongestLength: true }
       })
@@ -7440,7 +7539,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays, iteratee", atLeast: 2 },
+      args: { sig: "...arrays, iteratee", atLeast: 2, rest: ["array", "callback"] },
       emit: ({ recv, args, value, elements }) => {
         const arrays = [recv, ...args.slice(0, -1).map(value)];
         const cb = elements(args[args.length - 1], arrays.length);
@@ -7496,14 +7595,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = args[0] === void 0 ? identity(bind) : iteratee(args[0]);
         return { $arrayToObject: { $map: { input: recv, as: it.as, in: { k: stringKeyExpr(it.in), v: it.ref } } } };
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // Last wins, as lodash's does; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" })
     },
@@ -7533,7 +7632,7 @@ var NAMES = {
       // MEASURED: jsmql refuses Object.groupBy($.items) — the call must give the discriminator.
       perFamily: {
         array: {
-          args: { sig: "[iteratee]", allowed: [0, 1] },
+          args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
           emit: ({ recv, args, iteratee, bind }) => groupedByKey(recv, args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value \u2014 see its 'stream' cell."),
@@ -7545,7 +7644,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" })
     },
@@ -7572,7 +7671,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = args[0] === void 0 ? identity(bind) : iteratee(args[0]);
         const key = bind("key");
@@ -7585,7 +7684,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 })
     },
     statement: unsupported(
@@ -7605,7 +7704,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate }) => {
         const p = predicate(args[0]);
         return [
@@ -7639,14 +7738,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate }) => {
         const p = predicate(args[0]);
         return { $filter: { input: recv, as: p.as, cond: { $not: [p.in] } } };
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // The COMPLEMENT of the predicate's own clause — `$nor`, as `!p` is.
       emit: ({ args, predicate }) => [{ $match: { $nor: [predicate(args[0])] } }]
     },
@@ -7672,7 +7771,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "value");
         return {
@@ -7707,7 +7806,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "value");
         return {
@@ -7740,7 +7839,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2, type }) => {
+      emit: ({ recv, args, bind, value, present: present2, type: type2 }) => {
         const keys = spelledKeys(args[0]);
         if (keys === null) {
           const kv = bind("kv");
@@ -7749,7 +7848,7 @@ var NAMES = {
               $filter: {
                 input: pairsOfObject(recv, present2),
                 as: kv.as,
-                cond: { $in: [`${kv.ref}.k`, listArgument(value, type, args[0])] }
+                cond: { $in: [`${kv.ref}.k`, listArgument(value, type2, args[0])] }
               }
             }
           };
@@ -7763,17 +7862,17 @@ var NAMES = {
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
-      emit: ({ args, value, element: element2 }) => {
-        const at3 = element2().path;
+      emit: ({ args, value, element }) => {
+        const at2 = element().path;
         const keys = value(args[0]);
         if (keys.length === 0) {
-          const empty = at3 === "" ? {} : at3.split(".").reduceRight((inner, s) => setKey({}, s, inner), {});
+          const empty = at2 === "" ? {} : at2.split(".").reduceRight((inner, s) => setKey({}, s, inner), {});
           return [{ $replaceWith: empty }];
         }
         return [
           {
             $project: Object.fromEntries([
-              ...keys.map((k) => [at3 === "" ? k : `${at3}.${k}`, 1]),
+              ...keys.map((k) => [at2 === "" ? k : `${at2}.${k}`, 1]),
               ...keys.includes("_id") ? [] : [["_id", 0]]
             ])
           }
@@ -7799,9 +7898,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2, type }) => {
+      emit: ({ recv, args, bind, value, present: present2, type: type2 }) => {
         const spelled3 = spelledKeys(args[0]);
-        const keys = spelled3 ?? listArgument(value, type, args[0]);
+        const keys = spelled3 ?? listArgument(value, type2, args[0]);
         const kv = bind("kv");
         return {
           $arrayToObject: {
@@ -7817,11 +7916,11 @@ var NAMES = {
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Drops the named fields of the ELEMENT.
-      emit: ({ args, value, element: element2 }) => {
-        const at3 = element2().path;
+      emit: ({ args, value, element }) => {
+        const at2 = element().path;
         const keys = value(args[0]);
         if (keys.length === 0) return [];
-        return [{ $project: Object.fromEntries(keys.map((k) => [at3 === "" ? k : `${at3}.${k}`, 0])) }];
+        return [{ $project: Object.fromEntries(keys.map((k) => [at2 === "" ? k : `${at2}.${k}`, 0])) }];
       }
     },
     statement: unsupported(
@@ -7846,7 +7945,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "truth");
         return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
@@ -7875,7 +7974,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "truth");
         return {
@@ -8251,7 +8350,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
-      args: { sig: "lower, upper", exact: 2 },
+      args: { sig: "lower, upper", exact: 2, slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] })
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -8272,7 +8371,7 @@ var NAMES = {
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
@@ -8285,7 +8384,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, value }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
@@ -8348,7 +8447,7 @@ var NAMES = {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $round: recv } : { $round: [recv, value(args[0])] }
         },
@@ -8378,7 +8477,7 @@ var NAMES = {
       // MEASURED: $.n.ceil(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8407,7 +8506,7 @@ var NAMES = {
       // MEASURED: $.n.floor(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8438,18 +8537,18 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] })
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, type: type2 }) => ({ $setIntersection: [recv, listArgument(value, type2, args[0])] })
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       // The elements in `other`, one document per distinct element — lodash keeps each value once.
-      emit: ({ args, predicate, bind, element: element2 }) => {
+      emit: ({ args, predicate, bind, element }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
         return [
           { $match: predicate(arrowOf(x, callOf(other, "has", [identOf(x, other.pos)]), other.pos)) },
-          ...keepFirstPer(element2().ref)
+          ...keepFirstPer(element().ref)
         ];
       }
     },
@@ -8471,8 +8570,8 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] })
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, type: type2 }) => ({ $setUnion: [recv, listArgument(value, type2, args[0])] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -8499,14 +8598,14 @@ var NAMES = {
         // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
-          args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] })
+          args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+          emit: ({ recv, args, value, type: type2 }) => ({ $setDifference: [recv, listArgument(value, type2, args[0])] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       }
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       // The elements not in `other`: the predicate `x => !other.includes(x)`, through the filter road.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -8531,8 +8630,8 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] }))
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, present: present2, bind, type: type2 }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type2, args[0])] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8552,8 +8651,8 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] }))
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, present: present2, bind, type: type2 }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type2, args[0]), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8593,7 +8692,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value }) => ({
         $regexFind: regexBody(value(args[0]), recv, () => value(recv))
       })
@@ -8767,8 +8866,8 @@ var NAMES = {
     filter: {
       args: { sig: "field, query", exact: 2 },
       // a query document over the element as written, or an arrow whose body is that test
-      emit: ({ args, fieldPath: fieldPath3, query, element: element2 }) => ({
-        [fieldPath3(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element2(args[1]) : query(args[1]) }
+      emit: ({ args, fieldPath: fieldPath3, query, element }) => ({
+        [fieldPath3(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element(args[1]) : query(args[1]) }
       })
     }
   }),
@@ -9113,7 +9212,7 @@ var NAMES = {
       args: {
         sig: "stages | (o) => { \u2026stages }",
         exact: 1,
-        slotType: { 0: "array" },
+        slotType: { 0: ["callback", "array"] },
         nonEmpty: {
           0: {
             noun: "stage",
@@ -9140,12 +9239,12 @@ var NAMES = {
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
-      args: { sig: "condition[, message]", allowed: [1, 2] },
+      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 0: "value", 1: "string" } },
       // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
-      emit: ({ args, truth, value }) => {
+      emit: ({ args, truth: truth2, value }) => {
         const prefix = "jsmql assertion failed";
         const message = args[1] === void 0 ? prefix : args[1].type === "StringLiteral" ? `${prefix}: ${args[1].value}` : { $concat: [`${prefix}: `, { $toString: value(args[1]) }] };
-        return [{ $match: { $expr: { $convert: { input: true, to: { $cond: [truth(args[0]), "bool", message] } } } } }];
+        return [{ $match: { $expr: { $convert: { input: true, to: { $cond: [truth2(args[0]), "bool", message] } } } } }];
       }
     },
     group: unsupported("'assert(...)' is not an accumulator."),
@@ -9167,7 +9266,7 @@ var NAMES = {
         // The method form answers a NEW object, as '.pick()' and '.omit()' do —
         // the receiver is the first source, and the call writes nothing in place.
         object: {
-          args: { sig: "...sources", atLeast: 1, spread: true },
+          args: { sig: "...sources", atLeast: 1, spread: true, rest: "object" },
           emit: ({ recv, args, value }) => merged(recv, args, value)
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -9220,7 +9319,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
       emit: ({ args, value }) => ({
         $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }]
       })
@@ -9243,7 +9342,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
       emit: ({ args, value }) => ({
         $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }]
       })
@@ -9281,7 +9380,10 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
+    expr: {
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $isArray: [value(args[0])] })
+    },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(\u2026);'"
@@ -9301,13 +9403,13 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind, type }) => {
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, bind, type: type2 }) => {
         const a = bind("a");
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: listArgument(value, type, args[0]) },
+            vars: { [a.as]: recv, [b.as]: listArgument(value, type2, args[0]) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] }
           }
         };
@@ -9331,9 +9433,9 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({
-        $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0]
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
+      emit: ({ recv, args, value, present: present2, bind, type: type2 }) => nullOr(recv, present2, bind, (r) => ({
+        $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type2, args[0])] }), 0]
       }))
     },
     stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
@@ -9365,7 +9467,10 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
+    expr: {
+      args: { sig: "value", exact: 1, slotType: { 0: "value" } },
+      emit: ({ args, value }) => ({ $toString: value(args[0]) })
+    },
     stream: unsupported("'String()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(\u2026);'"
@@ -9381,7 +9486,7 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
+    expr: { args: { sig: "value", exact: 1, slotType: { 0: "value" } }, emit: ({ args, boolean }) => boolean(args[0]) },
     stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(\u2026);'"
@@ -9529,7 +9634,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[base]", allowed: [0, 1] },
+          args: { sig: "[base]", allowed: [0, 1], slotType: { 0: "number" } },
           emit: ({ recv, args, value }) => {
             const base = args[0];
             if (base === void 0) return { $ln: recv };
@@ -9611,7 +9716,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $trunc: recv } : { $trunc: [recv, value(args[0])] }
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -10009,7 +10114,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
+        number: {
+          args: { sig: "x", exact: 1, slotType: { 0: "number" } },
+          emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] })
+        },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.atan2(y, x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<y>.atan2(<x>)': '$.y.atan2($.x)'."
@@ -10035,7 +10143,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "...values", atLeast: 1 },
+          args: { sig: "...values", atLeast: 1, slotType: { 0: "number" }, rest: "number" },
           emit: ({ recv, args, value }) => ({
             $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) }
           })
@@ -10064,7 +10172,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        number: {
+          args: { sig: "[upper]", allowed: [0, 1], slotType: { 0: "number" } },
+          emit: (input) => randomOf(input)
+        },
         Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) }
       }
     },
@@ -10203,11 +10314,20 @@ var NAMES = {
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
-        // A 24-hex constant never reaches this row — the fold makes it a live ObjectId first.
-        constant: unsupported(
-          `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`
-        ),
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }) },
+        // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
+        // constant engine reads it and a query compares it as written.
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, construct }) => construct(
+            "ObjectId",
+            `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`,
+            args[0]
+          )
+        },
+        dynamic: {
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, value }) => ({ $toObjectId: value(args[0]) })
+        },
         otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
       }
     },
@@ -10221,11 +10341,10 @@ var NAMES = {
   // ── the BSON value constructors ────────────────────────────────────────────
   //
   // One factory, because the nine differ in three cells and agree on every other.
-  // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
-  // MongoDB has something to mint, a constant is a live BSON value the fold builds
-  // (so only a constant the type CANNOT hold reaches the `constant` cell below),
-  // and anything else converts on the server through its `$to…`
-  // operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
+  // Each has the SAME three-way meaning `ObjectId` has. No argument mints a value where
+  // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
+  // builds, and the cell refuses a value that the type CANNOT hold. Anything else
+  // converts on the server through its `$to…` operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
   // `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
@@ -10270,6 +10389,7 @@ var NAMES = {
     convert: "$toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
+    takes: "string",
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
   }),
   MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
@@ -10315,8 +10435,14 @@ var NAMES = {
         // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
         // `3` would be an int. The constant converts like anything else, and a string the
         // server cannot parse is the server's own error.
-        constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
+          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
+        },
+        dynamic: {
+          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
+          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
+        },
         otherwise: unsupported("'Number(x)' takes exactly one value.")
       }
     },
@@ -10443,7 +10569,8 @@ var NAMES = {
       args: {
         sig: "year[, month, day, hour, minute, second, ms]",
         allowed: [1, 2, 3, 4, 5, 6, 7],
-        slotType: { 1: "int" }
+        slotType: { 1: "int" },
+        rest: "int"
       },
       emit: ({ args, value }) => ({ $toLong: dateFromParts(args.map(value), "UTC") })
     },
@@ -10543,10 +10670,10 @@ function strictEqualityQuery(input, negated) {
   const present2 = presenceTest(input);
   if (present2 !== null) return presenceQuery(present2, negated);
   if (comparesALength(input)) return null;
-  const mod = moduloTest(input);
-  if (mod !== null) {
-    const test = { $mod: [mod.divisor, mod.remainder] };
-    return negated ? queryOwnValue(mod.path, { $not: test }) : queryOwnValue(mod.path, test);
+  const mod2 = moduloTest(input);
+  if (mod2 !== null) {
+    const test = { $mod: [mod2.divisor, mod2.remainder] };
+    return negated ? queryOwnValue(mod2.path, { $not: test }) : queryOwnValue(mod2.path, test);
   }
   const nul = nullTest(input);
   if (nul !== null) {
@@ -10569,8 +10696,8 @@ function orderedQuery(input, op) {
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   const v = pc.value;
-  const ordered = typeof v === "number" || typeof v === "string" || isDate(v) || bsonTagOf(v) !== void 0;
-  if (!ordered) return null;
+  const ordered2 = typeof v === "number" || typeof v === "string" || isDate(v) || bsonTagOf(v) !== void 0;
+  if (!ordered2) return null;
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 var PRODUCTIONS = {
@@ -10587,8 +10714,8 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "test, then, else", exact: 3 },
-      emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2]))
+      args: { sig: "test, then, else", exact: 3, slotType: { 0: "any", 1: "any", 2: "any" } },
+      emit: ({ args, value, truth: truth2 }) => cond(truth2(args[0]), value(args[1]), value(args[2]))
     },
     stream: unsupported("'?:' produces a value, not a stage."),
     statement: unsupported("'?:' is not a statement \u2014 see its 'where'.")
@@ -10608,7 +10735,10 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $ifNull: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "any" },
+      emit: ({ args, value }) => ({ $ifNull: args.map(value) })
+    },
     stream: unsupported("'??' produces a value, not a stage."),
     statement: unsupported("'??' is not a statement \u2014 see its 'where'.")
   }),
@@ -10623,8 +10753,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'||' produces a value, not a stage."),
     statement: unsupported("'||' is not a statement \u2014 see its 'where'.")
   }),
@@ -10639,8 +10769,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'&&' produces a value, not a stage."),
     statement: unsupported("'&&' is not a statement \u2014 see its 'where'.")
   }),
@@ -10659,7 +10789,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitOr: args.map(value) })
     },
     stream: unsupported("'|' produces a value, not a stage."),
@@ -10680,7 +10810,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitXor: args.map(value) })
     },
     stream: unsupported("'^' produces a value, not a stage."),
@@ -10701,7 +10831,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 2, rest: "int-or-long" },
+      args: { sig: "operands", atLeast: 2, rest: "number" },
       emit: ({ args, value }) => ({ $bitAnd: args.map(value) })
     },
     stream: unsupported("'&' produces a value, not a stage."),
@@ -10718,9 +10848,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, false) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, false)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $eq: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'===' produces a value, not a stage."),
@@ -10737,9 +10870,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, true) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, true)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $ne: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'!==' produces a value, not a stage."),
@@ -10756,8 +10892,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, false) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, false) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'==' produces a value, not a stage."),
     statement: unsupported("'==' is not a statement \u2014 see its 'where'.")
   }),
@@ -10772,8 +10908,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, true) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, true) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'!=' produces a value, not a stage."),
     statement: unsupported("'!=' is not a statement \u2014 see its 'where'.")
   }),
@@ -10789,11 +10925,11 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gt")
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>' produces a value, not a stage."),
@@ -10811,11 +10947,11 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$gte")
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>=' produces a value, not a stage."),
@@ -10833,11 +10969,11 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lt")
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<' produces a value, not a stage."),
@@ -10855,11 +10991,11 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     filter: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: (input) => orderedQuery(input, "$lte")
     },
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "any", 1: "any" } },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<=' produces a value, not a stage."),
@@ -10877,8 +11013,12 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "value, list",
+      exact: 2,
+      slotType: { 0: "element", 1: "array" }
+    }),
     stream: unsupported("'x in [ \u2026 ]' produces a value, not a stage."),
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
   }),
@@ -10898,7 +11038,12 @@ var PRODUCTIONS = {
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: ["number", "string", "date"] }),
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "operands",
+      atLeast: 2,
+      rest: ["number", "string"],
+      homogeneous: true
+    }),
     stream: unsupported("'+' produces a value, not a stage."),
     statement: unsupported("'+' is not a statement \u2014 see its 'where'.")
   }),
@@ -10918,7 +11063,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: ["number", "date"], 1: ["number", "date"] } },
+      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -10961,7 +11106,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $divide: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'/' produces a value, not a stage."),
@@ -10982,7 +11127,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1], slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $mod: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'%' produces a value, not a stage."),
@@ -11004,7 +11149,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, slotType: { 0: "number", 1: "number" } },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'**' produces a value, not a stage."),
@@ -11022,7 +11167,10 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, truth }) => ({ $not: truth(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, truth: truth2 }) => ({ $not: truth2(args[0]) })
+    },
     stream: unsupported("'!' produces a value, not a stage."),
     statement: unsupported("'!' is not a statement \u2014 see its 'where'.")
   }),
@@ -11061,7 +11209,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } },
+      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
       emit: ({ args, value }) => ({ $bitNot: value(args[0]) })
     },
     stream: unsupported("'~' produces a value, not a stage."),
@@ -11080,7 +11228,10 @@ var PRODUCTIONS = {
     returns: "string",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $type: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $type: value(args[0]) })
+    },
     stream: unsupported("'typeof' produces a value, not a stage."),
     statement: unsupported("'typeof' is not a statement \u2014 see its 'where'.")
   }),
@@ -11147,9 +11298,7 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    // A key of any kind reads as its string, as JavaScript reads `o[k]`: an ObjectId key
-    // reads the field its hex names. A null key reads no field.
-    expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } }),
+    expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x[0]' produces a value, not a stage."),
     statement: unsupported("'x[0]' is not a statement \u2014 see its 'where'.")
   }),
@@ -11773,25 +11922,6 @@ var PRODUCTIONS = {
   })
 };
 
-// src/errors.ts
-var CodegenError = class extends Error {
-  constructor(message, pos = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-};
-var UnknownIdentifierError = class extends CodegenError {
-  constructor(identifier2, pos = 0) {
-    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier2;
-  }
-};
-function internalError(detail, pos = 0) {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
 // src/compiler/rows.ts
 var ROWS = Object.assign(/* @__PURE__ */ Object.create(null), NAMES);
 var row = (name2) => ROWS[name2];
@@ -11888,41 +12018,6 @@ function receiverFamiliesOf(name2) {
 }
 function elementsOf(name2) {
   return row(name2)?.elements;
-}
-function argCountOf(name2, family) {
-  const cell = row(name2)?.expr;
-  if (cell === null || typeof cell !== "object") return void 0;
-  const direct = cell.args;
-  if (direct !== void 0) return direct;
-  const perFamily = cell.perFamily;
-  if (perFamily !== void 0) {
-    if (family !== void 0 && perFamily[family]?.args !== void 0) return perFamily[family].args;
-    return void 0;
-  }
-  const byArgs = cell.byArgs;
-  if (byArgs === void 0) return void 0;
-  const allowed = /* @__PURE__ */ new Set();
-  let atLeast;
-  for (const branch of Object.values(byArgs)) {
-    if (branch.unsupported !== void 0) continue;
-    const a = branch.args;
-    if (a === void 0) return void 0;
-    if (a.none === true) allowed.add(0);
-    if (a.exact !== void 0) allowed.add(a.exact);
-    for (const n2 of a.allowed ?? []) allowed.add(n2);
-    if (a.atLeast !== void 0) atLeast = atLeast === void 0 ? a.atLeast : Math.min(atLeast, a.atLeast);
-  }
-  if (atLeast !== void 0) return { atLeast: Math.min(atLeast, ...allowed) };
-  return { allowed: [...allowed].sort((x, y) => x - y) };
-}
-function acceptsArgumentCount(name2, count, family) {
-  const rule = argCountOf(name2, family);
-  if (rule === void 0) return true;
-  if (rule.none === true) return count === 0;
-  if (rule.exact !== void 0) return count === rule.exact;
-  if (rule.allowed !== void 0) return rule.allowed.includes(count);
-  if (rule.atLeast !== void 0) return count >= rule.atLeast;
-  return true;
 }
 function positionsOf(name2) {
   return row(name2)?.where;
@@ -12105,14 +12200,6 @@ function productionForOperator(nodeType, op) {
     if (p.becomes === nodeType && p.tokens[0] === op) return key;
   }
   return void 0;
-}
-function productionBuilding(nodeType) {
-  const keys = Object.entries(PRODUCTIONS).filter(([, p]) => p.becomes === nodeType).map(([k]) => k);
-  if (keys.length !== 1) internalError(`${keys.length} productions build a '${nodeType}'`);
-  return keys[0];
-}
-function productionSpelling(productionKey) {
-  return PRODUCTIONS[productionKey].spelling;
 }
 function flattensChain(productionKey) {
   return PRODUCTIONS[productionKey]?.flattensChain === true;
@@ -12321,13 +12408,13 @@ var KEYWORDS = {
 };
 
 // src/compiler/lex/token.ts
-var token2 = (type, text, pos) => ({
-  type,
+var token2 = (type2, text, pos) => ({
+  type: type2,
   text,
   pos,
   end: pos + text.length
 });
-var spanned = (type, text, pos, end) => ({ type, text, pos, end });
+var spanned = (type2, text, pos, end2) => ({ type: type2, text, pos, end: end2 });
 
 // src/compiler/lex/scanners.ts
 var LexError = class extends Error {
@@ -12341,16 +12428,16 @@ var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isHex = (ch) => isDigit(ch) || ch !== void 0 && (ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F");
 var isIdentStart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z]/.test(ch));
 var isIdentPart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z0-9]/.test(ch));
-function digits(src, i, ok4) {
-  if (!ok4(src[i])) return i;
+function digits(src, i, ok3) {
+  if (!ok3(src[i])) return i;
   i++;
   while (i < src.length) {
-    if (ok4(src[i])) {
+    if (ok3(src[i])) {
       i++;
       continue;
     }
     if (src[i] === "_") {
-      if (!ok4(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
+      if (!ok3(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
       i++;
       continue;
     }
@@ -12470,10 +12557,10 @@ function skipTrivia(src, i) {
       continue;
     }
     if (src[i] === "/" && src[i + 1] === "*") {
-      const at3 = i;
+      const at2 = i;
       i += 2;
       while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
+      if (i >= src.length) throw new LexError("Unterminated block comment", at2);
       i += 2;
       continue;
     }
@@ -12661,8 +12748,8 @@ var Cursor = class {
    * a getter and keeps the narrowing across a `next()` call. After one
    * `this.c.type !== "LBrace"` check, TypeScript refused every later comparison.
    */
-  is(type) {
-    return this.peek().type === type;
+  is(type2) {
+    return this.peek().type === type2;
   }
   next() {
     const t = this.peek();
@@ -12670,8 +12757,8 @@ var Cursor = class {
     return t;
   }
   /** Returns true and consumes the token, or returns false and leaves it. */
-  eat(type) {
-    if (this.type !== type) return false;
+  eat(type2) {
+    if (this.type !== type2) return false;
     this.at++;
     return true;
   }
@@ -12687,9 +12774,9 @@ var Cursor = class {
     const row2 = KEYWORDS[this.peek().text];
     return row2 !== void 0 && row2.token === this.peek().type;
   }
-  expect(type) {
-    if (this.type !== type) {
-      throw new ParseError(`Expected ${spell(type)} but got ${found(this.peek())}`, this.peek().pos);
+  expect(type2) {
+    if (this.type !== type2) {
+      throw new ParseError(`Expected ${spell(type2)} but got ${found(this.peek())}`, this.peek().pos);
     }
     return this.next();
   }
@@ -12914,23 +13001,23 @@ var BSONOffsetError = class extends BSONError {
 };
 var TextDecoderFatal;
 var TextDecoderNonFatal;
-function parseUtf8(buffer2, start, end, fatal) {
+function parseUtf8(buffer2, start, end2, fatal) {
   if (fatal) {
     TextDecoderFatal ??= new TextDecoder("utf8", { fatal: true });
     try {
-      return TextDecoderFatal.decode(buffer2.subarray(start, end));
+      return TextDecoderFatal.decode(buffer2.subarray(start, end2));
     } catch (cause) {
       throw new BSONError("Invalid UTF-8 string in BSON document", { cause });
     }
   }
   TextDecoderNonFatal ??= new TextDecoder("utf8", { fatal: false });
-  return TextDecoderNonFatal.decode(buffer2.subarray(start, end));
+  return TextDecoderNonFatal.decode(buffer2.subarray(start, end2));
 }
-function tryReadBasicLatin(uint8array, start, end) {
+function tryReadBasicLatin(uint8array, start, end2) {
   if (uint8array.length === 0) {
     return "";
   }
-  const stringByteLength = end - start;
+  const stringByteLength = end2 - start;
   if (stringByteLength === 0) {
     return "";
   }
@@ -12947,7 +13034,7 @@ function tryReadBasicLatin(uint8array, start, end) {
     return String.fromCharCode(uint8array[start]) + String.fromCharCode(uint8array[start + 1]) + String.fromCharCode(uint8array[start + 2]);
   }
   const latinBytes = [];
-  for (let i = start; i < end; i++) {
+  for (let i = start; i < end2; i++) {
     const byte = uint8array[i];
     if (byte > 127) {
       return null;
@@ -13000,11 +13087,11 @@ var nodeJsByteUtils = {
     }
     throw new BSONError(`Cannot create Buffer from the passed potentialBuffer.`);
   },
-  allocate(size) {
-    return Buffer.alloc(size);
+  allocate(size2) {
+    return Buffer.alloc(size2);
   },
-  allocateUnsafe(size) {
-    return Buffer.allocUnsafe(size);
+  allocateUnsafe(size2) {
+    return Buffer.allocUnsafe(size2);
   },
   compare(a, b) {
     return nodeJsByteUtils.toLocalBufferType(a).compare(b);
@@ -13012,8 +13099,8 @@ var nodeJsByteUtils = {
   concat(list) {
     return Buffer.concat(list);
   },
-  copy(source, target, targetStart, sourceStart, sourceEnd) {
-    return nodeJsByteUtils.toLocalBufferType(source).copy(target, targetStart ?? 0, sourceStart ?? 0, sourceEnd ?? source.length);
+  copy(source, target2, targetStart, sourceStart, sourceEnd) {
+    return nodeJsByteUtils.toLocalBufferType(source).copy(target2, targetStart ?? 0, sourceStart ?? 0, sourceEnd ?? source.length);
   },
   equals(a, b) {
     return nodeJsByteUtils.toLocalBufferType(a).equals(b);
@@ -13024,8 +13111,8 @@ var nodeJsByteUtils = {
   fromBase64(base64) {
     return Buffer.from(base64, "base64");
   },
-  fromUTF8(utf8) {
-    return Buffer.from(utf8, "utf8");
+  fromUTF8(utf82) {
+    return Buffer.from(utf82, "utf8");
   },
   toBase64(buffer2) {
     return nodeJsByteUtils.toLocalBufferType(buffer2).toString("base64");
@@ -13042,16 +13129,16 @@ var nodeJsByteUtils = {
   toHex(buffer2) {
     return nodeJsByteUtils.toLocalBufferType(buffer2).toString("hex");
   },
-  toUTF8(buffer2, start, end, fatal) {
-    const basicLatin = end - start <= 20 ? tryReadBasicLatin(buffer2, start, end) : null;
+  toUTF8(buffer2, start, end2, fatal) {
+    const basicLatin = end2 - start <= 20 ? tryReadBasicLatin(buffer2, start, end2) : null;
     if (basicLatin != null) {
       return basicLatin;
     }
-    const string = nodeJsByteUtils.toLocalBufferType(buffer2).toString("utf8", start, end);
+    const string = nodeJsByteUtils.toLocalBufferType(buffer2).toString("utf8", start, end2);
     if (fatal) {
       for (let i = 0; i < string.length; i++) {
         if (string.charCodeAt(i) === 65533) {
-          parseUtf8(buffer2, start, end, true);
+          parseUtf8(buffer2, start, end2, true);
           break;
         }
       }
@@ -13113,14 +13200,14 @@ var webByteUtils = {
     }
     throw new BSONError(`Cannot make a Uint8Array from passed potentialBuffer.`);
   },
-  allocate(size) {
-    if (typeof size !== "number") {
-      throw new TypeError(`The "size" argument must be of type number. Received ${String(size)}`);
+  allocate(size2) {
+    if (typeof size2 !== "number") {
+      throw new TypeError(`The "size" argument must be of type number. Received ${String(size2)}`);
     }
-    return new Uint8Array(size);
+    return new Uint8Array(size2);
   },
-  allocateUnsafe(size) {
-    return webByteUtils.allocate(size);
+  allocateUnsafe(size2) {
+    return webByteUtils.allocate(size2);
   },
   compare(uint8Array, otherUint8Array) {
     if (uint8Array === otherUint8Array)
@@ -13153,7 +13240,7 @@ var webByteUtils = {
     }
     return result;
   },
-  copy(source, target, targetStart, sourceStart, sourceEnd) {
+  copy(source, target2, targetStart, sourceStart, sourceEnd) {
     if (sourceEnd !== void 0 && sourceEnd < 0) {
       throw new RangeError(`The value of "sourceEnd" is out of range. It must be >= 0. Received ${sourceEnd}`);
     }
@@ -13167,11 +13254,11 @@ var webByteUtils = {
     }
     targetStart = targetStart ?? 0;
     const srcSlice = source.subarray(sourceStart, sourceEnd);
-    const maxLen = Math.min(srcSlice.length, target.length - targetStart);
+    const maxLen = Math.min(srcSlice.length, target2.length - targetStart);
     if (maxLen <= 0) {
       return 0;
     }
-    target.set(srcSlice.subarray(0, maxLen), targetStart);
+    target2.set(srcSlice.subarray(0, maxLen), targetStart);
     return maxLen;
   },
   equals(uint8Array, otherUint8Array) {
@@ -13191,8 +13278,8 @@ var webByteUtils = {
   fromBase64(base64) {
     return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   },
-  fromUTF8(utf8) {
-    return new TextEncoder().encode(utf8);
+  fromUTF8(utf82) {
+    return new TextEncoder().encode(utf82);
   },
   toBase64(uint8array) {
     return btoa(webByteUtils.toISO88591(uint8array));
@@ -13223,12 +13310,12 @@ var webByteUtils = {
   toHex(uint8array) {
     return Array.from(uint8array, (byte) => byte.toString(16).padStart(2, "0")).join("");
   },
-  toUTF8(uint8array, start, end, fatal) {
-    const basicLatin = end - start <= 20 ? tryReadBasicLatin(uint8array, start, end) : null;
+  toUTF8(uint8array, start, end2, fatal) {
+    const basicLatin = end2 - start <= 20 ? tryReadBasicLatin(uint8array, start, end2) : null;
     if (basicLatin != null) {
       return basicLatin;
     }
-    return parseUtf8(uint8array, start, end, fatal);
+    return parseUtf8(uint8array, start, end2, fatal);
   },
   utf8ByteLength(input) {
     return new TextEncoder().encode(input).byteLength;
@@ -13266,8 +13353,8 @@ var BSONValue = class {
   get [BSON_VERSION_SYMBOL]() {
     return BSON_MAJOR_VERSION;
   }
-  [/* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) {
-    return this.inspect(depth, options, inspect);
+  [/* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect2) {
+    return this.inspect(depth, options, inspect2);
   }
 };
 var FLOAT = new Float64Array(1);
@@ -13461,8 +13548,8 @@ var Binary = class _Binary extends BSONValue {
   }
   read(position, length) {
     length = length && length > 0 ? length : this.position;
-    const end = position + length;
-    return this.buffer.subarray(position, end > this.position ? this.position : end);
+    const end2 = position + length;
+    return this.buffer.subarray(position, end2 > this.position ? this.position : end2);
   }
   value() {
     return this.buffer.length === this.position ? this.buffer : this.buffer.subarray(0, this.position);
@@ -13517,31 +13604,31 @@ var Binary = class _Binary extends BSONValue {
   static fromExtendedJSON(doc, options) {
     options = options || {};
     let data;
-    let type;
+    let type2;
     if ("$binary" in doc) {
       if (options.legacy && typeof doc.$binary === "string" && "$type" in doc) {
-        type = doc.$type ? parseInt(doc.$type, 16) : 0;
+        type2 = doc.$type ? parseInt(doc.$type, 16) : 0;
         data = ByteUtils.fromBase64(doc.$binary);
       } else {
         if (typeof doc.$binary !== "string") {
-          type = doc.$binary.subType ? parseInt(doc.$binary.subType, 16) : 0;
+          type2 = doc.$binary.subType ? parseInt(doc.$binary.subType, 16) : 0;
           data = ByteUtils.fromBase64(doc.$binary.base64);
         }
       }
     } else if ("$uuid" in doc) {
-      type = 4;
+      type2 = 4;
       data = UUID.bytesFromString(doc.$uuid);
     }
     if (!data) {
       throw new BSONError(`Unexpected Binary Extended JSON format ${JSON.stringify(doc)}`);
     }
-    return type === BSON_BINARY_SUBTYPE_UUID_NEW ? new UUID(data) : new _Binary(data, type);
+    return type2 === BSON_BINARY_SUBTYPE_UUID_NEW ? new UUID(data) : new _Binary(data, type2);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
     const base64 = ByteUtils.toBase64(this.buffer.subarray(0, this.position));
-    const base64Arg = inspect(base64, options);
-    const subTypeArg = inspect(this.sub_type, options);
+    const base64Arg = inspect2(base64, options);
+    const subTypeArg = inspect2(this.sub_type, options);
     return `Binary.createFromBase64(${base64Arg}, ${subTypeArg})`;
   }
   toInt8Array() {
@@ -13651,18 +13738,18 @@ var Binary = class _Binary extends BSONValue {
 function validateBinaryVector(vector) {
   if (vector.sub_type !== Binary.SUBTYPE_VECTOR)
     return;
-  const size = vector.position;
+  const size2 = vector.position;
   const datatype = vector.buffer[0];
   const padding = vector.buffer[1];
   if ((datatype === Binary.VECTOR_TYPE.Float32 || datatype === Binary.VECTOR_TYPE.Int8) && padding !== 0) {
     throw new BSONError("Invalid Vector: padding must be zero for int8 and float32 vectors");
   }
   if (datatype === Binary.VECTOR_TYPE.Float32) {
-    if (size !== 0 && size - 2 !== 0 && (size - 2) % 4 !== 0) {
+    if (size2 !== 0 && size2 - 2 !== 0 && (size2 - 2) % 4 !== 0) {
       throw new BSONError("Invalid Vector: Float32 vector must contain a multiple of 4 bytes");
     }
   }
-  if (datatype === Binary.VECTOR_TYPE.PackedBit && padding !== 0 && size === 2) {
+  if (datatype === Binary.VECTOR_TYPE.PackedBit && padding !== 0 && size2 === 2) {
     throw new BSONError("Invalid Vector: padding must be zero for packed bit vectors that are empty");
   }
   if (datatype === Binary.VECTOR_TYPE.PackedBit && padding > 7) {
@@ -13766,9 +13853,9 @@ var UUID = class _UUID extends Binary {
   static isValidUUIDString(representation) {
     return UUID_WITHOUT_DASHES.test(representation) || UUID_WITH_DASHES.test(representation);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    return `new UUID(${inspect(this.toHexString(), options)})`;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    return `new UUID(${inspect2(this.toHexString(), options)})`;
   }
 };
 var Code = class _Code extends BSONValue {
@@ -13797,12 +13884,12 @@ var Code = class _Code extends BSONValue {
   static fromExtendedJSON(doc) {
     return new _Code(doc.$code, doc.$scope);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    let parametersString = inspect(this.code, options);
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    let parametersString = inspect2(this.code, options);
     const multiLineFn = parametersString.includes("\n");
     if (this.scope != null) {
-      parametersString += `,${multiLineFn ? "\n" : " "}${inspect(this.scope, options)}`;
+      parametersString += `,${multiLineFn ? "\n" : " "}${inspect2(this.scope, options)}`;
     }
     const endingNewline = multiLineFn && this.scope === null;
     return `new Code(${multiLineFn ? "\n" : ""}${parametersString}${endingNewline ? "\n" : ""})`;
@@ -13867,15 +13954,15 @@ var DBRef = class _DBRef extends BSONValue {
     delete copy.$db;
     return new _DBRef(doc.$ref, doc.$id, doc.$db, copy);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
     const args = [
-      inspect(this.namespace, options),
-      inspect(this.oid, options),
-      ...this.db ? [inspect(this.db, options)] : [],
-      ...Object.keys(this.fields).length > 0 ? [inspect(this.fields, options)] : []
+      inspect2(this.namespace, options),
+      inspect2(this.oid, options),
+      ...this.db ? [inspect2(this.db, options)] : [],
+      ...Object.keys(this.fields).length > 0 ? [inspect2(this.fields, options)] : []
     ];
-    args[1] = inspect === defaultInspect ? `new ObjectId(${args[1]})` : args[1];
+    args[1] = inspect2 === defaultInspect ? `new ObjectId(${args[1]})` : args[1];
     return `new DBRef(${args.join(", ")})`;
   }
 };
@@ -14012,9 +14099,9 @@ var Long = class _Long extends BSONValue {
     const radixToPower = _Long.fromNumber(Math.pow(radix, 8));
     let result = _Long.ZERO;
     for (let i = 0; i < str2.length; i += 8) {
-      const size = Math.min(8, str2.length - i), value = parseInt(str2.substring(i, i + size), radix);
-      if (size < 8) {
-        const power = _Long.fromNumber(Math.pow(radix, size));
+      const size2 = Math.min(8, str2.length - i), value = parseInt(str2.substring(i, i + size2), radix);
+      if (size2 < 8) {
+        const power = _Long.fromNumber(Math.pow(radix, size2));
         result = result.mul(power).add(_Long.fromNumber(value));
       } else {
         result = result.mul(radixToPower);
@@ -14542,10 +14629,10 @@ var Long = class _Long extends BSONValue {
     }
     return longResult;
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    const longVal = inspect(this.toString(), options);
-    const unsignedVal = this.unsigned ? `, ${inspect(this.unsigned, options)}` : "";
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    const longVal = inspect2(this.toString(), options);
+    const unsignedVal = this.unsigned ? `, ${inspect2(this.unsigned, options)}` : "";
     return `new Long(${longVal}${unsignedVal})`;
   }
 };
@@ -15107,9 +15194,9 @@ var Decimal128 = class _Decimal128 extends BSONValue {
   static fromExtendedJSON(doc) {
     return _Decimal128.fromString(doc.$numberDecimal);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    const d128string = inspect(this.toString(), options);
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    const d128string = inspect2(this.toString(), options);
     return `new Decimal128(${d128string})`;
   }
 };
@@ -15171,9 +15258,9 @@ var Double = class _Double extends BSONValue {
     const doubleValue = parseFloat(doc.$numberDouble);
     return options && options.relaxed ? doubleValue : new _Double(doubleValue);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    return `new Double(${inspect(this.value, options)})`;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    return `new Double(${inspect2(this.value, options)})`;
   }
 };
 var Int32 = class _Int32 extends BSONValue {
@@ -15219,9 +15306,9 @@ var Int32 = class _Int32 extends BSONValue {
   static fromExtendedJSON(doc, options) {
     return options && options.relaxed ? parseInt(doc.$numberInt, 10) : new _Int32(doc.$numberInt);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    return `new Int32(${inspect(this.value, options)})`;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    return `new Int32(${inspect2(this.value, options)})`;
   }
 };
 var MaxKey = class _MaxKey extends BSONValue {
@@ -15359,8 +15446,8 @@ var ObjectId = class _ObjectId extends BSONValue {
   toJSON() {
     return this.toHexString();
   }
-  static is(variable) {
-    return variable != null && typeof variable === "object" && "_bsontype" in variable && variable._bsontype === "ObjectId";
+  static is(variable2) {
+    return variable2 != null && typeof variable2 === "object" && "_bsontype" in variable2 && variable2._bsontype === "ObjectId";
   }
   equals(otherId) {
     if (otherId === void 0 || otherId === null) {
@@ -15445,9 +15532,9 @@ var ObjectId = class _ObjectId extends BSONValue {
   isCached() {
     return _ObjectId.cacheHexString && __idCache.has(this);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    return `new ObjectId(${inspect(this.toHexString(), options)})`;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    return `new ObjectId(${inspect2(this.toHexString(), options)})`;
   }
 };
 function alphabetize(str2) {
@@ -15500,11 +15587,11 @@ var BSONRegExp = class _BSONRegExp extends BSONValue {
     }
     throw new BSONError(`Unexpected BSONRegExp EJSON object form: ${JSON.stringify(doc)}`);
   }
-  inspect(depth, options, inspect) {
+  inspect(depth, options, inspect2) {
     const stylize = getStylizeFunction(options) ?? ((v) => v);
-    inspect ??= defaultInspect;
-    const pattern = stylize(inspect(this.pattern), "regexp");
-    const flags = stylize(inspect(this.options), "regexp");
+    inspect2 ??= defaultInspect;
+    const pattern = stylize(inspect2(this.pattern), "regexp");
+    const flags = stylize(inspect2(this.options), "regexp");
     return `new BSONRegExp(${pattern}, ${flags})`;
   }
 };
@@ -15532,9 +15619,9 @@ var BSONSymbol = class _BSONSymbol extends BSONValue {
   static fromExtendedJSON(doc) {
     return new _BSONSymbol(doc.$symbol);
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    return `new BSONSymbol(${inspect(this.value, options)})`;
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    return `new BSONSymbol(${inspect2(this.value, options)})`;
   }
 };
 var LongWithoutOverridesClass = Long;
@@ -15610,10 +15697,10 @@ var Timestamp = class _Timestamp extends LongWithoutOverridesClass {
     const t = Long.isLong(doc.$timestamp.t) ? doc.$timestamp.t.getLowBitsUnsigned() : doc.$timestamp.t;
     return new _Timestamp({ t, i });
   }
-  inspect(depth, options, inspect) {
-    inspect ??= defaultInspect;
-    const t = inspect(this.t, options);
-    const i = inspect(this.i, options);
+  inspect(depth, options, inspect2) {
+    inspect2 ??= defaultInspect;
+    const t = inspect2(this.t, options);
+    const i = inspect2(this.i, options);
     return `new Timestamp({ t: ${t}, i: ${i} })`;
   }
 };
@@ -15957,9 +16044,9 @@ function parseToElements(bytes, startOffset = 0) {
   const elements = [];
   let offset = startOffset + 4;
   while (offset <= documentSize + startOffset) {
-    const type = bytes[offset];
+    const type2 = bytes[offset];
     offset += 1;
-    if (type === 0) {
+    if (type2 === 0) {
       if (offset - startOffset !== documentSize) {
         throw new BSONOffsetError(`Invalid 0x00 type byte`, offset);
       }
@@ -15969,37 +16056,37 @@ function parseToElements(bytes, startOffset = 0) {
     const nameLength = findNull(bytes, offset) - nameOffset;
     offset += nameLength + 1;
     let length;
-    if (type === BSONElementType.double || type === BSONElementType.long || type === BSONElementType.date || type === BSONElementType.timestamp) {
+    if (type2 === BSONElementType.double || type2 === BSONElementType.long || type2 === BSONElementType.date || type2 === BSONElementType.timestamp) {
       length = 8;
-    } else if (type === BSONElementType.int) {
+    } else if (type2 === BSONElementType.int) {
       length = 4;
-    } else if (type === BSONElementType.objectId) {
+    } else if (type2 === BSONElementType.objectId) {
       length = 12;
-    } else if (type === BSONElementType.decimal) {
+    } else if (type2 === BSONElementType.decimal) {
       length = 16;
-    } else if (type === BSONElementType.bool) {
+    } else if (type2 === BSONElementType.bool) {
       length = 1;
-    } else if (type === BSONElementType.null || type === BSONElementType.undefined || type === BSONElementType.maxKey || type === BSONElementType.minKey) {
+    } else if (type2 === BSONElementType.null || type2 === BSONElementType.undefined || type2 === BSONElementType.maxKey || type2 === BSONElementType.minKey) {
       length = 0;
-    } else if (type === BSONElementType.regex) {
+    } else if (type2 === BSONElementType.regex) {
       length = findNull(bytes, findNull(bytes, offset) + 1) + 1 - offset;
-    } else if (type === BSONElementType.object || type === BSONElementType.array || type === BSONElementType.javascriptWithScope) {
+    } else if (type2 === BSONElementType.object || type2 === BSONElementType.array || type2 === BSONElementType.javascriptWithScope) {
       length = getSize(bytes, offset);
-    } else if (type === BSONElementType.string || type === BSONElementType.binData || type === BSONElementType.dbPointer || type === BSONElementType.javascript || type === BSONElementType.symbol) {
+    } else if (type2 === BSONElementType.string || type2 === BSONElementType.binData || type2 === BSONElementType.dbPointer || type2 === BSONElementType.javascript || type2 === BSONElementType.symbol) {
       length = getSize(bytes, offset) + 4;
-      if (type === BSONElementType.binData) {
+      if (type2 === BSONElementType.binData) {
         length += 1;
       }
-      if (type === BSONElementType.dbPointer) {
+      if (type2 === BSONElementType.dbPointer) {
         length += 12;
       }
     } else {
-      throw new BSONOffsetError(`Invalid 0x${type.toString(16).padStart(2, "0")} type byte`, offset);
+      throw new BSONOffsetError(`Invalid 0x${type2.toString(16).padStart(2, "0")} type byte`, offset);
     }
     if (length > documentSize) {
       throw new BSONOffsetError("value reports length larger than document", offset);
     }
-    elements.push([type, nameOffset, nameLength, offset, length]);
+    elements.push([type2, nameOffset, nameLength, offset, length]);
     offset += length;
   }
   return elements;
@@ -16109,8 +16196,8 @@ function longsWithin(value) {
   }
   if (Array.isArray(value)) {
     const out = [];
-    for (const element2 of value) {
-      const converted = longsWithin(element2);
+    for (const element of value) {
+      const converted = longsWithin(element);
       if (!converted.ok) return converted;
       out.push(converted.value);
     }
@@ -16132,6 +16219,336 @@ function bsonNullary(name2) {
   if (name2 === "MaxKey") return new MaxKey();
   return null;
 }
+
+// src/compiler/interpret/values.ts
+var NO = { ok: false };
+var ok = (value) => ({ ok: true, value });
+var unspellable = (name2) => ({ ok: false, unspellable: name2 });
+var Failed = class {
+  constructor(answer) {
+    this.answer = answer;
+  }
+};
+var MAX_DEPTH = 400;
+var MAX_SIZE = 1e6;
+var MAX_STEPS = 2e6;
+function withinSize(value) {
+  if (typeof value === "string") return value.length <= MAX_SIZE;
+  if (Array.isArray(value)) return value.length <= MAX_SIZE && value.every(withinSize);
+  return true;
+}
+function isPlain(v) {
+  return isPlainObject(v) && bsonTagOf(v) === void 0;
+}
+function kindOf2(v) {
+  if (v === null) return "null";
+  switch (typeof v) {
+    case "number":
+      return "number";
+    case "string":
+      return "string";
+    case "boolean":
+      return "boolean";
+  }
+  if (Array.isArray(v)) return "array";
+  if (isDate(v)) return "date";
+  if (isObjectId(v)) return "objectId";
+  if (isPlain(v)) return "object";
+  return "other";
+}
+function isValue(v) {
+  switch (typeof v) {
+    case "number":
+    case "boolean":
+      return true;
+    case "string":
+      return isWellFormed(v);
+    case "object":
+      break;
+    default:
+      return false;
+  }
+  if (v === null) return true;
+  if (Array.isArray(v)) return v.every(isValue);
+  if (isDate(v)) return !Number.isNaN(v.getTime());
+  if (isPlain(v)) return Object.values(v).every(isValue);
+  return bsonTagOf(v) !== void 0 || isRegExp(v);
+}
+function inert(v) {
+  switch (kindOf2(v)) {
+    case "other":
+      return false;
+    case "array":
+      return v.every(inert);
+    case "object":
+      return Object.values(v).every(inert);
+    default:
+      return true;
+  }
+}
+function truthOf(v) {
+  switch (kindOf2(v)) {
+    case "null":
+      return false;
+    case "number":
+      return v !== 0;
+    case "boolean":
+      return v;
+    case "string":
+    case "array":
+    case "object":
+    case "date":
+    case "objectId":
+      return true;
+    default:
+      return null;
+  }
+}
+var isWellFormed = (s) => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+function compareCodePoints(a, b) {
+  const n2 = Math.min(a.length, b.length);
+  for (let i = 0; i < n2; i++) {
+    let x = a.charCodeAt(i);
+    let y = b.charCodeAt(i);
+    if (x === y) continue;
+    if (x >= 55296 && y >= 55296) {
+      x = x >= 57344 ? x - 2048 : x + 8192;
+      y = y >= 57344 ? y - 2048 : y + 8192;
+    }
+    return x < y ? -1 : 1;
+  }
+  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+}
+function keyOf(v) {
+  switch (kindOf2(v)) {
+    case "null":
+      return "z";
+    case "number":
+      return `n${v}`;
+    case "string":
+      return `s${JSON.stringify(v)}`;
+    case "boolean":
+      return v ? "t" : "f";
+    case "date":
+      return `d${v.getTime()}`;
+    case "objectId":
+      return `o${objectIdHex(v)}`;
+    case "array":
+      return `[${v.map(keyOf).join(",")}]`;
+    case "object":
+      return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${keyOf(x)}`).join(",")}}`;
+    default:
+      return `?${String(v)}`;
+  }
+}
+function sameValue(a, b) {
+  const kind = kindOf2(a);
+  if (kind !== kindOf2(b)) return false;
+  switch (kind) {
+    case "null":
+      return true;
+    case "number":
+    case "string":
+    case "boolean":
+      return a === b && Object.is(a, -0) === Object.is(b, -0);
+    case "date":
+      return a.getTime() === b.getTime();
+    case "objectId":
+      return objectIdHex(a) === objectIdHex(b);
+    case "array": {
+      const x = a;
+      const y = b;
+      return x.length === y.length && x.every((v, i) => sameValue(v, y[i]));
+    }
+    case "object": {
+      const x = a;
+      const y = b;
+      const kx = Object.keys(x);
+      const ky = Object.keys(y);
+      return kx.length === ky.length && kx.every((k, i) => k === ky[i] && sameValue(x[k], y[k]));
+    }
+    default:
+      return false;
+  }
+}
+var KIND_RANK = {
+  null: 1,
+  number: 2,
+  string: 3,
+  object: 4,
+  array: 5,
+  objectId: 7,
+  boolean: 8,
+  date: 9
+};
+var TAG_RANK = {
+  MinKey: 0,
+  Int32: 2,
+  Long: 2,
+  Double: 2,
+  Decimal128: 2,
+  Binary: 6,
+  Timestamp: 10,
+  BSONRegExp: 11,
+  MaxKey: 12
+};
+function rankOf(v) {
+  const kind = kindOf2(v);
+  if (kind !== "other") return KIND_RANK[kind];
+  return isRegExp(v) ? TAG_RANK.BSONRegExp : TAG_RANK[bsonTagOf(v) ?? ""];
+}
+var signOf = (n2) => n2 < 0 ? -1 : n2 > 0 ? 1 : 0;
+function compareValues(a, b) {
+  const ra = rankOf(a);
+  const rb = rankOf(b);
+  if (ra === void 0 || rb === void 0) return void 0;
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  const ka = kindOf2(a);
+  if (ka !== kindOf2(b)) return void 0;
+  switch (ka) {
+    case "null":
+      return 0;
+    case "number":
+      return a < b ? -1 : a > b ? 1 : 0;
+    case "string":
+      return signOf(compareCodePoints(a, b));
+    case "boolean":
+      return a === b ? 0 : a ? 1 : -1;
+    case "date":
+      return signOf(a.getTime() - b.getTime());
+    case "objectId":
+      return signOf(compareCodePoints(objectIdHex(a), objectIdHex(b)));
+    case "array": {
+      const x = a;
+      const y = b;
+      for (let i = 0; i < Math.min(x.length, y.length); i++) {
+        const c = compareValues(x[i], y[i]);
+        if (c === void 0) return void 0;
+        if (c !== 0) return c;
+      }
+      return signOf(x.length - y.length);
+    }
+    case "object": {
+      const x = Object.entries(a);
+      const y = Object.entries(b);
+      for (let i = 0; i < Math.min(x.length, y.length); i++) {
+        const [px, py] = [rankOf(x[i][1]), rankOf(y[i][1])];
+        if (px === void 0 || py === void 0) return void 0;
+        if (px !== py) return px < py ? -1 : 1;
+        const byName = signOf(compareCodePoints(x[i][0], y[i][0]));
+        if (byName !== 0) return byName;
+        const c = compareValues(x[i][1], y[i][1]);
+        if (c !== 0) return c;
+      }
+      return signOf(x.length - y.length);
+    }
+    default:
+      return ra === TAG_RANK.MinKey || ra === TAG_RANK.MaxKey ? 0 : void 0;
+  }
+}
+var isInt32 = (n2) => typeof n2 === "number" && Number.isInteger(n2) && n2 >= -2147483648 && n2 <= 2147483647;
+function nameIfUnspellable(value) {
+  switch (kindOf2(value)) {
+    case "number": {
+      const n2 = value;
+      if (Number.isNaN(n2)) return "NaN";
+      if (!Number.isFinite(n2)) return String(n2);
+      return Object.is(n2, -0) ? "-0" : null;
+    }
+    case "array":
+      for (const v of value) {
+        const name2 = nameIfUnspellable(v);
+        if (name2 !== null) return name2;
+      }
+      return null;
+    case "object":
+      for (const v of Object.values(value)) {
+        const name2 = nameIfUnspellable(v);
+        if (name2 !== null) return name2;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+var isIndexKey = (k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295;
+var OrderedDocument = class {
+  constructor(pairs) {
+    this.pairs = pairs;
+  }
+};
+function losesKeyOrder(value, unordered) {
+  switch (kindOf2(value)) {
+    case "array":
+      return value.some((v) => losesKeyOrder(v, unordered));
+    case "object": {
+      const keys = Object.keys(value);
+      if (!unordered(value) && keys.length > 1) {
+        if (keys.some(isIndexKey)) return true;
+      }
+      return Object.values(value).some((v) => losesKeyOrder(v, unordered));
+    }
+    default:
+      return false;
+  }
+}
+function spellable(value, unordered = () => false) {
+  if (value === void 0 || losesKeyOrder(value, unordered)) return NO;
+  const name2 = nameIfUnspellable(value);
+  if (name2 === null) return withinSize(value) ? ok(value) : NO;
+  return name2 === "-0" ? NO : unspellable(name2);
+}
+function losesPrecision(result, ...operands) {
+  return Number.isFinite(result) && operands.every(Number.isSafeInteger) && !Number.isSafeInteger(result);
+}
+function exactDecimal(n2) {
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, Math.abs(n2));
+  const high = bits.getUint32(0);
+  const raw = high >>> 20 & 2047;
+  let mantissa = BigInt(high & 1048575) << 32n | BigInt(bits.getUint32(4));
+  let power = -1074;
+  if (raw !== 0) {
+    mantissa |= 1n << 52n;
+    power = raw - 1075;
+  }
+  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
+  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
+}
+function reduceToPlaces(n2, places, mode) {
+  if (!Number.isFinite(n2) || n2 === 0) return n2;
+  const { digits: digits2, exponent } = exactDecimal(n2);
+  const shift2 = exponent + places;
+  if (shift2 >= 0) return n2;
+  const unit = 10n ** BigInt(-shift2);
+  const whole = digits2 / unit;
+  const rest = digits2 % unit;
+  const half = unit / 2n;
+  let rounded = whole;
+  if (mode === "half-even") {
+    rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
+  }
+  let spelt = rounded.toString();
+  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
+  const body = places > 0 ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}` : places < 0 && rounded !== 0n ? spelt + "0".repeat(-places) : spelt;
+  return Number(`${n2 < 0 ? "-" : ""}${body}`);
+}
+function numberSpelling(n2) {
+  if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
+  return String(n2);
+}
+var NumberText = class {
+};
+var startsLikeNumber = (s) => /^-?[0-9]/.test(s);
+function holdsNumberText(v) {
+  if (v instanceof NumberText) return true;
+  if (v instanceof OrderedDocument) return v.pairs.some(([, x]) => holdsNumberText(x));
+  if (Array.isArray(v)) return v.some(holdsNumberText);
+  return isPlain(v) && Object.values(v).some(holdsNumberText);
+}
+var asciiUpper = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
+var asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+var points = (s) => [...s];
 
 // src/compiler/passes/literal.ts
 var NOT_CONSTANT = { ok: false };
@@ -16183,12 +16600,26 @@ function asLiteral(value, pos, text = false) {
   }
   if (Array.isArray(value)) {
     const elements = [];
-    for (const element2 of value) {
-      const spelled3 = leafOf(element2, pos, text);
+    for (const element of value) {
+      const spelled3 = leafOf(element, pos, text);
       if (spelled3 === null) return null;
       elements.push(spelled3);
     }
     return { type: "ArrayLiteral", elements, pos };
+  }
+  if (value instanceof OrderedDocument) {
+    const pairs = [];
+    for (const [key, held] of value.pairs) {
+      const spelled3 = leafOf(held, pos, text);
+      if (spelled3 === null) return null;
+      pairs.push({ type: "ArrayLiteral", elements: [{ type: "StringLiteral", value: key, pos }, spelled3], pos });
+    }
+    return {
+      type: "OperatorCall",
+      name: "$arrayToObject",
+      args: [{ type: "ArrayLiteral", elements: [{ type: "ArrayLiteral", elements: pairs, pos }], pos }],
+      pos
+    };
   }
   if (isPlainObject2(value)) {
     const entries = [];
@@ -16201,6 +16632,9 @@ function asLiteral(value, pos, text = false) {
   }
   if (isDate(value)) return { type: "Injected", value, pos };
   return null;
+}
+function nodeOf(value, pos, text = false) {
+  return asLiteral(value, pos, text) ?? { type: "Injected", value, pos };
 }
 function leafOf(value, pos, text) {
   if (value === void 0) return null;
@@ -16230,17 +16664,16 @@ function spellValue(value, pos) {
 }
 function inject(root2, values) {
   if (values.size === 0) return root2;
-  const nodes = /* @__PURE__ */ new Map();
-  for (const [name2, value] of values) nodes.set(name2, spellValue(value, 0));
-  return replaceIdents(root2, nodes);
+  return replaceRefs(root2, values, (name2, pos) => spellValue(values.get(name2), pos));
 }
 function replaceIdents(root2, nodes) {
-  if (nodes.size === 0) return root2;
-  const spell4 = (name2, pos) => {
+  return replaceRefs(root2, nodes, (name2, pos) => {
     const n2 = nodes.get(name2);
     return n2.type === "Injected" ? { ...n2, pos } : n2;
-  };
-  const values = nodes;
+  });
+}
+function replaceRefs(root2, values, spell4) {
+  if (values.size === 0) return root2;
   const walk2 = (node, shadow) => {
     if (Array.isArray(node)) return node.map((n3) => walk2(n3, shadow));
     if (node === null || typeof node !== "object") return node;
@@ -16280,13 +16713,13 @@ function build(want) {
   const out = /* @__PURE__ */ new Map();
   for (const [name2, row2] of rows) {
     if (row2.fixity === void 0 || !want(row2.fixity)) continue;
-    const type = lexemeToType(row2.tokens[0]);
-    if (type === null) continue;
+    const type2 = lexemeToType(row2.tokens[0]);
+    if (type2 === null) continue;
     const prec = row2.precedence ?? 0;
     const assoc = row2.associativity ?? "left";
-    const seen = out.get(type);
+    const seen = out.get(type2);
     if (seen === void 0) {
-      out.set(type, {
+      out.set(type2, {
         rules: [name2],
         prec,
         assoc,
@@ -16303,7 +16736,7 @@ function build(want) {
         `productions.ts: '${row2.tokens[0]}' heads '${seen.rules[0]}' at ${seen.prec}/${seen.assoc} and '${name2}' at ${prec}/${assoc}`
       );
     }
-    out.set(type, {
+    out.set(type2, {
       ...seen,
       rules: [...seen.rules, name2],
       noMixWith: [...seen.noMixWith, ...row2.noMixWith ?? []],
@@ -16319,8 +16752,8 @@ var INFIX = build(
   (f) => f === "infix" || f === "postfix" || f === "ternary" || f === "prefixOrPostfix"
 );
 function asStatementOf(spelling) {
-  const type = lexemeToType(spelling);
-  return type === null ? null : PREFIX.get(type)?.asStatement ?? null;
+  const type2 = lexemeToType(spelling);
+  return type2 === null ? null : PREFIX.get(type2)?.asStatement ?? null;
 }
 var WORDS = new Map(
   rows.filter(([, r]) => r.word !== void 0).map(([n2, r]) => [r.word, n2])
@@ -16399,8 +16832,8 @@ function statementSpelling(stmt) {
       return s.form === "function" ? `function ${s.name}(\u2026) { \u2026 }` : `${s.kind} ${s.name} = (\u2026) => \u2026`;
     case "UpdateFilter": {
       const op = s.ops?.[0];
-      const target = op?.target === void 0 ? "$.x" : targetSpelling(op.target);
-      return op?.type === "DeleteStmt" ? `delete ${target}` : `${target} = \u2026`;
+      const target2 = op?.target === void 0 ? "$.x" : targetSpelling(op.target);
+      return op?.type === "DeleteStmt" ? `delete ${target2}` : `${target2} = \u2026`;
     }
     case "CallExpression":
       return s.callee?.type === "Ident" ? `${s.callee.name}(...)` : "\u2026(...)";
@@ -16416,16 +16849,16 @@ function notPartOfACallback(stmt, retPos) {
   }
   const stages = `'.aggregate((o) => { ${wrote}; \u2026 })'`;
   const link = stmt.type === "OperatorCall" ? `'$$.$${stmt.name.replace(/^\$/, "")}(\u2026)'` : null;
-  const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
+  const chain2 = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain2}`;
   }
-  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain2}`;
 }
-function targetSpelling(target) {
-  if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
-  if (target.type === "Ident") return target.name;
-  if (target.type === "MemberAccess") return `${targetSpelling(target.object)}.${target.name}`;
+function targetSpelling(target2) {
+  if (target2.type === "FieldRef") return target2.path === "" ? "$" : `$.${target2.path}`;
+  if (target2.type === "Ident") return target2.name;
+  if (target2.type === "MemberAccess") return `${targetSpelling(target2.object)}.${target2.name}`;
   return "\u2026";
 }
 function notAPlainPattern(pos, wrote) {
@@ -16485,9 +16918,9 @@ function trailingComma(comma, next) {
   );
 }
 function writeInValue(wrote, statement, place2, side, pos) {
-  const read = place2 === null ? "" : `, and read '${place2}' there`;
+  const read3 = place2 === null ? "" : `, and read '${place2}' there`;
   return new ParseError(
-    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read}.`,
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read3}.`,
     pos
   );
 }
@@ -16507,13 +16940,13 @@ function functionInValueOf(node) {
     node.pos
   );
 }
-function refuseWholeTarget(target, op, pos) {
+function refuseWholeTarget(target2, op, pos) {
   if (op === "=" || op === "delete") return;
-  const what = target.type === "StreamRef" ? "'$$' is the root stream" : target.type === "FieldRef" && target.path === "" ? "'$' is the whole document" : null;
+  const what = target2.type === "StreamRef" ? "'$$' is the root stream" : target2.type === "FieldRef" && target2.path === "" ? "'$' is the whole document" : null;
   if (what === null) return;
   const field = asStatementOf(op) === null ? `$.<field> ${op} \u2026` : `$.<field>${op}`;
   throw new ParseError(
-    `Cannot use '${op}' on '${target.type === "StreamRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
+    `Cannot use '${op}' on '${target2.type === "StreamRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
     pos
   );
 }
@@ -16930,22 +17363,22 @@ var Parser = class _Parser {
     if (this.c.is("Delete")) {
       const kw = this.c.next();
       const targetStart = this.c.peek().pos;
-      const target2 = this.pratt(1);
-      this.requirePlace(target2, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
-      return [{ type: "DeleteStmt", target: target2.expr, pos: kw.pos }];
+      const target3 = this.pratt(1);
+      this.requirePlace(target3, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
+      return [{ type: "DeleteStmt", target: target3.expr, pos: kw.pos }];
     }
     const lead = PREFIX.get(this.c.type);
     const prefix = lead !== void 0 && lead.asStatement !== null ? this.c.next() : null;
     const start = prefix?.pos ?? this.c.peek().pos;
     const placeStart = this.c.peek().pos;
-    const target = prefix !== null && lead !== void 0 ? this.pratt(lead.prec) : this.pratt(1, true);
+    const target2 = prefix !== null && lead !== void 0 ? this.pratt(lead.prec) : this.pratt(1, true);
     const placeEnd = this.c.lastEnd();
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
     }
     const spelling = op.text;
-    this.requireWriteTarget(target, op.pos, spelling, this.src.slice(placeStart, placeEnd));
+    this.requireWriteTarget(target2, op.pos, spelling, this.src.slice(placeStart, placeEnd));
     const update = PREFIX.get(op.type)?.asStatement ?? null;
     if (update !== null) {
       if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
@@ -16953,10 +17386,10 @@ var Parser = class _Parser {
         const wrote = this.src.slice(start, prefix !== null ? placeEnd : op.end);
         throw writeInValue(wrote, `${place2} ${update}`, place2, prefix !== null ? "before" : "after", op.pos);
       }
-      return [{ type: "AssignExpr", target: target.expr, op: spelling, value: target.expr, pos: op.pos }];
+      return [{ type: "AssignExpr", target: target2.expr, op: spelling, value: target2.expr, pos: op.pos }];
     }
     if (spelling === "=") {
-      const targets = [target.expr];
+      const targets = [target2.expr];
       let valueStart2 = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
@@ -16970,17 +17403,17 @@ var Parser = class _Parser {
       if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart2);
       return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value.expr, pos: op.pos }));
     }
-    return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
+    return [{ type: "AssignExpr", target: target2.expr, op: spelling, value: this.expression(), pos: op.pos }];
   }
   /**
    * `1 + ($.a = 5)`: an assignment where JavaScript reads a value. The cursor
    * stands at the operator. This method reads the right side too, so the message
    * quotes the whole write.
    */
-  refuseAssignInValue(target, start) {
+  refuseAssignInValue(target2, start) {
     const place2 = this.src.slice(start, this.c.lastEnd());
     const op = this.c.next();
-    this.requireWriteTarget(target, op.pos, op.text, place2);
+    this.requireWriteTarget(target2, op.pos, op.text, place2);
     this.expression();
     const wrote = this.src.slice(start, this.c.lastEnd());
     throw writeInValue(wrote, wrote, place2, "before", op.pos);
@@ -17028,12 +17461,12 @@ var Parser = class _Parser {
    * JavaScript refuses them, and so does JSMQL. `wrote` is the target as the
    * source spells it, so the message quotes the developer's own text.
    */
-  requirePlace(target, pos, op, wrote) {
-    const t = target.expr.type;
+  requirePlace(target2, pos, op, wrote) {
+    const t = target2.expr.type;
     const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "StreamRef" || t === "DatabaseRef" || t === "ClusterRef";
     if (isPlace) return;
-    if (target.expr.type === "MethodCall") {
-      const call = `.${target.expr.wrote ?? target.expr.name}()`;
+    if (target2.expr.type === "MethodCall") {
+      const call = `.${target2.expr.wrote ?? target2.expr.name}()`;
       throw new ParseError(
         `Cannot apply '${op}' to the result of '${call}', at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection. Write the result to a field instead: '$.<field> = <receiver>${call};'.`,
         pos
@@ -17051,11 +17484,11 @@ var Parser = class _Parser {
    * This method reads the row rather than testing `.optional`. So the next rule
    * that says so needs no branch here.
    */
-  requireWriteTarget(target, pos, op, wrote) {
-    this.requirePlace(target, pos, op, wrote);
-    refuseWholeTarget(target.expr, op, pos);
-    if (target.rule === null) return;
-    const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
+  requireWriteTarget(target2, pos, op, wrote) {
+    this.requirePlace(target2, pos, op, wrote);
+    refuseWholeTarget(target2.expr, op, pos);
+    if (target2.rule === null) return;
+    const refusal = NEVER_A_WRITE_TARGET.get(target2.rule);
     if (refusal === void 0) return;
     throw new ParseError(`You cannot assign to '${refusal.spelling}'. JavaScript rejects it. ${refusal.hint}`, pos);
   }
@@ -17149,10 +17582,10 @@ var Parser = class _Parser {
     if (rule !== void 0 && rule.prec > 0) {
       const op = this.c.next();
       const placeStart = this.c.peek().pos;
-      const argument2 = this.pratt(rule.prec);
+      const argument = this.pratt(rule.prec);
       if (rule.asStatement !== null) {
         const place2 = this.src.slice(placeStart, this.c.lastEnd());
-        this.requireWriteTarget(argument2, op.pos, op.text, place2);
+        this.requireWriteTarget(argument, op.pos, op.text, place2);
         throw writeInValue(
           this.src.slice(op.pos, this.c.lastEnd()),
           `${place2} ${rule.asStatement}`,
@@ -17161,31 +17594,31 @@ var Parser = class _Parser {
           op.pos
         );
       }
-      if (mixingRefused(rule, argument2.rule, "right")) {
+      if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
-          `You cannot combine '${op.text}' with '${spelled(argument2.rule)}' without parentheses. JavaScript rejects it.`,
+          `You cannot combine '${op.text}' with '${spelled(argument.rule)}' without parentheses. JavaScript rejects it.`,
           op.pos
         );
       }
       return {
         // The token's own text is the operator: `!`, `-`, `~`, `typeof`.
-        expr: { type: "UnaryExpr", op: op.text, argument: argument2.expr, pos: op.pos },
+        expr: { type: "UnaryExpr", op: op.text, argument: argument.expr, pos: op.pos },
         rule: rule.rules[0]
       };
     }
     if (this.c.is("Delete")) {
       const kw = this.c.next();
       const placeStart = this.c.peek().pos;
-      const target = this.pratt(MAX_PRECEDENCE);
+      const target2 = this.pratt(MAX_PRECEDENCE);
       const place2 = this.src.slice(placeStart, this.c.lastEnd());
-      this.requirePlace(target, kw.pos, "delete", place2);
+      this.requirePlace(target2, kw.pos, "delete", place2);
       throw writeInValue(`delete ${place2}`, `delete ${place2}`, null, "before", kw.pos);
     }
     return this.postfix(this.atom());
   }
   /** Reads every `.`, `?.`, `[`, `(` that follows an atom, at the tightest level. */
-  postfix(target) {
-    let out = { expr: target, rule: null };
+  postfix(target2) {
+    let out = { expr: target2, rule: null };
     for (; ; ) {
       const rule = INFIX.get(this.c.type);
       if (rule === void 0 || rule.prec !== MAX_PRECEDENCE || rule.fixity !== "postfix") return out;
@@ -17544,7 +17977,7 @@ var Parser = class _Parser {
     const binders = [];
     for (const p of named) {
       if (p.kind === "name") binders.push({ name: p.name, pos: p.pos });
-      else for (const part of p.parts) if (part !== null) binders.push(part);
+      else for (const part2 of p.parts) if (part2 !== null) binders.push(part2);
     }
     if (arrow || named.some((p) => p.kind !== "name")) refuseDuplicateParams(binders);
     if (named.every((p) => p.kind === "name")) {
@@ -17564,26 +17997,26 @@ var Parser = class _Parser {
       const fresh = freshParam("x", ...taken);
       taken.push({ type: "Ident", name: fresh });
       names[i] = fresh;
-      for (const part of p.parts) {
-        if (part === null) continue;
-        const object = { type: "Ident", name: fresh, pos: part.pos };
+      for (const part2 of p.parts) {
+        if (part2 === null) continue;
+        const object = { type: "Ident", name: fresh, pos: part2.pos };
         parts.set(
-          part.name,
+          part2.name,
           p.kind === "array" ? {
             type: "IndexAccess",
             object,
-            index: { type: "NumberLiteral", value: Number(part.key), pos: part.pos },
+            index: { type: "NumberLiteral", value: Number(part2.key), pos: part2.pos },
             optional: false,
-            pos: part.pos
-          } : { type: "MemberAccess", object, name: part.key, optional: false, pos: part.pos }
+            pos: part2.pos
+          } : { type: "MemberAccess", object, name: part2.key, optional: false, pos: part2.pos }
         );
       }
     });
     const lambda = parsed.body !== void 0 ? { type: "Lambda", params: names, body: replaceIdents(parsed.body, parts), pos } : { type: "Lambda", params: names, stages: replaceIdents(parsed.stages, parts), pos };
-    const end = this.unclaimedStages.get(parsed);
-    if (end !== void 0) {
+    const end2 = this.unclaimedStages.get(parsed);
+    if (end2 !== void 0) {
       this.unclaimedStages.delete(parsed);
-      this.unclaimedStages.set(lambda, end);
+      this.unclaimedStages.set(lambda, end2);
     }
     return lambda;
   }
@@ -17720,1500 +18153,1796 @@ function bin(op, left, right) {
   return { type: "BinaryExpr", op: op.text, left, right, pos: op.pos };
 }
 
-// src/compiler/passes/fold-dates.ts
-var NO = { ok: false };
-var ok = (value) => ({ ok: true, value });
-var dateOk = (d) => Number.isNaN(d.getTime()) ? NO : ok(d);
-var DAY = 864e5;
-var FIXED_MS = { week: 7 * DAY, day: DAY, hour: 36e5, minute: 6e4, second: 1e3, millisecond: 1 };
-var MONTHS_IN = { year: 12, quarter: 3, month: 1 };
-var isUnit = (u) => typeof u === "string" && (u in FIXED_MS || u in MONTHS_IN);
-function utc(year, month, day, h = 0, mi = 0, s = 0, ms = 0) {
-  const t = /* @__PURE__ */ new Date(0);
-  t.setUTCFullYear(year, month, day);
-  t.setUTCHours(h, mi, s, ms);
-  return t;
-}
-var midnight = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-var isoWeekday = (d) => d.getUTCDay() === 0 ? 7 : d.getUTCDay();
-function isoThursday(d) {
-  const shifted = new Date(midnight(d));
-  shifted.setUTCDate(shifted.getUTCDate() + 4 - isoWeekday(d));
-  return shifted;
-}
-var isoWeekYearOf = (d) => isoThursday(d).getUTCFullYear();
-function isoWeekOf(d) {
-  const thursday = isoThursday(d);
-  const firstThursday = Date.UTC(thursday.getUTCFullYear(), 0, 4);
-  const firstThursdayWeekStart = firstThursday - (isoWeekday(new Date(firstThursday)) - 1) * DAY;
-  return Math.round((midnight(thursday) - isoWeekday(thursday) * DAY + DAY - firstThursdayWeekStart) / (7 * DAY)) + 1;
-}
-function weekOf(d) {
-  const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
-  const firstSunday = jan1 + (7 - new Date(jan1).getUTCDay()) % 7 * DAY;
-  const days = Math.round((midnight(d) - firstSunday) / DAY);
-  return days < 0 ? 0 : Math.floor(days / 7) + 1;
-}
-var dayOfYearOf = (d) => Math.round((midnight(d) - Date.UTC(d.getUTCFullYear(), 0, 1)) / DAY) + 1;
-function shift(d, unit, amount) {
-  if (unit in MONTHS_IN) {
-    const month = d.getUTCMonth() + MONTHS_IN[unit] * amount;
-    const lastDay = utc(d.getUTCFullYear(), month + 1, 0).getUTCDate();
-    const day = Math.min(d.getUTCDate(), lastDay);
-    return utc(
-      d.getUTCFullYear(),
-      month,
-      day,
-      d.getUTCHours(),
-      d.getUTCMinutes(),
-      d.getUTCSeconds(),
-      d.getUTCMilliseconds()
-    );
+// src/errors.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
   }
-  return new Date(d.getTime() + amount * FIXED_MS[unit]);
-}
-function truncate(d, unit) {
-  switch (unit) {
-    case "year":
-      return utc(d.getUTCFullYear(), 0, 1);
-    case "quarter":
-      return utc(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1);
-    case "month":
-      return utc(d.getUTCFullYear(), d.getUTCMonth(), 1);
-    case "week":
-      return new Date(midnight(d) - d.getUTCDay() * DAY);
-    default: {
-      const ms = FIXED_MS[unit];
-      return new Date(Math.floor(d.getTime() / ms) * ms);
-    }
+};
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier2, pos = 0) {
+    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier2;
   }
-}
-function boundariesBetween(start, end, unit) {
-  switch (unit) {
-    case "year":
-      return end.getUTCFullYear() - start.getUTCFullYear();
-    case "quarter":
-      return quarterIndex(end) - quarterIndex(start);
-    case "month":
-      return end.getUTCFullYear() * 12 + end.getUTCMonth() - (start.getUTCFullYear() * 12 + start.getUTCMonth());
-    default:
-      return Math.round((truncate(end, unit).getTime() - truncate(start, unit).getTime()) / FIXED_MS[unit]);
-  }
-}
-var quarterIndex = (d) => d.getUTCFullYear() * 4 + Math.floor(d.getUTCMonth() / 3);
-var pad = (n2, width) => String(n2).padStart(width, "0");
-function formatDate(d, format) {
-  const year = d.getUTCFullYear();
-  if (year < 1e3 || year > 9999) return null;
-  let out = "";
-  for (let i = 0; i < format.length; i++) {
-    const c = format[i];
-    if (c !== "%") {
-      out += c;
-      continue;
-    }
-    const spec = format[++i];
-    switch (spec) {
-      case "Y":
-        out += pad(year, 4);
-        break;
-      case "G":
-        out += pad(isoWeekYearOf(d), 4);
-        break;
-      case "m":
-        out += pad(d.getUTCMonth() + 1, 2);
-        break;
-      case "d":
-        out += pad(d.getUTCDate(), 2);
-        break;
-      case "H":
-        out += pad(d.getUTCHours(), 2);
-        break;
-      case "M":
-        out += pad(d.getUTCMinutes(), 2);
-        break;
-      case "S":
-        out += pad(d.getUTCSeconds(), 2);
-        break;
-      case "L":
-        out += pad(d.getUTCMilliseconds(), 3);
-        break;
-      case "j":
-        out += pad(dayOfYearOf(d), 3);
-        break;
-      case "w":
-        out += String(d.getUTCDay() + 1);
-        break;
-      case "u":
-        out += String(isoWeekday(d));
-        break;
-      case "U":
-        out += pad(weekOf(d), 2);
-        break;
-      case "V":
-        out += pad(isoWeekOf(d), 2);
-        break;
-      case "z":
-        out += "+0000";
-        break;
-      case "Z":
-        out += "0";
-        break;
-      case "%":
-        out += "%";
-        break;
-      default:
-        return null;
-    }
-  }
-  return out;
-}
-var CALENDAR_PARTS = ["year", "month", "day"];
-var ISO_PARTS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"];
-var TIME_PARTS = ["hour", "minute", "second", "millisecond"];
-function setParts(d, parts) {
-  const keys = Object.keys(parts);
-  const known = [...CALENDAR_PARTS, ...ISO_PARTS, ...TIME_PARTS];
-  if (keys.some((k) => !known.includes(k))) return null;
-  const iso = keys.some((k) => ISO_PARTS.includes(k));
-  if (iso && keys.some((k) => CALENDAR_PARTS.includes(k))) return null;
-  for (const k of keys) {
-    const v = parts[k];
-    if (typeof v !== "number" || !Number.isInteger(v)) return null;
-    if (k === "year" || k === "isoWeekYear" ? v < 1 || v > 9999 : v < -32768 || v > 32767) return null;
-  }
-  const part = (k, own) => typeof parts[k] === "number" ? parts[k] : own;
-  const h = part("hour", d.getUTCHours());
-  const mi = part("minute", d.getUTCMinutes());
-  const s = part("second", d.getUTCSeconds());
-  const ms = part("millisecond", d.getUTCMilliseconds());
-  if (!iso) {
-    return utc(
-      part("year", d.getUTCFullYear()),
-      part("month", d.getUTCMonth() + 1) - 1,
-      part("day", d.getUTCDate()),
-      h,
-      mi,
-      s,
-      ms
-    );
-  }
-  const weekYear = part("isoWeekYear", isoWeekYearOf(d));
-  const week = part("isoWeek", isoWeekOf(d));
-  const weekday = part("isoDayOfWeek", isoWeekday(d));
-  const jan4 = utc(weekYear, 0, 4);
-  const monday = jan4.getTime() - (isoWeekday(jan4) - 1) * DAY;
-  const days = (week - 1) * 7 + (weekday - 1);
-  return new Date(monday + days * DAY + h * FIXED_MS.hour + mi * FIXED_MS.minute + s * FIXED_MS.second + ms);
-}
-function foldDateMethod(d, name2, args) {
-  if (args.length === 0) return getter(d, name2);
-  const [first, second] = args;
-  switch (name2) {
-    case "plus":
-    case "minus":
-      if (args.length !== 2 || !isUnit(second) || typeof first !== "number" || !Number.isInteger(first)) return NO;
-      return dateOk(shift(d, second, name2 === "plus" ? first : -first));
-    case "startOf":
-      return args.length === 1 && isUnit(first) ? dateOk(truncate(d, first)) : NO;
-    case "endOf":
-      return args.length === 1 && isUnit(first) ? dateOk(new Date(shift(truncate(d, first), first, 1).getTime() - 1)) : NO;
-    case "diff":
-      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
-      return ok(boundariesBetween(first, d, second));
-    case "isSame":
-    case "isBefore":
-    case "isAfter": {
-      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
-      const mine = truncate(d, second).getTime();
-      const theirs = truncate(first, second).getTime();
-      return ok(name2 === "isSame" ? mine === theirs : name2 === "isBefore" ? mine < theirs : mine > theirs);
-    }
-    case "format": {
-      if (args.length !== 1 || typeof first !== "string") return NO;
-      const out = formatDate(d, first);
-      return out === null ? NO : ok(out);
-    }
-    case "set": {
-      if (args.length !== 1 || first === null || typeof first !== "object" || Array.isArray(first)) return NO;
-      const out = setParts(d, first);
-      return out === null ? NO : dateOk(out);
-    }
-    default:
-      return NO;
-  }
-}
-function getter(d, name2) {
-  switch (name2) {
-    case "getFullYear":
-    case "getUTCFullYear":
-      return ok(d.getUTCFullYear());
-    case "getMonth":
-    case "getUTCMonth":
-      return ok(d.getUTCMonth());
-    case "getDate":
-    case "getUTCDate":
-      return ok(d.getUTCDate());
-    case "getDay":
-    case "getUTCDay":
-      return ok(d.getUTCDay());
-    case "getHours":
-    case "getUTCHours":
-      return ok(d.getUTCHours());
-    case "getMinutes":
-    case "getUTCMinutes":
-      return ok(d.getUTCMinutes());
-    case "getSeconds":
-    case "getUTCSeconds":
-      return ok(d.getUTCSeconds());
-    case "getMilliseconds":
-    case "getUTCMilliseconds":
-      return ok(d.getUTCMilliseconds());
-    case "getTime":
-      return ok(d.getTime());
-    case "toISOString":
-      return ok(d.toISOString());
-    case "quarter":
-      return ok(Math.floor(d.getUTCMonth() / 3) + 1);
-    case "dayOfYear":
-      return ok(dayOfYearOf(d));
-    case "isoWeekday":
-      return ok(isoWeekday(d));
-    case "isoWeekYear":
-      return ok(isoWeekYearOf(d));
-    case "isoWeek":
-      return ok(isoWeekOf(d));
-    case "week":
-      return ok(weekOf(d));
-    default:
-      return NO;
-  }
-}
-function foldNewDate(args) {
-  if (args.length === 0) return NO;
-  if (args.length === 1) {
-    const [a] = args;
-    if (typeof a === "number") return Number.isFinite(a) ? ok(new Date(a)) : NO;
-    if (typeof a !== "string") return NO;
-    const parsed = new Date(a);
-    return Number.isNaN(parsed.getTime()) ? NO : ok(parsed);
-  }
-  if (!args.every((v) => typeof v === "number" && Number.isInteger(v))) return NO;
-  const [year, month, day = 1, hour = 0, minute = 0, second = 0, ms = 0] = args;
-  return ok(new Date(Date.UTC(year, month, day, hour, minute, second, ms)));
-}
-function foldDateUTC(args) {
-  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 0] : args;
-  const date = foldNewDate(parts);
-  return date.ok ? ok(date.value.getTime()) : NO;
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
 
-// src/compiler/passes/fold-methods.ts
-var NO2 = { ok: false };
-var ok2 = (value) => ({ ok: true, value });
-var valueOf = (a) => a?.value;
-var fnOf = (a) => a?.fn;
-var asciiUpper = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
-var asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
-var points = (s) => [...s];
-var isInt32 = (n2) => typeof n2 === "number" && Number.isInteger(n2) && n2 >= -2147483648 && n2 <= 2147483647;
-function roundToPlaces(n2, places) {
-  if (!Number.isFinite(n2) || n2 === 0) return n2;
-  const { digits: digits2, exponent } = exactDecimal(n2);
-  const shift2 = exponent + places;
-  if (shift2 >= 0) return n2;
-  const unit = 10n ** BigInt(-shift2);
-  const whole = digits2 / unit;
-  const rest = digits2 % unit;
-  const half = unit / 2n;
-  const rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
-  let spelt = rounded.toString();
-  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
-  const body = places > 0 ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}` : places < 0 && rounded !== 0n ? spelt + "0".repeat(-places) : spelt;
-  return Number(`${n2 < 0 ? "-" : ""}${body}`);
-}
-function exactDecimal(n2) {
-  const bits = new DataView(new ArrayBuffer(8));
-  bits.setFloat64(0, Math.abs(n2));
-  const high = bits.getUint32(0);
-  const raw = high >>> 20 & 2047;
-  let mantissa = BigInt(high & 1048575) << 32n | BigInt(bits.getUint32(4));
-  let power = -1074;
-  if (raw !== 0) {
-    mantissa |= 1n << 52n;
-    power = raw - 1075;
+// src/compiler/interpret/operand.ts
+var argsOf = (operand) => Array.isArray(operand) ? operand : [operand];
+function evalAll(walk2, nodes, anyOrder = false) {
+  const values = [];
+  for (const node of nodes) {
+    const a = anyOrder ? walk2.raw(node) : walk2.at(node);
+    if (!a.ok) return a;
+    values.push(a.value);
   }
-  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
-  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
+  return { ok: true, value: values };
 }
-function foldNamespaceCall(namespace, name2, args) {
-  const values = args.map(valueOf);
-  if (namespace === "Number") {
-    const [x] = values;
-    switch (name2) {
-      case "isInteger":
-        return ok2(typeof x === "number" && Number.isInteger(x));
-      case "isNaN":
-        return ok2(typeof x === "number" && Number.isNaN(x));
-      // No `isFinite` and no `isSafeInteger`: the language has neither, and
-      // folding one would ADD it.
-      default:
-        return NO2;
-    }
+function positional(min, max, run, anyOrder = false) {
+  return (operand, walk2) => {
+    const nodes = argsOf(operand);
+    if (nodes.length < min || nodes.length > max) return NO;
+    const all = evalAll(walk2, nodes, anyOrder);
+    return all.ok ? run(all.value, nodes, walk2) : all;
+  };
+}
+function keyed(required, optional, run) {
+  return (operand, walk2) => {
+    if (!isPlain(operand)) return NO;
+    const keys = Object.keys(operand);
+    if (!keys.every((k) => required.includes(k) || optional.includes(k))) return NO;
+    if (!required.every((k) => keys.includes(k))) return NO;
+    return run(operand, walk2);
+  };
+}
+var isVariableName = (name2) => typeof name2 === "string" && /^[a-z][A-Za-z0-9_]*$/.test(name2);
+
+// src/compiler/interpret/accumulate.ts
+var valuesOf = (xs) => xs.length === 1 && Array.isArray(xs[0]) ? xs[0] : xs;
+function sumOf(list) {
+  if (!list.every(inert)) return void 0;
+  const numbers = list.filter((v) => typeof v === "number");
+  if (numbers.length > 2 && !numbers.every(Number.isSafeInteger)) return void 0;
+  let total = 0;
+  for (const n2 of numbers) {
+    const next = total + n2;
+    if (losesPrecision(next, total, n2)) return void 0;
+    total = next;
   }
-  if (namespace === "Date") {
-    return name2 === "UTC" ? foldDateUTC(values) : NO2;
-  }
-  return NO2;
+  return total;
 }
-var isKey = (v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean";
-function foldNamespaceConstant(namespace, name2) {
-  if (namespace !== "Math") return NO2;
-  if (name2 === "PI") return ok2(Math.PI);
-  if (name2 === "E") return ok2(Math.E);
-  return NO2;
+var sum = positional(
+  0,
+  Infinity,
+  (xs) => {
+    const total = sumOf(valuesOf(xs));
+    return total === void 0 ? NO : spellable(total);
+  },
+  true
+);
+var avg = positional(
+  0,
+  Infinity,
+  (xs) => {
+    const list = valuesOf(xs);
+    const total = sumOf(list);
+    if (total === void 0) return NO;
+    const count = list.filter((v) => typeof v === "number").length;
+    return count === 0 ? ok(null) : spellable(total / count);
+  },
+  true
+);
+var COMPARABLE = /* @__PURE__ */ new Set(["number", "string", "boolean", "date", "objectId"]);
+var extreme = (greatest) => positional(
+  0,
+  Infinity,
+  (xs) => {
+    const kept = valuesOf(xs).filter((v) => v !== null);
+    if (kept.length === 0) return ok(null);
+    const kind = kindOf2(kept[0]);
+    if (!COMPARABLE.has(kind) || !kept.every((v) => kindOf2(v) === kind)) return NO;
+    if (!kept.every((v) => typeof v !== "string" || isWellFormed(v))) return NO;
+    let best = kept[0];
+    for (const v of kept.slice(1)) {
+      const order = compareValues(v, best);
+      if (greatest ? order > 0 : order < 0) best = v;
+    }
+    return ok(best);
+  },
+  true
+);
+var ACCUMULATE = { $sum: sum, $avg: avg, $max: extreme(true), $min: extreme(false) };
+
+// src/compiler/interpret/arithmetic.ts
+var isNumber = (v) => typeof v === "number";
+function numbersOrNull(xs) {
+  if (!xs.every((x) => isNumber(x) || x === null)) return void 0;
+  return xs.includes(null) ? null : xs;
 }
-function foldConstructor(name2, args) {
-  const values = args.map(valueOf);
-  switch (canonicalBsonName(name2)) {
-    case "Date":
-      return foldNewDate(values);
-    default:
-      return bsonValue2(name2, args.length, values);
-  }
+function numeric(min, max, fold2) {
+  return positional(min, max, (xs) => {
+    const ns = numbersOrNull(xs);
+    if (ns === void 0) return NO;
+    return ns === null ? ok(null) : fold2(ns);
+  });
 }
-function foldNamedCall(name2, args) {
-  const values = args.map(valueOf);
-  const [a] = values;
-  switch (canonicalBsonName(name2)) {
-    // `Date(…)` without `new` means the same date `new Date(…)` does. JavaScript's
-    // bare call returns a string instead; jsmql keeps the syntax, not that meaning.
-    case "Date":
-      return foldNewDate(values);
-    case "String":
-      if (a === null) return ok2(null);
-      if (typeof a === "string") return ok2(a);
-      if (typeof a === "boolean") return ok2(String(a));
-      if (typeof a === "number") {
-        const spelled3 = numberSpelling(a);
-        return spelled3 === null ? NO2 : ok2(spelled3);
-      }
-      return NO2;
-    case "Boolean":
-      return args.length === 1 ? ok2(Boolean(a)) : NO2;
-    case "Number":
-      return NO2;
-    default:
-      return bsonValue2(name2, args.length, values);
-  }
+function chain(identity2, step2) {
+  return numeric(0, Infinity, (ns) => {
+    let acc = identity2;
+    for (const n2 of ns) {
+      const next = step2(acc, n2);
+      if (losesPrecision(next, acc, n2)) return NO;
+      acc = next;
+    }
+    return spellable(acc);
+  });
 }
-function bsonValue2(name2, count, values) {
-  if (count === 0) {
-    const minted = bsonNullary(name2);
-    return minted === null ? NO2 : ok2(minted);
-  }
-  if (count !== 1) return NO2;
-  const built = bsonConstant(name2, values[0]);
-  return built === null ? NO2 : ok2(built);
+var subtract = numeric(2, 2, ([a, b]) => {
+  const r = a - b;
+  return losesPrecision(r, a, b) ? NO : spellable(r);
+});
+var divide = numeric(2, 2, ([a, b]) => spellable(a / b));
+var mod = numeric(2, 2, ([a, b]) => spellable(a % b));
+var pow = numeric(2, 2, ([a, b]) => {
+  if (!Number.isSafeInteger(a) || !Number.isInteger(b) || b < 0) return NO;
+  if (Math.abs(a) <= 1) return spellable(a ** b);
+  const sign = a < 0 && b % 2 === 1 ? "-Infinity" : "Infinity";
+  if (b > 2e3) return unspellable(sign);
+  const exact = BigInt(a) ** BigInt(b);
+  const wide = Number(exact);
+  if (Number.isSafeInteger(wide)) return ok(wide);
+  return Number.isFinite(wide) ? NO : unspellable(sign);
+});
+var unary = (f) => numeric(1, 1, ([n2]) => spellable(f(n2)));
+function rounding(mode) {
+  return positional(1, 2, ([n2, place2]) => {
+    if (n2 !== null && !isNumber(n2)) return NO;
+    if (place2 !== void 0 && !(isInt32(place2) && place2 >= -20 && place2 <= 100)) return NO;
+    if (n2 === null) return ok(null);
+    const result = reduceToPlaces(n2, place2 ?? 0, mode);
+    if (isInt32(n2) && !isInt32(result)) return NO;
+    return spellable(result);
+  });
 }
-function numberSpelling(n2) {
-  if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
-  return String(n2);
+function bitwise(combine) {
+  return positional(1, Infinity, (xs) => {
+    if (!xs.every(isInt32)) return NO;
+    return ok(xs.reduce(combine));
+  });
 }
-function foldInstanceCall(receiver, name2, args) {
-  if (typeof receiver === "string") return stringMethod(receiver, name2, args);
-  if (Array.isArray(receiver)) return arrayMethod(receiver, name2, args);
-  if (typeof receiver === "number") return numberMethod(receiver, name2, args);
-  if (isDate(receiver)) return foldDateMethod(receiver, name2, args.map(valueOf));
-  if (bsonTagOf(receiver) !== void 0) {
-    if (name2 !== "toString" || args.length !== 0) return NO2;
-    if (isObjectId(receiver)) {
-      const hex = objectIdHex(receiver);
-      return hex === null ? NO2 : ok2(hex);
-    }
-    const own = receiver.toString;
-    return typeof own === "function" && own !== Object.prototype.toString ? ok2(String(own.call(receiver))) : NO2;
-  }
-  if (isPlainObject3(receiver)) return objectMethod(receiver, name2, args);
-  return NO2;
-}
-function isPlainObject3(v) {
-  return isPlainObject(v) && bsonTagOf(v) === void 0;
-}
-var WORD = /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g;
-var wordsOf = (s) => s.match(WORD) ?? [];
-var HTML = [
-  ["&", "&amp;"],
-  ["<", "&lt;"],
-  [">", "&gt;"],
-  ['"', "&quot;"],
-  ["'", "&#39;"]
-];
-function lodashString(s, name2, args) {
-  const [a] = args.map(valueOf);
-  switch (name2) {
-    case "escape": {
-      let out = s;
-      for (const [from, to] of HTML) out = out.split(from).join(to);
-      return ok2(out);
-    }
-    case "words":
-      return ok2(wordsOf(s));
-    case "kebabCase":
-      return ok2(asciiLower(wordsOf(s).join("-")));
-    case "snakeCase":
-      return ok2(asciiLower(wordsOf(s).join("_")));
-    case "startCase":
-      return ok2(
-        wordsOf(s).map((w) => asciiUpper(w.slice(0, 1)) + asciiLower(w.slice(1))).join(" ")
-      );
-    case "camelCase": {
-      const parts = wordsOf(s).map((w) => asciiLower(w));
-      if (parts.length === 0) return ok2("");
-      const [head, ...rest] = parts;
-      return ok2(head + rest.map((w) => asciiUpper(w.slice(0, 1)) + w.slice(1)).join(""));
-    }
-    case "capitalize":
-      return ok2(asciiUpper(s.slice(0, 1)) + asciiLower(s.slice(1)));
-    case "upperFirst":
-      return ok2(asciiUpper(s.slice(0, 1)) + s.slice(1));
-    case "lowerFirst":
-      return ok2(asciiLower(s.slice(0, 1)) + s.slice(1));
-    case "truncate": {
-      if (a !== void 0 && (a === null || typeof a !== "object" || Array.isArray(a))) return NO2;
-      const options = a === void 0 ? {} : a;
-      for (const key of Object.keys(options)) if (key !== "length" && key !== "omission") return NO2;
-      const limit = options.length === void 0 ? 30 : options.length;
-      const omission = options.omission === void 0 ? "..." : options.omission;
-      if (typeof limit !== "number" || typeof omission !== "string") return NO2;
-      const cps = points(s);
-      if (cps.length <= limit) return ok2(s);
-      return ok2(cps.slice(0, Math.max(0, limit - points(omission).length)).join("") + omission);
-    }
-    default:
-      return NO2;
-  }
-}
-function stringMethod(s, name2, args) {
-  const [a, b] = args.map(valueOf);
-  switch (name2) {
-    case "toUpperCase":
-      return ok2(asciiUpper(s));
-    case "toLowerCase":
-      return ok2(asciiLower(s));
-    case "trim":
-      return ok2(s.trim());
-    case "trimStart":
-    case "trimLeft":
-      return ok2(s.trimStart());
-    case "trimEnd":
-    case "trimRight":
-      return ok2(s.trimEnd());
-    case "startsWith":
-      return typeof a === "string" ? ok2(s.startsWith(a, typeof b === "number" ? b : void 0)) : NO2;
-    case "endsWith":
-      return typeof a === "string" ? ok2(s.endsWith(a, typeof b === "number" ? b : void 0)) : NO2;
-    case "includes":
-      return typeof a === "string" ? ok2(s.includes(a)) : NO2;
-    case "length":
-      return ok2(points(s).length);
-    case "indexOfSubstring": {
-      if (typeof a !== "string") return NO2;
-      if (b !== void 0 && !isInt32(b)) return NO2;
-      const start = b === void 0 ? 0 : Math.max(0, b);
-      const cps = points(s);
-      if (start > 0 && start >= cps.length) return ok2(-1);
-      const needle = points(a);
-      for (let i = start; i <= cps.length - needle.length; i++) {
-        if (cps.slice(i, i + needle.length).join("") === a) return ok2(i);
-      }
-      return ok2(-1);
-    }
-    // No `lastIndexOf`: the language refuses it on a string, because `$indexOfCP`
-    // only searches forward. Folding it would ADD a method to the language.
-    case "charAt":
-      return isInt32(a) ? ok2(points(s)[a] ?? "") : NO2;
-    case "substring": {
-      if (!isInt32(a) || a < 0) return NO2;
-      if (b !== void 0 && (!isInt32(b) || b < 0)) return NO2;
-      const cps = points(s);
-      const end = b === void 0 ? cps.length : b;
-      return ok2(cps.slice(a, a + Math.max(0, end - a)).join(""));
-    }
-    case "repeat":
-      return isInt32(a) && a >= 0 ? ok2(s.repeat(a)) : NO2;
-    case "padStart":
-    case "padEnd": {
-      if (!isInt32(a)) return NO2;
-      const fill = b === void 0 ? " " : b;
-      if (typeof fill !== "string" || fill === "") return ok2(s);
-      const cps = points(s);
-      if (cps.length >= a) return ok2(s);
-      const pad2 = points(fill);
-      const built = [];
-      while (built.length < a - cps.length) built.push(pad2[built.length % pad2.length]);
-      return ok2(name2 === "padStart" ? built.join("") + s : s + built.join(""));
-    }
-    case "split":
-      if (typeof a !== "string" || a === "") return NO2;
-      if (b !== void 0 && !isInt32(b)) return NO2;
-      return ok2(s.split(a, typeof b === "number" ? b : void 0));
-    default:
-      return lodashString(s, name2, args);
-  }
-}
-function sliceOf(items, start, end, done) {
-  if (start !== void 0 && !isInt32(start)) return NO2;
-  if (end !== void 0 && !isInt32(end)) return NO2;
-  return ok2(done(items.slice(start, end)));
-}
-function numberMethod(n2, name2, args) {
-  const [a, b] = args.map(valueOf);
-  switch (name2) {
-    case "round":
-    case "ceil":
-    case "floor": {
-      if (a !== void 0 && !Number.isInteger(a)) return NO2;
-      const places = a ?? 0;
-      if (name2 === "round") return ok2(roundToPlaces(n2, places));
-      const scale = 10 ** places;
-      const scaled = name2 === "ceil" ? Math.ceil(n2 * scale) : Math.floor(n2 * scale);
-      const answer = scaled / scale;
-      return Number.isFinite(answer) ? ok2(answer) : NO2;
-    }
-    // The ones whose result is EXACTLY specified. IEEE-754 specifies `sqrt` and the
-    // algebraic operations, and leaves every transcendental free, so `.cbrt()`, `.log2()`,
-    // `.cos()` and the other transcendentals run on the server, where the answer is
-    // whatever the server gives. MEASURED against mongod: eleven of twenty-nine differ.
-    case "abs":
-      return a === void 0 ? ok2(Math.abs(n2)) : NO2;
-    case "sign":
-      return a === void 0 ? ok2(Math.sign(n2)) : NO2;
-    case "sqrt":
-      return a === void 0 ? ok2(Math.sqrt(n2)) : NO2;
-    case "trunc":
-      return a === void 0 ? ok2(Math.trunc(n2)) : NO2;
-    case "clamp":
-      if (typeof a !== "number") return NO2;
-      if (b !== void 0 && typeof b !== "number") return NO2;
-      return typeof b === "number" ? ok2(Math.min(Math.max(n2, a), b)) : ok2(Math.min(n2, a));
-    case "inRange":
-      if (typeof a !== "number") return NO2;
-      if (b !== void 0 && typeof b !== "number") return NO2;
-      if (typeof b !== "number") return ok2(n2 >= Math.min(0, a) && n2 < Math.max(0, a));
-      return ok2(n2 >= Math.min(a, b) && n2 < Math.max(a, b));
-    default:
-      return NO2;
-  }
-}
-function objectMethod(o, name2, args) {
-  const [a] = args.map(valueOf);
-  const fn = fnOf(args[0]);
-  switch (name2) {
-    case "keys":
-      return ok2(Object.keys(o));
-    case "values":
-      return ok2(Object.values(o));
-    // JavaScript's [key, value] pairs, as the runtime lowering gives them.
-    case "entries":
-    case "toPairs":
-      return ok2(Object.entries(o));
-    case "assign": {
-      const sources = args.map(valueOf);
-      return sources.every(isPlainObject3) ? ok2(Object.assign({}, o, ...sources)) : NO2;
-    }
-    case "invert": {
-      const out = {};
-      for (const [k, v] of Object.entries(o)) {
-        if (!isKey(v)) return NO2;
-        setKey(out, String(v), k);
-      }
-      return ok2(out);
-    }
-    case "pick":
-    case "omit": {
-      if (!Array.isArray(a) || !a.every((k) => typeof k === "string")) return NO2;
-      const keep = new Set(a);
-      const out = {};
-      for (const [k, v] of Object.entries(o)) if (keep.has(k) === (name2 === "pick")) setKey(out, k, v);
-      return ok2(out);
-    }
-    case "mapValues": {
-      if (fn === void 0) return NO2;
-      const out = {};
-      for (const [k, v] of Object.entries(o)) setKey(out, k, fn(v, k, o));
-      return ok2(out);
-    }
-    case "mapKeys": {
-      if (fn === void 0) return NO2;
-      const out = {};
-      for (const [k, v] of Object.entries(o)) {
-        const key = fn(v, k, o);
-        if (!isKey(key)) return NO2;
-        setKey(out, String(key), v);
-      }
-      return ok2(out);
-    }
-    case "pickBy":
-    case "omitBy": {
-      if (fn === void 0) return NO2;
-      const out = {};
-      for (const [k, v] of Object.entries(o)) {
-        if (truthy(fn(v, k, o)) === (name2 === "pickBy")) setKey(out, k, v);
-      }
-      return ok2(out);
-    }
-    default:
-      return NO2;
-  }
-}
-var deepIncludes = (haystack, needle) => haystack.some((h) => sameValue(h, needle));
-function firstPerKey(items, keyOf) {
-  const seen = [];
-  return items.filter((v, i) => {
-    const k = keyOf(v, i, items);
-    if (deepIncludes(seen, k)) return false;
-    seen.push(k);
+var ARITHMETIC = {
+  $add: chain(0, (a, b) => a + b),
+  $subtract: subtract,
+  $multiply: chain(1, (a, b) => a * b),
+  $divide: divide,
+  $mod: mod,
+  $pow: pow,
+  $sqrt: unary(Math.sqrt),
+  $abs: unary(Math.abs),
+  $ceil: unary(Math.ceil),
+  $floor: unary(Math.floor),
+  $trunc: rounding("toward-zero"),
+  $round: rounding("half-even"),
+  $bitAnd: bitwise((a, b) => a & b),
+  $bitOr: bitwise((a, b) => a | b),
+  $bitXor: bitwise((a, b) => a ^ b),
+  $bitNot: positional(1, 1, ([n2]) => isInt32(n2) ? ok(~n2) : NO)
+};
+
+// src/compiler/interpret/array.ts
+var isArray = (v) => Array.isArray(v);
+var allInert = (...lists2) => lists2.every((l) => l.every(inert));
+function unique(xs) {
+  const seen = /* @__PURE__ */ new Set();
+  return xs.filter((x) => {
+    const key = keyOf(x);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
-function keyedBy(xs, fn) {
-  const keys = xs.map((v, i) => fn(v, i, xs));
-  return keys;
-}
-function countArg(a) {
-  if (a === void 0) return 1;
-  return isInt32(a) ? a : null;
-}
-var numbersIn = (xs) => xs.filter((v) => typeof v === "number");
-var comparableStrings = (keys) => keys.every((k) => typeof k === "string" && !/[\uD800-\uDFFF]/.test(k));
-function sortByKeys(xs, keys, descending = false) {
-  const kind = (k) => typeof k === "number" ? "number" : typeof k === "string" ? "string" : "other";
-  if (keys.some((k) => kind(k) === "other")) return null;
-  if (new Set(keys.map(kind)).size > 1) return null;
-  if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return null;
-  const paired = xs.map((v, i) => ({ v, k: keys[i], i }));
-  paired.sort((p, q) => {
-    if (p.k === q.k) return p.i - q.i;
-    const less = p.k < q.k;
-    return (less ? -1 : 1) * (descending ? -1 : 1);
-  });
-  return paired.map((p) => p.v);
-}
-function sortAsk(name2, values) {
-  const direction = (v) => v === void 0 || v === 1 || v === "asc" ? 1 : v === -1 || v === "desc" ? -1 : null;
-  const [first, second] = values;
-  const keys = [];
-  if (name2 === "orderBy" && isPlainObject3(first)) {
-    if (second !== void 0) return null;
-    for (const [field, v] of Object.entries(first)) {
-      const d = direction(v);
-      if (d === null || field === "" || field.startsWith("$")) return null;
-      keys.push({ field, direction: d });
+var has = (xs, v) => xs.some((x) => sameValue(x, v));
+var keysOf = (xs) => new Set(xs.map(keyOf));
+var size = positional(1, 1, ([xs]) => isArray(xs) ? ok(xs.length) : NO, true);
+var arrayElemAt = positional(2, 2, ([xs, index]) => {
+  if (xs !== null && !isArray(xs)) return NO;
+  if (index === null || xs === null) return index === null || isInt32(index) ? ok(null) : NO;
+  if (!isInt32(index)) return NO;
+  const at2 = index < 0 ? xs.length + index : index;
+  return at2 >= 0 && at2 < xs.length ? ok(xs[at2]) : NO;
+});
+var end = (which) => positional(1, 1, ([xs]) => {
+  if (xs === null) return ok(null);
+  if (!isArray(xs) || xs.length === 0) return NO;
+  return ok(which === "first" ? xs[0] : xs[xs.length - 1]);
+});
+var ends = (which) => keyed(["n", "input"], [], (parts, walk2) => {
+  const n2 = walk2.at(parts.n);
+  if (!n2.ok) return n2;
+  const input = walk2.at(parts.input);
+  if (!input.ok) return input;
+  if (!isInt32(n2.value) || n2.value < 1 || !isArray(input.value)) return NO;
+  return ok(which === "first" ? input.value.slice(0, n2.value) : input.value.slice(-n2.value));
+});
+var slice = positional(2, 3, ([xs, a, b]) => {
+  if (xs !== null && !isArray(xs)) return NO;
+  if (!isInt32(a) || b !== void 0 && !(isInt32(b) && b > 0)) return NO;
+  if (xs === null) return ok(null);
+  if (b === void 0) return ok(a >= 0 ? xs.slice(0, a) : xs.slice(a));
+  const start = a < 0 ? Math.max(xs.length + a, 0) : a;
+  return ok(xs.slice(start, start + b));
+});
+var concatArrays = positional(
+  0,
+  Infinity,
+  (xs, _, walk2) => {
+    if (!xs.every((x) => x === null || isArray(x))) return NO;
+    if (xs.includes(null)) return ok(null);
+    const lists2 = xs;
+    const marked = lists2.some((l) => walk2.isSet(l));
+    if (marked && !lists2.every((l) => l.length === 0 || walk2.isSet(l))) return NO;
+    const out = lists2.flat(1);
+    return ok(marked ? walk2.markSet(out) : out);
+  },
+  true
+);
+var reverseArray = positional(1, 1, ([xs]) => {
+  if (xs === null) return ok(null);
+  return isArray(xs) ? ok([...xs].reverse()) : NO;
+});
+var range = positional(2, 3, ([from, to, step2 = 1]) => {
+  if (![from, to, step2].every(isInt32) || step2 === 0) return NO;
+  const f = from;
+  const t = to;
+  const s = step2;
+  const count = s > 0 ? Math.ceil((t - f) / s) : Math.ceil((f - t) / -s);
+  if (count > MAX_SIZE) return NO;
+  return ok(Array.from({ length: Math.max(0, count) }, (_, i) => f + i * s));
+});
+var inRule = positional(
+  2,
+  2,
+  ([needle, xs], _, walk2) => {
+    if (needle instanceof NumberText) {
+      return isArray(xs) && xs.every((x) => typeof x === "string" && !startsLikeNumber(x)) ? ok(false) : NO;
     }
-    return keys.length === 0 ? null : keys;
-  }
-  const fields = typeof first === "string" ? [first] : Array.isArray(first) ? first : null;
-  if (fields === null || fields.length === 0) return null;
-  if (!fields.every((f) => typeof f === "string" && f !== "" && !f.startsWith("$"))) return null;
-  if (name2 === "sortBy" && second !== void 0) return null;
-  const directions = second === void 0 ? [] : Array.isArray(second) ? second : [second];
-  for (const [i, field] of fields.entries()) {
-    const d = name2 === "sortBy" ? 1 : direction(directions[i]);
-    if (d === null) return null;
-    keys.push({ field, direction: d });
-  }
-  return keys;
+    if (!isArray(xs) || !allInert(xs) || !inert(needle)) return NO;
+    if (walk2.holdsSet(needle) || xs.some((x) => walk2.holdsSet(x))) return NO;
+    return ok(has(xs, needle));
+  },
+  true
+);
+var indexOfArray = positional(2, 4, ([xs, needle, from = 0, to]) => {
+  if (xs !== null && !isArray(xs)) return NO;
+  if (!isInt32(from) || from < 0 || to !== void 0 && !(isInt32(to) && to >= 0)) return NO;
+  if (xs === null) return ok(null);
+  if (!allInert(xs) || !inert(needle)) return NO;
+  const stop = Math.min(to === void 0 ? xs.length : to, xs.length);
+  for (let i = from; i < stop; i++) if (sameValue(xs[i], needle)) return ok(i);
+  return ok(-1);
+});
+var isArrayRule = positional(1, 1, ([v]) => ok(isArray(v)), true);
+var truthEvery = (every) => positional(
+  1,
+  1,
+  ([xs]) => {
+    if (!isArray(xs)) return NO;
+    const truths = xs.map(truthOf);
+    if (truths.includes(null)) return NO;
+    return ok(every ? truths.every(Boolean) : truths.some(Boolean));
+  },
+  true
+);
+function elementName(parts) {
+  const name2 = "as" in parts ? parts.as : "this";
+  return isVariableName(name2) ? name2 : null;
 }
-function readField(doc, field) {
+function inputOf(walk2, node, anyOrder = false) {
+  const input = anyOrder ? walk2.raw(node) : walk2.at(node);
+  if (!input.ok) return input;
+  return input.value === null || isArray(input.value) ? input : NO;
+}
+var map = keyed(["input", "in"], ["as"], (parts, walk2) => {
+  const name2 = elementName(parts);
+  const input = inputOf(walk2, parts.input, true);
+  if (name2 === null || !input.ok) return input.ok ? NO : input;
+  if (input.value === null) return ok(null);
+  const out = [];
+  for (const element of input.value) {
+    const a = walk2.raw(parts.in, { [name2]: element });
+    if (!a.ok) return a;
+    out.push(a.value);
+  }
+  return ok(walk2.isSet(input.value) ? walk2.markSet(out) : out);
+});
+var filter = keyed(["input", "cond"], ["as", "limit"], (parts, walk2) => {
+  const name2 = elementName(parts);
+  const input = inputOf(walk2, parts.input, true);
+  if (name2 === null || !input.ok) return input.ok ? NO : input;
+  let limit = Infinity;
+  if ("limit" in parts) {
+    const l = walk2.at(parts.limit);
+    if (!l.ok) return l;
+    if (l.value !== null) {
+      if (!isInt32(l.value) || l.value < 1) return NO;
+      limit = l.value;
+    }
+  }
+  if (input.value === null) return ok(null);
+  if (limit !== Infinity && walk2.isSet(input.value)) return NO;
+  const out = [];
+  for (const element of input.value) {
+    const a = walk2.raw(parts.cond, { [name2]: element });
+    if (!a.ok) return a;
+    const t = truthOf(a.value);
+    if (t === null) return NO;
+    if (t && out.length < limit) out.push(element);
+  }
+  return ok(walk2.isSet(input.value) ? walk2.markSet(out) : out);
+});
+var reduce = keyed(["input", "initialValue", "in"], [], (parts, walk2) => {
+  const input = inputOf(walk2, parts.input);
+  if (!input.ok) return input;
+  const start = walk2.raw(parts.initialValue);
+  if (!start.ok) return start;
+  if (input.value === null) return ok(null);
+  let value = start.value;
+  for (const element of input.value) {
+    const a = walk2.raw(parts.in, { value, this: element });
+    if (!a.ok) return a;
+    value = a.value;
+  }
+  return ok(value);
+});
+var zip = keyed(["inputs"], ["useLongestLength", "defaults"], (parts, walk2) => {
+  if (!isArray(parts.inputs) || parts.inputs.length === 0) return NO;
+  const longest = "useLongestLength" in parts ? parts.useLongestLength : false;
+  if (typeof longest !== "boolean") return NO;
+  const defaults = parts.defaults;
+  if ("defaults" in parts && (!longest || !isArray(defaults) || defaults.length !== parts.inputs.length)) return NO;
+  const lists2 = evalAll(walk2, parts.inputs);
+  if (!lists2.ok) return lists2;
+  const filler = isArray(defaults) ? evalAll(walk2, defaults) : ok(parts.inputs.map(() => null));
+  if (!filler.ok) return filler;
+  const columns = lists2.value;
+  if (columns.includes(null)) return ok(null);
+  if (!columns.every(isArray)) return NO;
+  const arrays = columns;
+  const width = longest ? Math.max(...arrays.map((l) => l.length)) : Math.min(...arrays.map((l) => l.length));
+  const fill = filler.value;
+  return spellable(Array.from({ length: width }, (_, i) => arrays.map((l, j) => i < l.length ? l[i] : fill[j])));
+});
+function readPath(doc, path) {
   let cursor = doc;
-  for (const segment of field.split(".")) {
-    if (!isPlainObject3(cursor)) return void 0;
+  for (const segment of path.split(".")) {
+    if (!isPlain(cursor) || !Object.prototype.hasOwnProperty.call(cursor, segment)) return void 0;
     cursor = cursor[segment];
   }
   return cursor;
 }
-function sortByFields(xs, keys) {
-  const columns = keys.map((k) => xs.map((x) => readField(x, k.field)));
-  for (const column of columns) {
-    if (!column.every((v) => typeof v === "number") && !comparableStrings(column)) return NO2;
-  }
-  const order = xs.map((_, i) => i);
+var SORTABLE = /* @__PURE__ */ new Set(["number", "string", "boolean"]);
+var oneSortableKind = (keys) => keys.every((k) => SORTABLE.has(kindOf2(k)) && kindOf2(k) === kindOf2(keys[0])) && keys.every((k) => typeof k !== "string" || isWellFormed(k));
+function sortedBy(items, columns, directions) {
+  const order = items.map((_, i) => i);
   order.sort((i, j) => {
-    for (const [c, key] of keys.entries()) {
-      const left = columns[c][i];
-      const right = columns[c][j];
-      if (left !== right) return (left < right ? -1 : 1) * key.direction;
+    for (const [c, column] of columns.entries()) {
+      const sign = compareValues(column[i], column[j]);
+      if (sign !== 0) return sign * directions[c];
     }
     return i - j;
   });
-  return ok2(order.map((i) => xs[i]));
+  return order.map((i) => items[i]);
 }
-function arrayMethod(xs, name2, args) {
-  const [a, b] = args.map(valueOf);
-  const fn = fnOf(args[0]);
-  const predicate = (f) => (v, i) => truthy(f(v, i, xs));
-  switch (name2) {
-    case "size":
-      return ok2(xs.length);
-    case "map":
-      return fn === void 0 ? NO2 : ok2(xs.map((v, i) => fn(v, i, xs)));
-    case "filter":
-      return fn === void 0 ? NO2 : ok2(xs.filter(predicate(fn)));
-    case "reject":
-      return fn === void 0 ? NO2 : ok2(xs.filter((v, i) => !predicate(fn)(v, i)));
-    case "some":
-      return fn === void 0 ? NO2 : ok2(xs.some(predicate(fn)));
-    case "every":
-      return fn === void 0 ? NO2 : ok2(xs.every(predicate(fn)));
-    case "find": {
-      if (fn === void 0) return NO2;
-      const i = xs.findIndex(predicate(fn));
-      return i === -1 ? NO2 : ok2(xs[i]);
-    }
-    case "findIndex":
-      return fn === void 0 ? NO2 : ok2(xs.findIndex(predicate(fn)));
-    case "findLastIndex": {
-      if (fn === void 0) return NO2;
-      const test = predicate(fn);
-      for (let i = xs.length - 1; i >= 0; i--) if (test(xs[i], i)) return ok2(i);
-      return ok2(-1);
-    }
-    case "flatMap": {
-      if (fn === void 0) return NO2;
-      const parts = xs.map((v, i) => fn(v, i, xs));
-      if (!parts.every((p) => Array.isArray(p))) return NO2;
-      return ok2(parts.flat());
-    }
-    case "reduce": {
-      if (fn === void 0 || args.length < 2) return NO2;
-      return ok2(xs.reduce((acc, v, i) => fn(acc, v, i, xs), valueOf(args[1])));
-    }
-    case "partition": {
-      if (fn === void 0) return NO2;
-      const yes = [];
-      const no = [];
-      xs.forEach((v, i) => (predicate(fn)(v, i) ? yes : no).push(v));
-      return ok2([yes, no]);
-    }
-    case "slice":
-      return sliceOf(xs, a, b, (parts) => parts);
-    case "toReversed":
-      return ok2([...xs].reverse());
-    case "concat":
-      return ok2(xs.concat(...args.map(valueOf)));
-    // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
-    // identity would answer false for `[[1]].includes([1])`, where the server
-    // answers true, and every literal here is a fresh object.
-    case "has":
-      return ok2(xs.some((v) => sameValue(v, a)));
-    case "indexOf":
-      return ok2(xs.findIndex((v) => sameValue(v, a)));
-    case "lastIndexOf": {
-      for (let i = xs.length - 1; i >= 0; i--) if (sameValue(xs[i], a)) return ok2(i);
-      return ok2(-1);
-    }
-    case "join": {
-      if (a !== void 0 && typeof a !== "string") return NO2;
-      if (!xs.every((v) => typeof v === "string" && v !== "" || typeof v === "number")) return NO2;
-      return ok2(xs.join(a));
-    }
-    case "at": {
-      if (!isInt32(a)) return NO2;
-      const i = a < 0 ? xs.length + a : a;
-      return i >= 0 && i < xs.length ? ok2(xs[i]) : NO2;
-    }
-    // ── aggregates ──────────────────────────────────────────────────────────
-    case "sum":
-      return ok2(numbersIn(xs).reduce((t, n2) => t + n2, 0));
-    case "mean": {
-      const ns = numbersIn(xs);
-      return ns.length === 0 ? ok2(null) : ok2(ns.reduce((t, n2) => t + n2, 0) / ns.length);
-    }
-    case "min":
-    case "max": {
-      if (xs.length === 0) return ok2(null);
-      if (xs.every((v) => typeof v === "number")) {
-        const ns = xs;
-        return ok2(name2 === "min" ? Math.min(...ns) : Math.max(...ns));
-      }
-      if (!comparableStrings(xs)) return NO2;
-      const ss = xs;
-      return ok2(ss.reduce((best, v) => (name2 === "min" ? v < best : v > best) ? v : best));
-    }
-    case "sumBy":
-    case "meanBy": {
-      if (fn === void 0) return NO2;
-      const ns = numbersIn(xs.map((v, i) => fn(v, i, xs)));
-      if (name2 === "sumBy") return ok2(ns.reduce((t, n2) => t + n2, 0));
-      return ns.length === 0 ? ok2(null) : ok2(ns.reduce((t, n2) => t + n2, 0) / ns.length);
-    }
-    case "minBy":
-    case "maxBy": {
-      if (fn === void 0 || xs.length === 0) return NO2;
-      const keys = xs.map((v, i) => fn(v, i, xs));
-      if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return NO2;
-      const ordered = keys;
-      const best = ordered.reduce(
-        (bi, k, i) => (name2 === "minBy" ? k < ordered[bi] : k > ordered[bi]) ? i : bi,
-        0
-      );
-      return ok2(xs[best]);
-    }
-    // ── the set family, compared the way MongoDB compares ───────────────────
-    case "uniq":
-    case "sortedUniq":
-      return ok2(firstPerKey(xs, (v) => v));
-    case "uniqBy":
-    case "sortedUniqBy":
-      return fn === void 0 ? NO2 : ok2(firstPerKey(xs, fn));
-    case "without":
-      return ok2(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
-    case "xor": {
-      if (!Array.isArray(a)) return NO2;
-      const other = a;
-      const kept = [...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))];
-      return ok2(firstPerKey(kept, (v) => v));
-    }
-    case "differenceBy":
-    case "intersectionBy":
-    case "unionBy":
-    case "xorBy": {
-      const other = a;
-      const by = fnOf(args[1]);
-      if (!Array.isArray(other) || by === void 0) return NO2;
-      const keyOf = (v, i, list) => by(v, i, list);
-      const otherKeys = other.map(keyOf);
-      const mine = xs.filter((v, i) => deepIncludes(otherKeys, keyOf(v, i, xs)));
-      const notMine = xs.filter((v, i) => !deepIncludes(otherKeys, keyOf(v, i, xs)));
-      if (name2 === "differenceBy") return ok2(notMine);
-      if (name2 === "intersectionBy") return ok2(mine);
-      const myKeys = xs.map(keyOf);
-      const extra = other.filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other)));
-      if (name2 === "xorBy") return ok2(firstPerKey([...notMine, ...extra], keyOf));
-      return ok2(firstPerKey([...xs, ...other], keyOf));
-    }
-    // ── slicing by count ────────────────────────────────────────────────────
-    case "take":
-    case "drop":
-    case "takeRight":
-    case "dropRight": {
-      const n2 = countArg(a);
-      if (n2 === null || n2 < 0) return NO2;
-      if (name2 === "take") return ok2(xs.slice(0, n2));
-      if (name2 === "drop") return ok2(xs.slice(n2));
-      if (name2 === "takeRight") return ok2(n2 === 0 ? [] : xs.slice(-n2));
-      return ok2(n2 === 0 ? [...xs] : xs.slice(0, -n2));
-    }
-    case "takeWhile":
-    case "dropWhile": {
-      if (fn === void 0) return NO2;
-      let i = 0;
-      while (i < xs.length && predicate(fn)(xs[i], i)) i++;
-      return ok2(name2 === "takeWhile" ? xs.slice(0, i) : xs.slice(i));
-    }
-    case "takeRightWhile":
-    case "dropRightWhile": {
-      if (fn === void 0) return NO2;
-      let i = xs.length;
-      while (i > 0 && predicate(fn)(xs[i - 1], i - 1)) i--;
-      return ok2(name2 === "takeRightWhile" ? xs.slice(i) : xs.slice(0, i));
-    }
-    case "tail":
-      return ok2(xs.slice(1));
-    case "initial":
-      return ok2(xs.slice(0, -1));
-    case "head":
-    case "first":
-    case "last":
-      return xs.length === 0 ? NO2 : ok2(name2 === "last" ? xs[xs.length - 1] : xs[0]);
-    case "nth": {
-      const n2 = a === void 0 ? 0 : a;
-      if (!isInt32(n2)) return NO2;
-      const i = n2 < 0 ? xs.length + n2 : n2;
-      return i >= 0 && i < xs.length ? ok2(xs[i]) : NO2;
-    }
-    // ── reshaping ───────────────────────────────────────────────────────────
-    case "chunk": {
-      if (!isInt32(a) || a < 1) return NO2;
-      const out = [];
-      for (let i = 0; i < xs.length; i += a) out.push(xs.slice(i, i + a));
-      return ok2(out);
-    }
-    case "compact":
-      return ok2(xs.filter((v) => v !== 0 && v !== "" && v !== null && v !== false && v !== void 0));
-    case "flatten":
-      return ok2(xs.flat());
-    case "flat":
-      if (a !== void 0 && a !== 1) return NO2;
-      if (!xs.every((v) => Array.isArray(v))) return NO2;
-      return ok2(xs.flat());
-    case "zip": {
-      const lists2 = [xs, ...args.map(valueOf)];
-      if (!lists2.every((l) => Array.isArray(l))) return NO2;
-      const width = Math.max(...lists2.map((l) => l.length));
-      return ok2(
-        Array.from({ length: width }, (_, i) => lists2.map((l) => i < l.length ? l[i] : null))
-      );
-    }
-    case "unzip": {
-      if (!xs.every((row2) => Array.isArray(row2))) return NO2;
-      const rows2 = xs;
-      const width = Math.max(0, ...rows2.map((r) => r.length));
-      if (!rows2.every((r) => r.length === width)) return NO2;
-      return ok2(Array.from({ length: width }, (_, i) => rows2.map((r) => r[i])));
-    }
-    case "zipWith": {
-      const lists2 = [xs, ...args.slice(0, -1).map(valueOf)];
-      const with_ = fnOf(args[args.length - 1]);
-      if (with_ === void 0 || !lists2.every((l) => Array.isArray(l))) return NO2;
-      const widths = new Set(lists2.map((l) => l.length));
-      if (widths.size !== 1) return NO2;
-      const width = [...widths][0];
-      return ok2(Array.from({ length: width }, (_, i) => with_(...lists2.map((l) => l[i]))));
-    }
-    case "zipObject": {
-      if (!Array.isArray(a)) return NO2;
-      const values = a;
-      const out = {};
-      xs.forEach((k, i) => {
-        if (!isKey(k)) throw NOT_A_KEY;
-        setKey(out, String(k), i < values.length ? values[i] : null);
-      });
-      return ok2(out);
-    }
-    case "fromPairs":
-    case "fromEntries": {
-      const out = {};
-      for (const pair of xs) {
-        if (!Array.isArray(pair) || pair.length === 0 || !isKey(pair[0])) return NO2;
-        setKey(out, String(pair[0]), pair.length > 1 ? pair[1] : null);
-      }
-      return ok2(out);
-    }
-    case "keyBy": {
-      if (fn === void 0) return NO2;
-      const out = {};
-      for (const [i, v] of xs.entries()) {
-        const k = fn(v, i, xs);
-        if (!isKey(k)) return NO2;
-        setKey(out, String(k), v);
-      }
-      return ok2(out);
-    }
-    case "groupBy":
-    case "countBy": {
-      if (fn === void 0) return NO2;
-      const out = /* @__PURE__ */ new Map();
-      for (const [i, v] of xs.entries()) {
-        const k = fn(v, i, xs);
-        if (!isKey(k)) return NO2;
-        const key = String(k);
-        if (name2 === "countBy") out.set(key, (out.get(key) ?? 0) + 1);
-        else out.set(key, [...out.get(key) ?? [], v]);
-      }
-      return ok2(Object.fromEntries(out));
-    }
-    // ── ordering ────────────────────────────────────────────────────────────
-    case "sortBy":
-    case "orderBy": {
-      if (fn !== void 0) {
-        const direction = name2 === "orderBy" ? valueOf(args[1]) : void 0;
-        const descending = direction === "desc" || direction === -1;
-        if (direction !== void 0 && !descending && direction !== "asc" && direction !== 1) return NO2;
-        const keys = keyedBy(xs, fn);
-        if (keys === null) return NO2;
-        const sorted = sortByKeys(xs, keys, descending);
-        return sorted === null ? NO2 : ok2(sorted);
-      }
-      if (args.length === 0) {
-        const sorted = sortByKeys(xs, [...xs]);
-        return sorted === null ? NO2 : ok2(sorted);
-      }
-      const ask = sortAsk(name2, args.map(valueOf));
-      return ask === null ? NO2 : sortByFields(xs, ask);
-    }
-    default:
-      return NO2;
+function tiesAreEqual(items, columns) {
+  const first = /* @__PURE__ */ new Map();
+  for (const [i, item] of items.entries()) {
+    const key = columns.map((c) => keyOf(c[i])).join("|");
+    if (!first.has(key)) first.set(key, item);
+    else if (!sameValue(first.get(key), item)) return false;
   }
-}
-var NOT_A_KEY = /* @__PURE__ */ Symbol("value cannot be an object key");
-
-// src/compiler/passes/evaluate.ts
-var asDeclaredFunction = (lambda) => ({ lambda });
-var isDeclaredFunction = (v) => typeof v === "object" && v !== null && "lambda" in v && Object.keys(v).length === 1;
-var NOT_CONSTANT2 = { ok: false };
-var ok3 = (value) => ({ ok: true, value });
-var unspellable = (name2) => ({ ok: false, unspellable: name2 });
-var propagate = (r) => !r.ok && r.unspellable !== void 0 ? r : NOT_CONSTANT2;
-function nameIfUnspellable(value) {
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) return "NaN";
-    if (!Number.isFinite(value)) return String(value);
-    if (Object.is(value, -0)) return "-0";
-  }
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const name2 = nameIfUnspellable(v);
-      if (name2 !== null) return name2;
-    }
-  } else if (typeof value === "object" && value !== null && !isDate(value)) {
-    for (const v of Object.values(value)) {
-      const name2 = nameIfUnspellable(v);
-      if (name2 !== null) return name2;
-    }
-  }
-  return null;
-}
-function spellable(value) {
-  const name2 = nameIfUnspellable(value);
-  if (name2 === null) return ok3(value);
-  return name2 === "-0" ? NOT_CONSTANT2 : unspellable(name2);
-}
-var MAX_DEPTH = 400;
-var MAX_SIZE = 1e6;
-function withinSize(value) {
-  if (typeof value === "string") return value.length <= MAX_SIZE;
-  if (Array.isArray(value)) return value.length <= MAX_SIZE && value.every(withinSize);
   return true;
 }
-function all(nodes, env, depth) {
-  const out = [];
-  for (const node of nodes) {
-    const r = at(node, env, depth);
-    if (!r.ok) return propagate(r);
-    out.push(r.value);
+var sortArray = keyed(["input", "sortBy"], [], (parts, walk2) => {
+  const input = inputOf(walk2, parts.input, true);
+  if (!input.ok) return input;
+  if (input.value === null) return ok(null);
+  const items = input.value;
+  const by = parts.sortBy;
+  if (by === 1 || by === -1) {
+    if (items.length > 0 && !oneSortableKind(items)) return NO;
+    return ok(sortedBy(items, [items], [by]));
+  }
+  if (!isPlain(by) || Object.keys(by).length === 0) return NO;
+  const fields = Object.entries(by);
+  if (!fields.every(([, d]) => d === 1 || d === -1)) return NO;
+  const columns = fields.map(([path]) => items.map((item) => readPath(item, path)));
+  if (!items.every(isPlain) || !columns.every(oneSortableKind)) return NO;
+  if (walk2.isSet(items) && !tiesAreEqual(items, columns)) return NO;
+  return ok(
+    sortedBy(
+      items,
+      columns,
+      fields.map(([, d]) => d)
+    )
+  );
+});
+var extremes = (greatest) => keyed(["input", "n"], [], (parts, walk2) => {
+  const input = walk2.at(parts.input);
+  const n2 = walk2.at(parts.n);
+  if (!input.ok) return input;
+  if (!n2.ok) return n2;
+  if (!isArray(input.value) || !isInt32(n2.value) || n2.value < 1) return NO;
+  const kept = input.value.filter((v) => v !== null);
+  if (kept.length > 0 && !oneSortableKind(kept)) return NO;
+  const sorted = sortedBy(kept, [kept], [greatest ? -1 : 1]);
+  return ok(sorted.slice(0, n2.value));
+});
+function overSets(min, max, run, { nullGivesNull = true, answersSet = true } = {}) {
+  return positional(
+    min,
+    max,
+    (xs, _, walk2) => {
+      if (nullGivesNull && xs.includes(null)) return xs.every((x) => x === null || isArray(x)) ? ok(null) : NO;
+      if (!xs.every(isArray) || !allInert(...xs)) return NO;
+      if (xs.some((set) => set.some((x) => walk2.holdsSet(x)))) return NO;
+      const answer = run(xs);
+      return spellable(answersSet ? walk2.markSet(answer) : answer);
+    },
+    true
+  );
+}
+var sameSet = (a, b) => {
+  const left = keysOf(a);
+  const right = keysOf(b);
+  return left.size === right.size && [...left].every((k) => right.has(k));
+};
+var ARRAY = {
+  $size: size,
+  $arrayElemAt: arrayElemAt,
+  $first: end("first"),
+  $last: end("last"),
+  $firstN: ends("first"),
+  $lastN: ends("last"),
+  $slice: slice,
+  $concatArrays: concatArrays,
+  $reverseArray: reverseArray,
+  $range: range,
+  $in: inRule,
+  $indexOfArray: indexOfArray,
+  $isArray: isArrayRule,
+  $map: map,
+  $filter: filter,
+  $reduce: reduce,
+  $zip: zip,
+  $sortArray: sortArray,
+  $maxN: extremes(true),
+  $minN: extremes(false),
+  $allElementsTrue: truthEvery(true),
+  $anyElementTrue: truthEvery(false),
+  $setUnion: overSets(0, Infinity, (sets) => unique(sets.flat(1))),
+  $setIntersection: overSets(0, Infinity, (sets) => {
+    const others = sets.slice(1).map(keysOf);
+    return sets.length === 0 ? [] : unique(sets[0]).filter((v) => others.every((s) => s.has(keyOf(v))));
+  }),
+  $setDifference: overSets(2, 2, ([a, b]) => {
+    const drop = keysOf(b);
+    return unique(a).filter((v) => !drop.has(keyOf(v)));
+  }),
+  $setEquals: overSets(2, Infinity, (sets) => sets.slice(1).every((s) => sameSet(sets[0], s)), {
+    nullGivesNull: false,
+    answersSet: false
+  }),
+  $setIsSubset: overSets(
+    2,
+    2,
+    ([a, b]) => {
+      const within = keysOf(b);
+      return a.every((v) => within.has(keyOf(v)));
+    },
+    { nullGivesNull: false, answersSet: false }
+  )
+};
+
+// src/compiler/interpret/compare.ts
+function equal(a, b) {
+  if (a instanceof NumberText || b instanceof NumberText) {
+    const other = a instanceof NumberText ? b : a;
+    return typeof other === "string" && !startsLikeNumber(other) ? false : void 0;
+  }
+  const ra = rankOf(a);
+  const rb = rankOf(b);
+  if (ra === void 0 || rb === void 0) return void 0;
+  if (ra !== rb) return false;
+  if (inert(a) && inert(b)) return sameValue(a, b);
+  const order = compareValues(a, b);
+  return order === void 0 ? void 0 : order === 0;
+}
+var ordered = (test) => positional(2, 2, ([a, b]) => {
+  const sign = compareValues(a, b);
+  return sign === void 0 ? NO : ok(test(sign));
+});
+var equality = (want) => positional(2, 2, ([a, b]) => {
+  const same = equal(a, b);
+  return same === void 0 ? NO : ok(same === want);
+});
+var COMPARE = {
+  $eq: equality(true),
+  $ne: equality(false),
+  $gt: ordered((s) => s > 0),
+  $gte: ordered((s) => s >= 0),
+  $lt: ordered((s) => s < 0),
+  $lte: ordered((s) => s <= 0),
+  $cmp: ordered((s) => s)
+};
+
+// src/compiler/interpret/dates.ts
+var SECOND = 1e3;
+var MINUTE = 60 * SECOND;
+var HOUR = 60 * MINUTE;
+var DAY = 24 * HOUR;
+var MAX_MS = 864e13;
+var ANCHOR_MS = 9466848e5;
+var ANCHOR_WEEKDAY = 6;
+var dateAt = (ms) => Number.isFinite(ms) && Math.abs(ms) <= MAX_MS ? ok(new Date(ms)) : NO;
+function daysFromCivil(year, month, day) {
+  const y = month <= 2 ? year - 1 : year;
+  const era = Math.floor(y / 400);
+  const yearOfEra = y - era * 400;
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
+  return era * 146097 + dayOfEra - 719468;
+}
+function civilFromDays(days) {
+  const z = days + 719468;
+  const era = Math.floor(z / 146097);
+  const dayOfEra = z - era * 146097;
+  const yearOfEra = Math.floor(
+    (dayOfEra - Math.floor(dayOfEra / 1460) + Math.floor(dayOfEra / 36524) - Math.floor(dayOfEra / 146096)) / 365
+  );
+  const dayOfYear = dayOfEra - (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const shifted = Math.floor((5 * dayOfYear + 2) / 153);
+  const month = shifted < 10 ? shifted + 3 : shifted - 9;
+  return {
+    year: yearOfEra + era * 400 + (month <= 2 ? 1 : 0),
+    month,
+    day: dayOfYear - Math.floor((153 * shifted + 2) / 5) + 1
+  };
+}
+var daysInMonth = (year, month) => daysFromCivil(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1, 1) - daysFromCivil(year, month, 1);
+function fieldsOf(ms) {
+  const days = Math.floor(ms / DAY);
+  const rest = ms - days * DAY;
+  return {
+    ...civilFromDays(days),
+    hour: Math.floor(rest / HOUR),
+    minute: Math.floor(rest / MINUTE) % 60,
+    second: Math.floor(rest / SECOND) % 60,
+    millisecond: rest % SECOND,
+    days,
+    weekday: ((days + 4) % 7 + 7) % 7
+  };
+}
+var isoWeekday = (weekday) => weekday === 0 ? 7 : weekday;
+function isoWeekOf(f) {
+  const thursday = f.days + 4 - isoWeekday(f.weekday);
+  const { year } = civilFromDays(thursday);
+  return { year, week: Math.floor((thursday - daysFromCivil(year, 1, 1)) / 7) + 1 };
+}
+var dayOfYearOf = (f) => f.days - daysFromCivil(f.year, 1, 1) + 1;
+var sundayWeekOf = (f) => Math.floor((dayOfYearOf(f) - 1 + 7 - f.weekday) / 7);
+var UTC_ZONES = ["UTC", "+00:00", "+0000"];
+var utcOnly = (v) => typeof v === "string" && UTC_ZONES.includes(v);
+function instantOf(v) {
+  switch (kindOf2(v)) {
+    case "date":
+      return v.getTime();
+    case "objectId": {
+      const hex = objectIdHex(v);
+      return hex === null ? void 0 : parseInt(hex.slice(0, 8), 16) * SECOND;
+    }
+    default:
+      return void 0;
+  }
+}
+var isInstant = (v) => instantOf(v) !== void 0;
+var isBoolean = (v) => typeof v === "boolean";
+var integerIn = (low, high) => (v) => typeof v === "number" && Number.isInteger(v) && v >= low && v <= high;
+var UNITS = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+var isUnit = (v) => typeof v === "string" && UNITS.includes(v);
+var FIXED_MS = {
+  week: 7 * DAY,
+  day: DAY,
+  hour: HOUR,
+  minute: MINUTE,
+  second: SECOND,
+  millisecond: 1
+};
+var MONTHS_IN = { year: 12, quarter: 3, month: 1 };
+var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+var isWeekdayName = (v) => typeof v === "string" && WEEKDAYS.includes(v);
+var startOfWeekOf = (v) => v.startOfWeek === void 0 ? 0 : WEEKDAYS.indexOf(v.startOfWeek);
+var nullWeekStart = (v) => v.startOfWeek === null && v.unit !== "week";
+function dated(required, optional, checks, compute, shape = () => true, unread = () => false) {
+  return keyed(required, optional, (parts, walk2) => {
+    if (!shape(Object.keys(parts))) return NO;
+    const values = {};
+    for (const key of Object.keys(parts)) {
+      const a = walk2.at(parts[key]);
+      if (!a.ok) return a;
+      values[key] = a.value;
+    }
+    if (unread(values)) return NO;
+    let sawNull = false;
+    for (const [key, v] of Object.entries(values)) {
+      if (v === null) sawNull = true;
+      else if (!checks[key](v)) return NO;
+    }
+    return sawNull ? ok(null) : compute(values);
+  });
+}
+var TIMEZONE = { timezone: utcOnly };
+function part(read3) {
+  const options = dated(
+    ["date"],
+    ["timezone"],
+    { date: isInstant, ...TIMEZONE },
+    (v) => ok(read3(fieldsOf(instantOf(v.date))))
+  );
+  return (operand, walk2) => {
+    if (isPlain(operand) && !Object.keys(operand).some((k) => k.startsWith("$"))) return options(operand, walk2);
+    const args = argsOf(operand);
+    if (args.length !== 1) return NO;
+    const a = walk2.at(args[0]);
+    if (!a.ok) return a;
+    if (a.value === null) return ok(null);
+    const ms = instantOf(a.value);
+    return ms === void 0 ? NO : ok(read3(fieldsOf(ms)));
+  };
+}
+var dateToParts = dated(
+  ["date"],
+  ["timezone", "iso8601"],
+  { date: isInstant, iso8601: isBoolean, ...TIMEZONE },
+  (v) => {
+    const f = fieldsOf(instantOf(v.date));
+    const time = { hour: f.hour, minute: f.minute, second: f.second, millisecond: f.millisecond };
+    if (v.iso8601 !== true) return ok({ year: f.year, month: f.month, day: f.day, ...time });
+    const iso = isoWeekOf(f);
+    return ok({ isoWeekYear: iso.year, isoWeek: iso.week, isoDayOfWeek: isoWeekday(f.weekday), ...time });
+  }
+);
+var CALENDAR_PARTS = ["month", "day"];
+var ISO_PARTS = ["isoWeek", "isoDayOfWeek"];
+var CLOCK_PARTS = ["hour", "minute", "second", "millisecond"];
+var PART = integerIn(-32768, 32767);
+function partsShape(keys) {
+  const calendar = keys.includes("year");
+  const iso = keys.includes("isoWeekYear");
+  if (calendar === iso) return false;
+  return keys.every(
+    (k) => k === "timezone" || CLOCK_PARTS.includes(k) || k === (calendar ? "year" : "isoWeekYear") || (calendar ? CALENDAR_PARTS : ISO_PARTS).includes(k)
+  );
+}
+var dateFromParts2 = dated(
+  [],
+  ["year", ...CALENDAR_PARTS, "isoWeekYear", ...ISO_PARTS, ...CLOCK_PARTS, "timezone"],
+  {
+    year: integerIn(1, 9999),
+    isoWeekYear: integerIn(1, 9999),
+    ...Object.fromEntries([...CALENDAR_PARTS, ...ISO_PARTS, ...CLOCK_PARTS].map((k) => [k, PART])),
+    ...TIMEZONE
+  },
+  (v) => {
+    const n2 = (key, otherwise) => v[key] === void 0 ? otherwise : v[key];
+    let days;
+    if (v.year !== void 0) {
+      const months = v.year * 12 + n2("month", 1) - 1;
+      days = daysFromCivil(Math.floor(months / 12), (months % 12 + 12) % 12 + 1, 1) + n2("day", 1) - 1;
+    } else {
+      const fourth = daysFromCivil(v.isoWeekYear, 1, 4);
+      const monday = fourth - (isoWeekday(((fourth + 4) % 7 + 7) % 7) - 1);
+      days = monday + (n2("isoWeek", 1) - 1) * 7 + n2("isoDayOfWeek", 1) - 1;
+    }
+    return dateAt(
+      days * DAY + n2("hour", 0) * HOUR + n2("minute", 0) * MINUTE + n2("second", 0) * SECOND + n2("millisecond", 0)
+    );
+  },
+  partsShape
+);
+function shift(ms, unit, amount) {
+  const months = MONTHS_IN[unit];
+  if (months === void 0) {
+    const moved = BigInt(ms) + BigInt(amount) * BigInt(FIXED_MS[unit]);
+    return dateAt(Number(moved));
+  }
+  if (Math.abs(amount * months) > 4e6) return NO;
+  const f = fieldsOf(ms);
+  const total = f.year * 12 + f.month - 1 + amount * months;
+  const year = Math.floor(total / 12);
+  const month = (total % 12 + 12) % 12 + 1;
+  const day = Math.min(f.day, daysInMonth(year, month));
+  return dateAt(daysFromCivil(year, month, day) * DAY + (ms - f.days * DAY));
+}
+var SHIFT_CHECKS = {
+  startDate: isInstant,
+  unit: isUnit,
+  amount: (v) => typeof v === "number" && Number.isSafeInteger(v),
+  ...TIMEZONE
+};
+var shifting = (sign) => dated(
+  ["startDate", "unit", "amount"],
+  ["timezone"],
+  SHIFT_CHECKS,
+  (v) => shift(instantOf(v.startDate), v.unit, sign * v.amount + 0)
+);
+function unitIndex(ms, unit, startOfWeek) {
+  const f = fieldsOf(ms);
+  switch (unit) {
+    case "year":
+      return f.year;
+    case "quarter":
+      return f.year * 4 + Math.floor((f.month - 1) / 3);
+    case "month":
+      return f.year * 12 + f.month - 1;
+    case "week":
+      return (f.days - (f.weekday - startOfWeek + 7) % 7 - (startOfWeek + 3) % 7) / 7;
+    default:
+      return Math.floor(ms / FIXED_MS[unit]);
+  }
+}
+var dateDiff = dated(
+  ["startDate", "endDate", "unit"],
+  ["timezone", "startOfWeek"],
+  { startDate: isInstant, endDate: isInstant, unit: isUnit, startOfWeek: isWeekdayName, ...TIMEZONE },
+  (v) => {
+    const sow = startOfWeekOf(v);
+    const start = unitIndex(instantOf(v.startDate), v.unit, sow);
+    const end2 = unitIndex(instantOf(v.endDate), v.unit, sow);
+    return Number.isSafeInteger(end2 - start) ? ok(end2 - start) : NO;
+  },
+  void 0,
+  nullWeekStart
+);
+var floorDiv = (a, b) => {
+  const q = a / b;
+  return a % b !== 0n && a < 0n !== b < 0n ? q - 1n : q;
+};
+var dateTrunc = dated(
+  ["date", "unit"],
+  ["binSize", "timezone", "startOfWeek"],
+  { date: isInstant, unit: isUnit, binSize: integerIn(1, 2147483647), startOfWeek: isWeekdayName, ...TIMEZONE },
+  (v) => {
+    const ms = instantOf(v.date);
+    const unit = v.unit;
+    const bin2 = v.binSize === void 0 ? 1 : v.binSize;
+    const months = MONTHS_IN[unit];
+    if (months !== void 0) {
+      const f = fieldsOf(ms);
+      const size3 = bin2 * months;
+      const since = f.year * 12 + f.month - 1 - 24e3;
+      const start = Math.floor(since / size3) * size3 + 24e3;
+      return dateAt(daysFromCivil(Math.floor(start / 12), (start % 12 + 12) % 12 + 1, 1) * DAY);
+    }
+    const anchor = ANCHOR_MS + (unit === "week" ? (startOfWeekOf(v) - ANCHOR_WEEKDAY + 7) % 7 * DAY : 0);
+    const size2 = BigInt(bin2) * BigInt(FIXED_MS[unit]);
+    return dateAt(Number(BigInt(anchor) + floorDiv(BigInt(ms) - BigInt(anchor), size2) * size2));
+  },
+  void 0,
+  nullWeekStart
+);
+var pad = (n2, width) => String(n2).padStart(width, "0");
+var MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+var SPECIFIERS = {
+  Y: (f) => yearText(f.year),
+  G: (f) => yearText(isoWeekOf(f).year),
+  m: (f) => pad(f.month, 2),
+  d: (f) => pad(f.day, 2),
+  H: (f) => pad(f.hour, 2),
+  M: (f) => pad(f.minute, 2),
+  S: (f) => pad(f.second, 2),
+  L: (f) => pad(f.millisecond, 3),
+  j: (f) => pad(dayOfYearOf(f), 3),
+  w: (f) => String(f.weekday + 1),
+  u: (f) => String(isoWeekday(f.weekday)),
+  U: (f) => pad(sundayWeekOf(f), 2),
+  V: (f) => pad(isoWeekOf(f).week, 2),
+  b: (f) => MONTH_NAMES[f.month - 1].slice(0, 3),
+  B: (f) => MONTH_NAMES[f.month - 1],
+  z: () => "+0000",
+  Z: () => "0",
+  "%": () => "%"
+};
+var yearText = (year) => year >= 0 && year <= 9999 ? pad(year, 4) : void 0;
+var DEFAULT_FORMAT = "%Y-%m-%dT%H:%M:%S.%LZ";
+function formatInstant(ms, format) {
+  const f = fieldsOf(ms);
+  let out = "";
+  for (let i = 0; i < format.length; i++) {
+    if (format[i] !== "%") {
+      out += format[i];
+      continue;
+    }
+    const specifier = Object.prototype.hasOwnProperty.call(SPECIFIERS, format[i + 1]) ? SPECIFIERS[format[i + 1]] : void 0;
+    const text = specifier?.(f);
+    if (text === void 0) return void 0;
+    out += text;
+    i++;
   }
   return out;
 }
-function plus(left, right) {
-  if (typeof left === "number" && typeof right === "number") {
-    const sum = left + right;
-    return losesIntegerPrecision("+", left, right, sum) ? NOT_CONSTANT2 : spellable(sum);
+function orNull(parts, key, walk2) {
+  return key in parts ? walk2.at(parts[key]) : ok(null);
+}
+var dateToString = keyed(["date"], ["format", "timezone", "onNull"], (parts, walk2) => {
+  const date = walk2.at(parts.date);
+  if (!date.ok) return date;
+  const format = "format" in parts ? walk2.at(parts.format) : ok(DEFAULT_FORMAT);
+  if (!format.ok) return format;
+  const zone = "timezone" in parts ? walk2.at(parts.timezone) : ok("UTC");
+  if (!zone.ok) return zone;
+  if (!utcOnly(zone.value)) return NO;
+  if (format.value !== null && typeof format.value !== "string") return NO;
+  if (date.value === null) return orNull(parts, "onNull", walk2);
+  const ms = instantOf(date.value);
+  if (ms === void 0) return NO;
+  if (format.value === null) return ok(null);
+  const text = formatInstant(ms, format.value);
+  return text === void 0 ? NO : ok(text);
+});
+var ISO_STRING = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+function parseIso(text) {
+  const m = ISO_STRING.exec(text);
+  if (m === null) return text === "" ? "fails" : void 0;
+  const [year, month, day, hour, minute, second] = [m[1], m[2], m[3], m[4] ?? "0", m[5] ?? "0", m[6] ?? "0"].map(
+    Number
+  );
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return "fails";
+  if (hour > 23 || minute > 59 || second > 59) return "fails";
+  const fraction = Number((m[7] ?? "").padEnd(3, "0"));
+  let ms = daysFromCivil(year, month, day) * DAY + hour * HOUR + minute * MINUTE + second * SECOND + fraction;
+  const zone = m[8];
+  if (zone !== void 0 && zone !== "Z") {
+    const [offsetHour, offsetMinute] = [Number(zone.slice(1, 3)), Number(zone.slice(4, 6))];
+    if (offsetHour > 23 || offsetMinute > 59) return void 0;
+    ms -= (zone[0] === "-" ? -1 : 1) * (offsetHour * HOUR + offsetMinute * MINUTE);
   }
-  if (typeof left === "string" && typeof right === "string") return ok3(left + right);
-  return NOT_CONSTANT2;
+  return ms;
 }
-function losesIntegerPrecision(op, left, right, result) {
-  if (!KEEPS_INTEGERS.has(op)) return false;
-  if (!Number.isFinite(result)) return false;
-  return Number.isInteger(left) && Number.isInteger(right) && !Number.isSafeInteger(result);
-}
-var KEEPS_INTEGERS = /* @__PURE__ */ new Set(["+", "-", "*", "**"]);
-function arithmetic(op, left, right) {
-  if (typeof left !== "number" || typeof right !== "number") return NOT_CONSTANT2;
-  let value;
-  switch (op) {
-    case "-":
-      value = left - right;
-      break;
-    case "*":
-      value = left * right;
-      break;
-    case "/":
-      value = left / right;
-      break;
-    case "%":
-      value = left % right;
-      break;
-    case "**":
-      if (!Number.isInteger(left) || !Number.isInteger(right) || right < 0) return NOT_CONSTANT2;
-      value = left ** right;
-      break;
-    default:
-      return NOT_CONSTANT2;
+var dateFromString = keyed(["dateString"], ["format", "timezone", "onError", "onNull"], (parts, walk2) => {
+  if ("format" in parts) return NO;
+  const text = walk2.at(parts.dateString);
+  if (!text.ok) return text;
+  const zone = "timezone" in parts ? walk2.at(parts.timezone) : ok("UTC");
+  if (!zone.ok) return zone;
+  if (!utcOnly(zone.value)) return NO;
+  if (text.value === null) return orNull(parts, "onNull", walk2);
+  const failure = () => "onError" in parts ? walk2.at(parts.onError) : NO;
+  if (typeof text.value !== "string")
+    return ["number", "boolean", "date"].includes(kindOf2(text.value)) ? failure() : NO;
+  const parsed = parseIso(text.value);
+  if (parsed === void 0) return NO;
+  if (parsed === "fails") return failure();
+  return dateAt(parsed);
+});
+var toDate = positional(1, 1, ([v]) => {
+  if (v === null) return ok(null);
+  if (typeof v === "number") {
+    if (Number.isInteger(v) && Math.abs(v) <= 2147483647) return NO;
+    return dateAt(Math.trunc(v));
   }
-  if (losesIntegerPrecision(op, left, right, value)) return NOT_CONSTANT2;
-  return spellable(value);
-}
-function strictEquality(op, left, right) {
-  const same = sameValue(left, right);
-  return ok3(op === "===" ? same : !same);
-}
-function sameValue(a, b) {
-  if (a === b) return Object.is(a, -0) === Object.is(b, -0);
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  if (typeof v === "string") {
+    const parsed = parseIso(v);
+    return typeof parsed === "number" ? dateAt(parsed) : NO;
   }
-  if (a !== null && b !== null && typeof a === "object" && typeof b === "object") {
-    if (Array.isArray(a) || Array.isArray(b)) return false;
-    const ka = Object.keys(a);
-    const kb = Object.keys(b);
-    return ka.length === kb.length && ka.every((k, i) => k === kb[i] && sameValue(a[k], b[k]));
+  const ms = instantOf(v);
+  return ms === void 0 ? NO : dateAt(ms);
+});
+var timestampHalf = (half) => positional(1, 1, ([v]) => {
+  if (v === null) return ok(null);
+  return bsonTagOf(v) === "Timestamp" ? ok(v[half] >>> 0) : NO;
+});
+var DATES = {
+  $year: part((f) => f.year),
+  $month: part((f) => f.month),
+  $dayOfMonth: part((f) => f.day),
+  $hour: part((f) => f.hour),
+  $minute: part((f) => f.minute),
+  $second: part((f) => f.second),
+  $millisecond: part((f) => f.millisecond),
+  $dayOfWeek: part((f) => f.weekday + 1),
+  $dayOfYear: part(dayOfYearOf),
+  $week: part(sundayWeekOf),
+  $isoWeek: part((f) => isoWeekOf(f).week),
+  $isoWeekYear: part((f) => isoWeekOf(f).year),
+  $isoDayOfWeek: part((f) => isoWeekday(f.weekday)),
+  $dateToParts: dateToParts,
+  $dateFromParts: dateFromParts2,
+  $dateAdd: shifting(1),
+  $dateSubtract: shifting(-1),
+  $dateDiff: dateDiff,
+  $dateTrunc: dateTrunc,
+  $dateToString: dateToString,
+  $dateFromString: dateFromString,
+  $toDate: toDate,
+  $tsSecond: timestampHalf("high"),
+  $tsIncrement: timestampHalf("low")
+};
+
+// src/compiler/interpret/logic.ts
+function truth(walk2, node) {
+  const a = walk2.raw(node);
+  if (!a.ok) return a;
+  const t = truthOf(a.value);
+  return t === null ? NO : ok(t);
+}
+var connective = (stopOn) => (operand, walk2) => {
+  const nodes = argsOf(operand);
+  for (const [i, node] of nodes.entries()) {
+    const t = truth(walk2, node);
+    if (!t.ok) return t;
+    if (t.value === stopOn) return ok(stopOn);
   }
-  return false;
-}
-function ordering(op, left, right) {
-  if (typeof left === "string" && typeof right === "string") {
-    return orderingOf(op, compareCodePoints(left, right));
+  return ok(!stopOn);
+};
+var IF_THEN_ELSE = ["if", "then", "else"];
+var cond2 = (operand, walk2) => {
+  let nodes;
+  if (Array.isArray(operand)) {
+    nodes = operand;
+  } else if (isPlain(operand)) {
+    const keys = Object.keys(operand);
+    if (keys.length !== 3 || !IF_THEN_ELSE.every((k) => keys.includes(k))) return NO;
+    nodes = IF_THEN_ELSE.map((k) => operand[k]);
+  } else {
+    return NO;
   }
-  if (typeof left !== "number" || typeof right !== "number") return NOT_CONSTANT2;
-  return orderingOf(op, left < right ? -1 : left > right ? 1 : 0);
-}
-function compareCodePoints(a, b) {
-  const x = [...a];
-  const y = [...b];
-  for (let i = 0; i < Math.min(x.length, y.length); i++) {
-    const p = x[i].codePointAt(0);
-    const q = y[i].codePointAt(0);
-    if (p !== q) return p < q ? -1 : 1;
+  if (nodes.length !== 3) return NO;
+  const test = truth(walk2, nodes[0]);
+  if (!test.ok) return test;
+  return walk2.raw(test.value ? nodes[1] : nodes[2]);
+};
+var switchRule = keyed(["branches"], ["default"], (parts, walk2) => {
+  const branches = parts.branches;
+  if (!Array.isArray(branches) || branches.length === 0) return NO;
+  for (const branch of branches) {
+    if (!isPlain(branch)) return NO;
+    const keys = Object.keys(branch);
+    if (keys.length !== 2 || !keys.includes("case") || !keys.includes("then")) return NO;
   }
-  return x.length === y.length ? 0 : x.length < y.length ? -1 : 1;
-}
-function orderingOf(op, sign) {
-  switch (op) {
-    case "<":
-      return ok3(sign < 0);
-    case ">":
-      return ok3(sign > 0);
-    case "<=":
-      return ok3(sign <= 0);
-    case ">=":
-      return ok3(sign >= 0);
-    default:
-      return NOT_CONSTANT2;
+  const all = branches;
+  for (const branch of all) {
+    const t = truth(walk2, branch.case);
+    if (!t.ok) return t;
+    if (!t.value) continue;
+    return walk2.raw(branch.then);
   }
-}
-function bitwise(op, left, right) {
-  if (!Number.isSafeInteger(left) || !Number.isSafeInteger(right)) return NOT_CONSTANT2;
-  const l = left;
-  const r = right;
-  const fits = (n2) => n2 >= -2147483648 && n2 <= 2147483647;
-  if (!fits(l) || !fits(r)) return NOT_CONSTANT2;
-  switch (op) {
-    case "&":
-      return ok3(l & r);
-    case "|":
-      return ok3(l | r);
-    case "^":
-      return ok3(l ^ r);
-    default:
-      return NOT_CONSTANT2;
+  return "default" in parts ? walk2.raw(parts.default) : NO;
+});
+var ifNull = (operand, walk2) => {
+  const nodes = argsOf(operand);
+  if (nodes.length < 2) return NO;
+  for (const node of nodes.slice(0, -1)) {
+    const a = walk2.raw(node);
+    if (!a.ok || a.value !== null) return a;
   }
-}
-function binary(op, left, right) {
-  switch (op) {
-    case "+":
-      return plus(left, right);
-    case "-":
-    case "*":
-    case "/":
-    case "%":
-    case "**":
-      return arithmetic(op, left, right);
-    case "===":
-    case "!==":
-      return strictEquality(op, left, right);
-    case "<":
-    case ">":
-    case "<=":
-    case ">=":
-      return ordering(op, left, right);
-    case "&":
-    case "|":
-    case "^":
-      return bitwise(op, left, right);
-    case "&&":
-    case "||":
-      return logical(op, left, right);
-    case "??":
-      return ok3(right);
-    case "in":
-      return membership(left, right);
-    default:
-      return NOT_CONSTANT2;
+  return walk2.raw(nodes[nodes.length - 1]);
+};
+var letRule = keyed(["vars", "in"], [], (parts, walk2) => {
+  const vars = parts.vars;
+  if (!isPlain(vars)) return NO;
+  const bound = /* @__PURE__ */ Object.create(null);
+  for (const [name2, node] of Object.entries(vars)) {
+    if (!isVariableName(name2)) return NO;
+    const a = walk2.raw(node);
+    bound[name2] = a.ok ? a.value : new Failed(a);
   }
-}
-function decidedByLeft(op, left) {
-  if (op === "&&" && !truthy(left)) return ok3(left);
-  if (op === "||" && truthy(left)) return ok3(left);
-  if (op === "??" && left !== null && left !== void 0) return ok3(left);
-  return null;
-}
-function logical(op, left, right) {
-  if (op === "&&") return truthy(left) ? ok3(right) : ok3(left);
-  if (op === "||") return truthy(left) ? ok3(left) : ok3(right);
-  return NOT_CONSTANT2;
-}
-var truthy = (v) => Boolean(v);
-function membership(needle, haystack) {
-  if (!Array.isArray(haystack)) return NOT_CONSTANT2;
-  return ok3(haystack.some((h) => sameValue(h, needle)));
-}
-function unary(op, operand) {
-  switch (op) {
-    case "-":
-      if (typeof operand === "bigint") return ok3(-operand);
-      return typeof operand === "number" ? spellable(-operand) : NOT_CONSTANT2;
-    case "!":
-      return typeof operand === "boolean" ? ok3(!operand) : NOT_CONSTANT2;
-    case "~":
-      return Number.isSafeInteger(operand) && Math.abs(operand) <= 2147483647 ? ok3(~operand) : NOT_CONSTANT2;
-    default:
-      return NOT_CONSTANT2;
-  }
-}
-var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v) && !isRegExp(v) && v._bsontype === void 0;
-function property(receiver, name2) {
-  if (!isPlain(receiver)) return NOT_CONSTANT2;
-  const own = Object.prototype.hasOwnProperty.call(receiver, name2);
-  return own ? ok3(receiver[name2]) : NOT_CONSTANT2;
-}
-function element(receiver, index) {
-  if (typeof index === "string") return property(receiver, index);
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) return NOT_CONSTANT2;
-  if (Array.isArray(receiver)) return index < receiver.length ? ok3(receiver[index]) : NOT_CONSTANT2;
-  if (typeof receiver === "string") {
-    const points2 = [...receiver];
-    return index < points2.length ? ok3(points2[index]) : NOT_CONSTANT2;
-  }
-  return NOT_CONSTANT2;
-}
-function applyLambda(lambda, args, env, depth = 0) {
-  const params = lambda.params;
-  if (params === void 0) return NOT_CONSTANT2;
-  const body = lambda.body;
-  if (body === void 0) return NOT_CONSTANT2;
-  const scope = new Map(env);
-  for (let i = 0; i < params.length; i++) scope.set(params[i], args[i]);
-  if (body.type === "ExprBlock") {
-    const block = body;
-    for (const decl of block.decls) {
-      const value = at(decl.value, scope, depth + 1);
-      if (!value.ok) return propagate(value);
-      scope.set(decl.name, value.value);
+  return walk2.raw(parts.in, bound);
+});
+var LOGIC = {
+  $and: connective(false),
+  $or: connective(true),
+  $not: positional(
+    1,
+    1,
+    ([v]) => {
+      const t = truthOf(v);
+      return t === null ? NO : ok(!t);
+    },
+    true
+  ),
+  $cond: cond2,
+  $switch: switchRule,
+  $ifNull: ifNull,
+  $let: letRule,
+  // The value is not an expression: it passes through as written.
+  $literal: (operand) => isValue(operand) ? spellable(operand) : NO
+};
+
+// src/compiler/interpret/object.ts
+var isFieldName = (k) => typeof k === "string" && !k.includes("\0") && !k.startsWith("$");
+var objectToArray = positional(
+  1,
+  1,
+  ([doc], _, walk2) => {
+    if (doc === null) return ok(null);
+    if (!isPlain(doc)) return NO;
+    const pairs = Object.entries(doc).map(([k, v]) => ({ k, v }));
+    return ok(walk2.isSet(doc) ? walk2.markSet(pairs) : pairs);
+  },
+  true
+);
+function pairsOf(list) {
+  const pairs = [];
+  const form = list.length === 0 ? "list" : Array.isArray(list[0]) ? "list" : "document";
+  for (const item of list) {
+    if (form === "list") {
+      if (!Array.isArray(item) || item.length !== 2) return null;
+      pairs.push([item[0], item[1]]);
+    } else {
+      if (!isPlain(item)) return null;
+      const keys = Object.keys(item);
+      if (keys.length !== 2 || !keys.includes("k") || !keys.includes("v")) return null;
+      pairs.push([item.k, item.v]);
     }
-    return at(block.ret, scope, depth + 1);
   }
-  return at(body, scope, depth + 1);
+  return pairs.every(([k]) => isFieldName(k)) ? pairs : null;
 }
-var NAMESPACES = namespaceNames();
-function asArg(node, env, depth) {
-  if (node.type === "Lambda") {
-    return {
-      fn: (...args) => {
-        const r = applyLambda(node, args, env, depth + 1);
-        if (!r.ok) throw r.unspellable !== void 0 ? new UnspellableInCallback(r.unspellable) : NOT_CONSTANT_CALLBACK;
-        return r.value;
-      }
-    };
+var arrayToObject = positional(
+  1,
+  1,
+  ([list], _, walk2) => {
+    if (list === null) return ok(null);
+    if (!Array.isArray(list)) return NO;
+    const pairs = pairsOf(list);
+    if (pairs === null) return NO;
+    const unordered = walk2.isSet(list);
+    if (unordered && new Set(pairs.map(([k]) => k)).size !== pairs.length) return NO;
+    const kept = new Map(pairs);
+    if (!unordered && kept.size > 1 && [...kept.keys()].some(isIndexKey)) return ok(new OrderedDocument([...kept]));
+    const out = {};
+    for (const [k, v] of kept) setKey(out, k, v);
+    return ok(unordered ? walk2.markSet(out) : out);
+  },
+  true
+);
+var mergeObjects = positional(
+  0,
+  Infinity,
+  (xs, _, walk2) => {
+    const list = xs.length === 1 && Array.isArray(xs[0]);
+    const docs = list ? xs[0] : xs;
+    if (!docs.every((d) => d === null || isPlain(d))) return NO;
+    const keys = docs.flatMap((d) => d === null ? [] : Object.keys(d));
+    if (list && walk2.isSet(xs[0]) && new Set(keys).size !== keys.length) return NO;
+    const out = {};
+    for (const d of docs)
+      if (d !== null) for (const [k, v] of Object.entries(d)) setKey(out, k, v);
+    const unordered = list && walk2.isSet(xs[0]) || docs.some((d) => walk2.isSet(d));
+    return ok(unordered ? walk2.markSet(out) : out);
+  },
+  true
+);
+function target(parts, walk2) {
+  const field = walk2.at(parts.field);
+  if (!field.ok) return field;
+  const input = walk2.at(parts.input);
+  if (!input.ok) return input;
+  if (!isFieldName(field.value)) return NO;
+  if (input.value === null) return ok(null);
+  return isPlain(input.value) ? { name: field.value, doc: input.value } : NO;
+}
+var isTarget = (t) => "name" in t;
+var getField = keyed(["field", "input"], [], (parts, walk2) => {
+  const t = target(parts, walk2);
+  if (!isTarget(t)) return t;
+  return Object.prototype.hasOwnProperty.call(t.doc, t.name) ? spellable(t.doc[t.name]) : NO;
+});
+var setField = keyed(["field", "input", "value"], [], (parts, walk2) => {
+  const value = walk2.at(parts.value);
+  if (!value.ok) return value;
+  const t = target(parts, walk2);
+  if (!isTarget(t)) return t;
+  return spellable(setKey({ ...t.doc }, t.name, value.value));
+});
+var unsetField = keyed(["field", "input"], [], (parts, walk2) => {
+  const t = target(parts, walk2);
+  if (!isTarget(t)) return t;
+  const out = {};
+  for (const [k, v] of Object.entries(t.doc)) if (k !== t.name) setKey(out, k, v);
+  return spellable(out);
+});
+var OBJECT = {
+  $objectToArray: objectToArray,
+  $arrayToObject: arrayToObject,
+  $mergeObjects: mergeObjects,
+  $getField: getField,
+  $setField: setField,
+  $unsetField: unsetField
+};
+
+// src/compiler/interpret/regex.ts
+var Outside = class extends Error {
+};
+var outside = () => {
+  throw new Outside();
+};
+var MAX_PATTERN = 200;
+var MAX_DEPTH2 = 12;
+var MAX_COUNT = 100;
+var MAX_SUBJECT = 2e4;
+var MAX_COST = 5e7;
+var isDigit3 = (c) => c >= "0" && c <= "9";
+var isAlnum = (c) => isDigit3(c) || c >= "a" && c <= "z" || c >= "A" && c <= "Z";
+var isPrintable = (c) => c >= " " && c <= "~";
+var SPECIAL = new Set("\\^$.|?*+()[]{}");
+var isLiteral = (c) => isPrintable(c) && !SPECIAL.has(c);
+var DIGITS = [[48, 57]];
+var WORD = [
+  [48, 57],
+  [65, 90],
+  [95, 95],
+  [97, 122]
+];
+var SPACE = [
+  [9, 13],
+  [32, 32]
+];
+var SHORTHAND = { d: DIGITS, w: WORD, s: SPACE };
+var Reader = class {
+  constructor(src) {
+    this.pos = 0;
+    this.groups = 0;
+    this.src = src;
   }
-  const value = at(node, env, depth + 1);
-  return value.ok ? { value: value.value } : null;
-}
-var NOT_CONSTANT_CALLBACK = /* @__PURE__ */ Symbol("callback is not constant");
-var UnspellableInCallback = class {
-  constructor(what) {
-    this.what = what;
+  peek() {
+    return this.src[this.pos] ?? "";
+  }
+  next() {
+    return this.src[this.pos++] ?? outside();
+  }
+  eat(c) {
+    if (this.peek() !== c) return false;
+    this.pos++;
+    return true;
   }
 };
-function familyOfValue(value) {
-  if (typeof value === "string") return "string";
-  if (Array.isArray(value)) return "array";
-  if (typeof value === "number") return "number";
-  if (isDate(value)) return "date";
-  if (isRegExp(value)) return "regexp";
-  if (typeof value === "object" && value !== null) return "object";
-  return void 0;
-}
-function methodCall(node, env, depth) {
-  const name2 = node.name;
-  const argNodes = node.args;
-  if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
-  const receiverNode = node.object;
-  const onNamespace = receiverNode.type === "Ident" && NAMESPACES.has(receiverNode.name);
-  let receiverValue;
-  if (!onNamespace) {
-    const receiver = at(receiverNode, env, depth + 1);
-    if (!receiver.ok) return propagate(receiver);
-    receiverValue = receiver.value;
+function inspect(node) {
+  switch (node.t) {
+    case "char":
+    case "class":
+      return { capture: false, quant: false, alt: false, min: 1 };
+    case "start":
+    case "end":
+    case "look":
+      return { capture: false, quant: false, alt: false, min: 0 };
+    case "group": {
+      const i = inspect(node.body);
+      return { ...i, capture: i.capture || node.capture };
+    }
+    case "quant": {
+      const i = inspect(node.body);
+      return { ...i, quant: true, min: i.min * node.min };
+    }
+    case "seq": {
+      const all = node.parts.map(inspect);
+      return {
+        capture: all.some((i) => i.capture),
+        quant: all.some((i) => i.quant),
+        alt: all.some((i) => i.alt),
+        min: all.reduce((n2, i) => n2 + i.min, 0)
+      };
+    }
+    case "alt": {
+      const all = node.branches.map(inspect);
+      return {
+        capture: all.some((i) => i.capture),
+        quant: all.some((i) => i.quant),
+        alt: true,
+        min: Math.min(...all.map((i) => i.min))
+      };
+    }
   }
-  const family = onNamespace ? receiverNode.name : familyOfValue(receiverValue);
-  if (!isCallable(name2)) return NOT_CONSTANT2;
-  const packed = argNodes.length === 1 && argNodes[0].packed === true;
-  const args = [];
-  if (packed) {
-    const list = at(argNodes[0], env, depth + 1);
-    if (!list.ok || !Array.isArray(list.value)) return NOT_CONSTANT2;
-    for (const value of list.value) args.push({ value });
+}
+function parseClass(r) {
+  const negated = r.eat("^");
+  const ranges = [];
+  const atStart = () => ranges.length === 0;
+  for (; ; ) {
+    const c = r.next();
+    if (c === "]") {
+      if (ranges.length === 0) outside();
+      return { t: "class", negated, ranges };
+    }
+    if (c === "\\") {
+      const e = r.next();
+      if (e in SHORTHAND) {
+        ranges.push(...SHORTHAND[e]);
+        if (r.peek() === "-" && r.src[r.pos + 1] !== "]") outside();
+        continue;
+      }
+      if (isAlnum(e) || !isPrintable(e)) outside();
+      ranges.push(...rangeFrom(r, e.charCodeAt(0)));
+      continue;
+    }
+    if (c === "-") {
+      if (!atStart() && r.peek() !== "]") outside();
+      ranges.push([45, 45]);
+      continue;
+    }
+    if (!isLiteral(c) && c !== "^") outside();
+    ranges.push(...rangeFrom(r, c.charCodeAt(0)));
+  }
+}
+function rangeFrom(r, low) {
+  if (r.peek() !== "-" || r.src[r.pos + 1] === "]" || r.src[r.pos + 1] === void 0) return [[low, low]];
+  r.pos++;
+  const end2 = r.next();
+  let high;
+  if (end2 === "\\") {
+    const e = r.next();
+    if (isAlnum(e) || !isPrintable(e)) return outside();
+    high = e.charCodeAt(0);
   } else {
-    for (const argNode of argNodes) {
-      const arg = asArg(argNode, env, depth);
-      if (arg === null) return NOT_CONSTANT2;
-      args.push(arg);
-    }
+    if (!isLiteral(end2) && end2 !== "^") return outside();
+    high = end2.charCodeAt(0);
   }
-  if (!acceptsArgumentCount(name2, args.length, family)) return NOT_CONSTANT2;
-  let result;
-  try {
-    result = onNamespace ? foldNamespaceCall(receiverNode.name, name2, args) : foldInstanceCall(receiverValue, name2, args);
-  } catch (e) {
-    if (e instanceof UnspellableInCallback) return unspellable(e.what);
-    return NOT_CONSTANT2;
-  }
-  if (!result.ok) return propagate(result);
-  if (!withinSize(result.value)) return NOT_CONSTANT2;
-  return spellable(result.value);
+  if (high < low) outside();
+  return [[low, high]];
 }
-function applyHere(lambda, argNodes, env, depth) {
-  if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
-  const values = [];
-  for (const argNode of argNodes) {
-    const value = at(argNode, env, depth + 1);
-    if (!value.ok) return propagate(value);
-    values.push(value.value);
-  }
-  const result = applyLambda(lambda, values, env, depth + 1);
-  if (!result.ok) return propagate(result);
-  if (!withinSize(result.value)) return NOT_CONSTANT2;
-  return spellable(result.value);
+function parseQuantifier(r) {
+  const c = r.peek();
+  let q;
+  if (c === "?") q = { min: 0, max: 1 };
+  else if (c === "*") q = { min: 0, max: Infinity };
+  else if (c === "+") q = { min: 1, max: Infinity };
+  else if (c === "{") {
+    const m = /^\{(\d{1,3})(?:(,)(\d{0,3}))?\}/.exec(r.src.slice(r.pos));
+    if (m === null) return outside();
+    const min = Number(m[1]);
+    const max = m[2] === void 0 ? min : m[3] === "" ? Infinity : Number(m[3]);
+    if (min > max || min > MAX_COUNT || max !== Infinity && max > MAX_COUNT) outside();
+    q = { min, max };
+    r.pos += m[0].length - 1;
+  } else return null;
+  r.pos++;
+  if ("?+*{".includes(r.peek()) && r.peek() !== "") outside();
+  return q;
 }
-function applyCall(argNodes, env, depth, run) {
-  if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
-  const args = [];
-  for (const argNode of argNodes) {
-    const arg = asArg(argNode, env, depth);
-    if (arg === null) return NOT_CONSTANT2;
-    args.push(arg);
-  }
-  let result;
-  try {
-    result = run(args);
-  } catch (e) {
-    if (e instanceof UnspellableInCallback) return unspellable(e.what);
-    return NOT_CONSTANT2;
-  }
-  if (!result.ok) return propagate(result);
-  if (!withinSize(result.value)) return NOT_CONSTANT2;
-  return spellable(result.value);
+function parseAlt(r, depth, inLook) {
+  if (depth > MAX_DEPTH2) outside();
+  const branches = [parseSeq(r, depth, inLook)];
+  while (r.eat("|")) branches.push(parseSeq(r, depth, inLook));
+  return branches.length === 1 ? branches[0] : { t: "alt", branches };
 }
-function evaluate(node, env) {
-  return at(node, env, 0);
+function parseSeq(r, depth, inLook) {
+  const parts = [];
+  while (r.peek() !== "" && r.peek() !== "|" && r.peek() !== ")") {
+    const c = r.next();
+    let atom;
+    let quantifiable = true;
+    if (c === "(") {
+      if (r.eat("?")) {
+        const kind = r.next();
+        if (kind === ":") atom = { t: "group", capture: false, body: parseAlt(r, depth + 1, inLook) };
+        else if (kind === "=" || kind === "!") {
+          atom = { t: "look", negative: kind === "!", body: parseAlt(r, depth + 1, true) };
+          quantifiable = false;
+        } else return outside();
+      } else {
+        if (inLook) outside();
+        r.groups++;
+        atom = { t: "group", capture: true, body: parseAlt(r, depth + 1, inLook) };
+      }
+      if (!r.eat(")")) outside();
+    } else if (c === "[") {
+      atom = parseClass(r);
+    } else if (c === "\\") {
+      const e = r.next();
+      if (e in SHORTHAND) atom = { t: "class", negated: false, ranges: SHORTHAND[e] };
+      else if (isAlnum(e) || !isPrintable(e)) return outside();
+      else atom = { t: "char", cp: e.charCodeAt(0) };
+    } else if (c === "^" || c === "$") {
+      atom = { t: c === "^" ? "start" : "end" };
+      quantifiable = false;
+    } else if (isLiteral(c)) {
+      atom = { t: "char", cp: c.charCodeAt(0) };
+    } else return outside();
+    const q = parseQuantifier(r);
+    if (q === null) {
+      parts.push(atom);
+      continue;
+    }
+    if (!quantifiable) outside();
+    if (atom.t === "group" && q.max > 1) {
+      const i = inspect(atom);
+      if (i.capture || i.quant || i.alt || i.min === 0) outside();
+    }
+    parts.push({ t: "quant", min: q.min, max: q.max, body: atom });
+  }
+  return parts.length === 1 ? parts[0] : { t: "seq", parts };
 }
-function at(node, env, depth) {
-  if (depth > MAX_DEPTH) return NOT_CONSTANT2;
-  if (depth > 0 && isFieldPathString(node)) return NOT_CONSTANT2;
-  const literal2 = readLiteral(node);
-  if (literal2.ok) return literal2;
-  if (node.type === "Injected") return isMqlShaped(node.value) ? NOT_CONSTANT2 : ok3(node.value);
-  switch (node.type) {
-    case "Ident":
-      return env.has(node.name) ? ok3(env.get(node.name)) : NOT_CONSTANT2;
-    case "ArrayLiteral": {
-      const out = [];
-      for (const element2 of node.elements) {
-        if (element2.type === "SpreadElement") {
-          const spread = at(element2.argument, env, depth + 1);
-          if (!spread.ok) return propagate(spread);
-          if (!Array.isArray(spread.value)) return NOT_CONSTANT2;
-          out.push(...spread.value);
-          continue;
-        }
-        if (element2.type === "FuncDecl") return NOT_CONSTANT2;
-        if (element2.type === "AssignExpr" || element2.type === "DeleteStmt") return NOT_CONSTANT2;
-        if (element2.type === "UpdateFilter") return NOT_CONSTANT2;
-        const value = at(element2, env, depth + 1);
-        if (!value.ok) return propagate(value);
-        out.push(value.value);
-      }
-      return spellable(out);
-    }
-    case "ObjectLiteral": {
-      const out = {};
-      for (const entry of node.entries) {
-        if (entry.type === "SpreadElement") {
-          const spread = at(entry.argument, env, depth + 1);
-          if (!spread.ok) return propagate(spread);
-          if (spread.value === null || typeof spread.value !== "object") return NOT_CONSTANT2;
-          Object.assign(out, spread.value);
-          continue;
-        }
-        const key = entry.key;
-        let name2;
-        if (key.kind === "static") {
-          name2 = key.name;
-        } else {
-          const computed = at(key.expr, env, depth + 1);
-          if (!computed.ok) return propagate(computed);
-          if (typeof computed.value !== "string") return NOT_CONSTANT2;
-          name2 = computed.value;
-        }
-        const value = at(entry.value, env, depth + 1);
-        if (!value.ok) return propagate(value);
-        setKey(out, name2, value.value);
-      }
-      return ok3(out);
-    }
-    case "TemplateLiteral": {
-      const parts = all(node.exprs, env, depth);
-      if (!Array.isArray(parts)) return parts;
-      const spelled3 = parts.map((p) => typeof p === "string" ? p : typeof p === "number" ? numberSpelling(p) : null);
-      if (spelled3.some((p) => p === null)) return NOT_CONSTANT2;
-      let out = node.quasis[0] ?? "";
-      for (let i = 0; i < spelled3.length; i++) out += spelled3[i] + (node.quasis[i + 1] ?? "");
-      return spellable(out);
-    }
-    case "UnaryExpr": {
-      const operand = at(node.argument, env, depth + 1);
-      return operand.ok ? unary(node.op, operand.value) : propagate(operand);
-    }
-    case "BinaryExpr": {
-      const left = at(node.left, env, depth + 1);
-      if (!left.ok) return propagate(left);
-      const shortCircuit = decidedByLeft(node.op, left.value);
-      if (shortCircuit !== null) return shortCircuit;
-      const right = at(node.right, env, depth + 1);
-      if (!right.ok) return propagate(right);
-      return binary(node.op, left.value, right.value);
-    }
-    case "TernaryExpr": {
-      const test = at(node.test, env, depth + 1);
-      if (!test.ok) return propagate(test);
-      if (typeof test.value !== "boolean") return NOT_CONSTANT2;
-      return at(test.value ? node.consequent : node.alternate, env, depth + 1);
-    }
-    case "MemberAccess": {
-      const on = node.object;
-      if (on.type === "Ident" && NAMESPACES.has(on.name) && !env.has(on.name)) {
-        return foldNamespaceConstant(on.name, node.name);
-      }
-      const receiver = at(node.object, env, depth + 1);
-      return receiver.ok ? property(receiver.value, node.name) : propagate(receiver);
-    }
-    case "IndexAccess": {
-      const receiver = at(node.object, env, depth + 1);
-      if (!receiver.ok) return propagate(receiver);
-      const index = at(node.index, env, depth + 1);
-      return index.ok ? element(receiver.value, index.value) : propagate(index);
-    }
-    case "MethodCall":
-      return methodCall(node, env, depth);
-    case "CallExpression": {
-      const callee = node.callee;
-      if (callee.type === "Lambda") return applyHere(callee, node.args, env, depth);
-      if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT2;
-      const bound = env.get(callee.name);
-      if (isDeclaredFunction(bound)) {
-        return applyHere(bound.lambda, node.args, env, depth);
-      }
-      if (env.has(callee.name)) return NOT_CONSTANT2;
-      if (!acceptsArgumentCount(callee.name, node.args.length)) return NOT_CONSTANT2;
-      return applyCall(node.args, env, depth, (args) => foldNamedCall(callee.name, args));
-    }
-    case "NewExpression": {
-      const callee = node.callee;
-      if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT2;
-      if (env.has(callee.name)) return NOT_CONSTANT2;
-      if (!acceptsArgumentCount(callee.name, node.args.length)) return NOT_CONSTANT2;
-      return applyCall(
-        node.args,
-        env,
-        depth,
-        (args) => foldConstructor(callee.name, args)
-      );
-    }
+function degree(node) {
+  switch (node.t) {
+    case "quant":
+      return (node.max === Infinity ? 1 : 0) + degree(node.body);
+    case "seq":
+      return node.parts.reduce((n2, p) => n2 + degree(p), 0);
+    case "alt":
+      return Math.max(...node.branches.map(degree));
+    case "group":
+    case "look":
+      return degree(node.body);
     default:
-      return NOT_CONSTANT2;
+      return 0;
+  }
+}
+var lit = (cp) => {
+  const c = String.fromCharCode(cp);
+  return isAlnum(c) || c === " " ? c : `\\x${cp.toString(16).padStart(2, "0")}`;
+};
+function print(node) {
+  switch (node.t) {
+    case "char":
+      return lit(node.cp);
+    case "class": {
+      const body = node.ranges.map(([a, b]) => a === b ? lit(a) : `${lit(a)}-${lit(b)}`).join("");
+      return `[${node.negated ? "^" : ""}${body}]`;
+    }
+    case "seq":
+      return node.parts.map(print).join("");
+    case "alt":
+      return node.branches.map(print).join("|");
+    case "group":
+      return `(${node.capture ? "" : "?:"}${print(node.body)})`;
+    case "look":
+      return `(?${node.negative ? "!" : "="}${print(node.body)})`;
+    case "start":
+      return "^";
+    // PCRE2 also matches `$` before a newline that ends the string.
+    case "end":
+      return "(?=\\n?$)";
+    case "quant": {
+      const count = node.min === 0 && node.max === 1 ? "?" : node.min === 0 && node.max === Infinity ? "*" : node.min === 1 && node.max === Infinity ? "+" : `{${node.min}${node.max === node.min ? "" : `,${node.max === Infinity ? "" : node.max}`}}`;
+      return print(node.body) + count;
+    }
+  }
+}
+function compile(pattern, caseless) {
+  if (pattern.length > MAX_PATTERN) return null;
+  const reader = new Reader(pattern);
+  let tree;
+  try {
+    tree = parseAlt(reader, 0, false);
+    if (reader.pos !== pattern.length) return null;
+  } catch (e) {
+    if (e instanceof Outside) return null;
+    throw e;
+  }
+  const longest = Math.min(MAX_SUBJECT, Math.floor(MAX_COST ** (1 / (degree(tree) + 1))));
+  return { re: new RegExp(print(tree), caseless ? "giu" : "gu"), groups: reader.groups, longest };
+}
+var codePointsBefore = (s, at2) => {
+  let n2 = 0;
+  for (let i = 0; i < at2; i += s.codePointAt(i) > 65535 ? 2 : 1) n2++;
+  return n2;
+};
+var read = (s, m) => ({
+  match: m[0],
+  idx: codePointsBefore(s, m.index),
+  captures: m.slice(1).map((c) => c ?? null)
+});
+var insidePair = (s, at2) => {
+  const unit = s.charCodeAt(at2);
+  const before = s.charCodeAt(at2 - 1);
+  return at2 > 0 && unit >= 56320 && unit <= 57343 && before >= 55296 && before <= 56319;
+};
+function findAll(re, s) {
+  const found2 = [];
+  let start = 0;
+  do {
+    re.lastIndex = start;
+    const m = re.exec(s);
+    if (m === null) break;
+    if (insidePair(s, m.index)) return void 0;
+    found2.push(read(s, m));
+    start = m.index + (m[0] === "" ? s.codePointAt(m.index) > 65535 ? 2 : 1 : m[0].length);
+  } while (start < s.length);
+  return found2;
+}
+var FOLDS_TO_ASCII = /[ſK]/;
+function regexRule(answer) {
+  return keyed(["input", "regex"], ["options"], (parts, walk2) => {
+    const input = walk2.at(parts.input);
+    const regex = walk2.at(parts.regex);
+    if (!input.ok) return input;
+    if (!regex.ok) return regex;
+    let caseless = false;
+    if ("options" in parts) {
+      const options = walk2.at(parts.options);
+      if (!options.ok) return options;
+      if (options.value !== "" && options.value !== "i") return NO;
+      caseless = options.value === "i";
+    }
+    if (typeof regex.value !== "string") return NO;
+    const compiled = compile(regex.value, caseless);
+    if (compiled === null) return NO;
+    const subject = input.value;
+    if (subject === null) return ok(answer(compiled.re, null));
+    if (typeof subject !== "string" || subject.length > compiled.longest || subject.includes("\0")) return NO;
+    if (caseless && FOLDS_TO_ASCII.test(subject)) return NO;
+    const value = answer(compiled.re, subject);
+    return value === void 0 ? NO : ok(value);
+  });
+}
+var REGEX = {
+  $regexMatch: regexRule((re, s) => {
+    if (s === null) return false;
+    re.lastIndex = 0;
+    const m = re.exec(s);
+    if (m === null) return false;
+    return insidePair(s, m.index) ? void 0 : true;
+  }),
+  $regexFind: regexRule((re, s) => {
+    if (s === null) return null;
+    re.lastIndex = 0;
+    const m = re.exec(s);
+    if (m === null) return null;
+    return insidePair(s, m.index) ? void 0 : read(s, m);
+  }),
+  $regexFindAll: regexRule((re, s) => s === null ? [] : findAll(re, s))
+};
+
+// src/compiler/interpret/string.ts
+var isString = (v) => typeof v === "string";
+var encoder = new TextEncoder();
+var decoder = new TextDecoder();
+var utf8 = (s) => encoder.encode(s);
+function findBytes(bytes, needle, from) {
+  for (let i = from; i + needle.length <= bytes.length; i++) {
+    if (needle.every((b, j) => bytes[i + j] === b)) return i;
+  }
+  return -1;
+}
+var concat = positional(0, Infinity, (xs) => {
+  if (!xs.every((x) => x === null || isString(x))) return NO;
+  return xs.includes(null) ? ok(null) : spellable(xs.join(""));
+});
+var letterCase = (change) => positional(1, 1, ([s]) => s === null ? ok("") : isString(s) ? ok(change(s)) : NO);
+var toString = positional(1, 1, ([v]) => {
+  if (v === null || isString(v)) return ok(v);
+  if (typeof v === "boolean") return ok(String(v));
+  if (typeof v === "number") return ok(numberSpelling(v) ?? new NumberText());
+  if (kindOf2(v) === "objectId") return objectIdHex(v) === null ? NO : ok(objectIdHex(v));
+  const tag = bsonTagOf(v);
+  if (tag === "Long" && v.unsigned === true) return NO;
+  return tag !== void 0 && TEXT_OF.has(tag) ? ok(String(v)) : NO;
+});
+var TEXT_OF = /* @__PURE__ */ new Set(["Decimal128", "Long", "Int32"]);
+var DEFAULT_TRIM = (cp) => cp === 0 || cp >= 9 && cp <= 13 || cp === 32 || cp === 160 || cp === 5760 || cp >= 8192 && cp <= 8202;
+var DISPUTED = /[\u0085\u2028\u2029\u202f\u205f\u3000]/;
+var trimming = (left, right) => keyed(["input"], ["chars"], (parts, walk2) => {
+  const input = walk2.at(parts.input);
+  if (!input.ok) return input;
+  if (!isString(input.value)) return NO;
+  let drops;
+  if ("chars" in parts) {
+    const chars = walk2.at(parts.chars);
+    if (!chars.ok) return chars;
+    if (!isString(chars.value)) return NO;
+    const set = new Set(points(chars.value).map((c) => c.codePointAt(0)));
+    drops = (cp) => set.has(cp);
+  } else {
+    if (DISPUTED.test(input.value)) return NO;
+    drops = DEFAULT_TRIM;
+  }
+  const cps = points(input.value).map((c) => c.codePointAt(0));
+  let from = 0;
+  let to = cps.length;
+  if (left) while (from < to && drops(cps[from])) from++;
+  if (right) while (to > from && drops(cps[to - 1])) to--;
+  return ok(
+    cps.slice(from, to).map((cp) => String.fromCodePoint(cp)).join("")
+  );
+});
+var strLenCP = positional(1, 1, ([s]) => isString(s) ? ok(points(s).length) : NO);
+var strLenBytes = positional(1, 1, ([s]) => isString(s) ? ok(utf8(s).length) : NO);
+var substrCP = positional(3, 3, ([s, start, length]) => {
+  if (!isString(s) || !isInt32(start) || !isInt32(length) || start < 0 || length < 0) return NO;
+  return ok(
+    points(s).slice(start, start + length).join("")
+  );
+});
+var isContinuation = (byte) => byte !== void 0 && (byte & 192) === 128;
+var substrBytes = positional(3, 3, ([s, start, length]) => {
+  if (!isString(s) || !isInt32(start) || !isInt32(length) || start < 0) return NO;
+  const bytes = utf8(s);
+  if (start >= bytes.length) return ok("");
+  const stop = length < 0 ? bytes.length : Math.min(start + length, bytes.length);
+  if (isContinuation(bytes[start]) || isContinuation(bytes[stop])) return NO;
+  return ok(decoder.decode(bytes.subarray(start, stop)));
+});
+var indexOfCP = positional(2, 3, ([s, needle, from = 0]) => {
+  if (!isString(needle) || !isInt32(from) || from < 0) return NO;
+  if (s === null) return ok(null);
+  if (!isString(s)) return NO;
+  const text = points(s);
+  if (from > 0 && from >= text.length) return ok(-1);
+  const find = points(needle);
+  for (let i = from; i + find.length <= text.length; i++) {
+    if (find.every((c, j) => text[i + j] === c)) return ok(i);
+  }
+  return ok(-1);
+});
+var indexOfBytes = positional(2, 4, ([s, needle, from = 0, to]) => {
+  if (!isString(needle) || needle === "" || !isInt32(from) || from < 0) return NO;
+  if (to !== void 0 && !(isInt32(to) && to >= 0)) return NO;
+  if (s === null) return ok(null);
+  if (!isString(s)) return NO;
+  const bytes = utf8(s);
+  const find = utf8(needle);
+  const found2 = findBytes(bytes, find, from);
+  const stop = to === void 0 ? bytes.length : to;
+  return ok(found2 !== -1 && found2 + find.length <= stop ? found2 : -1);
+});
+var split = positional(2, 2, ([s, separator]) => {
+  if (!isString(s) || !isString(separator) || separator === "") return NO;
+  return spellable(s.split(separator));
+});
+var replacing = (all) => keyed(["input", "find", "replacement"], [], (parts, walk2) => {
+  const input = walk2.at(parts.input);
+  const find = walk2.at(parts.find);
+  const replacement = walk2.at(parts.replacement);
+  if (!input.ok) return input;
+  if (!find.ok) return find;
+  if (!replacement.ok) return replacement;
+  const [text, what, by] = [input.value, find.value, replacement.value];
+  if (!isString(text) || !isString(what) || !isString(by) || what === "") return NO;
+  if (all) return spellable(text.split(what).join(by));
+  const at2 = text.indexOf(what);
+  return spellable(at2 === -1 ? text : text.slice(0, at2) + by + text.slice(at2 + what.length));
+});
+var strcasecmp = positional(2, 2, ([a, b]) => {
+  if (!isString(a) || !isString(b)) return NO;
+  const order = compareCodePoints(asciiUpper(a), asciiUpper(b));
+  return ok(order < 0 ? -1 : order > 0 ? 1 : 0);
+});
+var STRING = {
+  $concat: concat,
+  $toUpper: letterCase(asciiUpper),
+  $toLower: letterCase(asciiLower),
+  $toString: toString,
+  $trim: trimming(true, true),
+  $ltrim: trimming(true, false),
+  $rtrim: trimming(false, true),
+  $strLenCP: strLenCP,
+  $strLenBytes: strLenBytes,
+  $substrCP: substrCP,
+  $substrBytes: substrBytes,
+  $substr: substrBytes,
+  $indexOfCP: indexOfCP,
+  $indexOfBytes: indexOfBytes,
+  $split: split,
+  $replaceOne: replacing(false),
+  $replaceAll: replacing(true),
+  $strcasecmp: strcasecmp
+};
+
+// src/compiler/interpret/type.ts
+var TAGGED = {
+  Int32: "int",
+  Long: "long",
+  Double: "double",
+  Decimal128: "decimal",
+  Binary: "binData",
+  MinKey: "minKey",
+  MaxKey: "maxKey",
+  BSONRegExp: "regex"
+};
+var NUMERIC_TAGS = /* @__PURE__ */ new Set(["Int32", "Long", "Double", "Decimal128"]);
+var type = positional(
+  1,
+  1,
+  ([v], written2) => {
+    switch (kindOf2(v)) {
+      case "null":
+        return ok("null");
+      case "string":
+        return ok("string");
+      case "boolean":
+        return ok("bool");
+      case "array":
+        return ok("array");
+      case "object":
+        return ok("object");
+      case "date":
+        return ok("date");
+      case "objectId":
+        return ok("objectId");
+      case "number":
+        if (typeof written2[0] !== "number") return NO;
+        return ok(isInt32(v) ? "int" : "double");
+      default: {
+        const name2 = isRegExp(v) ? "regex" : TAGGED[bsonTagOf(v) ?? ""];
+        return name2 === void 0 ? NO : ok(name2);
+      }
+    }
+  },
+  true
+);
+var isNumber2 = positional(1, 1, ([v]) => ok(kindOf2(v) === "number" || NUMERIC_TAGS.has(bsonTagOf(v) ?? "")), true);
+var toBool = positional(
+  1,
+  1,
+  ([v]) => {
+    switch (kindOf2(v)) {
+      case "null":
+        return ok(null);
+      case "number":
+        return ok(v !== 0);
+      case "boolean":
+        return ok(v);
+      case "string":
+      case "array":
+      case "object":
+      case "date":
+      case "objectId":
+        return ok(true);
+      default:
+        return NO;
+    }
+  },
+  true
+);
+var toObjectId = positional(1, 1, ([v]) => {
+  if (v === null || kindOf2(v) === "objectId") return ok(v);
+  return typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v) ? ok(new ObjectId(v)) : NO;
+});
+var toInt = positional(1, 1, ([v]) => {
+  if (v === null) return ok(null);
+  if (typeof v === "boolean") return ok(v ? 1 : 0);
+  if (typeof v === "number") return v >= -2147483648 && v <= 2147483647 ? ok(Math.trunc(v) + 0) : NO;
+  if (typeof v !== "string" || !/^[+-]?[0-9]+$/.test(v)) return NO;
+  const n2 = Number(v);
+  return isInt32(n2) ? ok(n2 + 0) : NO;
+});
+var TYPE = {
+  $type: type,
+  $isNumber: isNumber2,
+  $toBool: toBool,
+  $toObjectId: toObjectId,
+  $toInt: toInt
+};
+
+// src/compiler/interpret/rules.ts
+var FAMILIES = [
+  ARITHMETIC,
+  COMPARE,
+  LOGIC,
+  ARRAY,
+  OBJECT,
+  STRING,
+  REGEX,
+  TYPE,
+  ACCUMULATE,
+  DATES
+];
+function join(families2) {
+  const table = /* @__PURE__ */ Object.create(null);
+  for (const family of families2) {
+    for (const [name2, rule] of Object.entries(family)) {
+      if (name2 in table) internalError(`two interpreter rules for ${name2}`);
+      table[name2] = rule;
+    }
+  }
+  return table;
+}
+var RULES = join(FAMILIES);
+
+// src/compiler/interpret/index.ts
+function lookup(scope, name2) {
+  for (let s = scope; s !== null; s = s.parent) if (s.vars.has(name2)) return { found: true, value: s.vars.get(name2) };
+  return { found: false };
+}
+var VARIABLE = /^\$\$([a-z][A-Za-z0-9_]*)((?:\.[^.]+)*)$/;
+function variable(text, scope, unordered) {
+  const match = VARIABLE.exec(text);
+  if (match === null) return NO;
+  const bound = lookup(scope, match[1]);
+  if (!bound.found) return NO;
+  if (bound.value instanceof Failed) return bound.value.answer;
+  let value = bound.value;
+  for (const segment of match[2] === "" ? [] : match[2].slice(1).split(".")) {
+    if (!isPlain(value) || !Object.prototype.hasOwnProperty.call(value, segment)) return NO;
+    value = value[segment];
+  }
+  return spellable(value, unordered);
+}
+function holdsSet(budget, value) {
+  if (budget.sets === null || typeof value !== "object" || value === null) return false;
+  if (budget.sets.has(value)) return true;
+  if (Array.isArray(value)) return value.some((v) => holdsSet(budget, v));
+  return isPlain(value) && Object.values(value).some((v) => holdsSet(budget, v));
+}
+function step(budget, scope, depth, node) {
+  if (depth > MAX_DEPTH || ++budget.steps > MAX_STEPS) return NO;
+  const unordered = (v) => budget.sets?.has(v) ?? false;
+  const scoped = (bind) => bind === void 0 ? scope : { vars: new Map(Object.entries(bind)), parent: scope };
+  const below = {
+    raw: (child, bind) => step(budget, scoped(bind), depth + 1, child),
+    at: (child, bind) => {
+      const a = step(budget, scoped(bind), depth + 1, child);
+      return a.ok && holdsSet(budget, a.value) ? NO : a;
+    },
+    holdsSet: (value) => holdsSet(budget, value),
+    isSet: (value) => typeof value === "object" && value !== null && (budget.sets?.has(value) ?? false),
+    markSet: (array) => {
+      (budget.sets ??= /* @__PURE__ */ new WeakSet()).add(array);
+      return array;
+    }
+  };
+  if (typeof node === "string") {
+    if (node.startsWith("$")) return node.startsWith("$$") ? variable(node, scope, unordered) : NO;
+    return isWellFormed(node) ? spellable(node) : NO;
+  }
+  if (Array.isArray(node)) {
+    const out = [];
+    for (const element of node) {
+      const a = below.raw(element);
+      if (!a.ok) return a;
+      out.push(a.value);
+    }
+    return spellable(out, unordered);
+  }
+  if (isPlain(node)) {
+    const keys = Object.keys(node);
+    const operators = keys.filter((k) => k.startsWith("$"));
+    if (operators.length === 0) {
+      if (keys.some((k) => k === "" || k.includes(".") || k.includes("\0"))) return NO;
+      const out = {};
+      for (const key of keys) {
+        const a = below.raw(node[key]);
+        if (!a.ok) return a;
+        setKey(out, key, a.value);
+      }
+      return spellable(out, unordered);
+    }
+    if (keys.length !== 1) return NO;
+    const rule = Object.prototype.hasOwnProperty.call(RULES, keys[0]) ? RULES[keys[0]] : void 0;
+    if (rule === void 0) return NO;
+    const answer = rule(node[keys[0]], below);
+    if (!answer.ok) return answer;
+    if (Array.isArray(answer.value)) budget.steps += answer.value.length;
+    return spellable(answer.value, unordered);
+  }
+  if (typeof node === "number" && !Number.isFinite(node)) return unspellable(String(node));
+  return isValue(node) ? spellable(node) : NO;
+}
+function interpret(mql) {
+  try {
+    const answer = step({ steps: 0, sets: null }, null, 0, mql);
+    if (answer.ok && holdsNumberText(answer.value)) return NO;
+    return answer.ok ? ok(answer.value) : answer;
+  } catch (e) {
+    if (e instanceof RangeError) return NO;
+    throw e;
   }
 }
 
@@ -19226,10 +19955,10 @@ var UPDATE_DOC = { at: "updateDoc" };
 var TARGET = { at: "target" };
 var stageMayStand = (here) => here.at === "statement" || here.at === "stream";
 function reached(stage, path, slot, child) {
-  const type = typeof child === "object" && child !== null ? child.type : void 0;
-  if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
-  const at3 = type === "ArrayLiteral" ? slot.at : slot.otherwise;
-  return at3 === "value" && !slot.evaluated ? { at: at3, written: { stage, path } } : { at: at3 };
+  const type2 = typeof child === "object" && child !== null ? child.type : void 0;
+  if (slot.deeper && type2 === "ObjectLiteral") return { at: "stageBody", stage, path };
+  const at2 = type2 === "ArrayLiteral" ? slot.at : slot.otherwise;
+  return at2 === "value" && !slot.evaluated ? { at: at2, written: { stage, path } } : { at: at2 };
 }
 function edge(node, key, here) {
   const n2 = node;
@@ -19268,8 +19997,8 @@ function edge(node, key, here) {
   }
   if (namesSomething(n2, key)) return TARGET;
   if (n2.type === "AssignExpr" && key === "value") {
-    const target = n2.target;
-    if (target.type === "StreamRef") return STREAM;
+    const target2 = n2.target;
+    if (target2.type === "StreamRef") return STREAM;
   }
   if ((n2.type === "MethodCall" || n2.type === "MemberAccess" || n2.type === "IndexAccess") && key === "object") {
     const receiver = n2.object;
@@ -19369,241 +20098,12 @@ function mapTreeIn(root2, seed, edge2, fn) {
   return transformIn(root2, seed, edge2, fn).value;
 }
 
-// src/compiler/passes/fold.ts
-var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-function rootName(node) {
-  let cursor = node;
-  while (isNode3(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
-    cursor = cursor.object;
-  }
-  return isNode3(cursor) && cursor.type === "Ident" && typeof cursor.name === "string" ? cursor.name : null;
-}
-function unfoldable(stmts) {
-  const excluded = /* @__PURE__ */ new Set();
-  const declared = /* @__PURE__ */ new Set();
-  const readSoFar = /* @__PURE__ */ new Set();
-  for (const stmt of stmts) {
-    if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
-      if (readSoFar.has(stmt.name)) excluded.add(stmt.name);
-    }
-    for (const name2 of freeNamesIn(stmt)) readSoFar.add(name2);
-  }
-  const order = declaredIn(stmts);
-  for (const stmt of stmts) {
-    if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
-      if (declared.has(stmt.name)) excluded.add(stmt.name);
-      declared.add(stmt.name);
-      const body = stmt.type === "LetDecl" ? stmt.value : stmt.lambda;
-      const later = new Set(order.slice(order.indexOf(stmt.name)));
-      if (body?.type === "Lambda" && [...freeNamesIn(body)].some((n2) => later.has(n2))) excluded.add(stmt.name);
-    }
-    for (const [node, where] of everyNodeWithPosition(stmt)) {
-      if (node.type === "AssignExpr" || node.type === "DeleteStmt") {
-        const name2 = rootName(node.target);
-        if (name2 !== null) excluded.add(name2);
-      }
-      if (node.type !== "MethodCall") continue;
-      if (where.at === "statement") {
-        const receiver = rootName(node.object);
-        if (receiver !== null) excluded.add(receiver);
-      }
-    }
-  }
-  return excluded;
-}
-function freeNamesIn(stmt) {
-  const out = /* @__PURE__ */ new Set();
-  const step = (node, key, here) => {
-    const names = bindsFor(node, key);
-    if (names.length === 0) return here;
-    const next = new Set(here);
-    for (const n2 of names) next.add(n2);
-    return next;
-  };
-  mapTreeIn(stmt, /* @__PURE__ */ new Set(), step, (node, bound) => {
-    const n2 = node;
-    if (n2.type === "Ident" && typeof n2.name === "string" && !bound.has(n2.name)) out.add(n2.name);
-    return node;
-  });
-  return out;
-}
-function everyNodeWithPosition(stmt) {
-  const out = [];
-  mapTreeIn(stmt, STATEMENT, edge, (node, where) => {
-    out.push([node, where]);
-    return node;
-  });
-  return out;
-}
-var shadowedIn = (node, key) => bindsFor(node, key);
-function substitute(program, folded) {
-  const start = { shadowed: /* @__PURE__ */ new Set(), naming: false };
-  const step = (node, key, here) => {
-    const n2 = node;
-    const naming = namesSomething(n2, key);
-    const names = shadowedIn(n2, key);
-    if (names.length === 0) {
-      return naming === here.naming ? here : { shadowed: here.shadowed, naming };
-    }
-    const shadowed = new Set(here.shadowed);
-    for (const name2 of names) shadowed.add(name2);
-    return { shadowed, naming: naming || here.naming };
-  };
-  return mapTreeIn(program, start, step, (node, scope) => {
-    const n2 = node;
-    if (n2.type !== "Ident" || typeof n2.name !== "string") return node;
-    if (scope.naming || scope.shadowed.has(n2.name)) return node;
-    if (!folded.has(n2.name)) return node;
-    return asLiteral(folded.get(n2.name), n2.pos, true);
-  });
-}
-function foldConstantParts(node, known = EMPTY) {
-  const step = (n2, key, here) => {
-    const names = shadowedIn(n2, key);
-    if (names.length === 0) return here;
-    const next = new Map(here);
-    for (const name2 of names) next.delete(name2);
-    return next;
-  };
-  return mapTreeIn(node, known, step, (inner, env) => {
-    const n2 = inner;
-    if (n2.type === "KeyValueEntry") {
-      const key = n2.key;
-      if (key.kind !== "computed" || key.expr === void 0) return inner;
-      const computed = evaluate(key.expr, env);
-      return computed.ok && typeof computed.value === "string" ? { ...n2, key: { kind: "static", name: computed.value } } : inner;
-    }
-    if (!EVALUABLE.has(n2.type) || n2.type === "RegexLiteral") return inner;
-    const result = evaluate(n2, env);
-    if (!result.ok) {
-      if (result.unspellable !== void 0) throw noLiteralFor(result.unspellable, n2.pos);
-      return inner;
-    }
-    const nonFinite = nonFiniteIn(result.value);
-    if (nonFinite !== null) throw noLiteralFor(nonFinite, n2.pos);
-    return asLiteral(result.value, n2.pos, true) ?? inner;
-  });
-}
-function foldPartsIn(stmts, known) {
-  const out = stmts.map((stmt) => foldConstantParts(stmt, known));
-  return out.some((stmt, i) => stmt !== stmts[i]) ? out : stmts;
-}
-var EMPTY = /* @__PURE__ */ new Map();
-var EVALUABLE_TYPES = [
-  "UnaryExpr",
-  "BinaryExpr",
-  "TernaryExpr",
-  "TemplateLiteral",
-  "MemberAccess",
-  "IndexAccess",
-  "MethodCall",
-  "CallExpression",
-  "NewExpression"
-];
-var EVALUABLE = new Set(EVALUABLE_TYPES);
-function fold(program) {
-  const foldNested = (node) => {
-    const n2 = node;
-    if (n2.type !== "Pipeline") return node;
-    const inner = foldStatements(n2.stmts);
-    const parts = foldPartsIn(inner.stmts, inner.env);
-    return inner.changed || parts !== inner.stmts ? { ...n2, stmts: parts } : node;
-  };
-  const root2 = program;
-  if (root2.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested));
-  const stmts = root2.stmts.map(
-    (stmt) => mapTree(stmt, foldNested)
-  );
-  const top = foldStatements(stmts);
-  const original = root2.stmts;
-  const nestedChanged = stmts.some((stmt, i) => stmt !== original[i]);
-  if (!top.changed && !nestedChanged) {
-    const parts = foldPartsIn(stmts, top.env);
-    if (parts === stmts) return program;
-    return { type: "Pipeline", stmts: parts, pos: root2.pos };
-  }
-  const rewritten = { type: "Pipeline", stmts: foldPartsIn(top.stmts, top.env), pos: root2.pos };
-  const left = rewritten.stmts;
-  if (left.length === 1) {
-    const only = left[0];
-    const isStatement = only.type === "UpdateFilter" || only.type === "LetDecl" || only.type === "FuncDecl";
-    if (!isStatement) return only;
-  }
-  return rewritten;
-}
-function foldStatements(stmts) {
-  const excluded = unfoldable(stmts);
-  const folded = /* @__PURE__ */ new Map();
-  const env = /* @__PURE__ */ new Map();
-  const survivors = [];
-  let changed = false;
-  for (const stmt of stmts) {
-    const resolved = folded.size === 0 ? stmt : substitute({ type: "Pipeline", stmts: [stmt], pos: 0 }, folded).stmts[0];
-    if (resolved !== stmt) changed = true;
-    if (resolved.type === "FuncDecl" && !excluded.has(resolved.name)) {
-      env.set(resolved.name, asDeclaredFunction(resolved.lambda));
-      survivors.push(resolved);
-      continue;
-    }
-    if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
-      const result = evaluate(resolved.value, env);
-      if (result.ok && nonFiniteIn(result.value) !== null)
-        throw noLiteralFor(nonFiniteIn(result.value), resolved.pos);
-      if (!result.ok && result.unspellable !== void 0) {
-        throw new ParseError(
-          `This constant expression evaluates to ${result.unspellable}, which has no MongoDB literal. Check the arithmetic \u2014 a division by zero, or an exponent out of range.`,
-          resolved.pos
-        );
-      }
-      if (result.ok) {
-        if (asLiteral(result.value, 0) !== null) {
-          folded.set(resolved.name, result.value);
-          env.set(resolved.name, result.value);
-          changed = true;
-          continue;
-        }
-      }
-    }
-    if (resolved.type === "LetDecl" || resolved.type === "FuncDecl") {
-      folded.delete(resolved.name);
-      env.delete(resolved.name);
-    }
-    survivors.push(resolved);
-  }
-  return { stmts: survivors, changed, env };
-}
-function noLiteralFor(what, pos) {
-  return new ParseError(
-    `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic \u2014 a division by zero, or an exponent out of range \u2014 or guard it with a condition.`,
-    pos
-  );
-}
-function nonFiniteIn(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? null : String(value);
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const found2 = nonFiniteIn(v);
-      if (found2 !== null) return found2;
-    }
-    return null;
-  }
-  if (isPlainObject(value)) {
-    for (const v of Object.values(value)) {
-      const found2 = nonFiniteIn(v);
-      if (found2 !== null) return found2;
-    }
-  }
-  return null;
-}
-
-// src/compiler/passes/desugar.ts
-var MAX_ROUNDS = 1e5;
-var fingerprint = (program) => JSON.stringify(program, (k, v) => k === "pos" ? 0 : v);
+// src/compiler/passes/desugar-rules.ts
 var COMPOUND = new Map(
   ASSIGN_OPS.filter((op) => op.length > 1 && op.endsWith("=")).map((op) => [op, op.slice(0, -1)])
 );
-function writesACollection(target) {
-  const base = chainBase(target);
+function writesACollection(target2) {
+  const base = chainBase(target2);
   return base.type === "DatabaseRef" || base.type === "ClusterRef";
 }
 var compoundAssign = {
@@ -19690,15 +20190,15 @@ var fieldPath = {
     return optionalAt === void 0 ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt };
   }
 };
-var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-function writeBack(target, value, pos) {
+var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+function writeBack(target2, value, pos) {
   return {
     type: "UpdateFilter",
     // The destination gets a FRESH copy of the target: the target now appears
     // twice, and a later phase compares nodes by identity.
     // `mutates` marks a mutator's own write, which JavaScript also allows on a `const` binding.
-    ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos, mutates: true }],
-    pos: target.pos
+    ops: [{ type: "AssignExpr", target: { ...target2 }, op: "=", value, pos, mutates: true }],
+    pos: target2.pos
   };
 }
 var mutatorTwin = {
@@ -19709,12 +20209,12 @@ var mutatorTwin = {
     if (n2.type !== "MethodCall" || typeof n2.name !== "string") return node;
     const twin = immutableTwinOf(n2.name);
     if (twin === void 0) return node;
-    const target = writtenField(n2);
-    if (target === null) return node;
+    const target2 = writtenField(n2);
+    if (target2 === null) return node;
     return writeBack(
-      target,
+      target2,
       // `wrote` keeps the source spelling, so a refusal names `.reverse()`, not the twin.
-      { type: "MethodCall", object: target, name: twin, wrote: n2.name, args: n2.args, optional: false, pos: n2.pos },
+      { type: "MethodCall", object: target2, name: twin, wrote: n2.name, args: n2.args, optional: false, pos: n2.pos },
       n2.pos
     );
   }
@@ -19722,7 +20222,7 @@ var mutatorTwin = {
 function instantiate(form, recv, args, pos) {
   const sub = (v) => {
     if (Array.isArray(v)) return v.map(sub);
-    if (!isNode4(v)) return v;
+    if (!isNode3(v)) return v;
     if (v.type === "Ident" && typeof v.name === "string") {
       if (v.name === "_r") return { ...recv };
       const slot = /^_(\d+)$/.exec(v.name);
@@ -19742,20 +20242,20 @@ var mutatorForm = {
     if (n2.type !== "MethodCall" || typeof n2.name !== "string") return node;
     const form = mutatorFormOf(n2.name);
     if (form === void 0) return node;
-    const target = writtenField(n2);
-    if (target === null) return node;
+    const target2 = writtenField(n2);
+    if (target2 === null) return node;
     const args = n2.args;
     if (args.some((a) => a.type === "SpreadElement")) return node;
     const template = form.by[args.length];
     if (template === void 0) {
       const counts = Object.keys(form.by).map(Number);
-      const range = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
+      const range2 = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
       throw new ParseError(
-        `'.${n2.name}(${form.sig})' at position ${n2.pos} takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
+        `'.${n2.name}(${form.sig})' at position ${n2.pos} takes ${range2} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
         n2.pos
       );
     }
-    return writeBack(target, instantiate(template, target, args, n2.pos), n2.pos);
+    return writeBack(target2, instantiate(template, target2, args, n2.pos), n2.pos);
   }
 };
 var mutatorSpread = {
@@ -19766,12 +20266,12 @@ var mutatorSpread = {
     if (n2.type !== "MethodCall" || typeof n2.name !== "string") return node;
     const order = arrayLiteralOrderOf(n2.name);
     if (order === void 0) return node;
-    const target = writtenField(n2);
-    if (target === null) return node;
-    const spread = { type: "SpreadElement", argument: target, pos: target.pos };
+    const target2 = writtenField(n2);
+    if (target2 === null) return node;
+    const spread = { type: "SpreadElement", argument: target2, pos: target2.pos };
     const args = n2.args;
     const elements = order === "receiver, then arguments" ? [spread, ...args] : [...args, spread];
-    return writeBack(target, { type: "ArrayLiteral", elements, pos: n2.pos }, n2.pos);
+    return writeBack(target2, { type: "ArrayLiteral", elements, pos: n2.pos }, n2.pos);
   }
 };
 var packSpread = {
@@ -19878,7 +20378,7 @@ function bareCall(callee, param, pos) {
       return void 0;
     return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
   }
-  if (callee.type === "MemberAccess" && isNode4(callee.object) && callee.object.type === "Ident") {
+  if (callee.type === "MemberAccess" && isNode3(callee.object) && callee.object.type === "Ident") {
     const ns = callee.object.name;
     if (typeof ns !== "string" || !namespaceNames().has(ns) || typeof callee.name !== "string") return void 0;
     return { type: "MethodCall", object: { ...callee.object }, name: callee.name, args: [arg], optional: false, pos };
@@ -19911,7 +20411,7 @@ var iterateeShorthand = {
     return changed ? { ...n2, args: next } : node;
   }
 };
-var RULES = [
+var RULES2 = [
   // The write normalisations come first: everything downstream assumes `op` is
   // `"="`, including the sugar dispatch that routes a write by its target.
   compoundAssign,
@@ -19933,6 +20433,415 @@ var RULES = [
   // them matches, and the arrow it builds is not a shape any of them looks for.
   iterateeShorthand
 ];
+function applyRules(root2, where) {
+  let next = root2;
+  for (const rule of RULES2) next = mapTreeIn(next, where, edge, rule.apply);
+  return next;
+}
+
+// src/compiler/passes/date-literal.ts
+var NO2 = { ok: false };
+function literalsOf(args) {
+  const out = [];
+  for (const a of args) {
+    if (a.type === "SpreadElement") return null;
+    const r = readLiteral(a);
+    if (!r.ok) return null;
+    out.push(r.value);
+  }
+  return out;
+}
+function instantOf2(args) {
+  if (args.length === 0) return null;
+  if (args.length === 1) {
+    const [a] = args;
+    if (typeof a === "number") return Number.isFinite(a) && !Number.isNaN(new Date(a).getTime()) ? new Date(a) : null;
+    if (typeof a !== "string") return null;
+    const parsed = new Date(a);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (args.length > 7 || !args.every((v) => typeof v === "number" && Number.isInteger(v))) return null;
+  const [year, month, day = 1, hour = 0, minute = 0, second = 0, ms = 0] = args;
+  const date = new Date(Date.UTC(year, month, day, hour, minute, second, ms));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+var isDateName = (name2) => canonicalBsonName(name2) === "Date";
+function readDateLiteral(node, isBound) {
+  if ((node.type === "NewExpression" || node.type === "CallExpression") && node.callee.type === "Ident") {
+    const name2 = node.callee.name;
+    if (!isDateName(name2) || isBound(name2)) return NO2;
+    const args = literalsOf(node.args);
+    const date = args === null ? null : instantOf2(args);
+    return date === null ? NO2 : { ok: true, value: date };
+  }
+  if (node.type === "MethodCall" && node.name === "UTC" && node.object.type === "Ident") {
+    const on = node.object.name;
+    if (!isDateName(on) || !namespaceNames().has(on) || isBound(on)) return NO2;
+    const args = literalsOf(node.args);
+    if (args === null) return NO2;
+    const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 0] : args;
+    const date = parts.length < 2 ? null : instantOf2(parts);
+    return date === null ? NO2 : { ok: true, value: date.getTime() };
+  }
+  return NO2;
+}
+
+// src/compiler/passes/substitute.ts
+function substitute(root2, values) {
+  const start = { shadowed: /* @__PURE__ */ new Set(), naming: false };
+  const step2 = (node, key, here) => {
+    const naming = namesSomething(node, key);
+    const names = bindsFor(node, key);
+    if (names.length === 0) {
+      return naming === here.naming ? here : { shadowed: here.shadowed, naming };
+    }
+    const shadowed = new Set(here.shadowed);
+    for (const name2 of names) shadowed.add(name2);
+    return { shadowed, naming: naming || here.naming };
+  };
+  return mapTreeIn(root2, start, step2, (node, scope) => {
+    const n2 = node;
+    if (n2.type !== "Ident" || typeof n2.name !== "string") return node;
+    if (scope.naming || scope.shadowed.has(n2.name)) return node;
+    if (!values.has(n2.name)) return node;
+    return nodeOf(values.get(n2.name), n2.pos, true);
+  });
+}
+
+// src/compiler/passes/evaluate.ts
+var asDeclaredFunction = (lambda) => ({ lambda });
+var isDeclaredFunction = (v) => typeof v === "object" && v !== null && "lambda" in v && Object.keys(v).length === 1;
+var NOT_CONSTANT2 = { ok: false };
+var ok2 = (value) => ({ ok: true, value });
+var lowering = null;
+function provideLowering(lower) {
+  lowering = lower;
+}
+function writeBack2(value, pos) {
+  if (isObjectId(value)) {
+    const hex = objectIdHex(value);
+    const typo = hex === null ? null : objectIdTypo(hex);
+    if (typo !== null) throw new ParseError(typo, pos);
+  }
+  return nodeOf(value, pos, true);
+}
+function settled(node) {
+  if (constantOf(node).ok) return node;
+  const result = evaluate(node, /* @__PURE__ */ new Map());
+  return result.ok ? writeBack2(result.value, node.pos) : node;
+}
+var MAX_DEPTH3 = 400;
+var MAX_SIZE2 = 1e6;
+function withinSize2(value) {
+  if (typeof value === "string") return value.length <= MAX_SIZE2;
+  if (Array.isArray(value)) return value.length <= MAX_SIZE2 && value.every(withinSize2);
+  return true;
+}
+function constantOf(node) {
+  return read2(node, 0);
+}
+function read2(node, depth) {
+  if (depth > MAX_DEPTH3) return NOT_CONSTANT2;
+  if (depth > 0 && isFieldPathString(node)) return NOT_CONSTANT2;
+  const literal2 = readLiteral(node);
+  if (literal2.ok) return literal2;
+  switch (node.type) {
+    case "Injected":
+      return isMqlShaped(node.value) ? NOT_CONSTANT2 : ok2(node.value);
+    case "UnaryExpr":
+      return node.op === "-" && node.argument.type === "BigIntLiteral" ? ok2(-BigInt(node.argument.value)) : NOT_CONSTANT2;
+    case "ArrayLiteral": {
+      const out = [];
+      for (const element of node.elements) {
+        if (!isElement(element)) return NOT_CONSTANT2;
+        const v = read2(element, depth + 1);
+        if (!v.ok) return NOT_CONSTANT2;
+        out.push(v.value);
+      }
+      return ok2(out);
+    }
+    case "ObjectLiteral": {
+      const out = {};
+      for (const entry of node.entries) {
+        if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") return NOT_CONSTANT2;
+        const v = read2(entry.value, depth + 1);
+        if (!v.ok) return NOT_CONSTANT2;
+        out[entry.key.name] = v.value;
+      }
+      return ok2(out);
+    }
+    default:
+      return NOT_CONSTANT2;
+  }
+}
+var isElement = (e) => e.type !== "SpreadElement" && e.type !== "FuncDecl" && e.type !== "AssignExpr" && e.type !== "DeleteStmt" && e.type !== "UpdateFilter";
+function readsMoreThanConstants(node, env) {
+  let refused = node.type === "Lambda";
+  const step2 = (n2, key, here) => {
+    const names = bindsFor(n2, key);
+    const type2 = n2.type;
+    const declaring = type2 === "ExprBlock" && key === "decls";
+    const bound = names.length === 0 ? here.bound : /* @__PURE__ */ new Set([...here.bound, ...names]);
+    return { bound, declaring, depth: here.depth + 1 };
+  };
+  mapTreeIn(node, { bound: /* @__PURE__ */ new Set(), declaring: false, depth: 0 }, step2, (n2, here) => {
+    if (refused) return n2;
+    const x = n2;
+    switch (x.type) {
+      case "FieldRef":
+      case "StreamRef":
+      case "DatabaseRef":
+      case "ClusterRef":
+      case "OperatorCall":
+      case "AssignExpr":
+      case "DeleteStmt":
+      case "UpdateFilter":
+      case "FuncDecl":
+      case "Pipeline":
+        refused = true;
+        break;
+      case "LetDecl":
+        if (!here.declaring) refused = true;
+        break;
+      case "Ident": {
+        const name2 = x.name;
+        if (!here.bound.has(name2) && !env.has(name2) && !isGlobalName(name2)) refused = true;
+        break;
+      }
+      case "StringLiteral":
+        if (isFieldPathString(x)) refused = true;
+        break;
+      case "Injected":
+        if (isMqlShaped(x.value)) refused = true;
+        break;
+    }
+    if (here.depth > MAX_DEPTH3) refused = true;
+    return n2;
+  });
+  return refused;
+}
+function evaluate(node, env) {
+  const known = constantOf(node);
+  if (known.ok) return known;
+  if (node.type === "Injected") return NOT_CONSTANT2;
+  const date = readDateLiteral(node, (name2) => env.has(name2));
+  if (date.ok) return ok2(date.value);
+  try {
+    return settle(node, env);
+  } catch (e) {
+    if (e instanceof RangeError) return NOT_CONSTANT2;
+    throw e;
+  }
+}
+function settle(node, env) {
+  if (readsMoreThanConstants(node, env)) return NOT_CONSTANT2;
+  const values = /* @__PURE__ */ new Map();
+  const functions = /* @__PURE__ */ new Map();
+  for (const [name2, held] of env) {
+    if (isDeclaredFunction(held)) functions.set(name2, held.lambda);
+    else values.set(name2, held);
+  }
+  const spelled3 = mapTree(substitute(node, values), (n2) => {
+    const date = readDateLiteral(n2, (name2) => env.has(name2));
+    return date.ok ? nodeOf(date.value, n2.pos) : n2;
+  });
+  const closed = spelled3;
+  if (applyRules(closed, VALUE) !== closed) return NOT_CONSTANT2;
+  if (lowering === null) internalError("emit/lower.ts did not lend the lowering before the fold read it");
+  let mql;
+  try {
+    mql = lowering(closed, functions);
+  } catch {
+    return NOT_CONSTANT2;
+  }
+  const result = interpret(mql);
+  if (!result.ok)
+    return result.unspellable === void 0 ? NOT_CONSTANT2 : { ok: false, unspellable: result.unspellable };
+  return withinSize2(result.value) ? ok2(result.value) : NOT_CONSTANT2;
+}
+
+// src/compiler/passes/fold.ts
+var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+function rootName(node) {
+  let cursor = node;
+  while (isNode4(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
+    cursor = cursor.object;
+  }
+  return isNode4(cursor) && cursor.type === "Ident" && typeof cursor.name === "string" ? cursor.name : null;
+}
+function unfoldable(stmts) {
+  const excluded = /* @__PURE__ */ new Set();
+  const declared = /* @__PURE__ */ new Set();
+  const readSoFar = /* @__PURE__ */ new Set();
+  for (const stmt of stmts) {
+    if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
+      if (readSoFar.has(stmt.name)) excluded.add(stmt.name);
+    }
+    for (const name2 of freeNamesIn(stmt)) readSoFar.add(name2);
+  }
+  const order = declaredIn(stmts);
+  for (const stmt of stmts) {
+    if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
+      if (declared.has(stmt.name)) excluded.add(stmt.name);
+      declared.add(stmt.name);
+      const body = stmt.type === "LetDecl" ? stmt.value : stmt.lambda;
+      const later = new Set(order.slice(order.indexOf(stmt.name)));
+      if (body?.type === "Lambda" && [...freeNamesIn(body)].some((n2) => later.has(n2))) excluded.add(stmt.name);
+    }
+    for (const [node, where] of everyNodeWithPosition(stmt)) {
+      if (node.type === "AssignExpr" || node.type === "DeleteStmt") {
+        const name2 = rootName(node.target);
+        if (name2 !== null) excluded.add(name2);
+      }
+      if (node.type !== "MethodCall") continue;
+      if (where.at === "statement") {
+        const receiver = rootName(node.object);
+        if (receiver !== null) excluded.add(receiver);
+      }
+    }
+  }
+  return excluded;
+}
+function freeNamesIn(stmt) {
+  const out = /* @__PURE__ */ new Set();
+  const step2 = (node, key, here) => {
+    const names = bindsFor(node, key);
+    if (names.length === 0) return here;
+    const next = new Set(here);
+    for (const n2 of names) next.add(n2);
+    return next;
+  };
+  mapTreeIn(stmt, /* @__PURE__ */ new Set(), step2, (node, bound) => {
+    const n2 = node;
+    if (n2.type === "Ident" && typeof n2.name === "string" && !bound.has(n2.name)) out.add(n2.name);
+    return node;
+  });
+  return out;
+}
+function everyNodeWithPosition(stmt) {
+  const out = [];
+  mapTreeIn(stmt, STATEMENT, edge, (node, where) => {
+    out.push([node, where]);
+    return node;
+  });
+  return out;
+}
+function foldConstantParts(node, known = EMPTY) {
+  const step2 = (n2, key, here) => {
+    const names = bindsFor(n2, key);
+    if (names.length === 0) return here;
+    const next = new Map(here);
+    for (const name2 of names) next.delete(name2);
+    return next;
+  };
+  return mapTreeIn(node, known, step2, (inner, env) => {
+    const n2 = inner;
+    if (n2.type === "KeyValueEntry") {
+      const key = n2.key;
+      if (key.kind !== "computed" || key.expr === void 0) return inner;
+      const computed = evaluate(key.expr, env);
+      return computed.ok && typeof computed.value === "string" ? { ...n2, key: { kind: "static", name: computed.value } } : inner;
+    }
+    if (!EVALUABLE.has(n2.type) || n2.type === "RegexLiteral") return inner;
+    const result = evaluate(n2, env);
+    if (!result.ok) {
+      if (result.unspellable !== void 0) throw noLiteralFor(result.unspellable, n2.pos);
+      return inner;
+    }
+    return writeBack2(result.value, n2.pos);
+  });
+}
+function foldPartsIn(stmts, known) {
+  const out = stmts.map((stmt) => foldConstantParts(stmt, known));
+  return out.some((stmt, i) => stmt !== stmts[i]) ? out : stmts;
+}
+var EMPTY = /* @__PURE__ */ new Map();
+var EVALUABLE_TYPES = [
+  "UnaryExpr",
+  "BinaryExpr",
+  "TernaryExpr",
+  "TemplateLiteral",
+  "MemberAccess",
+  "IndexAccess",
+  "MethodCall",
+  "CallExpression",
+  "NewExpression"
+];
+var EVALUABLE = new Set(EVALUABLE_TYPES);
+function fold(program) {
+  const foldNested = (node) => {
+    const n2 = node;
+    if (n2.type !== "Pipeline") return node;
+    const inner = foldStatements(n2.stmts);
+    const parts = foldPartsIn(inner.stmts, inner.env);
+    return inner.changed || parts !== inner.stmts ? { ...n2, stmts: parts } : node;
+  };
+  const root2 = program;
+  if (root2.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested));
+  const stmts = root2.stmts.map(
+    (stmt) => mapTree(stmt, foldNested)
+  );
+  const top = foldStatements(stmts);
+  const original = root2.stmts;
+  const nestedChanged = stmts.some((stmt, i) => stmt !== original[i]);
+  if (!top.changed && !nestedChanged) {
+    const parts = foldPartsIn(stmts, top.env);
+    if (parts === stmts) return program;
+    return { type: "Pipeline", stmts: parts, pos: root2.pos };
+  }
+  const rewritten = { type: "Pipeline", stmts: foldPartsIn(top.stmts, top.env), pos: root2.pos };
+  const left = rewritten.stmts;
+  if (left.length === 1) {
+    const only = left[0];
+    const isStatement = only.type === "UpdateFilter" || only.type === "LetDecl" || only.type === "FuncDecl";
+    if (!isStatement) return only;
+  }
+  return rewritten;
+}
+function foldStatements(stmts) {
+  const excluded = unfoldable(stmts);
+  const folded = /* @__PURE__ */ new Map();
+  const env = /* @__PURE__ */ new Map();
+  const survivors = [];
+  let changed = false;
+  for (const stmt of stmts) {
+    const resolved = folded.size === 0 ? stmt : substitute({ type: "Pipeline", stmts: [stmt], pos: 0 }, folded).stmts[0];
+    if (resolved !== stmt) changed = true;
+    if (resolved.type === "FuncDecl" && !excluded.has(resolved.name)) {
+      env.set(resolved.name, asDeclaredFunction(resolved.lambda));
+      survivors.push(resolved);
+      continue;
+    }
+    if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
+      const result = evaluate(resolved.value, env);
+      if (!result.ok && result.unspellable !== void 0) throw noLiteralFor(result.unspellable, resolved.pos);
+      if (result.ok) {
+        const at2 = resolved.value.pos;
+        writeBack2(result.value, at2);
+        folded.set(resolved.name, result.value);
+        env.set(resolved.name, result.value);
+        changed = true;
+        continue;
+      }
+    }
+    if (resolved.type === "LetDecl" || resolved.type === "FuncDecl") {
+      folded.delete(resolved.name);
+      env.delete(resolved.name);
+    }
+    survivors.push(resolved);
+  }
+  return { stmts: survivors, changed, env };
+}
+function noLiteralFor(what, pos) {
+  return new ParseError(
+    `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic \u2014 a division by zero, or an exponent out of range \u2014 or guard it with a condition.`,
+    pos
+  );
+}
+
+// src/compiler/passes/desugar.ts
+var MAX_ROUNDS = 1e5;
+var fingerprint = (program) => JSON.stringify(program, (k, v) => k === "pos" ? 0 : v);
 function refuseWritesInValues(program, root2) {
   mapTreeIn(program, root2, edge, (node, where) => {
     if (where.at === "statement" || where.at === "updateDoc") return node;
@@ -19949,17 +20858,16 @@ function desugarVerbose(program, root2 = STATEMENT) {
   let current = program;
   const seen = /* @__PURE__ */ new Set([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    let next = current;
-    for (const rule of RULES) next = mapTreeIn(next, root2, edge, rule.apply);
+    let next = applyRules(current, root2);
     next = fold(next);
     if (next === current) return { program: current, rounds: round };
-    const print = fingerprint(next);
-    if (seen.has(print)) {
+    const print2 = fingerprint(next);
+    if (seen.has(print2)) {
       throw new Error(
         `jsmql internal error (please report): the desugar pass cycled after ${round} rounds \u2014 two rules are rewriting each other's output.`
       );
     }
-    seen.add(print);
+    seen.add(print2);
     current = next;
   }
   throw new Error(`jsmql internal error (please report): the desugar pass did not settle after ${MAX_ROUNDS} rounds.`);
@@ -20091,7 +20999,7 @@ function walk(node, ctx, role, query, road) {
       return;
     }
     case "TernaryExpr":
-      for (const part of [node.test, node.consequent, node.alternate]) operand(part, "an operand of '?:'");
+      for (const part2 of [node.test, node.consequent, node.alternate]) operand(part2, "an operand of '?:'");
       return;
     case "TemplateLiteral":
       for (const e of node.exprs) operand(e, "an operand of a template literal");
@@ -20170,8 +21078,8 @@ function isBareAssign(program) {
   return namedRow(node) === "assign" && writesItsReceiver(node);
 }
 function writesItsReceiver(node) {
-  const target = node.object;
-  return node.type === "MethodCall" && target !== void 0 && (target.type === "FieldRef" || target.type === "Ident");
+  const target2 = node.object;
+  return node.type === "MethodCall" && target2 !== void 0 && (target2.type === "FieldRef" || target2.type === "Ident");
 }
 function shapeOf(program) {
   const root2 = program;
@@ -20327,11 +21235,11 @@ var Scope = class _Scope {
    * The developer's own variable binder — a lambda parameter, a `$let` var.
    * The compiler encodes it and never renames it. `type` is what the row says the parameter holds.
    */
-  param(js, type, pos, level) {
+  param(js, type2, pos, level) {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type: type2, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     return { as, ref, scope: new _Scope(bound, taken) };
@@ -20356,16 +21264,16 @@ function fieldSlot(path) {
 }
 
 // src/compiler/emit/type.ts
-var has = (t, k) => t.kinds === "any" || t.kinds.has(k);
+var has2 = (t, k) => t.kinds === "any" || t.kinds.has(k);
 var ANY = { kinds: "any", absent: true, open: true };
 var NOTHING = { kinds: /* @__PURE__ */ new Set(), absent: true, open: false };
 var isNothing = (t) => t.kinds !== "any" && t.kinds.size === 0;
 var DOCUMENT = { kinds: /* @__PURE__ */ new Set(["object"]), absent: false, open: true };
 var of = (k, absent = false) => ({ kinds: /* @__PURE__ */ new Set([k]), absent, open: k === "object" });
-var arrayOf = (element2, absent = false) => ({
+var arrayOf = (element, absent = false) => ({
   kinds: /* @__PURE__ */ new Set(["array"]),
   absent,
-  element: element2,
+  element,
   open: false
 });
 var tupleOf = (items, absent = false) => ({
@@ -20378,7 +21286,7 @@ var tupleOf = (items, absent = false) => ({
 var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @__PURE__ */ new Set(["object"]), absent, props, open, ...values === void 0 ? {} : { values } });
 var present = (t) => t.absent ? { ...t, absent: false } : t;
 var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
-var mayBe = has;
+var mayBe = has2;
 var cannotBe = (t, k) => t.kinds !== "any" && !t.kinds.has(k);
 var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
 function single2(t) {
@@ -20386,10 +21294,22 @@ function single2(t) {
   return [...t.kinds][0];
 }
 var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
+function proofOf(t) {
+  if (t.kinds === "any") return "unknown";
+  return t.kinds.size === 0 ? ["null"] : [...t.kinds];
+}
+function elementProofOf(t) {
+  const e = elementOf(t);
+  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+}
+function itemProofsOf(t) {
+  if (!has2(t, "array") || t.items === void 0) return void 0;
+  return t.items.map((i) => i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]);
+}
 function elementOf(t) {
-  if (!has(t, "array")) return NOTHING;
-  const element2 = t.element ?? ANY;
-  return t.absent ? maybeAbsent(element2) : element2;
+  if (!has2(t, "array")) return NOTHING;
+  const element = t.element ?? ANY;
+  return t.absent ? maybeAbsent(element) : element;
 }
 function itemOf(t, i) {
   if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
@@ -20407,7 +21327,7 @@ function propOf(t, name2) {
   if (t.kinds === "any") return ANY;
   const asObject2 = t.kinds.has("object") ? ownProp(t, name2) : NOTHING;
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
-  const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join(asObject2, asArray);
+  const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join2(asObject2, asArray);
   return t.absent ? maybeAbsent(own) : own;
 }
 function unreadable(t, name2, throughArrays) {
@@ -20425,7 +21345,7 @@ function unreadable(t, name2, throughArrays) {
 function unreadableAt(t, path, throughArrays) {
   const segments = path.split(".");
   for (let i = 0; i < segments.length; i++) {
-    const why = unreadable(at2(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
+    const why = unreadable(at(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
     if (why !== null) return { index: i, why };
   }
   return null;
@@ -20436,7 +21356,7 @@ function ownProp(t, name2) {
   if (!t.open) return NOTHING;
   return t.values === void 0 ? ANY : maybeAbsent(t.values);
 }
-function at2(t, path) {
+function at(t, path) {
   if (path === "") return t;
   let cur = t;
   for (const seg of path.split(".")) {
@@ -20469,13 +21389,13 @@ function into(t, write) {
   const canBeArray = t.kinds === "any" || t.kinds.has("array") && !t.absent;
   if (!canBeArray) return asObj;
   const asArr = { ...arrayOf(write(asObject(elementOf(t)))), absent: false };
-  return join(asObj, asArr);
+  return join2(asObj, asArr);
 }
 function removed(doc, path) {
   const dot = path.indexOf(".");
   const head = dot === -1 ? path : path.slice(0, dot);
   const rest = dot === -1 ? "" : path.slice(dot + 1);
-  if (!has(doc, "object")) return doc;
+  if (!has2(doc, "object")) return doc;
   const props = new Map(doc.props ?? []);
   if (rest === "") {
     if (doc.open) props.set(head, NOTHING);
@@ -20497,36 +21417,36 @@ function asObject(t) {
     ...known && t.values !== void 0 ? { values: t.values } : {}
   };
 }
-var joinAll = (list) => list.length === 0 ? NOTHING : list.reduce((acc, t) => join(acc, t));
-function join(a, b) {
+var joinAll = (list) => list.length === 0 ? NOTHING : list.reduce((acc, t) => join2(acc, t));
+function join2(a, b) {
   if (isNothing(a)) return maybeAbsent(b);
   if (isNothing(b)) return maybeAbsent(a);
   const kinds = a.kinds === "any" || b.kinds === "any" ? "any" : /* @__PURE__ */ new Set([...a.kinds, ...b.kinds]);
   const out = { kinds, absent: a.absent || b.absent, open: a.open || b.open };
-  if (a.element !== void 0 || b.element !== void 0) out.element = join(a.element ?? ANY, b.element ?? ANY);
+  if (a.element !== void 0 || b.element !== void 0) out.element = join2(a.element ?? ANY, b.element ?? ANY);
   if (a.items !== void 0 && b.items !== void 0 && a.items.length === b.items.length) {
-    out.items = a.items.map((t, i) => join(t, b.items[i]));
+    out.items = a.items.map((t, i) => join2(t, b.items[i]));
   }
   if (a.props !== void 0 || b.props !== void 0) {
     const props = /* @__PURE__ */ new Map();
     for (const k of /* @__PURE__ */ new Set([...a.props?.keys() ?? [], ...b.props?.keys() ?? []])) {
-      props.set(k, join(propOf(a, k), propOf(b, k)));
+      props.set(k, join2(propOf(a, k), propOf(b, k)));
     }
     out.props = props;
   }
-  if (a.values !== void 0 || b.values !== void 0) out.values = join(a.values ?? ANY, b.values ?? ANY);
+  if (a.values !== void 0 || b.values !== void 0) out.values = join2(a.values ?? ANY, b.values ?? ANY);
   return out;
 }
 function merge(a, b) {
   const props = /* @__PURE__ */ new Map();
   const bOpen = b.kinds === "any" || b.open;
-  for (const [k, t] of a.props ?? []) props.set(k, bOpen ? join(t, b.values ?? ANY) : t);
+  for (const [k, t] of a.props ?? []) props.set(k, bOpen ? join2(t, b.values ?? ANY) : t);
   for (const [k, t] of b.props ?? []) {
     const base = props.get(k) ?? propOf(a, k);
-    props.set(k, b.absent ? join(base, t) : t);
+    props.set(k, b.absent ? join2(base, t) : t);
   }
   const open = a.kinds === "any" || a.open || bOpen;
-  const values = open ? join(a.values ?? (a.open || a.kinds === "any" ? ANY : NOTHING), b.values ?? (bOpen ? ANY : NOTHING)) : void 0;
+  const values = open ? join2(a.values ?? (a.open || a.kinds === "any" ? ANY : NOTHING), b.values ?? (bOpen ? ANY : NOTHING)) : void 0;
   return objectOf(props, open, open ? values : void 0);
 }
 function familyOf(k) {
@@ -20576,10 +21496,10 @@ function evaluate2(e, site) {
     const [of3, n2] = e.itemOf;
     return itemOf(evaluate2(of3, site), n2);
   }
-  const map = e;
+  const map2 = e;
   const family = site.family ?? familyOfType(site.receiver);
   if (family !== null) {
-    const term = map[family];
+    const term = map2[family];
     return term === void 0 ? ANY : evaluate2(term, site);
   }
   return ANY;
@@ -20660,10 +21580,10 @@ function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
 
 // src/stringify.ts
 var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
-var kindOf2 = (v) => Object.prototype.toString.call(v);
-var isDate3 = (v) => kindOf2(v) === "[object Date]";
-var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
-var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
+var kindOf3 = (v) => Object.prototype.toString.call(v);
+var isDate3 = (v) => kindOf3(v) === "[object Date]";
+var isRegExp3 = (v) => kindOf3(v) === "[object RegExp]";
+var isBytes2 = (v) => kindOf3(v) === "[object Uint8Array]";
 function keySource(key) {
   if (key === "__proto__") return `[${JSON.stringify(key)}]`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
@@ -20777,8 +21697,8 @@ function stringify2(value, options) {
         const flat2 = `[${parts2.join(", ")}]`;
         if (pad2 === "" || fits(flat2, depth)) return flat2;
         return `[
-${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}]`;
+${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}]`;
       }
       const entries = Object.entries(v);
       if (entries.length === 0) return "{}";
@@ -20786,14 +21706,14 @@ ${at3(depth)}]`;
       const flat = `{ ${parts.join(", ")} }`;
       if (pad2 === "" || fits(flat, depth)) return flat;
       return `{
-${parts.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}}`;
+${parts.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}}`;
     } finally {
       seen.delete(v);
     }
   };
-  const at3 = (d) => pad2.repeat(d);
-  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
+  const at2 = (d) => pad2.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
   return render(value, 0);
 }
 
@@ -20830,8 +21750,7 @@ function readCell(name2, position, cell) {
     };
   }
   if (typeof cell.inCode === "string") {
-    const args = isObj2(cell.args) ? cell.args : void 0;
-    return { kind: "inCode", name: name2, position, file: cell.inCode, ...args === void 0 ? {} : { args } };
+    return { kind: "inCode", name: name2, position, file: cell.inCode, args: cell.args };
   }
   if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
   if (Array.isArray(cell.composedInto)) {
@@ -20867,6 +21786,381 @@ function everyName() {
   return Object.keys(NAMES);
 }
 
+// src/compiler/emit/check.ts
+function literal(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return { kind: "number", value: e };
+    case "UnaryExpr":
+      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
+    case "StringLiteral":
+      return isFieldPathString(e) ? null : { kind: "string", value: e };
+    case "BooleanLiteral":
+      return { kind: "bool", value: e };
+    case "NullLiteral":
+      return { kind: "null", value: e };
+    case "ArrayLiteral":
+      return { kind: "array", value: e };
+    case "ObjectLiteral":
+      return { kind: "object", value: e };
+    case "RegexLiteral":
+      return { kind: "regex", value: e };
+    case "BigIntLiteral":
+      return { kind: "bigint", value: e };
+    default:
+      return null;
+  }
+}
+var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
+var NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  null: "null",
+  array: "an array",
+  object: "a document",
+  regex: "a regular expression",
+  bigint: "a bigint"
+};
+function matches(lit2, expected) {
+  switch (expected) {
+    case "number":
+    case "number-or-date":
+      return lit2.kind === "number" || lit2.kind === "bigint";
+    case "int":
+    case "int-or-long": {
+      if (lit2.kind === "bigint") return true;
+      const n2 = numberOf(lit2.value);
+      return n2 !== null && Number.isInteger(n2);
+    }
+    case "string":
+    case "bool":
+    case "array":
+    case "object":
+      return lit2.kind === expected;
+    case "fieldName":
+    case "fieldPath":
+      return false;
+    case "regex":
+      return lit2.kind === "regex" || lit2.kind === "string";
+    case "any":
+    case "element":
+      return true;
+    case "value":
+      return lit2.kind !== "null";
+    case "orderable":
+      return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
+    case "date":
+    case "timestamp":
+    case "callback":
+      return false;
+  }
+}
+var TAKES = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  orderable: "a number, a string, a date or an ObjectId",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp",
+  any: "a value",
+  value: "a value",
+  callback: "a callback",
+  regex: "a regular expression or a string",
+  element: "an element of the array"
+};
+var takesOf = (t) => {
+  if (!Array.isArray(t)) return TAKES[t];
+  const nouns = t.map((x) => TAKES[x]);
+  return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
+var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
+var hint = (expected) => {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  return "";
+};
+function checkType(name2, slot, e, expected) {
+  if (expected === "fieldPath") {
+    if (e.type !== "StringLiteral") return;
+    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
+      throw new CodegenError(
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        e.pos
+      );
+    }
+    return;
+  }
+  if (expected === "fieldName") {
+    if (e.type !== "StringLiteral") {
+      const other = literal(e);
+      if (other === null || other.kind === "null") return;
+      throw new CodegenError(
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        e.pos
+      );
+    }
+    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
+    if (bad === null) return;
+    throw new CodegenError(
+      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      e.pos
+    );
+  }
+  const lit2 = literal(e);
+  if (lit2 === null || lit2.kind === "null") return;
+  if (matches(lit2, expected)) return;
+  const fraction = lit2.kind === "number" && (expected === "int" || expected === "int-or-long");
+  throw new CodegenError(
+    wrongKind(
+      `'${spell2(name2)}'`,
+      slot,
+      TAKES[expected],
+      `got ${fraction ? "a fraction" : NOUN[lit2.kind]}`,
+      fraction ? ROUND : hint(expected)
+    ),
+    e.pos
+  );
+}
+function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
+  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
+  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
+  if (allowed.includes(v)) return;
+  const near = didYouMean(v, allowed, (s) => s);
+  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
+}
+function checkBodyKeys(body) {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
+  }
+}
+function checkBody(name2, rule, args, keys, pos) {
+  if (args.length === 1 && args[0].type === "Injected") return;
+  let present2;
+  let valueOf;
+  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
+  if (body !== null) {
+    checkBodyKeys(body);
+    const byKey = /* @__PURE__ */ new Map();
+    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
+    present2 = [...byKey.keys()];
+    valueOf = (k) => byKey.get(k);
+  } else {
+    present2 = keys.slice(0, args.length);
+    valueOf = (k) => {
+      const i = keys.indexOf(k);
+      return i >= 0 && i < args.length ? args[i] : void 0;
+    };
+  }
+  const closed = [...rule.required, ...rule.optional];
+  if (body !== null && rule.closed) {
+    for (const k of present2) {
+      if (!closed.includes(k)) {
+        throw new CodegenError(
+          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
+          valueOf(k)?.pos ?? pos
+        );
+      }
+    }
+  }
+  for (const k of rule.required) {
+    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
+  }
+  for (const [a, b] of rule.notTogether ?? []) {
+    const inA = present2.filter((k) => a.includes(k));
+    const inB = present2.filter((k) => b.includes(k));
+    if (inA.length > 0 && inB.length > 0) {
+      throw new CodegenError(
+        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
+        pos
+      );
+    }
+  }
+  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
+  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+  }
+  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkType(name2, k, v, t);
+  }
+  for (const k of rule.constantKeys ?? []) {
+    const v = valueOf(k);
+    if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
+      throw new CodegenError(
+        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        v.pos
+      );
+    }
+  }
+}
+var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
+var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
+function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false) {
+  for (const i of args.integer ?? []) {
+    const e = i === -1 ? receiver : operands[i];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && !Number.isInteger(n2)) {
+      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, what, "an integer", "got a fraction", ROUND), e.pos);
+    }
+  }
+  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
+      throw new CodegenError(
+        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
+  }
+  for (const i of args.dateFormat ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
+  }
+  for (const [i, rule] of Object.entries(args.body ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
+  }
+  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0) continue;
+    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
+    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
+    if (own === void 0) continue;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${Number(i) + 1}`, e, own);
+  }
+  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0 || e.type !== "ArrayLiteral") continue;
+    for (const el of e.elements) {
+      if (el.type === "SpreadElement") continue;
+      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
+    }
+  }
+  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
+    const e = operands[Number(i)];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && (n2 < lo || n2 > hi)) {
+      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
+    }
+  }
+  for (const i of args.nonZero ?? []) {
+    const e = operands[i];
+    if (!settling && e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
+        e.pos
+      );
+    }
+  }
+  for (const i of args.constant ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
+      throw new CodegenError(
+        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
+  }
+}
+var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+var MOMENT_FORMAT_TOKENS = [
+  ["YYYY", "%Y"],
+  ["MMMM", null],
+  ["dddd", null],
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null],
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null],
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null]
+];
+var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+function momentFormatHint(fmt) {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token3, i)) continue;
+      out += spec ?? token3;
+      i += token3.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
+}
+function checkDateFormat(name2, fmt, pos) {
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
+      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        pos
+      );
+    }
+    i++;
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      pos
+    );
+  }
+}
+
 // src/compiler/emit/errors.ts
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
 var RUNS_ON = {
@@ -20897,7 +22191,7 @@ function valueStart(bare) {
   if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
   return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
 }
-function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
+function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`, subjects = { args: [] }) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
     case "refused":
@@ -20931,6 +22225,8 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     }
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
+    case "wrongKind":
+      return kindRefusal(sel.fault, spelled3, subjects, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
       const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
@@ -21047,7 +22343,7 @@ function readFix(name2, kinds) {
   const example = EXAMPLE_METHOD[family];
   return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
 }
-function unreadableField(name2, why, read, holder, pos) {
+function unreadableField(name2, why, read3, holder, pos) {
   if (why.kind === "closed") {
     const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
     const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
@@ -21057,17 +22353,17 @@ function unreadableField(name2, why, read, holder, pos) {
       `the elements of ${subject2} do not have`,
       why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
     ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
-    return new CodegenError(`'${read}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
+    return new CodegenError(`'${read3}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
   }
-  if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
+  if (why.kinds.length === 0) return alwaysAbsent(read3, holder, pos);
   const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
-  return new CodegenError(`'${read}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
+  return new CodegenError(`'${read3}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
 }
-function alwaysAbsent(read, holder, pos) {
+function alwaysAbsent(read3, holder, pos) {
   const subject = holder ?? "this value";
   const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
   return new CodegenError(
-    `${sentence} is always null or missing here, so '${read}' has no value to read. Remove the read, or write a value before the read.`,
+    `${sentence} is always null or missing here, so '${read3}' has no value to read. Remove the read, or write a value before the read.`,
     pos
   );
 }
@@ -21201,7 +22497,8 @@ var KIND_NOUN = {
   binData: "binary data",
   stream: "a stream",
   minKey: "a MinKey",
-  maxKey: "a MaxKey"
+  maxKey: "a MaxKey",
+  null: "null"
 };
 var ELEMENT_NOUN = {
   number: "numbers",
@@ -21214,6 +22511,80 @@ var ELEMENT_NOUN = {
   binData: "binary data"
 };
 var nounFor = (k, table) => table[k] ?? `a ${k}`;
+var orList = (items) => {
+  const once = [...new Set(items)];
+  return once.length < 2 ? once[0] ?? "" : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
+};
+var kindNoun = (k) => KIND_NOUN[k] ?? `a ${k}`;
+var kindsNoun = (ks, join3) => ks.map(kindNoun).join(join3);
+var pluralKind = (k) => ELEMENT_NOUN[k] ?? `${k}s`;
+function spellArray(e) {
+  const node = e;
+  if (node?.type === "SpreadElement") return spellArray(node.argument);
+  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "an array";
+}
+function gotKinds(e, kinds, viaElements) {
+  const nouns = orList(kinds.map(kindNoun));
+  return viaElements ? `an element of ${spellArray(e)} that is ${nouns}` : nouns;
+}
+function operandAt(subjects, slot) {
+  const only = subjects.args.length === 1 ? subjects.args[0] : null;
+  if (only !== null && only.type === "ArrayLiteral" && only.packed === true) {
+    return only.elements[slot];
+  }
+  return subjects.args[slot];
+}
+function shownName(spelled3) {
+  if (spelled3.startsWith("'")) return spelled3;
+  if (spelled3.startsWith("$")) return `'${spelled3}'`;
+  return `'${spelled3.replace(/\(\)$/, "")}()'`;
+}
+function kindRefusal(fault, spelled3, subjects, pos) {
+  const name2 = shownName(spelled3);
+  switch (fault.rule) {
+    case "slot": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          `argument ${fault.slot + 1}`,
+          takesOf(fault.expected),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`
+        ),
+        e?.pos ?? pos
+      );
+    }
+    case "element": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          `argument ${fault.slot + 1}`,
+          takesOf("element"),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`
+        ),
+        e?.pos ?? pos
+      );
+    }
+    case "elements":
+      return new CodegenError(
+        wrongKind(name2, "", pluralKind(fault.expected), `the array holds ${kindsNoun(fault.held, " and ")}`),
+        subjects.receiver?.pos ?? pos
+      );
+    case "homogeneous": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          "",
+          "operands of one kind",
+          `got ${gotKinds(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${gotKinds(e, fault.got, fault.viaElements === true)}`
+        ),
+        e?.pos ?? pos
+      );
+    }
+  }
+}
 function nounOfKinds(t) {
   if (t.kinds === "any") return "a value";
   if (t.kinds.size === 0) return "null";
@@ -21296,8 +22667,8 @@ var SPELLING2 = {
   omitted: "no argument at all"
 };
 var spellings = (forms) => {
-  const all2 = ["an arrow ('d => \u2026')", ...forms.map((f) => SPELLING2[f])];
-  return all2.length === 1 ? all2[0] : `${all2.slice(0, -1).join(", ")}, or ${all2[all2.length - 1]}`;
+  const all = ["an arrow ('d => \u2026')", ...forms.map((f) => SPELLING2[f])];
+  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(", ")}, or ${all[all.length - 1]}`;
 };
 var ARG_NOUN = {
   NumberLiteral: "a number",
@@ -21581,8 +22952,8 @@ var diagnosticIsNotALink = (name2, pos) => {
 var notAStageOnRef = (name2, sigil, candidates, pos) => {
   const where = sigil === "$$$$" ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it" : "'$$$' is the database, and no stage runs on it alone";
   const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()').";
-  const read = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
-  return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read}`, pos);
+  const read3 = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
+  return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read3}`, pos);
 };
 var noDestination = (pos) => new CodegenError(
   "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.\u2026'), bind it ('let x = $$$.<coll>.\u2026'), or make it the stream ('$$ = $$$.<coll>.\u2026').",
@@ -21732,8 +23103,8 @@ var Chain = class {
     this.stamped = /* @__PURE__ */ new Set();
     this.isPipeline = isPipeline;
   }
-  proved(node, type) {
-    this.proofs.set(node, type);
+  proved(node, type2) {
+    this.proofs.set(node, type2);
   }
   proofOf(node) {
     return this.proofs.get(node);
@@ -21826,15 +23197,15 @@ var Chain = class {
   }
 };
 var Env = class _Env {
-  constructor(scope, site, chain, documents = [DOCUMENT]) {
+  constructor(scope, site, chain2, documents = [DOCUMENT]) {
     this.scope = scope;
     this.site = site;
-    this.chain = chain;
+    this.chain = chain2;
     this.documents = documents;
   }
   /** The proof at a dotted path of the document on `level` — this level unless said otherwise. */
   typeAt(path, level = this.level) {
-    return at2(this.documents[level], path);
+    return at(this.documents[level], path);
   }
   /** The same Env, with the document on this level changed. */
   withDocument(doc) {
@@ -21847,8 +23218,8 @@ var Env = class _Env {
     return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
   }
   /** The same Env, after a write of a value proven `type` at `path` on this level. */
-  written(path, type) {
-    return this.withDocument(written(this.documents[this.level], path, type));
+  written(path, type2) {
+    return this.withDocument(written(this.documents[this.level], path, type2));
   }
   /** The same Env, after `delete` of the field at `path` on this level. */
   removed(path) {
@@ -21863,9 +23234,9 @@ var Env = class _Env {
    * introduces anywhere for the whole of it, so a compiler mint never shadows a
    * parameter bound deeper in.
    */
-  static root(program, root2, chain = new Chain(root2 === "statement")) {
-    const site = { where: { at: root2 }, root: root2, envelope: "none", boundaries: [], inside: null };
-    return new _Env(Scope.root(namesIn(program)), site, chain);
+  static root(program, root2, chain2 = new Chain(root2 === "statement"), settling = false) {
+    const site = { where: { at: root2 }, root: root2, envelope: "none", boundaries: [], inside: null, settling };
+    return new _Env(Scope.root(namesIn(program)), site, chain2);
   }
   // ── the transitions: each answers a new Env and changes ONE thing ──────────
   /** A name bound to something other than a variable — the document, a slot, a function. */
@@ -21911,8 +23282,8 @@ var Env = class _Env {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
-  param(js, type, pos) {
-    return this.bound(this.scope.param(js, type, pos, this.level));
+  param(js, type2, pos) {
+    return this.bound(this.scope.param(js, type2, pos, this.level));
   }
   /** A compiler mint, named after `hint`, that steps aside from every name the program uses. */
   fresh(hint2) {
@@ -21955,15 +23326,15 @@ var Env = class _Env {
    * body over the SAME documents (a `$facet` branch) gets each scratch field that
    * the outer chain left on them. So the cleanup of the body owes those fields too.
    */
-  enter(boundary, chain) {
+  enter(boundary, chain2) {
     const site = {
       ...this.site,
       where: { at: "statement" },
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
-    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
-    return new _Env(this.scope, site, chain, documents);
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain2.dirty ||= this.chain.dirty;
+    return new _Env(this.scope, site, chain2, documents);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
   get rootChain() {
@@ -21979,567 +23350,105 @@ var Env = class _Env {
   }
 };
 
-// src/compiler/emit/select.ts
-var isObj3 = (v) => typeof v === "object" && v !== null;
-function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
-  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
-  if (args.length === 0) return { kind: "none" };
-  if (args.length > 1) return { kind: "multiple" };
-  const only = args[0];
-  if (only.type === "ObjectLiteral") {
-    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
-    return { kind: "object", keys };
-  }
-  const v = evaluate(args[0], constants);
-  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
-}
-var FIELD_FAMILIES2 = Object.keys(FIELD_FAMILY_TYPES);
-var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
-var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
-var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
-function countOf(name2, args, n2) {
-  const rejected = args.reject?.[n2];
-  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
-  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
-  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
-}
-function settle(name2, branch, shaped, count, family) {
-  if (isRefusal(branch)) {
-    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
-  }
-  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
-  if (shaped.kind === "spread") {
-    if (branch.args.spread === true) {
-      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
-    }
-    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
-  }
-  return countOf(name2, branch.args, count) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
-}
-function familyOf2(receiver) {
-  switch (receiver.kind) {
-    case "none":
-      return null;
-    case "namespace":
-      return receiver.name;
-    case "stream":
-      return "stream";
-    case "value":
-      return receiver.family;
-    case "opaque":
-      return null;
-  }
-}
-function receiverGate(name2, receiver) {
-  const on = familiesFor(name2);
-  if (on === void 0 || on === "any") return null;
-  if (receiver.kind === "opaque") {
-    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
-    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
-      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
-    }
-    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
-  }
-  const family = familyOf2(receiver);
-  if (family !== null && on.includes(family)) return null;
-  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
-}
-function fromByArgs(name2, byArgs, shaped, count) {
-  const otherwise = byArgs.otherwise;
-  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
-  const leftover = () => settle(name2, otherwise, shaped, count);
-  switch (shaped.kind) {
-    case "spread":
-      return leftover();
-    case "constant":
-      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
-    default: {
-      const entry = byArgs[shaped.kind];
-      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
-    }
-  }
-}
-function kindFits(kind, expected) {
+// src/compiler/kinds.ts
+var UNPROVEN = { args: [], elements: "unknown" };
+function kindFits(kind, expected, elements = "unknown") {
   if (kind === "unknown") return true;
-  if (kind === "null") return false;
-  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t));
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
   switch (expected) {
+    case "any":
+      return true;
+    case "value":
+      return kind !== "null";
     case "number":
     case "int":
     case "int-or-long":
       return kind === "number";
     case "number-or-date":
       return kind === "number" || kind === "date";
+    case "orderable":
+      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
     case "string":
     case "fieldName":
     case "fieldPath":
+    case "regex":
       return kind === "string";
     case "bool":
     case "array":
     case "object":
     case "date":
       return kind === expected;
+    case "element":
+      return elements === "unknown" || elements.includes(kind);
     case "timestamp":
+    case "callback":
       return false;
-    // every kind, never null: the test above refuses null
-    case "any":
-      return true;
-    // `regexp` is a family of the source, not a kind of the proof, so this case judges only null
-    case "regex":
-      return true;
   }
 }
-function fromPerFamily(name2, branches, receiver, shaped, count) {
-  const on = familiesFor(name2);
-  if (receiver.kind !== "opaque") {
-    const family = familyOf2(receiver);
-    const branch = family === null ? void 0 : branches[family];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, isFieldFamily(family) ? family : void 0);
-  }
-  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
-  const possible = receiver.possible;
-  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
-  if (possible !== void 0 && listed.length === 0) {
-    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
-  }
-  const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const families2 = lowering.length > 0 ? lowering : listed;
-  if (families2.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  if (lowering.length > 1) {
-    internalError(`the row '${name2}' lowers on ${lowering.join(" and ")}. A row lowers on one field family`);
-  }
-  return settle(name2, branches[families2[0]], shaped, count, families2[0]);
+var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
+var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
+var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
+var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
+function elementsFaultOf(name2, proofs) {
+  const need = elementsOf(name2);
+  if (need === void 0 || need === "scalar") return null;
+  const takes = (p) => p === "unknown" || p.includes(need);
+  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
+  if (!broken) return null;
+  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
+  return { rule: "elements", expected: need, held: [...new Set(held)] };
 }
-function select(verdict, receiver, shaped, count) {
-  const name2 = verdict.name;
-  switch (verdict.kind) {
-    case "unknown":
-      return { kind: "unknown", name: name2 };
-    case "refused": {
-      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
-      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
-    }
-    case "fallback":
-      return { kind: "fallback", name: name2 };
-    case "composedOnly":
-      return { kind: "composedOnly", name: name2, owners: verdict.owners };
-    case "noCell":
-      return { kind: "noCell", name: name2 };
-    case "inCode": {
-      const gate = receiverGate(name2, receiver);
-      return gate ?? { kind: "noCell", name: name2 };
-    }
-    case "perFamily":
-      return fromPerFamily(name2, verdict.branches, receiver, shaped, count);
-    case "lower": {
-      const gate = receiverGate(name2, receiver);
-      if (gate !== null) return gate;
-      const cell = verdict.cell;
-      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
-      return settle(name2, cell, shaped, count);
-    }
+function faultOf(name2, rule, proofs) {
+  let spread = false;
+  for (let i = 0; i < proofs.args.length; i++) {
+    const via = proofs.viaElements?.[i] === true;
+    spread = spread || proofs.packed === true && via;
+    const expected = spread ? rule.rest : slotTypeOf(rule, i);
+    const proof = proofs.args[i];
+    if (expected === void 0 || takesCallback(expected) || proof === "unknown") continue;
+    if (proofFits(proof, expected, proofs.elements)) continue;
+    const through = via ? { viaElements: true } : {};
+    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : { rule: "slot", slot: i, expected, got: proof, ...through };
   }
-}
-
-// src/compiler/emit/check.ts
-function literal(e) {
-  switch (e.type) {
-    case "NumberLiteral":
-      return { kind: "number", value: e };
-    case "UnaryExpr":
-      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
-    case "StringLiteral":
-      return isFieldPathString(e) ? null : { kind: "string", value: e };
-    case "BooleanLiteral":
-      return { kind: "bool", value: e };
-    case "NullLiteral":
-      return { kind: "null", value: e };
-    case "ArrayLiteral":
-      return { kind: "array", value: e };
-    case "ObjectLiteral":
-      return { kind: "object", value: e };
-    case "RegexLiteral":
-      return { kind: "regex", value: e };
-    case "BigIntLiteral":
-      return { kind: "bigint", value: e };
-    default:
-      return null;
-  }
-}
-var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
-var NOUN = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  null: "null",
-  array: "an array",
-  object: "a document",
-  regex: "a regular expression",
-  bigint: "a bigint"
-};
-function matches(lit, expected) {
-  switch (expected) {
-    case "number":
-    case "number-or-date":
-      return lit.kind === "number" || lit.kind === "bigint";
-    case "int":
-    case "int-or-long": {
-      if (lit.kind === "bigint") return true;
-      const n2 = numberOf(lit.value);
-      return n2 !== null && Number.isInteger(n2);
-    }
-    case "string":
-    case "bool":
-    case "array":
-    case "object":
-      return lit.kind === expected;
-    case "fieldName":
-    case "fieldPath":
-      return false;
-    case "date":
-    case "timestamp":
-      return false;
-    case "any":
-      return true;
-    case "regex":
-      return lit.kind === "regex";
-  }
-}
-var TAKES = {
-  number: "a number",
-  int: "an integer",
-  "int-or-long": "an integer",
-  "number-or-date": "a number or a date",
-  string: "a string",
-  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "a field PATH to read: a string that starts with '$'",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  timestamp: "a timestamp",
-  any: "a value",
-  regex: "a regular expression"
-};
-function slotKinds(args, count) {
-  const stated = args.slotType ?? {};
-  const out = Object.entries(stated).map(
-    ([i, t]) => [Number(i), t]
-  );
-  const rest = args.rest;
-  if (rest !== void 0) {
-    for (let i = 0; i < count; i++) if (!(i in stated)) out.push([i, rest]);
-  }
-  return out.sort((a, b) => a[0] - b[0]);
-}
-var takesOf = (t) => {
-  const nouns = Array.isArray(t) ? t.map((x) => TAKES[x]) : [TAKES[t]];
-  return nouns.length === 1 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
-};
-var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
-var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}' ${slot} takes ${takes}, but got ${got}.${hint2}`;
-var argument = (i) => `argument ${Number(i) + 1}`;
-var hint = (expected) => {
-  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
-  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
-  return "";
-};
-var KIND_NOUN2 = {
-  null: "null",
-  string: "a string",
-  number: "a number",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data"
-};
-function checkType(name2, slot, e, expected) {
-  if (e.type === "NullLiteral") throw new CodegenError(wrongKind(name2, slot, TAKES[expected], "null"), e.pos);
-  if (expected === "fieldPath") {
-    if (e.type !== "StringLiteral") return;
-    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
-      throw new CodegenError(
-        `'${spell2(name2)}' ${slot} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
-        e.pos
-      );
-    }
-    return;
-  }
-  if (expected === "fieldName") {
-    if (e.type !== "StringLiteral") {
-      const other = literal(e);
-      if (other === null) return;
-      throw new CodegenError(
-        `'${spell2(name2)}' ${slot} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
-        e.pos
-      );
-    }
-    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
-    if (bad === null) return;
-    throw new CodegenError(
-      `'${spell2(name2)}' ${slot} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
-      e.pos
-    );
-  }
-  const lit = literal(e);
-  if (lit === null || matches(lit, expected)) return;
-  const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
-  throw new CodegenError(
-    wrongKind(name2, slot, TAKES[expected], fraction ? "a fraction" : NOUN[lit.kind], fraction ? ROUND : hint(expected)),
-    e.pos
-  );
-}
-function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
-  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
-  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
-  if (allowed.includes(v)) return;
-  const near = didYouMean(v, allowed, (s) => s);
-  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
-}
-function checkBodyKeys(body) {
-  if (body.type !== "ObjectLiteral") return;
-  for (const e of body.entries) {
-    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
-    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
-  }
-}
-function checkBody(name2, rule, args, keys, pos) {
-  if (args.length === 1 && args[0].type === "Injected") return;
-  let present2;
-  let valueOf2;
-  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
-  if (body !== null) {
-    checkBodyKeys(body);
-    const byKey = /* @__PURE__ */ new Map();
-    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
-    present2 = [...byKey.keys()];
-    valueOf2 = (k) => byKey.get(k);
-  } else {
-    present2 = keys.slice(0, args.length);
-    valueOf2 = (k) => {
-      const i = keys.indexOf(k);
-      return i >= 0 && i < args.length ? args[i] : void 0;
-    };
-  }
-  const closed = [...rule.required, ...rule.optional];
-  if (body !== null && rule.closed) {
-    for (const k of present2) {
-      if (!closed.includes(k)) {
-        throw new CodegenError(
-          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
-          valueOf2(k)?.pos ?? pos
-        );
+  if (rule.homogeneous === true) {
+    let shared = null;
+    const taking = [];
+    for (let i = 0; i < proofs.args.length; i++) {
+      const kinds = concreteKinds(proofs.args[i]);
+      if (kinds === null) continue;
+      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
+      if (left.length === 0) {
+        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
+        return {
+          rule: "homogeneous",
+          first: other.slot,
+          firstKinds: other.kinds,
+          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
+          slot: i,
+          got: kinds,
+          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
+        };
       }
+      shared = left;
+      taking.push({ slot: i, kinds });
     }
   }
-  for (const k of rule.required) {
-    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
-  }
-  for (const [a, b] of rule.notTogether ?? []) {
-    const inA = present2.filter((k) => a.includes(k));
-    const inB = present2.filter((k) => b.includes(k));
-    if (inA.length > 0 && inB.length > 0) {
-      throw new CodegenError(
-        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
-        pos
-      );
-    }
-  }
-  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
-  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
-    const v = valueOf2(k);
-    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
-  }
-  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
-    const v = valueOf2(k);
-    if (v !== void 0) checkType(name2, k, v, t);
-  }
-  for (const k of rule.constantKeys ?? []) {
-    const v = valueOf2(k);
-    if (v !== void 0 && v.type !== "Injected" && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
-      throw new CodegenError(
-        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        v.pos
-      );
-    }
-  }
+  return elementsFaultOf(name2, proofs);
 }
-var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
-function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver, readFirst) {
-  for (const i of args.integer ?? []) {
-    const e = i === -1 ? receiver : operands[i];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && !Number.isInteger(n2)) {
-      const what = i === -1 ? "receiver" : argument(i);
-      throw new CodegenError(wrongKind(name2, what, "an integer", "a fraction", ROUND), e.pos);
-    }
-  }
-  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
-      throw new CodegenError(
-        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
-  }
-  for (const i of args.dateFormat ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
-  }
-  for (const [i, rule] of Object.entries(args.body ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
-  }
-  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0) continue;
-    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, t] of slotKinds(args, operands.length)) {
-    const e = operands[i];
-    if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
-    if (!Array.isArray(t)) {
-      checkType(name2, argument(i), e, t);
-      continue;
-    }
-    const types = t;
-    if (e.type === "StringLiteral" && types.includes("fieldPath")) {
-      checkType(name2, argument(i), e, "fieldPath");
-      continue;
-    }
-    const lit = literal(e);
-    if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(wrongKind(name2, argument(i), takesOf(types), NOUN[lit.kind]), e.pos);
-  }
-  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0 || e.type !== "ArrayLiteral") continue;
-    for (const el of e.elements) {
-      if (el.type === "SpreadElement") continue;
-      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
-    }
-  }
-  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
-    const e = operands[Number(i)];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && (n2 < lo || n2 > hi)) {
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
-    }
-  }
-  for (const i of args.nonZero ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
-        e.pos
-      );
-    }
-  }
-  for (const i of args.constant ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
-      throw new CodegenError(
-        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0) checkEnum(name2, argument(i), e, allowed, false);
-  }
-  for (const [i, t] of slotKinds(args, operands.length)) {
-    const e = operands[i];
-    const k = kinds[i];
-    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
-    if (k === "null") readFirst?.(e);
-    throw new CodegenError(wrongKind(name2, argument(i), takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
-  }
-}
-var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
-var MOMENT_FORMAT_TOKENS = [
-  ["YYYY", "%Y"],
-  ["MMMM", null],
-  ["dddd", null],
-  ["MMM", null],
-  ["ddd", null],
-  ["DDD", "%j"],
-  ["SSS", "%L"],
-  ["YY", null],
-  ["MM", "%m"],
-  ["DD", "%d"],
-  ["HH", "%H"],
-  ["hh", null],
-  ["ZZ", "%z"],
-  ["mm", "%M"],
-  ["ss", "%S"],
-  ["Do", null]
-];
-var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
-function momentFormatHint(fmt) {
-  let out = "";
-  let i = 0;
-  outer: while (i < fmt.length) {
-    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
-      if (!fmt.startsWith(token3, i)) continue;
-      out += spec ?? token3;
-      i += token3.length;
-      continue outer;
-    }
-    out += fmt[i];
-    i++;
-  }
-  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
-  if (missing === null) return ` Did you mean '${out}'?`;
-  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
-}
-function checkDateFormat(name2, fmt, pos) {
-  for (let i = 0; i < fmt.length; i++) {
-    if (fmt[i] !== "%") continue;
-    const spec = fmt[i + 1];
-    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
-      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
-      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
-      throw new CodegenError(
-        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
-        pos
-      );
-    }
-    i++;
-  }
-  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
-    throw new CodegenError(
-      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
-      pos
-    );
-  }
+function kindOfValue(v) {
+  if (typeof v === "number" || typeof v === "bigint") return "number";
+  if (typeof v === "string") return "string";
+  if (typeof v === "boolean") return "bool";
+  if (isDate(v)) return "date";
+  if (Array.isArray(v)) return "array";
+  const tag = bsonTagOf(v);
+  if (tag !== void 0) return BSON_KIND[tag] ?? null;
+  return isPlainObject(v) ? "object" : null;
 }
 
 // src/compiler/emit/prove.ts
-var NAMESPACES2 = namespaceNames();
+var NAMESPACES = namespaceNames();
 var isPresent = (node, env) => !typeOf(node, env).absent;
 function statedPresence(node, env) {
   switch (node.type) {
@@ -22560,7 +23469,7 @@ function statedPresence(node, env) {
       if (!neverNullOf(name2)) return false;
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
       const wrapped = !spineHasOptional(node) && (emptyValueOf(name2, family) !== null || readsNullReceiverOf(name2));
-      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
+      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && argsThere(name2, node.args, env);
     }
     case "OperatorCall":
@@ -22636,19 +23545,59 @@ function familyOfKind(k) {
   }
 }
 function sourceFamily(node) {
-  if (node.type === "Ident" && NAMESPACES2.has(node.name)) return node.name;
+  if (node.type === "Ident" && NAMESPACES.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
   return null;
 }
-var kindOf3 = (node, env) => {
-  const t = typeOf(node, env);
-  return isNothing(t) ? "null" : single2(t);
-};
+var kindOf4 = (node, env) => single2(typeOf(node, env));
+function proofsFor(args, env, objectForm, source = null, isField) {
+  const proven = (a) => {
+    if (a.type === "SpreadElement" || objectForm && a.type === "ObjectLiteral") return "unknown";
+    const t = typeOf(a, env);
+    return isNothing(t) ? ["null"] : proofOf(t);
+  };
+  const sourceType = source === null ? null : typeOf(source.node, source.env);
+  const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
+  const found2 = sourceType === null ? void 0 : itemProofsOf(sourceType);
+  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
+  const items = found2 === void 0 || elementNodes.length !== found2.length ? found2 : found2.map((p, i) => {
+    const el = elementNodes[i];
+    return el.type === "NullLiteral" ? ["null"] : p;
+  });
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
+  if (list !== null) {
+    const own = (e) => e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);
+    const packedArgs = list.elements;
+    return {
+      args: packedArgs.map(own),
+      elements,
+      ...items === void 0 ? {} : { items },
+      viaElements: packedArgs.map((e) => e.type === "SpreadElement"),
+      packed: true
+    };
+  }
+  const plain = args.map(proven);
+  const mayBeArray2 = (p) => p !== "unknown" && p.includes("array");
+  const via = [];
+  const throughElements = (a, i) => {
+    const p = plain[i];
+    if (isField === void 0 || a.type === "SpreadElement" || !isField(a) || p === "unknown" || !mayBeArray2(p))
+      return p;
+    if (plain.some((other, j) => j !== i && mayBeArray2(other))) return p;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    via[i] = p.every((k) => k === "array");
+    return [.../* @__PURE__ */ new Set([...p.filter((k) => k !== "array"), ...held])];
+  };
+  const proofs = args.map(throughElements);
+  const tuple = items === void 0 ? {} : { items };
+  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) } : { args: proofs, elements, ...tuple };
+}
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
   if (node.type === "StreamRef") return "stream";
-  return familyOfKind(kindOf3(node, env));
+  return familyOfKind(kindOf4(node, env));
 }
 function namesIn2(arg) {
   if (arg === void 0) return null;
@@ -22711,18 +23660,8 @@ function callOnUnproven(name2, receiver, args, env) {
 var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
-  if (typeof v === "number" || typeof v === "bigint") return of("number");
-  if (typeof v === "string") return of("string");
-  if (typeof v === "boolean") return of("bool");
-  if (isDate(v)) return of("date");
-  if (Array.isArray(v)) return of("array");
-  const tag = bsonTagOf(v);
-  if (tag !== void 0) {
-    const k = BSON_KIND[tag];
-    return k === void 0 ? ANY : of(k);
-  }
-  if (isPlainObject(v)) return of("object");
-  return ANY;
+  const k = kindOfValue(v);
+  return k === null ? ANY : of(k);
 }
 function typeOf(node, env) {
   const joined = env.chain.proofOf(node);
@@ -22767,7 +23706,7 @@ function kindsOf2(node, env) {
         if (entry.type === "SpreadElement") {
           const spread = typeOf(entry.argument, env);
           if (spread.kinds === "any" || spread.open) {
-            for (const [k, t] of props) props.set(k, join(t, spread.values ?? ANY));
+            for (const [k, t] of props) props.set(k, join2(t, spread.values ?? ANY));
             open = true;
           }
           for (const [k, t] of spread.props ?? []) props.set(k, spread.absent ? maybeAbsent(t) : t);
@@ -22824,21 +23763,21 @@ function kindsOf2(node, env) {
     }
     case "BinaryExpr": {
       if (node.op === "+") {
-        const l = kindOf3(node.left, env);
-        const r = kindOf3(node.right, env);
+        const l = kindOf4(node.left, env);
+        const r = kindOf4(node.right, env);
         if (l === "string" || r === "string") return of("string");
         if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
         const r = kindsOf2(node.right, env);
-        return { ...join(kindsOf2(node.left, env), r), absent: r.absent };
+        return { ...join2(kindsOf2(node.left, env), r), absent: r.absent };
       }
-      if (node.op === "&&" || node.op === "||") return join(kindsOf2(node.left, env), kindsOf2(node.right, env));
+      if (node.op === "&&" || node.op === "||") return join2(kindsOf2(node.left, env), kindsOf2(node.right, env));
       const key = productionForOperator("BinaryExpr", node.op);
       return key === void 0 ? ANY : callOn(key, ANY, null, [], env);
     }
     case "TernaryExpr":
-      return join(kindsOf2(node.consequent, env), kindsOf2(node.alternate, env));
+      return join2(kindsOf2(node.consequent, env), kindsOf2(node.alternate, env));
     case "ExprBlock":
       return kindsOf2(node.ret, env);
     default:
@@ -22854,7 +23793,7 @@ function typeOfEmitted(value, doc) {
   if (value === null || value === void 0) return NOTHING;
   if (typeof value === "string") {
     if (value.startsWith("$$")) return value === "$$ROOT" || value === "$$CURRENT" ? doc : ANY;
-    if (value.startsWith("$")) return at2(doc, value.slice(1));
+    if (value.startsWith("$")) return at(doc, value.slice(1));
     return of("string");
   }
   if (typeof value === "number" || typeof value === "bigint") return of("number");
@@ -22865,9 +23804,9 @@ function typeOfEmitted(value, doc) {
     const raw = value[op];
     if (op === "$literal") return injectedType(raw);
     if (op === "$cond") {
-      if (Array.isArray(raw) && raw.length === 3) return join(typeOfEmitted(raw[1], doc), typeOfEmitted(raw[2], doc));
+      if (Array.isArray(raw) && raw.length === 3) return join2(typeOfEmitted(raw[1], doc), typeOfEmitted(raw[2], doc));
       if (isPlainObject(raw) && "then" in raw && "else" in raw) {
-        return join(typeOfEmitted(raw.then, doc), typeOfEmitted(raw.else, doc));
+        return join2(typeOfEmitted(raw.then, doc), typeOfEmitted(raw.else, doc));
       }
       return ANY;
     }
@@ -22946,17 +23885,17 @@ function documentAfter(stage, doc) {
           keepsId = false;
           continue;
         }
-        out = written(out, k, v === 1 || v === true ? at2(doc, k) : typeOfEmitted(v, doc));
+        out = written(out, k, v === 1 || v === true ? at(doc, k) : typeOfEmitted(v, doc));
       }
-      if (keepsId && !("_id" in body)) out = written(out, "_id", at2(doc, "_id"));
+      if (keepsId && !("_id" in body)) out = written(out, "_id", at(doc, "_id"));
       return out;
     }
     case "element": {
       const spec = typeof body === "string" ? { path: body } : body;
       const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
-      const element2 = elementOf(at2(doc, path));
-      return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element2) : present(element2));
+      const element = elementOf(at(doc, path));
+      return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element) : present(element));
     }
     case "unknown":
       return DOCUMENT;
@@ -23080,7 +24019,7 @@ function narrowedBy(query, doc) {
     if (key.startsWith("$")) continue;
     const proven = provenByClause(clause);
     if (proven === null) continue;
-    const was = at2(out, key);
+    const was = at(out, key);
     const narrowed = { ...was, kinds: bothKinds(was.kinds, proven.kinds), absent: was.absent && !proven.present };
     out = written(out, key, narrowed);
   }
@@ -23118,7 +24057,7 @@ function joinedType(l) {
 function documentBody(link, env) {
   const cb = link.args[0];
   if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return false;
-  return kindOf3(cb.body, env) === "object";
+  return kindOf4(cb.body, env) === "object";
 }
 function lookupOf(node, env, S, over = "$lookup") {
   let head = node;
@@ -23163,11 +24102,11 @@ function lookupOf(node, env, S, over = "$lookup") {
   const rest = links.slice(i);
   const complete = rest.length === 0 && head === node;
   const vars = capture !== null && capture.any ? capture.vars : null;
-  const element2 = body.chain.element;
+  const element = body.chain.element;
   const stages = body.chain.close();
   const document = documentsOf(stages, DOCUMENT);
   const shape = takePair(vars, stages);
-  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element: element2, document, pos };
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element, document, pos };
 }
 function pathOn2(base, path, pos) {
   return path.split(".").reduce((object, name2) => ({ type: "MemberAccess", object, name: name2, optional: false, pos }), base);
@@ -23178,8 +24117,8 @@ function elementsOf2(slot, l, env, node) {
   if (countsElements(node, l.peeledTo)) return slot;
   const x = env.fresh("el").as;
   const body = pathOn2({ type: "Ident", name: x, pos: l.pos }, l.element, l.pos);
-  const map = { type: "Lambda", params: [x], body, pos: l.pos };
-  return { type: "MethodCall", object: slot, name: "map", args: [map], optional: false, pos: l.pos };
+  const map2 = { type: "Lambda", params: [x], body, pos: l.pos };
+  return { type: "MethodCall", object: slot, name: "map", args: [map2], optional: false, pos: l.pos };
 }
 function countsElements(node, peeledTo) {
   if (node.type === "MemberAccess") return node.name === "length" && node.object === peeledTo;
@@ -23205,11 +24144,11 @@ function takePair(vars, pipeline) {
   for (const [i, conjunct] of conjuncts.entries()) {
     const eq = conjunct.$eq;
     if (!Array.isArray(eq) || eq.length !== 2) continue;
-    for (const [name2, read] of Object.entries(vars)) {
-      const localField = fieldPath2(read);
+    for (const [name2, read3] of Object.entries(vars)) {
+      const localField = fieldPath2(read3);
       if (localField === null) continue;
-      const variable = `$$${name2}`;
-      const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+      const variable2 = `$$${name2}`;
+      const foreignField = fieldPath2(eq[0] === variable2 ? eq[1] : eq[1] === variable2 ? eq[0] : null);
       if (foreignField === null) continue;
       const others = conjuncts.filter((_, j) => j !== i);
       const match = { ...query };
@@ -23399,13 +24338,13 @@ function comparatorSpec(arg, method) {
   if (whole !== null) return { kind: "whole", dir: whole, params: [a, b], pos: arg.body.pos };
   const spec = {};
   const terms = [];
-  const split = (e) => {
+  const split2 = (e) => {
     if (e.type === "BinaryExpr" && e.op === "||") {
-      split(e.left);
-      split(e.right);
+      split2(e.left);
+      split2(e.right);
     } else terms.push(e);
   };
-  split(arg.body);
+  split2(arg.body);
   const single3 = terms.length === 1;
   const orWhole = single3 ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
   for (const t of terms) {
@@ -23483,15 +24422,15 @@ function orderBySpec(keys, orders, method) {
   });
   return { kind: "keys", spec };
 }
-function streamSortAsk(ask, method, element2, pos) {
+function streamSortAsk(ask, method, element, pos) {
   if (ask.kind === "keys") {
     const count = Object.keys(ask.spec).length;
     if (count > SORT_KEY_LIMIT) throw tooManySortKeys(`.${method}()`, count, SORT_KEY_LIMIT, pos);
-    if (element2 === "") return ask;
-    return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element2}.${k}`, d])) };
+    if (element === "") return ask;
+    return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element}.${k}`, d])) };
   }
   if (ask.kind !== "whole") return ask;
-  if (element2 !== "") return { kind: "keys", spec: { [element2]: ask.dir } };
+  if (element !== "") return { kind: "keys", spec: { [element]: ask.dir } };
   const [a, b] = ask.params;
   const body = ask.dir === 1 ? `${a} - ${b}` : `${b} - ${a}`;
   const named = ask.dir === 1 ? `${a}.age - ${b}.age` : `${b}.age - ${a}.age`;
@@ -23506,18 +24445,19 @@ function streamSortAsk(ask, method, element2, pos) {
 var mint = (doc) => doc;
 var TRUE = mint(true);
 var FALSE = mint(false);
-var constantOf = (t) => t === TRUE ? true : t === FALSE ? false : null;
+var constantOf2 = (t) => t === TRUE ? true : t === FALSE ? false : null;
 var boolTruth = (doc) => mint(doc);
 var mongoTruthy = (value) => mint(value);
-function truthOf(value, type) {
-  if (isNothing(type)) return FALSE;
-  const kinds = type.kinds;
-  if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
+function truthOf2(value, type2, asValue2 = false) {
+  if (isNothing(type2)) return FALSE;
+  const kinds = type2.kinds;
+  const own = kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number");
+  if (own && (!asValue2 || [...kinds].every((k) => k === "bool"))) return mint(value);
   const tests = [];
-  if (type.absent) tests.push(isNotNullish(value));
-  if (mayBe(type, "bool")) tests.push({ $ne: [value, false] });
-  if (mayBe(type, "string")) tests.push({ $ne: [value, ""] });
-  if (mayBe(type, "number")) tests.push({ $ne: [value, 0] });
+  if (type2.absent) tests.push(isNotNullish(value));
+  if (mayBe(type2, "bool")) tests.push({ $ne: [value, false] });
+  if (mayBe(type2, "string")) tests.push({ $ne: [value, ""] });
+  if (mayBe(type2, "number")) tests.push({ $ne: [value, 0] });
   if (tests.length === 0) return TRUE;
   if (tests.length === 1) return mint(tests[0]);
   return mint({ $and: tests });
@@ -23545,15 +24485,15 @@ function or(...ts) {
 var not = (t) => t === TRUE ? FALSE : t === FALSE ? TRUE : mint({ $not: t });
 
 // src/compiler/emit/mql.ts
-var cond2 = (test, then, otherwise) => {
-  const c = constantOf(test);
+var cond3 = (test, then, otherwise) => {
+  const c = constantOf2(test);
   if (c !== null) return c ? then : otherwise;
   return { $cond: [test, then, otherwise] };
 };
 var liveBranches = (branches) => {
   const kept = [];
   for (const b of branches) {
-    const c = constantOf(b.case);
+    const c = constantOf2(b.case);
     if (c === false) continue;
     if (c === true) return { kept, decided: b.then };
     kept.push(b);
@@ -23578,6 +24518,151 @@ var readsRef = (mql, ref) => {
   return false;
 };
 
+// src/compiler/emit/select.ts
+var isObj3 = (v) => typeof v === "object" && v !== null;
+function shapeOf2(args) {
+  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
+  if (args.length === 0) return { kind: "none" };
+  if (args.length > 1) return { kind: "multiple" };
+  const only = args[0];
+  if (only.type === "ObjectLiteral") {
+    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
+    return { kind: "object", keys };
+  }
+  const v = constantOf(args[0]);
+  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
+}
+var FIELD_FAMILIES2 = Object.keys(FIELD_FAMILY_TYPES);
+var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
+var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
+var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
+function countOf(name2, args, n2) {
+  const rejected = args.reject?.[n2];
+  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
+  const ok3 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
+  return ok3 ? null : { kind: "wrongCount", name: name2, got: n2, args };
+}
+function settle2(name2, branch, shaped, count, proofs, family) {
+  if (isRefusal(branch)) {
+    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
+  }
+  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
+  if (shaped.kind === "spread") {
+    if (branch.args.spread === true) {
+      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
+    }
+    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
+  }
+  return countOf(name2, branch.args, count) ?? kindFault(name2, branch.args, proofs) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
+}
+function familyOf2(receiver) {
+  switch (receiver.kind) {
+    case "none":
+      return null;
+    case "namespace":
+      return receiver.name;
+    case "stream":
+      return "stream";
+    case "value":
+      return receiver.family;
+    case "opaque":
+      return null;
+  }
+}
+function receiverGate(name2, receiver) {
+  const on = familiesFor(name2);
+  if (on === void 0 || on === "any") return null;
+  if (receiver.kind === "opaque") {
+    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
+    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
+    }
+    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
+  }
+  const family = familyOf2(receiver);
+  if (family !== null && on.includes(family)) return null;
+  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
+}
+function fromByArgs(name2, byArgs, shaped, count, proofs) {
+  const otherwise = byArgs.otherwise;
+  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
+  const leftover = () => settle2(name2, otherwise, shaped, count, proofs);
+  switch (shaped.kind) {
+    case "spread":
+      return leftover();
+    case "constant":
+      return byArgs.constant === void 0 ? leftover() : settle2(name2, byArgs.constant, shaped, count, proofs);
+    default: {
+      const entry = byArgs[shaped.kind];
+      return entry === void 0 ? leftover() : settle2(name2, entry, shaped, count, proofs);
+    }
+  }
+}
+function kindFault(name2, rule, proofs) {
+  const fault = faultOf(name2, rule, proofs);
+  return fault === null ? null : { kind: "wrongKind", name: name2, fault };
+}
+function fromPerFamily(name2, branches, receiver, shaped, count, proofs) {
+  const on = familiesFor(name2);
+  if (receiver.kind !== "opaque") {
+    const family = familyOf2(receiver);
+    const branch = family === null ? void 0 : branches[family];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
+    return settle2(
+      name2,
+      branch,
+      shaped,
+      count,
+      proofs,
+      isFieldFamily(family) ? family : void 0
+    );
+  }
+  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const possible = receiver.possible;
+  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== void 0 && listed.length === 0) {
+    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
+  }
+  const lowering2 = listed.filter((f) => !isRefusal(branches[f]));
+  const families2 = lowering2.length > 0 ? lowering2 : listed;
+  if (families2.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  if (lowering2.length > 1) {
+    internalError(`the row '${name2}' lowers on ${lowering2.join(" and ")}. A row lowers on one field family`);
+  }
+  return settle2(name2, branches[families2[0]], shaped, count, proofs, families2[0]);
+}
+function select(verdict, receiver, shaped, count, proofs) {
+  const name2 = verdict.name;
+  switch (verdict.kind) {
+    case "unknown":
+      return { kind: "unknown", name: name2 };
+    case "refused": {
+      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
+      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
+    case "fallback":
+      return { kind: "fallback", name: name2 };
+    case "composedOnly":
+      return { kind: "composedOnly", name: name2, owners: verdict.owners };
+    case "noCell":
+      return { kind: "noCell", name: name2 };
+    case "inCode": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      return (verdict.args === void 0 ? null : kindFault(name2, verdict.args, proofs)) ?? { kind: "noCell", name: name2 };
+    }
+    case "perFamily":
+      return fromPerFamily(name2, verdict.branches, receiver, shaped, count, proofs);
+    case "lower": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      const cell = verdict.cell;
+      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count, proofs);
+      return settle2(name2, cell, shaped, count, proofs);
+    }
+  }
+}
+
 // src/compiler/emit/filter.ts
 function lowerFilter(node, env, jsRead = false) {
   const q = translate(node, env, false, jsRead);
@@ -23589,8 +24674,8 @@ var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type
 function translate(node, env, nativeOnly, jsRead) {
   if (node.type === "Injected" && isMqlShaped(node.value)) throw runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
-    const all2 = extractHasChain(node, env);
-    if (all2 !== null) return hasChain(all2.path, all2.values);
+    const all = extractHasChain(node, env);
+    if (all !== null) return hasChain(all.path, all.values);
     const left = translate(node.left, childEnv(env, node, "left"), nativeOnly, true);
     const right = translate(node.right, childEnv(env, node, "right"), nativeOnly, true);
     if (left === null || right === null) return null;
@@ -23674,8 +24759,8 @@ function rawQuery(node, env) {
   const out = rawDocument({ ...node, entries: kept }, valueEnv);
   if (lifted.length === 0) return out;
   const own = out.$expr === void 0 ? [] : [out.$expr];
-  const all2 = [...own, ...lifted];
-  out.$expr = all2.length === 1 ? all2[0] : { $and: all2 };
+  const all = [...own, ...lifted];
+  out.$expr = all.length === 1 ? all[0] : { $and: all };
   return out;
 }
 var NEAR = /* @__PURE__ */ new Set(["$near", "$nearSphere"]);
@@ -23749,7 +24834,7 @@ function rawValue(e, env) {
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
   if (e.type === "RegexLiteral") return e.injected ?? regexValue(e.pattern, mongoRegexOptions(e.flags));
-  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
+  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !constantOf(e).ok) {
     throw expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
@@ -23800,25 +24885,22 @@ function leaf(node, env) {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
   const receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
-  const sel = select(verdict, receiver, shapeOf2(args), args.length);
+  const source = recv ?? args[args.length - 1];
+  const proofs = escape ? UNPROVEN : proofsFor(args, env, true, source === void 0 ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
+  const sel = select(verdict, receiver, shapeOf2(args), args.length, proofs);
+  if (sel.kind === "wrongKind") {
+    throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, [], void 0, {
+      ...recv === null ? {} : { receiver: recv },
+      args
+    });
+  }
   if (sel.kind === "spreadRefused") throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
     if (node.type === "OperatorCall") return plainQuery(node, env);
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) {
-    const argEnv = childEnv(env, node, "args");
-    checkSlots(
-      node.type === "BinaryExpr" ? node.op : name2,
-      sel.rule.args,
-      args,
-      args.map((a) => kindOf3(a, argEnv)),
-      true,
-      void 0,
-      (a) => lowerValue(a, argEnv)
-    );
-  }
+  if (!escape) checkSlots(name2, sel.rule.args, args, true, void 0, env.site.settling);
   const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
     lowerValue,
     lowerFilter,
@@ -23935,7 +25017,7 @@ function constantIn(e) {
   if (e.type === "Injected") return { value: e.value };
   if (e.type === "RegexLiteral") return e.injected !== void 0 ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
-  const v = evaluate(e, /* @__PURE__ */ new Map());
+  const v = constantOf(e);
   if (!v.ok) return null;
   const converted = longsWithin(v.value);
   if (!converted.ok) return null;
@@ -24034,21 +25116,19 @@ function readableSort(ask, t, holder, pos) {
   return ask;
 }
 var childEnv = (env, node, key) => {
-  const at3 = env.at(edge(node, key, env.site.where));
+  const at2 = env.at(edge(node, key, env.site.where));
   const n2 = node;
-  if (n2.type === "OperatorCall" && key === "args") return at3.inside(n2.name ?? null);
-  if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at3;
-  return at3.inside(null);
+  if (n2.type === "OperatorCall" && key === "args") return at2.inside(n2.name ?? null);
+  if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at2;
+  return at2.inside(null);
 };
-function callback(cb, env, read) {
-  if (cb.type !== "Lambda" || cb.body === void 0) {
-    internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
-  }
+function callback(cb, env, read3, refusal) {
+  if (cb.type !== "Lambda" || cb.body === void 0) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
   const bound = env.param(cb.params[0], ANY, cb.pos);
-  return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
+  return { as: bound.as, ref: bound.ref, in: read3(cb.body, childEnv(bound.env, cb, "body")) };
 }
 function readsParam(node, name2) {
   if (node === null || typeof node !== "object") return false;
@@ -24057,14 +25137,14 @@ function readsParam(node, name2) {
   if (n2.type === "Ident" && n2.name === name2) return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && readsParam(v, name2));
 }
-function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
+function arrayCallback(cb, recv, recvNode, env, read3, name2, present2 = false) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element2 = recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
+  const element = recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
-    const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);
+    const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element, cb.pos);
     let bodyEnv2 = bound.env;
     const vars2 = {};
     if (arr !== void 0) {
@@ -24072,7 +25152,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
       vars2[a.as] = recv;
       bodyEnv2 = a.env;
     }
-    const body = read(cb.body, childEnv(bodyEnv2, cb, "body"));
+    const body = read3(cb.body, childEnv(bodyEnv2, cb, "body"));
     return {
       input: recv,
       as: bound.as,
@@ -24084,7 +25164,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
   const pair = env.fresh("pair");
   let bodyEnv = pair.env;
   const vars = {};
-  const x = bodyEnv.param(elem, element2, cb.pos);
+  const x = bodyEnv.param(elem, element, cb.pos);
   vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
   bodyEnv = x.env;
   const i = bodyEnv.param(index, of("number", true), cb.pos);
@@ -24095,13 +25175,13 @@ function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
     vars[a.as] = recv;
     bodyEnv = a.env;
   }
-  const size = sizeOf(recv);
+  const size2 = sizeOf(recv);
   return {
-    input: { $zip: { inputs: [{ $range: [0, size] }, recv] } },
+    input: { $zip: { inputs: [{ $range: [0, size2] }, recv] } },
     as: pair.as,
     ref: pair.ref,
     paired: true,
-    in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } }
+    in: { $let: { vars, in: read3(cb.body, childEnv(bodyEnv, cb, "body")) } }
   };
 }
 function callsSomething(node) {
@@ -24112,7 +25192,7 @@ function callsSomething(node) {
     return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && callsSomething(v));
 }
-function reducerCallback(cb, seed, recv, env, read, name2) {
+function reducerCallback(cb, seed, recv, env, read3, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 2 || cb.params.length > 3) {
     throw reducerShape(name2, cb.pos);
   }
@@ -24141,12 +25221,12 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
         mutable: false,
         pos: cb.pos
       });
-      return { input: recv, in: read(cb.body, childEnv(bodyEnv, cb, "body")) };
+      return { input: recv, in: read3(cb.body, childEnv(bodyEnv, cb, "body")) };
     }
     const x2 = bodyEnv.param(elem, ANY, cb.pos);
     vars[x2.as] = reduceVar("this");
     bodyEnv = x2.env;
-    return { input: recv, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+    return { input: recv, in: { $let: { vars, in: read3(cb.body, childEnv(bodyEnv, cb, "body")) } } };
   }
   const x = bodyEnv.param(elem, ANY, cb.pos);
   vars[x.as] = { $arrayElemAt: [reduceVar("this"), 1] };
@@ -24154,9 +25234,9 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
   const i = bodyEnv.param(index, of("number", true), cb.pos);
   vars[i.as] = { $arrayElemAt: [reduceVar("this"), 0] };
   bodyEnv = i.env;
-  return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+  return { input: indexedPairs(recv), in: { $let: { vars, in: read3(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function elementsCallback(cb, count, env, read, name2) {
+function elementsCallback(cb, count, env, read3, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== count) {
     throw elementsShape(name2, count, cb.pos);
   }
@@ -24168,12 +25248,13 @@ function elementsCallback(cb, count, env, read, name2) {
     vars[b.as] = { $arrayElemAt: [pair.ref, k] };
     bodyEnv = b.env;
   });
-  return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+  return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read3(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
+function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
   const argEnv = childEnv(env, node, "args");
-  const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
+  const value = (e) => overrides.has(e) ? overrides.get(e) : read3.value(env.site.settling ? e : settled(e), argEnv);
   const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
+  const notArrow = (cb, what) => notAnArrow(name2, what, slotFormsOf(name2, "array", Math.max(0, args.indexOf(cb))), cb);
   return {
     name: name2,
     recv,
@@ -24181,18 +25262,15 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     keys,
     value,
     present: present2,
-    // A cell asks for a kind to pick a lowering, and a proven null picks none.
-    kind: (e) => {
-      const k = kindOf3(e, argEnv);
-      return k === "null" ? "unknown" : k;
-    },
+    kind: (e) => kindOf4(e, argEnv),
     type: (e) => typeOf(e, argEnv),
-    truth: (e) => read.truth(e, argEnv),
-    iteratee: (cb) => callback(cb, argEnv, read.value),
-    predicate: (cb) => callback(cb, argEnv, read.truth),
-    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
-    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
-    elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
+    truth: (e) => read3.truth(e, argEnv),
+    boolean: (e) => read3.boolean(e, argEnv),
+    iteratee: (cb) => callback(cb, argEnv, read3.value, () => notArrow(cb, "a key")),
+    predicate: (cb) => callback(cb, argEnv, read3.truth, () => notArrow(cb, "a predicate")),
+    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read3.value : read3.truth, name2, present2),
+    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read3.value, name2),
+    elements: (cb, count) => elementsCallback(cb, count, argEnv, read3.value, name2),
     sortSpec: (e, objects) => readableSort(sortSpecOf(e, name2, objects), elementOfRecv(), "the element", e.pos),
     orderBy: (keys2, orders) => readableSort(orderBySpec(keys2, orders, name2), elementOfRecv(), "the element", keys2.pos),
     objIteratee: (cb, mode) => {
@@ -24214,7 +25292,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
         as: kv.as,
         ref: kv.ref,
         body: {
-          $let: { vars, in: (mode === "value" ? read.value : read.truth)(cb.body, childEnv(bodyEnv, cb, "body")) }
+          $let: { vars, in: (mode === "value" ? read3.value : read3.truth)(cb.body, childEnv(bodyEnv, cb, "body")) }
         }
       };
     },
@@ -24225,16 +25303,22 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     hoist: (stages, reads2) => {
       const source = node.object ?? null;
       const handle = streamHandleOf(source, env);
-      const chain = handle === null ? env.rootChain : handle.chain;
+      const chain2 = handle === null ? env.rootChain : handle.chain;
       const level = handle === null ? 0 : handle.level;
-      if (!chain.isPipeline) throw needsPipeline(name2, node.pos);
-      chain.hoist(stages, reads2);
+      if (!chain2.isPipeline) throw needsPipeline(name2, node.pos);
+      chain2.hoist(stages, reads2);
       return env.render(
         { kind: "s", level, path: reads2, hint: reads2.slice(reads2.lastIndexOf(".") + 1) },
         node.pos
       );
     },
-    slot: () => env.chain.slot().path
+    slot: () => env.chain.slot().path,
+    construct: (spelling, refusal, arg) => {
+      const given = arg === void 0 ? null : constantOf(arg);
+      const built = arg === void 0 ? bsonNullary(spelling) : given !== null && given.ok ? bsonConstant(spelling, given.value) : null;
+      if (built === null) throw new CodegenError(refusal, node.pos);
+      return built;
+    }
   };
 }
 function staleCountStage(cb) {
@@ -24254,7 +25338,7 @@ function streamHandleOf(recv, env) {
 function onOwnStream(recv, env) {
   return recv !== null && recv.type === "Ident" && env.scope.has(recv.name) && env.lookup(recv.name, recv.pos).ref.kind === "streamHandle";
 }
-function filterInputs(name2, recv, args, keys, env, node, read) {
+function filterInputs(name2, recv, args, keys, env, node, read3) {
   const argEnv = childEnv(env, node, "args");
   return {
     name: name2,
@@ -24263,14 +25347,14 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
     keys,
     pathOf: (e) => pathOfIn(e, env),
     constant: constantIn,
-    query: (e) => read.lowerFilter(e, argEnv),
-    nativeQuery: (e) => read.lowerNativeFilter(e, argEnv),
+    query: (e) => read3.lowerFilter(e, argEnv),
+    nativeQuery: (e) => read3.lowerNativeFilter(e, argEnv),
     elementQuery: (cb) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) return null;
       const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
-      return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
+      return read3.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },
-    value: (e) => read.lowerValue(e, argEnv),
+    value: (e) => read3.lowerValue(e, argEnv),
     fieldPath: (e) => {
       const path = pathOfIn(e, env);
       if (path === null) throw needsFieldPath(name2, e.pos);
@@ -24288,13 +25372,13 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
         throw elementNeedsQuery(name2, cb.pos);
       }
       const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
-      const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
+      const q = read3.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name2, cb.pos);
       return q;
     }
   };
 }
-function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = name2) {
+function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 = name2) {
   const argEnv = childEnv(env, node, "args");
   const before = [...env.chain.emitted, ...soFar];
   const readableKeys = (ask, pos) => readableSort(
@@ -24364,19 +25448,19 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
     name: name2,
     args,
     keys,
-    value: (e) => read.value(e, argEnv),
-    truth: (e) => read.truth(e, argEnv),
+    value: (e) => read3.value(env.site.settling ? e : settled(e), argEnv),
+    truth: (e) => read3.truth(e, argEnv),
     predicate: (cb) => {
       const b = body(cb, "a predicate");
-      return read.predicate(b.body, b.env);
+      return read3.predicate(b.body, b.env);
     },
     reshape: (cb) => {
       const b = body(cb, "a key");
-      return read.reshape(b.body, b.env);
+      return read3.reshape(b.body, b.env);
     },
     condition: (cb) => {
       const b = body(cb, "a predicate");
-      return read.truth(b.body, b.env);
+      return read3.truth(b.body, b.env);
     },
     sortedBy: () => {
       for (let k = before.length - 1; k >= 0; k--) {
@@ -24389,11 +25473,11 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
       const b = body(cb, "a document");
       const t = typeOf(b.body, b.env);
       if (cannotBe(t, "object")) throw mapMustReturnDocument(name2, nounOfKinds(t), b.body.pos);
-      return read.reshape(b.body, b.env);
+      return read3.reshape(b.body, b.env);
     },
     fieldPath: (cb) => {
       const b = body(cb, "a field");
-      const v = read.reshape(b.body, b.env);
+      const v = read3.reshape(b.body, b.env);
       if (typeof v !== "string" || !v.startsWith("$") || v.startsWith("$$")) throw notAFieldOfTheDocument(name2, cb.pos);
       return v;
     },
@@ -24404,7 +25488,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
       }
       const stages = cb.stages;
       if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
-      return read.block(stages, e);
+      return read3.block(stages, e);
     },
     sortSpec: (e, objects = true) => streamSortAsk(readableKeys(sortSpecOf(e, name2, objects), e.pos), name2, env.chain.element, e.pos),
     orderBy: (keys2, orders) => streamSortAsk(readableKeys(orderBySpec(keys2, orders, name2), keys2.pos), name2, env.chain.element, keys2.pos),
@@ -24424,8 +25508,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
 }
 
 // src/compiler/emit/lower.ts
-var NAMESPACES3 = namespaceNames();
-var READ = { value: lowerValue, truth: lowerTruth };
+var NAMESPACES2 = namespaceNames();
+var READ = { value: lowerValue, truth: lowerTruth, boolean: lowerBoolean };
 var positionIn = (env) => positionOf(env.site.where) ?? "value";
 var NOT_EXPR = /* @__PURE__ */ new Set([
   "SpreadElement",
@@ -24435,23 +25519,6 @@ var NOT_EXPR = /* @__PURE__ */ new Set([
   "UpdateFilter"
 ]);
 var isExpr2 = (a) => !NOT_EXPR.has(a.type);
-var OWN_CASE = /* @__PURE__ */ new Set([
-  "StringLiteral",
-  "BigIntLiteral",
-  "UndefinedLiteral",
-  "RegexLiteral",
-  "Lambda",
-  // A literal's own case lowers its parts and holds the list-operand rule for a
-  // raw `{ $op: … }`. Settling the whole literal would skip both.
-  "ObjectLiteral",
-  "ArrayLiteral"
-]);
-var hasOwnCase = (type) => OWN_CASE.has(type);
-function settledValue(value, pos) {
-  const converted = longsWithin(value);
-  if (!converted.ok) throw bigIntTooLarge(converted.tooBig.toString(), pos);
-  return converted.value;
-}
 var joinRoad = null;
 function provideJoin(road) {
   joinRoad = road;
@@ -24461,26 +25528,15 @@ function lowerValue(node, env) {
     if (joinRoad === null) internalError("statement.ts did not lend the join road before lower.ts read it");
     return joinRoad(node, env);
   }
-  if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
-    const settled = evaluate(node, /* @__PURE__ */ new Map());
-    if (settled.ok) {
-      if (isObjectId(settled.value)) {
-        const hex = objectIdHex(settled.value);
-        const typo = hex === null ? null : objectIdTypo(hex);
-        if (typo !== null) throw new CodegenError(typo, node.pos);
-      }
-      return settledValue(settled.value, node.pos);
-    }
-  }
   const stopped = stoppedChain(node);
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
     const gone = boolTruth(isNullish(lowerValue(base, env)));
-    return cond2(gone, null, lowerValue(withoutOptional(node), proved));
+    return cond3(gone, null, lowerValue(withoutOptional(node), proved));
   }
-  if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
+  if (isRead(node) && readsHaveOptional(node)) return ifNull2(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
     case "StringLiteral":
       if (node.text === true) return textValue(node.value, node.pos, env);
@@ -24527,7 +25583,7 @@ function lowerValue(node, env) {
     case "IndexAccess":
       return indexAccess(node, env);
     case "MethodCall":
-      return methodCall2(node, env);
+      return methodCall(node, env);
     case "CallExpression":
       return callExpression(node, env);
     case "NewExpression":
@@ -24537,7 +25593,7 @@ function lowerValue(node, env) {
     case "UnaryExpr":
       return unary2(node, env);
     case "BinaryExpr":
-      return binary2(node, env);
+      return binary(node, env);
     case "TernaryExpr": {
       const key = productionForNode("TernaryExpr");
       if (key === void 0) internalError("no production builds a TernaryExpr");
@@ -24548,6 +25604,13 @@ function lowerValue(node, env) {
     case "ExprBlock":
       return exprBlock(node, env, lowerValue);
   }
+}
+function lowerBoolean(node, env) {
+  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
+  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
+    return lowerTruth(node, env);
+  }
+  return truthOf2(lowerValue(nullPassing(node), env), typeOf(node, env), true);
 }
 function lowerTruth(node, env) {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
@@ -24562,10 +25625,10 @@ function lowerTruth(node, env) {
   }
   if (node.type === "TernaryExpr") {
     const test = lowerTruth(node.test, childEnv(env, node, "test"));
-    return boolTruth(cond2(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
+    return boolTruth(cond3(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
   if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
-  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env));
+  return truthOf2(lowerValue(nullPassing(node), env), typeOf(node, env));
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
@@ -24574,14 +25637,14 @@ function templateLiteral(node, env) {
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
-    const safe = chainHasOptional(e) ? ifNull(lowered, "") : lowered;
-    parts.push(kindOf3(e, inner) === "string" ? safe : { $toString: safe });
+    const safe = chainHasOptional(e) ? ifNull2(lowered, "") : lowered;
+    parts.push(kindOf4(e, inner) === "string" ? safe : { $toString: safe });
   });
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== void 0) parts.push(tail);
   return { $concat: parts };
 }
-function ifNull(v, neutral) {
+function ifNull2(v, neutral) {
   if (typeof v === "object" && v !== null && !Array.isArray(v)) {
     const keys = Object.keys(v);
     const inner = v.$ifNull;
@@ -24665,7 +25728,7 @@ function arrayLiteral(node, elements, env) {
       if (cannotBe(t, "array")) throw spreadNotAnArray(nounOfKinds(t), el.argument.pos);
       const packed = node.packed === true;
       const v = lowerValue(el.argument, inner);
-      operands.push(t.absent && !packed ? ifNull(v, []) : v);
+      operands.push(t.absent && !packed ? ifNull2(v, []) : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -24712,8 +25775,8 @@ function objectLiteral(node, entries, env) {
         if (doc !== null && typeof doc === "object") Object.assign(out, doc);
         continue;
       }
-      const at3 = childEnv(inner, e, "value");
-      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at3.inside(e.key.name) : at3));
+      const at2 = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at2.inside(e.key.name) : at2));
     }
     return out;
   };
@@ -24739,7 +25802,7 @@ function objectLiteral(node, entries, env) {
 function rootAsValue(node, env) {
   const name2 = rowForNodeType(node.type);
   if (name2 === void 0) internalError(`no root row builds a '${node.type}'`);
-  const sel = select(consult(name2, positionIn(env)), { kind: "none" }, { kind: "none" }, 0);
+  const sel = select(consult(name2, positionIn(env)), { kind: "none" }, { kind: "none" }, 0, UNPROVEN);
   throw refusalFor(sel, name2, "", positionIn(env), node.pos, []);
 }
 function identifier(node, env) {
@@ -24761,11 +25824,11 @@ function identifier(node, env) {
         throw droppedBinding(b.ref, node.pos);
     }
   }
-  if (NAMESPACES3.has(node.name)) {
+  if (NAMESPACES2.has(node.name)) {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  if (isGlobalName(node.name) || NAMESPACES3.has(node.name)) throw callableAsValue(node.name, node.pos);
+  if (isGlobalName(node.name) || NAMESPACES2.has(node.name)) throw callableAsValue(node.name, node.pos);
   throw new UnknownIdentifierError(node.name, node.pos);
 }
 function locate(node, env) {
@@ -24802,10 +25865,10 @@ function pathOf(node, env) {
 function reachable(path) {
   const root2 = path.startsWith("$$") ? 2 : 1;
   const segments = path.slice(root2).split(".");
-  const at3 = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
-  if (at3 < 0) return path;
-  let value = path.slice(0, root2) + segments.slice(0, at3).join(".");
-  for (const seg of segments.slice(at3)) {
+  const at2 = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
+  if (at2 < 0) return path;
+  let value = path.slice(0, root2) + segments.slice(0, at2).join(".");
+  for (const seg of segments.slice(at2)) {
     value = { $getField: { field: seg.startsWith("$") ? { $literal: seg } : seg, input: value } };
   }
   return value;
@@ -24876,13 +25939,11 @@ function memberAccess(node, env) {
 function refuseUnreadable(node, env) {
   const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
   if (why === null) return;
-  const read = `${node.optional ? "?." : "."}${node.name}`;
-  throw unreadableField(node.name, why, read, holderOf(node.object, env), node.pos);
+  const read3 = `${node.optional ? "?." : "."}${node.name}`;
+  throw unreadableField(node.name, why, read3, holderOf(node.object, env), node.pos);
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
-  const key = productionBuilding("IndexAccess");
-  checkRoad(key, productionSpelling(key), [node.index], env);
   if (node.index.type === "StringLiteral") {
     const name2 = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name2, false);
@@ -24896,14 +25957,14 @@ function indexAccess(node, env) {
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
-  const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf3(node.object, objEnv));
+  const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf4(node.object, objEnv));
   const absent = !isPresent(node.object, objEnv);
-  const orEmpty = (neutral) => absent ? ifNull(raw, neutral) : raw;
+  const orEmpty = (neutral) => absent ? ifNull2(raw, neutral) : raw;
   const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
-  const keyKind = kindOf3(node.index, env);
+  const keyKind = kindOf4(node.index, env);
   if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
-  const isString = (o) => boolTruth({ $eq: [{ $type: o }, "string"] });
-  const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
+  const isString2 = (o) => boolTruth({ $eq: [{ $type: o }, "string"] });
+  const literal2 = constantOf(node.index);
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
     const i = literal2.value;
     if (i < 0) throw negativeIndex(i, node.pos);
@@ -24911,27 +25972,27 @@ function indexAccess(node, env) {
     const fieldAt2 = { $getField: { field: String(i), input: orEmpty({}) } };
     if (known === "array") return { $arrayElemAt: [orEmpty([]), i] };
     if (known === "object") return fieldAt2;
-    if (known === "string") return absent ? switchOn([{ case: isString(raw), then: charAt }], "$$REMOVE") : charAt;
+    if (known === "string") return absent ? switchOn([{ case: isString2(raw), then: charAt }], "$$REMOVE") : charAt;
     return switchOn(
       [
         { case: boolTruth({ $isArray: raw }), then: { $arrayElemAt: [raw, i] } },
-        { case: isString(raw), then: charAt }
+        { case: isString2(raw), then: charAt }
       ],
       fieldAt2
     );
   }
   const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
   if (known === "object") return fieldAt;
-  const element2 = { $arrayElemAt: [orEmpty([]), idx] };
+  const element = { $arrayElemAt: [orEmpty([]), idx] };
   if (known === "array") {
-    return keyKind === "number" ? element2 : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element2 }], "$$REMOVE");
+    return keyKind === "number" ? element : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element }], "$$REMOVE");
   }
   const onArray = keyKind === "number" ? { $isArray: raw } : { $and: [{ $isArray: raw }, { $isNumber: idx }] };
   return switchOn([{ case: boolTruth(onArray), then: { $arrayElemAt: [raw, idx] } }], fieldAt);
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);
-  if (src !== null && NAMESPACES3.has(src))
+  if (src !== null && NAMESPACES2.has(src))
     return { kind: "namespace", name: src };
   if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
@@ -24948,10 +26009,10 @@ function receiverOf(recv, env) {
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
   return { kind: "opaque", lowered, possible };
 }
-var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
+var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
-function methodCall2(node, env) {
+function methodCall(node, env) {
   return dispatchOn(node, node.name, node.object, node.args, env);
 }
 function dispatchOn(node, name2, recvNode, args, env) {
@@ -24973,8 +26034,8 @@ function dispatchOn(node, name2, recvNode, args, env) {
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
-  const kinds = exprArgs.map((a) => kindOf3(a, argEnv));
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
+  const proofs = proofsFor(args, argEnv, true, { node: recvNode, env: recvEnv });
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, proofs);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -24983,7 +26044,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs, kinds, true, recvNode, (e) => lowerValue(e, argEnv));
+    checkSlots(name2, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
@@ -24991,7 +26052,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
     const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
     const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);
     const wrap = needsEmpty && !nullIsEmpty;
-    const input = wrap ? ifNull(recv, empty) : recv;
+    const input = wrap ? ifNull2(recv, empty) : recv;
     return sel.rule.emit(
       exprInputs(
         name2,
@@ -25012,7 +26073,11 @@ function dispatchOn(node, name2, recvNode, args, env) {
     const on = familiesFor(n2);
     return on !== void 0 && on !== "any" && on.includes(receiver.name) && lowersOn(n2, receiver.name);
   }) : JS_NAMES;
-  throw refusalFor(sel, spelled3, container, position, node.pos, near, format);
+  if (sel.kind === "wrongKind") operandsFirst(exprArgs, argEnv);
+  throw refusalFor(sel, spelled3, container, position, node.pos, near, format, {
+    receiver: recvNode,
+    args
+  });
 }
 function arraysHolder(recv) {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
@@ -25026,7 +26091,7 @@ function callExpression(node, env) {
       const b = env.lookup(callee.name, callee.pos);
       if (b.ref.kind === "function") {
         if (b.ref.lambda.type !== "Lambda") internalError("a function binding holds a non-lambda");
-        return applyLambda2(b.ref.lambda, node.args, env, node.pos, `Function '${callee.name}'`, callee.name);
+        return applyLambda(b.ref.lambda, node.args, env, node.pos, `Function '${callee.name}'`, callee.name);
       }
       if (b.ref.kind === "dropped") throw droppedBinding(b.ref, node.pos);
       throw notCallable(node.pos);
@@ -25034,7 +26099,7 @@ function callExpression(node, env) {
     if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
     throw unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
-  if (callee.type === "Lambda") return applyLambda2(callee, node.args, env, node.pos, "IIFE", null);
+  if (callee.type === "Lambda") return applyLambda(callee, node.args, env, node.pos, "IIFE", null);
   throw notCallable(node.pos);
 }
 function newExpression(node, env) {
@@ -25052,11 +26117,12 @@ function newExpression(node, env) {
 function dispatchBare(node, name2, args, env) {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr2);
-  const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length);
+  const proofs = proofsFor(args, childEnv(env, node, "args"), true);
+  const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  throw refusalFor(sel, name2, "", position, node.pos, []);
+  throw refusalFor(sel, name2, "", position, node.pos, [], void 0, { args });
 }
-function applyLambda2(lambda, args, env, pos, label, fnName) {
+function applyLambda(lambda, args, env, pos, label, fnName) {
   if (lambda.body === void 0) throw lambdaAsValue(lambda.pos);
   if (lambda.params.length !== args.length) throw wrongCallCount(label, lambda.params, args.length, pos);
   const vars = {};
@@ -25095,7 +26161,7 @@ function operatorCall(node, env) {
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr2);
-  const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
+  const sel = select(verdict, { kind: "none" }, shapeOf2(args), count, UNPROVEN);
   if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
   if (sel.kind !== "rule") return plainOperator(node, env);
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
@@ -25155,38 +26221,33 @@ function plainOperator(node, env) {
   return { [node.name]: args.map((a) => lowerValue(a, inner)) };
 }
 var spelledProduction = (node, key) => node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
+function selectProduction(key, operands, env) {
+  const last = operands[operands.length - 1];
+  const proofs = proofsFor(operands, env, false, last === void 0 ? null : { node: last, env });
+  return select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length, proofs);
+}
+function operandsFirst(operands, env) {
+  for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
+}
+function checkOperandKinds(node, key, operands, env) {
+  const sel = selectProduction(key, operands, env);
+  if (sel.kind === "wrongKind") {
+    operandsFirst(operands, env);
+    throw refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], void 0, {
+      args: operands
+    });
+  }
+}
 function production2(node, key, operands, env) {
-  const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
+  const sel = selectProduction(key, operands, env);
   const spelled3 = spelledProduction(node, key);
   if (sel.kind !== "rule") {
-    throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
+    if (sel.kind === "wrongKind") operandsFirst(operands, env);
+    throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, [], void 0, { args: operands });
   }
-  const argEnv = childEnv(env, node, "args");
-  checkSlots(
-    spelled3,
-    sel.rule.args,
-    operands,
-    operands.map((e) => kindOf3(e, argEnv)),
-    true,
-    void 0,
-    (e) => lowerValue(e, argEnv)
-  );
-  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
-  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
-}
-function checkRoad(key, spelled3, operands, env) {
-  const verdict = consult(key, "value");
-  if (verdict.kind !== "inCode") internalError(`'${key}' hands its value cell to no road`);
-  if (verdict.args === void 0) return;
-  checkSlots(
-    spelled3,
-    verdict.args,
-    operands,
-    operands.map((e) => kindOf3(e, env)),
-    true,
-    void 0,
-    (e) => lowerValue(e, env)
-  );
+  checkSlots(spelled3, sel.rule.args, operands, true, void 0, env.site.settling);
+  const read3 = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
+  return sel.rule.emit(exprInputs(key, null, read3, [], env, node, READ));
 }
 function chainOf2(node, op) {
   const out = [];
@@ -25201,26 +26262,21 @@ function chainOf2(node, op) {
 }
 function unary2(node, env) {
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return asValue(lowerTruth(node.argument.argument, childEnv(env, node, "argument")));
+    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a unary '${node.op}'`);
   return production2(node, key, [node.argument], env);
 }
-function binary2(node, env) {
+function binary(node, env) {
   const inner = childEnv(env, node, "left");
   switch (node.op) {
     case "+": {
       const operands = chainOf2(node, "+");
-      checkRoad(
-        productionForOperator("BinaryExpr", "+") ?? internalError("no production builds '+'"),
-        "+",
-        operands,
-        inner
-      );
-      if (operands.some((e) => kindOf3(e, inner) === "string")) {
+      checkOperandKinds(node, productionKeyOf(node), operands, inner);
+      if (operands.some((e) => kindOf4(e, inner) === "string")) {
         return {
-          $concat: operands.map((e) => chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))
+          $concat: operands.map((e) => chainHasOptional(e) ? ifNull2(lowerValue(e, inner), "") : lowerValue(e, inner))
         };
       }
       return { $add: operands.map((e) => lowerValue(productionPassesNullOf("addition") ? nullPassing(e) : e, inner)) };
@@ -25236,7 +26292,7 @@ function binary2(node, env) {
       return node.op === "==" ? isNullish(operand) : isNotNullish(operand);
     }
     case "in":
-      return membership2(node, inner);
+      return membership(node, inner);
     case "===":
     case "!==": {
       const operand = orientUndefined(node.left, node.right);
@@ -25247,9 +26303,13 @@ function binary2(node, env) {
       break;
     }
   }
+  const key = productionKeyOf(node);
+  return production2(node, key, flattensChain(key) ? chainOf2(node, node.op) : [node.left, node.right], env);
+}
+function productionKeyOf(node) {
   const key = productionForOperator("BinaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a binary '${node.op}'`);
-  return production2(node, key, flattensChain(key) ? chainOf2(node, node.op) : [node.left, node.right], env);
+  return key;
 }
 function typeofComparison(node, env) {
   const { left, right } = node;
@@ -25274,32 +26334,33 @@ function orientUndefined(left, right) {
 function logicalValue(node, env) {
   const op = node.op;
   const inner = childEnv(env, node, "left");
-  const chain = chainOf2(node, op);
-  if (chain.every((e) => kindOf3(e, inner) === "bool")) return asValue(lowerTruth(node, env));
+  const chain2 = chainOf2(node, op);
+  if (chain2.every((e) => kindOf4(e, inner) === "bool")) return asValue(lowerTruth(node, env));
   const fold2 = (rest, e) => {
     if (rest.length === 1) return lowerValue(rest[0], e);
     const lhs = rest[0];
     const lowered = lowerValue(lhs, e);
     const rhs = fold2(rest.slice(1), e);
     const t = typeOf(lhs, e);
-    if (pathOf(lhs, e) !== null || kindOf3(lhs, e) === "bool") {
-      const test2 = truthOf(lowered, t);
-      return op === "&&" ? cond2(test2, rhs, lowered) : cond2(test2, lowered, rhs);
+    if (pathOf(lhs, e) !== null || kindOf4(lhs, e) === "bool") {
+      const test2 = truthOf2(lowered, t);
+      return op === "&&" ? cond3(test2, rhs, lowered) : cond3(test2, lowered, rhs);
     }
     const bound = e.fresh("v");
-    const test = truthOf(bound.ref, t);
-    return letOne(bound.as, lowered, op === "&&" ? cond2(test, rhs, bound.ref) : cond2(test, bound.ref, rhs));
+    const test = truthOf2(bound.ref, t);
+    return letOne(bound.as, lowered, op === "&&" ? cond3(test, rhs, bound.ref) : cond3(test, bound.ref, rhs));
   };
-  return fold2(chain, inner);
+  return fold2(chain2, inner);
 }
-function membership2(node, env) {
+function membership(node, env) {
   const { left, right } = node;
   const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
   if (right.type !== "ArrayLiteral" && !passedList) throw inNeedsList(node.pos);
+  checkOperandKinds(node, productionKeyOf(node), [left, right], env);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {
-  const step = (i, e, carried) => {
+  const step2 = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
     const vars = {};
     const refs = [];
@@ -25310,7 +26371,7 @@ function exprBlock(node, env, ret) {
       const d = node.decls[j];
       const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
       carry = null;
-      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step2(j, scope, { value }) } };
       const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as] = value;
       refs.push(`$$${bound.as}`);
@@ -25318,15 +26379,27 @@ function exprBlock(node, env, ret) {
       j++;
       if (j === node.decls.length || node.decls[j].group !== d.group) break;
     }
-    return { $let: { vars, in: step(j, scope, null) } };
+    return { $let: { vars, in: step2(j, scope, null) } };
   };
-  return step(0, env, null);
+  return step2(0, env, null);
 }
+provideLowering((node, functions) => {
+  let env = Env.root({ node, functions: [...functions.values()] }, "value", void 0, true);
+  for (const [name2, lambda] of functions) {
+    env = env.bind(name2, {
+      ref: { kind: "function", lambda, expanding: lambda.body === void 0 },
+      type: ANY,
+      mutable: false,
+      pos: lambda.pos
+    });
+  }
+  return lowerValue(node, env);
+});
 
 // src/compiler/emit/union.ts
 var DOCUMENTS = "$documents";
-function noStageInDocuments(chain, written2, pos) {
-  const made = chain.hoisted[0] ?? chain.emitted[0];
+function noStageInDocuments(chain2, written2, pos) {
+  const made = chain2.hoisted[0] ?? chain2.emitted[0];
   if (made !== void 0) throw documentsNeedNoStage(written2, Object.keys(made)[0], pos);
 }
 function writtenDocuments(e) {
@@ -25406,25 +26479,25 @@ function unionStages(args, env, node, S) {
 }
 
 // src/compiler/emit/reduce-wrap.ts
-function seeded(acc, init, read) {
-  const c = constantOf2(init);
+function seeded(acc, init, read3) {
+  const c = constantOf3(init);
   if (c === NOT_CONSTANT3) throw reduceWrapSeed(init.pos);
   switch (acc.op) {
     case "$sum":
-      return c === 0 ? read : { $add: [c, read] };
+      return c === 0 ? read3 : { $add: [c, read3] };
     case "$max":
     case "$min":
-      return c === null ? read : { [acc.op]: [c, read] };
+      return c === null ? read3 : { [acc.op]: [c, read3] };
     case "$push":
-      return Array.isArray(c) && c.length > 0 ? { $concatArrays: [c, read] } : read;
+      return Array.isArray(c) && c.length > 0 ? { $concatArrays: [c, read3] } : read3;
     case "$first":
-      return c === null ? read : c;
+      return c === null ? read3 : c;
     case "$last":
-      return read;
+      return read3;
   }
 }
 var NOT_CONSTANT3 = /* @__PURE__ */ Symbol("not constant");
-function constantOf2(e) {
+function constantOf3(e) {
   switch (e.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -25437,7 +26510,7 @@ function constantOf2(e) {
       const out = [];
       for (const el of e.elements) {
         if (el.type === "SpreadElement") return NOT_CONSTANT3;
-        const v = constantOf2(el);
+        const v = constantOf3(el);
         if (v === NOT_CONSTANT3) return NOT_CONSTANT3;
         out.push(v);
       }
@@ -25447,7 +26520,7 @@ function constantOf2(e) {
       const out = {};
       for (const en of e.entries) {
         if (en.type !== "KeyValueEntry" || en.key.kind !== "static") return NOT_CONSTANT3;
-        const v = constantOf2(en.value);
+        const v = constantOf3(en.value);
         if (v === NOT_CONSTANT3) return NOT_CONSTANT3;
         out[en.key.name] = v;
       }
@@ -25537,14 +26610,14 @@ function reduceWrapStages(list) {
   const r = reducerOf(el);
   if (r.body.type !== "ObjectLiteral") throw reduceWrapObjectBody(r.acc, r.body.pos);
   const init = el.args[1];
-  const keyed = keyedEntry(r.body, r.acc, r.param);
-  if (keyed === null && r.body.entries.length === 1 && r.body.entries[0].type === "KeyValueEntry" && r.body.entries[0].key.kind === "computed") {
+  const keyed2 = keyedEntry(r.body, r.acc, r.param);
+  if (keyed2 === null && r.body.entries.length === 1 && r.body.entries[0].type === "KeyValueEntry" && r.body.entries[0].key.kind === "computed") {
     throw reduceWrapKeyedNeedsSpread(r.acc, r.body.pos);
   }
-  if (keyed !== null) {
+  if (keyed2 !== null) {
     if (init.type !== "ObjectLiteral" || init.entries.length !== 0) throw reduceWrapKeyedInit(init.pos);
     return [
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed.k, v: keyed.v } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed2.k, v: keyed2.v } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } }
     ];
   }
@@ -25645,19 +26718,19 @@ function stageBody(node, env) {
     const key = staticKey(entry);
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
-    const at3 = slot.site.where.at;
+    const at2 = slot.site.where.at;
     setKey(
       out,
       key,
       // A slot that holds a pipeline takes a bracketed list of stages. Any other value
       // is the developer's own MQL, and it lowers as a value: `pipeline: $.p` → "$p".
-      (at3 === "statement" || at3 === "stream") && entry.value.type === "ArrayLiteral" ? pipelineBody(
+      (at2 === "statement" || at2 === "stream") && entry.value.type === "ArrayLiteral" ? pipelineBody(
         entry.value,
         slot,
         env.site.where.at === "stageBody" ? env.site.where.stage : "",
         [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
         captures
-      ) : at3 === "statement" || at3 === "stream" ? lowerValue(entry.value, slot) : readIn(entry.value, slot)
+      ) : at2 === "statement" || at2 === "stream" ? lowerValue(entry.value, slot) : readIn(entry.value, slot)
     );
   }
   const captured = captures.filter((c) => c.any);
@@ -25674,9 +26747,9 @@ function subPipeline(node, env) {
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw afterTerminalStage(env.chain.terminal.spelled, el.pos);
-    const step = statementStages(el, scope, out.length === 0);
-    out.push(...env.chain.ahead(), ...step.stages);
-    scope = step.env;
+    const step2 = statementStages(el, scope, out.length === 0);
+    out.push(...env.chain.ahead(), ...step2.stages);
+    scope = step2.env;
   }
   return out;
 }
@@ -25699,9 +26772,9 @@ var READ2 = {
     let scope = childEnv(env, stages, "stmts");
     const out = [];
     for (const stmt of stages.stmts) {
-      const step = statementStages(stmt, scope, out.length === 0);
-      out.push(...env.chain.ahead(), ...step.stages);
-      scope = step.env;
+      const step2 = statementStages(stmt, scope, out.length === 0);
+      out.push(...env.chain.ahead(), ...step2.stages);
+      scope = step2.env;
     }
     return out;
   }
@@ -25721,11 +26794,11 @@ function lowerProgram(program, env) {
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
     const run = declRun(stmts, i);
     const taken = run === null ? null : declStages(run, scope);
-    const step = taken ?? statementStages(stmt, scope, first);
+    const step2 = taken ?? statementStages(stmt, scope, first);
     if (taken !== null) i += taken.consumed - 1;
     env.chain.flush();
-    env.chain.emitted.push(...step.stages);
-    scope = step.env;
+    env.chain.emitted.push(...step2.stages);
+    scope = step2.env;
   }
   return env.chain.close();
 }
@@ -25775,7 +26848,7 @@ function declStages(run, env) {
   for (const decl of run) {
     const mark = env.chain.mark();
     const rootMark = env.rootChain.mark();
-    const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    const step2 = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
     const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
     if (consumed > 0 && hoisted) {
       env.chain.rewind(mark);
@@ -25783,13 +26856,13 @@ function declStages(run, env) {
       break;
     }
     consumed++;
-    scope = step.env;
-    const only = step.stages.length === 1 ? step.stages[0] : null;
+    scope = step2.env;
+    const only = step2.stages.length === 1 ? step2.stages[0] : null;
     const set = only !== null && Object.keys(only).length === 1 ? only.$set : void 0;
-    if (step.stages.length === 0) continue;
+    if (step2.stages.length === 0) continue;
     if (set === void 0) {
       flush();
-      out.push(...step.stages);
+      out.push(...step2.stages);
       continue;
     }
     const slot = Object.keys(set)[0];
@@ -25809,7 +26882,7 @@ function letStages(decl, env) {
     throw shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type) => env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
+  const bind = (type2) => env.bind(decl.name, { ref: { kind: "field", slot }, type: type2, mutable: decl.kind === "let", pos: decl.pos });
   if (decl.value.type === "Lambda") {
     return {
       stages: [],
@@ -25863,9 +26936,15 @@ function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
   const dropAll = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];
-  const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  const sel = select(
+    consult(DOCUMENTS2, "statement"),
+    { kind: "none" },
+    { kind: "multiple" },
+    1,
+    proofsFor([list], env, false)
+  );
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
-  checkSlots(written2, sel.rule.args, [list], [kindOf3(list, env)], false);
+  checkSlots(written2, sel.rule.args, [list], false);
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
   const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
   noStageInDocuments(body.chain, written2, list.pos);
@@ -25954,8 +27033,8 @@ function targetPath(op, env) {
   if (t.type === "StreamRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
 }
-function rootAsWritten(target) {
-  return target.type === "Ident" ? target.name : "$";
+function rootAsWritten(target2) {
+  return target2.type === "Ident" ? target2.name : "$";
 }
 function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return landed(documentsStages(value, env, written2), env);
@@ -25964,8 +27043,8 @@ function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lea
   const t = typeOf(value, env);
   if (streamRoad || isOnly(t, "stream")) return streamStages(value, env, first);
   if (cannotBe(t, "array")) throw notAStreamChain(value.pos, nounOfKinds(t), lead, how);
-  const element2 = elementOf(t);
-  if (cannotBe(element2, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element2), written2, value.pos);
+  const element = elementOf(t);
+  if (cannotBe(element, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element), written2, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
   return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
@@ -25989,24 +27068,24 @@ function outTarget(t) {
   for (const s of segments) if (s === "" || s.startsWith("$")) throw badOutTarget(s, t.pos);
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
 }
-function targetSpelling2(target) {
+function targetSpelling2(target2) {
   const seg = (s) => /^[A-Za-z_$][\w$]*$/.test(s) ? `.${s}` : `[${JSON.stringify(s)}]`;
-  return typeof target === "string" ? `$$$${seg(target)}` : `$$$$${seg(target.db)}${seg(target.coll)}`;
+  return typeof target2 === "string" ? `$$$${seg(target2)}` : `$$$$${seg(target2.db)}${seg(target2.coll)}`;
 }
-function outStages(op, target, env, first) {
+function outStages(op, target2, env, first) {
   if (op.op !== "=" && op.op !== "+=") throw writeToCollectionOp(op.op, op.pos);
   const name2 = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs);
   if (base.type !== "StreamRef") throw outNeedsStream(rhs.pos);
-  const chain = rhs.type === "StreamRef" ? { stages: [], env } : streamStages(rhs, childEnv(env, op, "value"), first);
-  const spelled3 = `${targetSpelling2(target)} ${op.op} \u2026`;
-  const write = place(name2, { [name2]: target }, env, first && chain.stages.length === 0, op.pos, spelled3);
-  return { stages: [...chain.stages, ...write], env: chain.env.backAt(env) };
+  const chain2 = rhs.type === "StreamRef" ? { stages: [], env } : streamStages(rhs, childEnv(env, op, "value"), first);
+  const spelled3 = `${targetSpelling2(target2)} ${op.op} \u2026`;
+  const write = place(name2, { [name2]: target2 }, env, first && chain2.stages.length === 0, op.pos, spelled3);
+  return { stages: [...chain2.stages, ...write], env: chain2.env.backAt(env) };
 }
 function mergeStages(node, env, first) {
-  const target = outTarget(node.object);
-  if (target === null) internalError("a collection write whose receiver names no collection");
+  const target2 = outTarget(node.object);
+  if (target2 === null) internalError("a collection write whose receiver names no collection");
   if (node.args.length === 0) throw mergeNeedsArgument(node.name, node.pos);
   if (node.args.length > 1) throw mergeOneSource(node.name, node.args.length, node.pos);
   const arg = node.args[0];
@@ -26027,8 +27106,8 @@ function mergeStages(node, env, first) {
       "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ \u2026 });')."
     )
   );
-  const spelled3 = `${targetSpelling2(target)}.${node.name}(\u2026)`;
-  const write = place("$merge", { $merge: target }, env, false, node.pos, spelled3);
+  const spelled3 = `${targetSpelling2(target2)}.${node.name}(\u2026)`;
+  const write = place("$merge", { $merge: target2 }, env, false, node.pos, spelled3);
   return { stages: [...documents.stages, ...write], env: documents.env.backAt(env) };
 }
 function oneDocumentStages(value, env) {
@@ -26081,8 +27160,8 @@ var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.st
 var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
 function writeStages(uf, env, first) {
   let inner = childEnv(env, uf, "ops");
-  const prove = (path, type) => {
-    inner = type === null ? inner.removed(path) : inner.written(path, type);
+  const prove = (path, type2) => {
+    inner = type2 === null ? inner.removed(path) : inner.written(path, type2);
   };
   const out = [];
   let sets = null;
@@ -26098,9 +27177,9 @@ function writeStages(uf, env, first) {
   };
   const emit = (made = []) => {
     const hoisted = env.chain.ahead();
-    const step = "env" in made ? made : landed([...made], inner);
-    out.push(...hoisted, ...step.stages);
-    inner = step.env;
+    const step2 = "env" in made ? made : landed([...made], inner);
+    out.push(...hoisted, ...step2.stages);
+    inner = step2.env;
   };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
@@ -26217,10 +27296,6 @@ function refuseUnbuiltSugar(value) {
     if (!direct) throw streamAsValue(value.pos);
   }
 }
-var kindsOf3 = (args, env, node) => {
-  const argEnv = childEnv(env, node, "args");
-  return args.map((a) => kindOf3(a, argEnv));
-};
 function elementWiseOnDocument(value, env) {
   const links = [];
   let cur = value;
@@ -26235,27 +27310,27 @@ function elementWiseOnDocument(value, env) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === void 0 || on === "any" || !on.includes("object") || !on.includes("stream"))
       return null;
-    if (!link.args.every((a) => a.type !== "SpreadElement" && evaluate(a, /* @__PURE__ */ new Map()).ok)) return null;
+    if (!link.args.every((a) => a.type !== "SpreadElement" && constantOf(a).ok)) return null;
   }
   return links;
 }
 function documentStages(links, env, first) {
-  const element2 = env.chain.element;
+  const element = env.chain.element;
   env.chain.element = "";
-  const step = linkStages(links, env, first);
-  if (!step.stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
-  return step;
+  const step2 = linkStages(links, env, first);
+  if (!step2.stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element;
+  return step2;
 }
-function streamStages(chain, env, first) {
+function streamStages(chain2, env, first) {
   const links = [];
-  let cur = chain;
+  let cur = chain2;
   while (cur.type === "MethodCall") {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (readsAnotherCollection(cur)) return landed(joinStream(chain, env, first, JOIN), env);
-  if (cur.type === "StreamRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
-  if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
+  if (readsAnotherCollection(cur)) return landed(joinStream(chain2, env, first, JOIN), env);
+  if (cur.type === "StreamRef" && env.level > 0) throw rootStreamInForeign(chain2.pos);
+  if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain2.pos);
   return linkStages(links, env, first);
 }
 function linkStages(links, env, first) {
@@ -26285,18 +27360,21 @@ function refStatement(node, ref, env, first) {
   }
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
-  const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
   const args = node.args;
   const escape = node.name.startsWith("$");
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
+  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
   } else {
-    if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
-    checkSlots(node.name, sel.rule.args, args, kindsOf3(args, env, node), false);
+    if (sel.kind !== "rule") {
+      throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, [], void 0, { args });
+    }
+    checkSlots(node.name, sel.rule.args, args, false);
     stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
   const out = [];
@@ -26323,16 +27401,19 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
       []
     );
   }
-  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
   const args = link.args;
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
+  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
   } else {
-    if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    checkSlots(link.name, sel.rule.args, args, kindsOf3(args, env, link), false);
+    if (sel.kind !== "rule") {
+      throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], void 0, { args });
+    }
+    checkSlots(link.name, sel.rule.args, args, false);
     stages = sel.rule.emit(
       stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
     );
@@ -26430,7 +27511,8 @@ function stageStatement(node, env, first) {
   if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
   if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
-  const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
@@ -26442,9 +27524,9 @@ function stageStatement(node, env, first) {
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
-    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
+    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s, { args });
   }
-  checkSlots(name2, sel.rule.args, args, kindsOf3(args, env, node), false);
+  checkSlots(name2, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   return landed(
     stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),
@@ -26452,8 +27534,8 @@ function stageStatement(node, env, first) {
   );
 }
 function plainStage(name2, node, args, env) {
-  const all2 = "args" in node ? node.args : [];
-  const spread = all2.find((a) => a.type === "SpreadElement");
+  const all = "args" in node ? node.args : [];
+  const spread = all.find((a) => a.type === "SpreadElement");
   if (spread !== void 0) {
     throw refusalFor({ kind: "spreadRefused", name: name2, sig: "\u2026" }, name2, "", "statement", spread.pos, []);
   }
@@ -26612,8 +27694,8 @@ function lowerUpdate(program, env) {
     }
   }
 }
-function pathOf2(target, pos) {
-  if (target.type === "FieldRef" && target.path !== "") return target.path;
+function pathOf2(target2, pos) {
+  if (target2.type === "FieldRef" && target2.path !== "") return target2.path;
   throw updateTargetNeedsField(pos);
 }
 function minMax(v, path) {
@@ -26702,8 +27784,8 @@ function checkValue(value, slot, key) {
 function templateSource(strings, values) {
   let src = "";
   const bound = /* @__PURE__ */ new Map();
-  strings.forEach((part, i) => {
-    src += part;
+  strings.forEach((part2, i) => {
+    src += part2;
     if (i < values.length) {
       checkValue(values[i], i + 1);
       const name2 = `__jsmql_slot${i + 1}`;
@@ -26777,14 +27859,14 @@ function received(program) {
     };
   }
   if (program.type === "UpdateFilter") {
-    const target = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
-    if (target === "StreamRef") {
+    const target2 = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
+    if (target2 === "StreamRef") {
       return {
         what: "a stream-replace `$$ = <expr>` (the pipeline stages its chain describes)",
         hint: "jsmql.pipeline(); for a Filter, pass the predicate to jsmql.filter() directly"
       };
     }
-    if (target === "FieldRef" && program.ops[0].target.path === "") {
+    if (target2 === "FieldRef" && program.ops[0].target.path === "") {
       return { what: "a root-replace `$ = <expr>` (a `$replaceWith` stage)", hint: "jsmql.pipeline()" };
     }
     return {
@@ -26840,7 +27922,7 @@ function expressionOf(program) {
         );
       }
       const init = replaceIdents(s.value, nodes);
-      const v = evaluate(init, /* @__PURE__ */ new Map());
+      const v = constantOf(init);
       nodes.set(s.name, v.ok ? spellValue(v.value, s.pos) : init);
       continue;
     }
@@ -26903,7 +27985,7 @@ function oneShot(mode, api, input, values) {
   throw new TypeError(`${api}() expects a string, an arrow function, or a template literal \u2014 got ${ty}.`);
 }
 function makeCompile(mode, api) {
-  function compile(input) {
+  function compile2(input) {
     let src;
     if (typeof input === "function") src = fnSource(input);
     else if (typeof input === "string") src = input.trim();
@@ -26935,7 +28017,7 @@ function makeCompile(mode, api) {
       return lowerMode(mode, api, parsed.program, values);
     };
   }
-  return compile;
+  return compile2;
 }
 function jsmqlDispatch(input, ...values) {
   return oneShot("auto", "jsmql", input, values);

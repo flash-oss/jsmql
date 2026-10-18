@@ -208,68 +208,19 @@ they like.
 
 ## Constant folding
 
-The fold (`src/compiler/passes/fold.ts`, with `evaluate.ts`, `fold-methods.ts`,
-`fold-dates.ts` and `literal.ts`) runs inside the driver's rounds. The pass
-computes a `const` or `let` once, when its right-hand side is a constant. The
-declaration then emits nothing, and every reference becomes the value. The
-pass replaces any constant SUBEXPRESSION the same way. For the user-facing
-statement and examples, see
-[LANGUAGE.md § Compile-time constants](../LANGUAGE.md#compile-time-constants-folding).
+The fold (`src/compiler/passes/fold.ts`) runs inside the driver's rounds. It replaces a
+`const` or a constant subexpression with its value, and the declaration then emits nothing.
+A constant is an expression whose lowered MQL reads nothing from the document and nothing
+from the environment. The constant engine computes it: the emitter lowers the closed subtree,
+and the interpreter gives the value of the MQL. The fold keeps the statement logic: the names
+that never fold, the substitution, the collapse of one leftover expression to a Filter, and
+the nested pipelines. See [constant-engine.md](constant-engine.md) for the engine, and
+[LANGUAGE.md § Compile-time constants](../LANGUAGE.md#compile-time-constants-folding) for the
+user-facing statement.
 
-**What a constant is.** An expression over literals and earlier constants that
-reads neither the document nor the environment: arithmetic, the string and array
-methods, `new Date(<literal>)` and the date methods on one, an `ObjectId`
-literal and its `.toString()`, a literal array or object and a read out of it.
-A binding that reads the document, the clock or the RNG stays the runtime
-`__jsmql.var.<name>` field of [let-bindings.md](let-bindings.md).
-
-**An operator call is never a constant.** The escape hatch is the developer's
-MQL, so `$size([[1, 2, 3]])` stays as written. Only the JavaScript spelling
-folds: `[1, 2, 3].size()` is 3.
-
-**The invariant: a fold must not change the answer.** Every rule computes what
-the SERVER computes for the same expression, measured on mongod, not what
-JavaScript computes where the two differ. That is why a month added to 31
-January gives the last day of February (`$dateAdd` clamps). That is why
-`.startOf("week")` gives the Sunday (`$dateTrunc`'s default). That is why
-`.diff` counts the boundaries crossed (`$dateDiff`). That is why
-`(0.5).round()` gives 0. The server's answer is the answer of JSMQL's own
-lowering, not of the nearest raw operator. So `({ a: 1 }).entries()` folds
-to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
-`$objectToArray(…)` gives `{ k, v }` documents.
-
-**A set answer has no order.** A set operator such as `$setUnion` gives each
-value once, in an order that MongoDB does not specify (see
-[LANGUAGE.md § Set operations on arrays](../LANGUAGE.md#set-operations-on-arrays)).
-So the fold of a set method, for example `.xor()`, gives each value once, at the
-position where the value first occurs. The same input always gives the same
-order. That order is not part of the answer.
-[`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
-compares the fold with the server by the values of a set answer, not by their order.
-
-The pass leaves a form to the server when it cannot reproduce the answer with
-certainty: a date method with a timezone or another option (a named zone
-shifts with daylight saving), a number in `String(n)` or a template slot
-outside the integers both sides print identically, `Number("42")` (a double on
-the server, an int when written), `typeof` (a BSON type name, when a written
-`1` is an int). `test/fold-consistency.test.ts` runs every folded method
-against its runtime lowering on the fixture mongod, and the pass removes a
-rule that fails there.
-
-**Spelling the value.** A value goes back into the tree as the literal that
-spells it, so later rules match on it (`const k = "name"; $.items.map(k)`
-reaches the shorthand rule). A Date has no literal spelling, so it goes in as
-an `Injected` node — the carrier a `${…}` slot uses. So a query compares it as
-written, and an expression passes it through.
-
-A value no node can carry (`undefined`, a non-finite number) does not fold. A
-declaration then keeps its binding, and a declaration whose constant IS such a
-value is a positioned error. A constant computed key (`{ [k]: 1 }`) becomes
-the static key JavaScript would compute.
-
-**What never folds.** A raw `$op(…)` call (HR2: it is emitted as written), a name
-written to or mutated anywhere in its scope, a name read before its declaration,
-and a fold that would add a name the language does not have.
+**What never folds.** The emitter writes a raw `$op(…)` call as written, so it never folds (HR2).
+The fold also skips a name that its scope writes or mutates, a name read before its declaration,
+and a subtree that a desugar rule still rewrites. The next round asks again.
 
 ## Order constraints
 

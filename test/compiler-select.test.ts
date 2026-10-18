@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { consult } from "../src/compiler/emit/consult.ts";
-import { select, shapeOf, type Receiver, kindFits } from "../src/compiler/emit/select.ts";
+import { select, shapeOf, type Receiver, kindFits, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { FIELD_FAMILY_TYPES, type FieldFamily } from "../src/registry/vocabulary.ts";
@@ -28,14 +28,15 @@ describe("compiler/emit/select — the argument partition", () => {
     expect(shapeOf(argsOf("f({ length: 3 })"))).toEqual({ kind: "object", keys: ["length"] });
     expect(shapeOf(argsOf("f({ [k]: 3, n: 1 })"))).toEqual({ kind: "object", keys: ["n"] });
     expect(shapeOf(argsOf('f("abc")'))).toEqual({ kind: "constant", value: "abc" });
-    expect(shapeOf(argsOf("f(1 + 2)"))).toEqual({ kind: "constant", value: 3 });
+    // the fold writes a settled constant back as a literal, so an expression it did not settle is read at run time
+    expect(shapeOf(argsOf("f(1 + 2)"))).toEqual({ kind: "dynamic" });
     expect(shapeOf(argsOf("f($.id)"))).toEqual({ kind: "dynamic" });
   });
 });
 
 describe("compiler/emit/select — a keyed byArgs routes by class and states its leftover", () => {
   const pick = (name: string, src: string, receiver: Receiver = NONE) =>
-    select(consult(name, "value"), receiver, shapeOf(argsOf(src)), argsOf(src).length);
+    select(consult(name, "value"), receiver, shapeOf(argsOf(src)), argsOf(src).length, UNPROVEN);
 
   it("routes each class of `new Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
@@ -66,7 +67,7 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
 
 describe("compiler/emit/select — a per-family cell and the receiver's proof", () => {
   const at = (name: string, receiver: Receiver, n = 0) =>
-    select(consult(name, "value"), receiver, n === 0 ? { kind: "none" } : { kind: "dynamic" }, n);
+    select(consult(name, "value"), receiver, n === 0 ? { kind: "none" } : { kind: "dynamic" }, n, UNPROVEN);
 
   it("runs the branch a proven receiver names", () => {
     const r = at("length", value("string"));
@@ -77,7 +78,16 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     });
   });
 
-  it("fits a proven argument kind to a slot type", () => {
+  it("refuses a proven argument kind that the slot never takes, and runs a rule when the proof says nothing", () => {
+    const pick = (kind: "number" | "string" | "unknown") =>
+      select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, {
+        args: [kind === "unknown" ? "unknown" : [kind]],
+        elements: ["string"],
+      });
+    // `.indexOf()` takes an element of the array, and the array holds strings
+    expect(pick("number")).toMatchObject({ kind: "wrongKind", fault: { rule: "element" } });
+    expect(pick("string").kind).toBe("rule");
+    expect(pick("unknown").kind).toBe("rule");
     expect(kindFits("number", "string")).toBe(false);
     expect(kindFits("unknown", "string")).toBe(true);
     expect(kindFits("date", "number-or-date")).toBe(true);
@@ -103,15 +113,15 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   it("checks the count against the branch that will run", () => {
     expect(at("length", value("string"), 1)).toMatchObject({ kind: "wrongCount", got: 1 });
     // `$abs` takes one operand; two is the count no rule states
-    expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2)).toMatchObject({
+    expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2, UNPROVEN)).toMatchObject({
       kind: "wrongCount",
       got: 2,
     });
-    expect(select(consult("$abs", "value"), NONE, { kind: "dynamic" }, 1).kind).toBe("rule");
+    expect(select(consult("$abs", "value"), NONE, { kind: "dynamic" }, 1, UNPROVEN).kind).toBe("rule");
   });
 
   it("refuses a spread on a rule that reads arguments one by one, quoting the signature", () => {
-    expect(select(consult("$abs", "value"), NONE, { kind: "spread" }, 1)).toMatchObject({
+    expect(select(consult("$abs", "value"), NONE, { kind: "spread" }, 1, UNPROVEN)).toMatchObject({
       kind: "spreadRefused",
       sig: "operand",
     });
@@ -142,7 +152,7 @@ describe("compiler/emit/select — the table audit", () => {
     expect(perFamily.length).toBeGreaterThanOrEqual(15);
     // and an unproven receiver selects the one lowering family on each of them
     for (const [name] of perFamily) {
-      const r = select(consult(name, "value"), OPAQUE, { kind: "dynamic" }, 1);
+      const r = select(consult(name, "value"), OPAQUE, { kind: "dynamic" }, 1, UNPROVEN);
       expect(r.kind, name).not.toBe("unknown");
     }
   });

@@ -29,6 +29,7 @@ A new operator or syntax feature lands as a row in the registry. You update the 
 |---|---|
 | `specs/architecture.md` | The five phases over the registry, from start to end, and the owner of each construct |
 | `specs/desugar-pass.md` | Sugar → explicit nodes before lowering runs. The precedence between overlapping forms matters here. |
+| `specs/constant-engine.md` | The fold lowers a constant, and the interpreter gives its value: the definition, the steps, the write-back. |
 | `specs/position-pass.md` | The seven positions: the source of each one, how a stage row lays out its body, and why an accumulator slot takes one operand |
 | `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof, operand shapes, the checks, the query cells and the per-branch `$or` |
 | `specs/types.md` | The type tracker: the `Type` model, the write rules, the merge rules, a row's `returns` grammar, the stage `document` effect, and each consumer's rule |

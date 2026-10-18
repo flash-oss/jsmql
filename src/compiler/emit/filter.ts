@@ -22,7 +22,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId, regexValue } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
@@ -33,9 +33,9 @@ import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
 import { holderOf, lowerTruth, lowerValue, readablePath } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
-import { kindOf, typeOf } from "./prove.ts";
+import { proofsFor, typeOf } from "./prove.ts";
 import { isNothing, unreadable } from "./type.ts";
-import { select, shapeOf, type Receiver } from "./select.ts";
+import { select, shapeOf, UNPROVEN, type Receiver } from "./select.ts";
 import {
   isCallable,
   isKnownName,
@@ -346,7 +346,7 @@ function rawValue(e: Expr, env: Env): unknown {
   // nothing. This is the silent kind of wrong answer. A constant that happens
   // to be written as an expression (`-1`) has already settled to a value, so
   // it passes.
-  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, new Map()).ok) {
+  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !constantOf(e).ok) {
     throw E.expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
@@ -417,25 +417,26 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
   const receiver: Receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
-  const sel = select(verdict, receiver, shapeOf(args), args.length);
+  // A `$`-named call is the developer's own MQL, so no kind rule judges it (HR7). The
+  // elements are the receiver's, or those of the last operand of an operator.
+  const source = recv ?? args[args.length - 1];
+  const proofs = escape
+    ? UNPROVEN
+    : proofsFor(args, env, true, source === undefined ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
+  const sel = select(verdict, receiver, shapeOf(args), args.length, proofs);
+  if (sel.kind === "wrongKind") {
+    throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, [], undefined, {
+      ...(recv === null ? {} : { receiver: recv }),
+      args,
+    });
+  }
   if (sel.kind === "spreadRefused") throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
     if (node.type === "OperatorCall") return plainQuery(node, env);
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) {
-    const argEnv = childEnv(env, node, "args");
-    checkSlots(
-      node.type === "BinaryExpr" ? node.op : name,
-      sel.rule.args,
-      args,
-      args.map((a) => kindOf(a, argEnv)),
-      true,
-      undefined,
-      (a) => lowerValue(a, argEnv),
-    );
-  }
+  if (!escape) checkSlots(name, sel.rule.args, args, true, undefined, env.site.settling);
   const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {
     lowerValue,
     lowerFilter,
@@ -611,7 +612,7 @@ export function constantIn(e: Expr): { value: unknown } | null {
   // constant to compare a field with.
   if (e.type === "RegexLiteral") return e.injected !== undefined ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
-  const v = evaluate(e, new Map());
+  const v = constantOf(e);
   if (!v.ok) return null;
   // A BigInt IS an int64 in MQL. The compiler converts it here, so `$.n === 5n`
   // stays a query the index serves. Left unconverted, it would fall through to

@@ -105,42 +105,6 @@ describe("compiler/emit/lower — operators", () => {
     expect(expr("$.a == null")).toEqual({ $lte: ["$a", null] });
     expect(() => expr("$.a == 1")).toThrow(/only allowed against null/);
   });
-
-  it("refuses an operand of a kind the operator does not take (HR7)", () => {
-    // `null` is not the kind any of these operators takes.
-    expect(() => expr("$.n + null")).toThrow("'+' argument 2 takes a number, a string or a date, but got null.");
-    expect(() => expr("$.a + $.b + null")).toThrow("'+' argument 3 takes a number, a string or a date, but got null.");
-    expect(() => expr("$.n - null")).toThrow("'-' argument 2 takes a number or a date, but got null.");
-    expect(() => expr("$.n * $.m * null")).toThrow("'*' argument 3 takes a number, but got null.");
-    expect(() => expr("$.n / null")).toThrow("'/' argument 2 takes a number, but got null.");
-    expect(() => expr("$.n % null")).toThrow("'%' argument 2 takes a number, but got null.");
-    expect(() => expr("$.n ** null")).toThrow("'**' argument 2 takes a number, but got null.");
-    expect(() => expr("-null")).toThrow("'-' argument 1 takes a number, but got null.");
-    expect(() => expr("~null")).toThrow("'~' argument 1 takes an integer, but got null.");
-    expect(() => expr("$.n | null")).toThrow("'|' argument 2 takes an integer, but got null.");
-    expect(() => expr("$.n & null")).toThrow("'&' argument 2 takes an integer, but got null.");
-    expect(() => expr("$.n ^ null")).toThrow("'^' argument 2 takes an integer, but got null.");
-    expect(() => expr("$.n > null")).toThrow("'>' argument 2 takes a value, but got null.");
-    expect(() => expr("$.n < null")).toThrow("'<' argument 2 takes a value, but got null.");
-    expect(() => expr("$.n >= null")).toThrow("'>=' argument 2 takes a value, but got null.");
-    expect(() => expr("$.n <= null")).toThrow("'<=' argument 2 takes a value, but got null.");
-    expect(() => expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
-    // a proven kind and a literal of the wrong kind
-    expect(() => expr("$.s.trim() * 2")).toThrow("'*' argument 1 takes a number, but got a string.");
-    expect(() => expr("$.n | 1.5")).toThrow("'|' argument 2 takes an integer, but got a fraction.");
-    // a read that gives no value keeps its own refusal, which names the cause
-    expect(() => pipeline("$group({ _id: $.k, n: $sum(1) }); $match($.total > 5);")).toThrow(
-      "'$.total' reads a field that the document does not have.",
-    );
-  });
-
-  it("keeps null where the operator takes it", () => {
-    expect(expr("$.n === null")).toEqual({ $eq: ["$n", null] });
-    expect(expr("$.n ?? null")).toEqual({ $ifNull: ["$n", null] });
-    expect(expr("$.c > 1 ? null : 1")).toEqual({ $cond: [{ $gt: ["$c", 1] }, null, 1] });
-    expect(expr("$.n in [null]")).toEqual({ $in: ["$n", [null]] });
-    expect(expr("typeof null")).toEqual({ $type: null });
-  });
 });
 
 describe("compiler/emit/lower — access", () => {
@@ -248,7 +212,7 @@ describe("compiler/emit/lower — calls", () => {
 
   it("lowers the globals by their argument class", () => {
     expect(expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(expr("new Date($.ms)")).toEqual({ $toDate: "$ms" });
+    expect(expr("new Date($.ms)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$ms" }, { $toLong: "$ms" }, "$ms"] } });
     expect(expr("ObjectId($.id)")).toEqual({ $toObjectId: "$id" });
     // never folded: `$toDouble("3")` is a double; the server judges a string it cannot parse
     expect(expr('Number("3")')).toEqual({ $toDouble: "3" });

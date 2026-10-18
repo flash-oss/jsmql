@@ -7,14 +7,17 @@
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import type { Arity, Family, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
+import type { ArgType, Arity, Family, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Where } from "../passes/position.ts";
 import { stringify } from "../../stringify.ts";
 import { isPlainObject } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
+import { takesOf, wrongKind } from "./check.ts";
 import type { Selected } from "./select.ts";
+import type { KindFault, Proven } from "../kinds.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import type { Unreadable } from "./type.ts";
 import {
   callbackParamsOf,
@@ -102,6 +105,8 @@ export function refusalFor(
   pos: number,
   near: readonly string[],
   format: (candidate: string) => string = (s) => `.${s}()`,
+  /** The nodes that a kind refusal points at: the operands, and the receiver of a method. */
+  subjects: Subjects = { args: [] },
 ): CodegenError {
   // Callers spell the name as the source did — `.trim`, `'.find()'`, `Date.now`.
   // A sentence that adds its own quotes or parentheses starts from the bare name.
@@ -175,6 +180,8 @@ export function refusalFor(
     }
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
+    case "wrongKind":
+      return kindRefusal(sel.fault, spelled, subjects, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
       // A JavaScript call reads each argument on its own. Its own signature shows the correct form.
@@ -696,6 +703,7 @@ const KIND_NOUN: Readonly<Record<string, string>> = {
   stream: "a stream",
   minKey: "a MinKey",
   maxKey: "a MaxKey",
+  null: "null",
 };
 
 const ELEMENT_NOUN: Readonly<Record<string, string>> = {
@@ -710,6 +718,110 @@ const ELEMENT_NOUN: Readonly<Record<string, string>> = {
 };
 
 const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => table[k] ?? `a ${k}`;
+
+// ── a kind refusal (HR7) ─────────────────────────────────────────────────────
+
+/** The nodes a kind refusal points at. The receiver of a method is not an argument, so it has its own field. */
+export type Subjects = {
+  readonly receiver?: { readonly pos: number };
+  readonly args: readonly { readonly pos: number }[];
+};
+
+/** "a, b or c", with each name once. */
+const orList = (items: readonly string[]): string => {
+  const once = [...new Set(items)];
+  return once.length < 2 ? (once[0] ?? "") : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
+};
+
+const kindNoun = (k: Proven): string => KIND_NOUN[k] ?? `a ${k}`;
+const kindsNoun = (ks: readonly Proven[], join: string): string => ks.map(kindNoun).join(join);
+const pluralKind = (k: Proven): string => ELEMENT_NOUN[k] ?? `${k}s`;
+
+/** The array whose elements a proof describes, as the message names it: a field by its path, anything else "an array". */
+function spellArray(e: { readonly pos: number } | undefined): string {
+  const node = e as { type?: string; path?: string; argument?: { pos: number } } | undefined;
+  if (node?.type === "SpreadElement") return spellArray(node.argument);
+  return node?.type === "FieldRef" && node.path !== undefined && node.path !== "" ? `'${node.path}'` : "an array";
+}
+
+/** What an operand is, as the noun after "got": `a string`, or `an element of 'tags' that is a number`. */
+function gotKinds(e: { readonly pos: number } | undefined, kinds: readonly Proven[], viaElements: boolean): string {
+  const nouns = orList(kinds.map(kindNoun));
+  return viaElements ? `an element of ${spellArray(e)} that is ${nouns}` : nouns;
+}
+
+/**
+ * The operand a fault names. A call with a spread passes its arguments as ONE packed list.
+ * The proofs hold one entry for each element of that list. So the slot indexes the elements.
+ */
+function operandAt(subjects: Subjects, slot: number): { readonly pos: number } | undefined {
+  const only =
+    subjects.args.length === 1 ? (subjects.args[0] as { type?: string; packed?: true; elements?: unknown }) : null;
+  if (only !== null && only.type === "ArrayLiteral" && only.packed === true) {
+    return (only.elements as readonly { readonly pos: number }[])[slot];
+  }
+  return subjects.args[slot];
+}
+
+/** The name of the call as a kind message shows it: `'.max()'`, `'+'`, `'$match'`. */
+function shownName(spelled: string): string {
+  if (spelled.startsWith("'")) return spelled;
+  if (spelled.startsWith("$")) return `'${spelled}'`;
+  return `'${spelled.replace(/\(\)$/, "")}()'`;
+}
+
+/**
+ * The refusal for a value whose proof shows a kind that its slot never takes. The wording
+ * is the one function `wrongKind` of check.ts, as for a literal. The message states what is
+ * wrong and names no conversion and no escape hatch, because no one spelling is the right
+ * one. See docs/specs/types.md § The kind check.
+ */
+function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos: number): CodegenError {
+  const name = shownName(spelled);
+  switch (fault.rule) {
+    case "slot": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name,
+          `argument ${fault.slot + 1}`,
+          takesOf(fault.expected),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+        ),
+        e?.pos ?? pos,
+      );
+    }
+    case "element": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name,
+          `argument ${fault.slot + 1}`,
+          takesOf("element"),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`,
+        ),
+        e?.pos ?? pos,
+      );
+    }
+    case "elements":
+      return new CodegenError(
+        wrongKind(name, "", pluralKind(fault.expected), `the array holds ${kindsNoun(fault.held, " and ")}`),
+        subjects.receiver?.pos ?? pos,
+      );
+    case "homogeneous": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name,
+          "",
+          "operands of one kind",
+          `got ${gotKinds(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+        ),
+        e?.pos ?? pos,
+      );
+    }
+  }
+}
 
 /** The kinds a proof allows, as one noun phrase: "a string", "a string or a number", "null". */
 export function nounOfKinds(t: Type): string {

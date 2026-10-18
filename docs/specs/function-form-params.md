@@ -96,6 +96,13 @@ jsmql.validate(input)     // { valid, errors } instead of a throw
 
 `jsmql.validate()` turns every compiler error class into a `ValidationError` with a `.pos`. The compile *invocation* path throws instead, because a call-time failure, such as a missing or refused value, is the caller's error, not a source error.
 
+The inject pass spells each value at the position of the name that the value replaces. So the refusal of a value carries the offset of that name in the arrow's source:
+
+```js
+jsmql.expr.compile(({ start }, { $ }) => $.a.slice(start))({ start: null })
+// ✗ a null in an integer slot; .pos is the offset of `start` in `$.a.slice(start)`
+```
+
 ## Validation rules summary
 
 | When | Failure mode | Error class |
