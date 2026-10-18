@@ -25294,7 +25294,8 @@ function logicalValue(node, env) {
 }
 function membership2(node, env) {
   const { left, right } = node;
-  if (right.type !== "ArrayLiteral") throw inNeedsList(node.pos);
+  const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
+  if (right.type !== "ArrayLiteral" && !passedList) throw inNeedsList(node.pos);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {

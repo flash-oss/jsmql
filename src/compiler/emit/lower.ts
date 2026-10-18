@@ -1300,13 +1300,15 @@ function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): un
 /**
  * `x in [ … ]` is MongoDB's own `$in`: true when the value is an element of the
  * list. The right side is a list spelled in the source; a constant, a parameter
- * and a `${…}` interpolation arrive as that literal. Every other right side is
- * refused, and the message names the JavaScript spelling that does the job.
- * See docs/LANGUAGE.md § Comparison.
+ * and a `${…}` interpolation arrive as that literal. A passed list that reads as
+ * MQL arrives as an `Injected` node, and so does a `validate()` parameter, of no
+ * known kind. Every other right side is refused, and the message names the
+ * JavaScript spelling that does the job. See docs/LANGUAGE.md § Comparison.
  */
 function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown {
   const { left, right } = node;
-  if (right.type !== "ArrayLiteral") throw E.inNeedsList(node.pos);
+  const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
+  if (right.type !== "ArrayLiteral" && !passedList) throw E.inNeedsList(node.pos);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 

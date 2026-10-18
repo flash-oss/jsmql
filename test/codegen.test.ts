@@ -9653,6 +9653,17 @@ describe("jsmql.compile()", () => {
     expect(() => set({ parts: "$x" })).toThrow("'.set()' argument 1 takes a document, but got a string.");
   });
 
+  it("validates a parameterised arrow with a parameter on the right side of 'in'", () => {
+    expect(jsmql.validate(({ ids }: { ids: number[] }, { $ }) => $.x in ids)).toEqual({ valid: true, errors: [] });
+    const member = jsmql.pipeline.compile(({ ids }: { ids: unknown }, { $ }) => {
+      $.y = $.x in ids;
+    });
+    expect(member({ ids: [1, 2] })).toEqual([{ $set: { y: { $in: ["$x", [1, 2]] } } }]);
+    // A list that reads as MQL is a value, so it takes `$literal`.
+    expect(member({ ids: ["$a", 1] })).toEqual([{ $set: { y: { $in: ["$x", { $literal: ["$a", 1] }] } } }]);
+    expect(() => member({ ids: "$a" })).toThrow("The right side of 'in' must be a list");
+  });
+
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);
