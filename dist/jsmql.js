@@ -21309,11 +21309,15 @@ function proofOf(t) {
 }
 function elementProofOf(t) {
   const e = elementOf(t);
-  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+  if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
+  return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
 }
 function itemProofsOf(t) {
   if (!has2(t, "array") || t.items === void 0) return void 0;
-  return t.items.map((i) => i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]);
+  return t.items.map((i) => {
+    if (i.kinds === "any") return "unknown";
+    return i.absent ? [...i.kinds, "null"] : [...i.kinds];
+  });
 }
 function elementOf(t) {
   if (!has2(t, "array")) return NOTHING;
@@ -22531,7 +22535,8 @@ var ELEMENT_NOUN = {
   object: "documents",
   date: "dates",
   objectId: "ObjectIds",
-  binData: "binary data"
+  binData: "binary data",
+  null: "null"
 };
 var nounFor = (k, table) => table[k] ?? `a ${k}`;
 var orList = (items) => {
@@ -23581,12 +23586,7 @@ function proofsFor(args, env, objectForm, source = null, isField) {
   };
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
-  const found2 = sourceType === null ? void 0 : itemProofsOf(sourceType);
-  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
-  const items = found2 === void 0 || elementNodes.length !== found2.length ? found2 : found2.map((p, i) => {
-    const el = elementNodes[i];
-    return el.type === "NullLiteral" ? ["null"] : p;
-  });
+  const items = sourceType === null ? void 0 : itemProofsOf(sourceType);
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   if (list !== null) {
     const own = (e) => e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);

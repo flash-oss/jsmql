@@ -134,6 +134,38 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(jsmql.expr("$.x in [1, 2]")).toEqual({ $in: ["$x", [1, 2]] });
   });
 
+  it("a null element is an element of the list, so a null needle fits it", () => {
+    expect(jsmql.expr("[1, null].has(null)")).toBe(true);
+    expect(jsmql.expr("null in [1, null]")).toBe(true);
+    expect(jsmql.expr("[1, null].without(null)")).toEqual([1]);
+    expect(jsmql.expr("[1, null].lastIndexOf(null)")).toBe(1);
+    expect(jsmql.expr("null in [1, $.x]")).toEqual({ $in: [null, [1, "$x"]] });
+    expect(jsmql("$.a = [1, null]; $.r = $.a.has(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $in: [null, "$a"] } } },
+    ]);
+    expect(jsmql("$.a = [1, null]; $.r = $.a.indexOf(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $indexOfArray: ["$a", null] } } },
+    ]);
+    // A read that the proof shows is null is a null element too.
+    expect(jsmql("$.o = { b: null }; $.r = [1, $.o.b].has(null);")).toEqual([
+      { $set: { o: { $mergeObjects: [{ b: null }] } } },
+      { $set: { r: { $in: [null, [1, "$o.b"]] } } },
+    ]);
+  });
+
+  it("a null needle is refused where no element is null, and the message names a held null", () => {
+    expect(() => jsmql.expr("[1, 2].has(null)")).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.expr("[1, 2].without(null)")).toThrow(/'\.without\(\)' argument 1 takes an element/);
+    expect(() => jsmql("$.a = [1, 2]; $.r = $.a.has(null);")).toThrow(/'\.has\(\)' argument 1 takes an element/);
+    expect(() => jsmql.expr('[1, null].has("a")')).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got a string, and the array holds numbers or null.",
+    );
+  });
+
   it("a call that the program passes in is judged by its kind as a literal is", () => {
     const build = jsmql.compile(({ n }: { n: unknown }, { $ }: { $: any }) => $.s.trim() + n);
     expect(() => build({ n: 1 })).toThrow(/'\+' takes operands of one kind/);
@@ -156,6 +188,21 @@ describe("kinds — the query road obeys HR7 too", () => {
       /'===' takes operands of one kind, but got a number and a string\./,
     );
     expect(() => jsmql.pipeline('$.n = 1; $match($.n < "x");')).toThrow(/'<' takes operands of one kind/);
+  });
+
+  it("a null needle fits a list that holds a null, and is refused by a list that holds none", () => {
+    expect(jsmql.filter("null in [1, null]")).toEqual({ $expr: true });
+    expect(jsmql.filter("null in [1, $.x]")).toEqual({ $expr: { $in: [null, [1, "$x"]] } });
+    expect(jsmql.pipeline("$.a = [1, null]; $match($.a.has(null));")).toEqual([
+      { $set: { a: [1, null] } },
+      { $match: { a: null } },
+    ]);
+    expect(() => jsmql.filter("null in [1, 2]")).toThrow(
+      "'in' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.pipeline("$.a = [1, 2]; $match($.a.has(null));")).toThrow(
+      /'\.has\(\)' argument 1 takes an element of the array, but got null/,
+    );
   });
 
   it("a field of unknown kind passes, and the server decides", () => {
@@ -379,6 +426,15 @@ describe("kinds — a literal array is judged by each position, a computed array
     );
     expect(() => jsmql.expr("[1, null].max()")).toThrow(/'\.max\(\)' takes numbers/);
     expect(() => jsmql.expr("[null].mean()")).toThrow(/'\.mean\(\)' takes numbers, but the array holds null\./);
+  });
+
+  it("a null position is judged the same way in a written array and in a read that the proof shows", () => {
+    expect(() => jsmql("$.a = [1, null]; $.r = $.a.max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
+    expect(() => jsmql("$.o = { b: null }; $.r = [1, $.o.b].max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
   });
 
   it("a null that the call supplies proves no kind", () => {

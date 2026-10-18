@@ -246,17 +246,20 @@ const proofOfValue = (v: unknown): Proof => {
 export function proofsOfValues(values: readonly unknown[]): Proofs {
   const last = values[values.length - 1];
   const kinds = new Set<Kind>();
+  let holdsNull = false;
   // A known value that is an array is of a fixed length, so each position has a proof of its own.
   const items: Proof[] = [];
   if (Array.isArray(last)) {
     for (const el of last) {
       const k = el === null || el === undefined ? null : kindOfValue(el);
       if (k !== null) kinds.add(k);
+      holdsNull = holdsNull || el === null || el === undefined;
       // A null element proves the kind `null`, as a null operand does: it fits only a slot that takes any.
       items.push(el === null || el === undefined ? ["null"] : k === null ? "unknown" : [k]);
     }
   }
-  const elements = kinds.size === 0 ? "unknown" : [...kinds];
+  // A null element is one of the kinds of the elements. Only null elements prove nothing, as in emit/type.ts.
+  const elements: Proof = kinds.size === 0 ? "unknown" : holdsNull ? [...kinds, "null"] : [...kinds];
   return Array.isArray(last)
     ? { args: values.map(proofOfValue), elements, items }
     : { args: values.map(proofOfValue), elements };
