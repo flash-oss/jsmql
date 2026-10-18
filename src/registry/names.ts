@@ -10855,8 +10855,8 @@ export const NAMES = {
     window: booleanIsNotJsmql,
   }),
 
-  // The parser accepts the name so it gets an answer, and every position refuses it: one
-  // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
+  // The parser accepts the name so it gets an answer, and every position refuses it:
+  // '.toDouble()' is the numeric conversion, and one capability gets one spelling.
   parseInt: global_({
     doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",

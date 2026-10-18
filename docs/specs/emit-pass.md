@@ -978,7 +978,7 @@ to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
 measured), and `Number.isInteger` excludes NaN and the infinities the same
 way. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
-`Number` is the one numeric conversion: the compiler parses `parseInt` and
+`.toDouble()` is the numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
 index as its radix, and `$toInt` refuses a fractional string.
 
