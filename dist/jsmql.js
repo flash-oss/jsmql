@@ -21927,7 +21927,7 @@ var takesOf = (t) => {
   const nouns = t.map((x) => TAKES[x]);
   return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
 };
-var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+var ROUND = " Write an integer, or round the value with '<number>.ceil()' or '<number>.floor()'.";
 function refuseProvenNull(name2, slot, e, takes, proof) {
   if (proof === void 0 || e.type === "NullLiteral" || !proof.isNull(e)) return;
   proof.read(e);

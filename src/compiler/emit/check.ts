@@ -131,7 +131,7 @@ export const takesOf = (t: ArgType | readonly ArgType[]): string => {
 };
 
 /** The hint for a fraction where the server takes a whole number. */
-const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+const ROUND = " Write an integer, or round the value with '<number>.ceil()' or '<number>.floor()'.";
 
 /**
  * What the slot check may ask of an option key or a list element: is the value proven
