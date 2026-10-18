@@ -3218,7 +3218,7 @@ $.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, milliseco
 
 The parts come in two families, and `.set` follows the family that you name. One family is `year`, `month` and `day`. The ISO-week family is `isoWeekYear`, `isoWeek` and `isoDayOfWeek`. Each family can combine with `hour`, `minute`, `second` and `millisecond`, but the two families cannot mix. MongoDB builds a date from one family or the other. JSMQL rejects a mix, and the error names both keys that conflict.
 
-Write the parts out as an object literal, because MongoDB reads them by name. Their values can be field paths or parameters. The timezone is the *second* argument, not a part: `.set({ year: 2030 }, "America/New_York")`. It applies to the read and to the rebuild, so JSMQL reads the parts in that zone.
+Write the parts out as an object literal, because MongoDB reads them by name. Their values can be field paths or parameters. A parameter can also hold the whole document of parts: `jsmql.compile(({ parts }, { $ }) => $.t.set(parts))`. The timezone is the *second* argument, not a part: `.set({ year: 2030 }, "America/New_York")`. It applies to the read and to the rebuild, so JSMQL reads the parts in that zone.
 
 **Compare at a granularity.** `.isSame(other, unit)`, `.isBefore(other, unit)` and `.isAfter(other, unit)` truncate both sides to `unit` and then compare, so "same day" ignores the time of day:
 

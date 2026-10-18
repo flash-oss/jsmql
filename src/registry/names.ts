@@ -7210,8 +7210,14 @@ export const NAMES = {
       emit: ({ recv, args, value, bind }) => {
         // the parts named decide the family; the rest come from the date itself
         const given = new Map<string, Expr>();
-        for (const e of (args[0] as Extract<Expr, { type: "ObjectLiteral" }>).entries) {
-          if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+        const body = args[0];
+        if (body.type === "ObjectLiteral") {
+          for (const e of body.entries) {
+            if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+          }
+        } else if (body.type === "Injected" && typeof body.value === "object" && body.value !== null) {
+          // A document the call supplies is a value: each part holds the value the call gave it.
+          for (const [k, v] of Object.entries(body.value)) given.set(k, { type: "Injected", value: v, pos: body.pos });
         }
         const iso = [...given.keys()].some((k) => (DATE_PARTS_ISO_MARKERS as readonly string[]).includes(k));
         const family: readonly string[] = iso ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
@@ -7223,6 +7229,8 @@ export const NAMES = {
           const v = given.get(key);
           rebuilt[key] = v !== undefined ? value(v) : `${parts!.ref}.${key}`;
         }
+        // A key outside the family comes only from a supplied document. The server judges the key.
+        for (const [key, v] of given) if (!family.includes(key)) rebuilt[key] = value(v);
         const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
         if (parts === null) return fromParts;
         const toParts: Record<string, unknown> = { date: recv, ...tz };

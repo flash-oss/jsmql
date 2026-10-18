@@ -6163,8 +6163,13 @@ var NAMES = {
       },
       emit: ({ recv, args, value, bind }) => {
         const given = /* @__PURE__ */ new Map();
-        for (const e of args[0].entries) {
-          if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+        const body = args[0];
+        if (body.type === "ObjectLiteral") {
+          for (const e of body.entries) {
+            if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+          }
+        } else if (body.type === "Injected" && typeof body.value === "object" && body.value !== null) {
+          for (const [k, v] of Object.entries(body.value)) given.set(k, { type: "Injected", value: v, pos: body.pos });
         }
         const iso = [...given.keys()].some((k) => DATE_PARTS_ISO_MARKERS.includes(k));
         const family = iso ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
@@ -6176,6 +6181,7 @@ var NAMES = {
           const v = given.get(key);
           rebuilt[key] = v !== void 0 ? value(v) : `${parts.ref}.${key}`;
         }
+        for (const [key, v] of given) if (!family.includes(key)) rebuilt[key] = value(v);
         const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
         if (parts === null) return fromParts;
         const toParts = { date: recv, ...tz };
@@ -23678,8 +23684,7 @@ var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf"
 var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
   const k = kindOfValue(v);
-  if (k === null) return ANY;
-  return (k === "string" || k === "array" || k === "object") && isMqlShaped(v) ? ANY : of(k);
+  return k === null ? ANY : of(k);
 }
 function typeOf(node, env) {
   const joined = env.chain.proofOf(node);
@@ -26387,7 +26392,8 @@ function logicalValue(node, env) {
 }
 function membership(node, env) {
   const { left, right } = node;
-  if (right.type !== "ArrayLiteral") throw inNeedsList(node.pos);
+  const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
+  if (right.type !== "ArrayLiteral" && !passedList) throw inNeedsList(node.pos);
   checkOperandKinds(node, productionKeyOf(node), [left, right], env);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }

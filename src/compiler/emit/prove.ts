@@ -428,12 +428,13 @@ function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], 
 const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 
-/** A runtime value carried in: its proof, as deep as a plain value can show. */
+/**
+ * The proof of a value that the call supplies, as deep as a plain value can show it. A
+ * value that reads as MQL is still a value (HR1), so `"$x"` is a string.
+ */
 function injectedType(v: unknown): Type {
   const k = kindOfValue(v);
-  if (k === null) return ANY;
-  // a string, a list or a document that reads as MQL is MQL, and proves nothing
-  return (k === "string" || k === "array" || k === "object") && isMqlShaped(v) ? ANY : of(k);
+  return k === null ? ANY : of(k);
 }
 
 /**

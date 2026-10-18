@@ -9646,6 +9646,44 @@ describe("jsmql.compile()", () => {
     });
   });
 
+  it("validates a parameterised arrow that passes the parts of .set()", () => {
+    expect(jsmql.validate(({ parts }: { parts: object }, { $ }) => $.d.set(parts))).toEqual({
+      valid: true,
+      errors: [],
+    });
+    const set = jsmql.expr.compile(({ parts }: { parts: unknown }, { $ }) => $.d.set(parts));
+    expect(set({ parts: { year: 2020 } })).toEqual({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$d" } } },
+        in: {
+          $dateFromParts: {
+            year: 2020,
+            month: "$$jsmqlParts.month",
+            day: "$$jsmqlParts.day",
+            hour: "$$jsmqlParts.hour",
+            minute: "$$jsmqlParts.minute",
+            second: "$$jsmqlParts.second",
+            millisecond: "$$jsmqlParts.millisecond",
+          },
+        },
+      },
+    });
+    // A document that reads as MQL is a value, and the server judges its parts.
+    expect(() => set({ parts: { year: "$y" } })).not.toThrow();
+    expect(() => set({ parts: "$x" })).toThrow("'.set()' argument 1 takes a document, but got a string.");
+  });
+
+  it("validates a parameterised arrow with a parameter on the right side of 'in'", () => {
+    expect(jsmql.validate(({ ids }: { ids: number[] }, { $ }) => $.x in ids)).toEqual({ valid: true, errors: [] });
+    const member = jsmql.pipeline.compile(({ ids }: { ids: unknown }, { $ }) => {
+      $.y = $.x in ids;
+    });
+    expect(member({ ids: [1, 2] })).toEqual([{ $set: { y: { $in: ["$x", [1, 2]] } } }]);
+    // A list that reads as MQL is a value, so it takes `$literal`.
+    expect(member({ ids: ["$a", 1] })).toEqual([{ $set: { y: { $in: ["$x", { $literal: ["$a", 1] }] } } }]);
+    expect(() => member({ ids: "$a" })).toThrow("The right side of 'in' must be a list");
+  });
+
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);
@@ -9658,8 +9696,7 @@ describe("jsmql.compile()", () => {
     });
 
     it("array binding inlines into $in", () => {
-      // `in` is not query-translatable today, so the residual goes through
-      // $expr — the binding still inlines into `$in`'s second slot.
+      // A constant list is the native query `$in`.
       const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
       expect(q({ allowed: ["A", "B"] })).toEqual({ grade: { $in: ["A", "B"] } });
     });

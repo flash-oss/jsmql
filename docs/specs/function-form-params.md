@@ -82,7 +82,7 @@ jsmql.compile(fn)         // parameterised, reusable
 jsmql.validate(input)     // { valid, errors } instead of a throw
 ```
 
-`jsmql.validate` accepts every shape `jsmql.compile` accepts, in addition to the one-shot string / function / template-tag shapes from `jsmql()`, so editor tooling can pre-flight a parameterised arrow before it passes the arrow to `jsmql.compile`. The check stubs each parameter to `null`.
+`jsmql.validate` accepts every shape that `jsmql.compile` accepts. It also accepts the one-shot string / function / template-tag shapes of `jsmql()`. So editor tooling can check a parameterised arrow before it passes the arrow to `jsmql.compile`. The check binds each parameter to a value of no known kind (`ParameterValue` in [src/index.ts](../../src/index.ts)). A `null` fails, because a slot that states a kind refuses `null` (HR7).
 
 `jsmql.compile` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — and parses it once (`parseEntry` gives the params, the toolbox names and the program). The returned closure, on each call:
 
