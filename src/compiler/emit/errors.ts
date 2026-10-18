@@ -715,6 +715,7 @@ const ELEMENT_NOUN: Readonly<Record<string, string>> = {
   date: "dates",
   objectId: "ObjectIds",
   binData: "binary data",
+  null: "null",
 };
 
 const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => table[k] ?? `a ${k}`;

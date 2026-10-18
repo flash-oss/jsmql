@@ -410,7 +410,10 @@ A row states the rule, never the compiler:
   of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
   neither.
 - `"element"` is the kind of one element of the element source: the receiver of
-  a method, the last operand of a production.
+  a method, the last operand of a production. An element that can be null adds
+  the kind `null` to the proof of the elements. So `[1, null].has(null)` passes,
+  and `[1, 2].has(null)` is refused. A source that holds only null elements
+  proves nothing about them.
 - `homogeneous` says that every operand has one kind. The first operand of one
   proven kind sets it. An operand of unknown kind, or of two or more kinds, sets no
   kind and breaks no rule.
@@ -426,8 +429,10 @@ Each position of such an array is certain, so the proof of the elements is a TUP
 one proof per position. A tuple breaks the `elements` rule when ANY position has no
 fitting kind. A set of kinds breaks it only when NO kind fits. So `[1, "a"].max()` is
 refused, and `$.nums.map(x => x + 1).max()` passes, because a computed array has one
-proof for all its positions. A position of unknown kind fits. A `null` element proves the kind `null`, so it fits no position that needs numbers. The constant fold reads
-the same rule, so `[1, "a"].sum()` is not folded.
+proof for all its positions. A position of unknown kind fits. A position that is
+null proves the kind `null`, so it fits no position that needs numbers. This holds
+for a written `null` and for a read that the proof shows is null. The constant fold
+reads the same rule, so `[1, "a"].sum()` is not folded.
 
 A slot that takes a callback is not judged here, because the lowering of the callback
 names every spelling that the slot takes. A call with a spread passes its arguments as

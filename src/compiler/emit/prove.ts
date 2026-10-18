@@ -273,16 +273,7 @@ export function proofsFor(
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
   // An element source of a fixed length, such as a literal, proves each position on its own.
-  const found = sourceType === null ? undefined : itemProofsOf(sourceType);
-  // A `null` element proves the kind `null`, as a `null` operand does.
-  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
-  const items =
-    found === undefined || elementNodes.length !== found.length
-      ? found
-      : found.map((p, i) => {
-          const el = elementNodes[i];
-          return el.type === "NullLiteral" ? (["null"] as const) : p;
-        });
+  const items = sourceType === null ? undefined : itemProofsOf(sourceType);
   // A call with a spread passes its arguments as ONE packed list (the desugar pass). Each
   // element of the list is an argument, and a spread proves the kinds of its elements.
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
