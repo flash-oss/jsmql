@@ -9676,8 +9676,7 @@ describe("jsmql.compile()", () => {
     });
 
     it("array binding inlines into $in", () => {
-      // `in` is not query-translatable today, so the residual goes through
-      // $expr — the binding still inlines into `$in`'s second slot.
+      // A constant list is the native query `$in`.
       const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
       expect(q({ allowed: ["A", "B"] })).toEqual({ grade: { $in: ["A", "B"] } });
     });
