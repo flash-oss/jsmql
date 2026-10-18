@@ -379,6 +379,21 @@ function nameIfUnspellable(value: unknown): string | null {
   }
 }
 
+/** Does the key read as an array index? A JavaScript object lists such a key before every other key. */
+export const isIndexKey = (k: string): boolean => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295;
+
+/**
+ * A document whose keys a JavaScript object cannot keep in order, held as the pairs that keep it.
+ * It is opaque. No rule reads its keys. A rule that reads the document refuses it. The fold writes
+ * it back as `$arrayToObject` over the pairs.
+ */
+export class OrderedDocument {
+  readonly pairs: readonly (readonly [string, unknown])[];
+  constructor(pairs: readonly (readonly [string, unknown])[]) {
+    this.pairs = pairs;
+  }
+}
+
 /**
  * Does a document hold keys in an order that a JavaScript object cannot keep? An
  * object lists a key that reads as an array index (`"1"`) before every other key,
@@ -392,7 +407,7 @@ function losesKeyOrder(value: unknown, unordered: (document: object) => boolean)
     case "object": {
       const keys = Object.keys(value as Record<string, unknown>);
       if (!unordered(value as object) && keys.length > 1) {
-        if (keys.some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) return true;
+        if (keys.some(isIndexKey)) return true;
       }
       return Object.values(value as Record<string, unknown>).some((v) => losesKeyOrder(v, unordered));
     }
@@ -499,6 +514,7 @@ export const startsLikeNumber = (s: string): boolean => /^-?[0-9]/.test(s);
 /** Does the value hold a `NumberText` at any depth? */
 export function holdsNumberText(v: unknown): boolean {
   if (v instanceof NumberText) return true;
+  if (v instanceof OrderedDocument) return v.pairs.some(([, x]) => holdsNumberText(x));
   if (Array.isArray(v)) return v.some(holdsNumberText);
   return isPlain(v) && Object.values(v).some(holdsNumberText);
 }

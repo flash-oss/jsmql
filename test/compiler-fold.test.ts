@@ -12,6 +12,7 @@ import { desugar } from "../src/compiler/passes/desugar.ts";
 import { evaluate } from "../src/compiler/passes/evaluate.ts";
 import { fold } from "../src/compiler/passes/fold.ts";
 import { asLiteral, isSpellable } from "../src/compiler/passes/literal.ts";
+import { OrderedDocument } from "../src/compiler/interpret/values.ts";
 import { shapeOf } from "../src/compiler/passes/shape.ts";
 import { filter, pipeline } from "../src/compiler/index.ts";
 // The fold asks the emitter for the lowering of a constant, which the emitter lends at load.
@@ -667,5 +668,138 @@ describe("compiler/passes/evaluate — a constant is what its lowered MQL says",
     expect(pipeline("$.x = new Date($.n);")).toEqual([
       { $set: { x: { $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } } } },
     ]);
+  });
+});
+
+describe("compiler/passes/evaluate — a constant document with index-like keys", () => {
+  // A JavaScript object lists a key that reads as an array index first, and BSON compares a document key by key.
+  // So the fold writes such a document as the pairs that keep the order.
+  it("folds keyBy to $arrayToObject over the pairs in order", () => {
+    expect(pipeline("$.x = [3, 1, 2].keyBy(n => n % 2);")).toEqual([
+      {
+        $set: {
+          x: {
+            $arrayToObject: [
+              [
+                ["1", 1],
+                ["0", 2],
+              ],
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("writes a document whose keys keep their order as it did", () => {
+    expect(pipeline('$.x = ["b", "a"].keyBy(k => k);')).toEqual([
+      { $set: { x: { $mergeObjects: [{ b: "b", a: "a" }] } } },
+    ]);
+    expect(pipeline("$.x = [3, 1, 2].groupBy(n => n % 2);")).toEqual([
+      { $set: { x: { $mergeObjects: [{ "0": [2], "1": [3, 1] }] } } },
+    ]);
+  });
+
+  it("writes the pairs at every level of a value", () => {
+    expect(pipeline("$.x = { a: [3, 1, 2].keyBy(n => n % 2), b: [[3, 1].keyBy(n => n % 2)] };")).toEqual([
+      {
+        $set: {
+          x: {
+            $mergeObjects: [
+              {
+                a: {
+                  $arrayToObject: [
+                    [
+                      ["1", 1],
+                      ["0", 2],
+                    ],
+                  ],
+                },
+                b: [{ "1": 1 }],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("keeps a string with a dollar as text in the pairs", () => {
+    expect(pipeline('$.x = [["1", "$a"], ["0", "b"]].fromPairs();')).toEqual([
+      {
+        $set: {
+          x: {
+            $arrayToObject: [
+              [
+                ["1", { $literal: "$a" }],
+                ["0", "b"],
+              ],
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("writes the pairs of a nested document", () => {
+    const nested = new OrderedDocument([
+      [
+        "1",
+        new OrderedDocument([
+          ["1", 1],
+          ["0", 2],
+        ]),
+      ],
+      ["0", 5],
+    ]);
+    // The value of the first pair is the inner document, an `$arrayToObject` call again.
+    const outer = asLiteral(nested, 0, true) as {
+      type: string;
+      args: { elements: { elements: { elements: { type: string }[] }[] }[] }[];
+    };
+    expect(outer.type).toBe("OperatorCall");
+    expect(outer.args[0].elements[0].elements[0].elements[1].type).toBe("OperatorCall");
+  });
+
+  it("leaves a method call on such a document to the server", () => {
+    expect(pipeline("$.x = [3, 1, 2].keyBy(n => n % 2).keys();")).toEqual([
+      {
+        $set: {
+          x: {
+            $map: {
+              input: {
+                $objectToArray: {
+                  $arrayToObject: [
+                    [
+                      ["1", 1],
+                      ["0", 2],
+                    ],
+                  ],
+                },
+              },
+              in: "$$this.k",
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("compares a field with such a document through $expr, never as a constant document", () => {
+    expect(filter("$.doc === [3, 1, 2].keyBy(n => n % 2)")).toEqual({
+      $expr: {
+        $eq: [
+          "$doc",
+          {
+            $arrayToObject: [
+              [
+                ["1", 1],
+                ["0", 2],
+              ],
+            ],
+          },
+        ],
+      },
+    });
   });
 });

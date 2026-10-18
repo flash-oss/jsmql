@@ -2,11 +2,12 @@
 //
 // A document keeps the order of its keys, and a key that reads as an array index
 // would move in a JavaScript object. `spellable` refuses such a document, so no
-// rule here checks that. A field that the answer needs and the document lacks is
+// rule here checks that. `$arrayToObject` is the one rule that answers it, as an
+// `OrderedDocument`, which no other rule reads. A field that the answer needs and the document lacks is
 // MISSING, and no literal spells missing, so such a read is a refusal.
 
 import type { Answer, Rule } from "./values.ts";
-import { NO, isPlain, ok, spellable } from "./values.ts";
+import { NO, OrderedDocument, isIndexKey, isPlain, ok, spellable } from "./values.ts";
 import { keyed, positional } from "./operand.ts";
 import { setKey } from "../../registry/mql.ts";
 
@@ -56,8 +57,11 @@ const arrayToObject = positional(
     if (pairs === null) return NO;
     const unordered = walk.isSet(list);
     if (unordered && new Set(pairs.map(([k]) => k)).size !== pairs.length) return NO;
+    // A key that repeats keeps its first place and the value of its last pair.
+    const kept = new Map(pairs);
+    if (!unordered && kept.size > 1 && [...kept.keys()].some(isIndexKey)) return ok(new OrderedDocument([...kept]));
     const out: Record<string, unknown> = {};
-    for (const [k, v] of pairs) setKey(out, k, v);
+    for (const [k, v] of kept) setKey(out, k, v);
     return ok(unordered ? walk.markSet(out) : out);
   },
   true,

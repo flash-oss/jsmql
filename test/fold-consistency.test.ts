@@ -361,6 +361,10 @@ function foldedValue(lit: string, call: string): unknown {
   return only && "v" in only ? only.v : NOT_FOLDED;
 }
 
+/** The fold of a document with index-like keys: an `$arrayToObject` call over the pairs. */
+const isOrderedFold = (v: unknown): boolean =>
+  typeof v === "object" && v !== null && Object.keys(v).length === 1 && "$arrayToObject" in v;
+
 describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering on mongod", () => {
   let db: Db;
   beforeAll(() => {
@@ -412,6 +416,18 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
         return;
       }
       compared += 1;
+      if (isOrderedFold(folded)) {
+        // The fold wrote a document whose keys read as array indexes as `$arrayToObject` over the pairs. A driver
+        // reads a document into an object and loses the key order, so both sides give their pairs through `$objectToArray`.
+        const pairs = async (m: unknown): Promise<unknown> => {
+          const [row] = await db
+            .aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: { $objectToArray: m } } }])
+            .toArray();
+          return (row as { v: unknown }).v;
+        };
+        expect(await pairs(folded)).toEqual(await pairs(mql));
+        return;
+      }
       if (answersSet(mql)) {
         // Each order of a set answer is valid. The fold must give the same values,
         // and each value as many times as the server gives it.

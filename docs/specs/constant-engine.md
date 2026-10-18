@@ -77,6 +77,11 @@ an ObjectId against the plausibility rule of the literal, so a typo reports at i
 A node that a lowering builds itself (a stream cell that makes `list.map(key)` from its
 arguments) is a node that the fold does not visit. The services that hand a node to the lowering call `settled`.
 
+A document with two or more keys has no object literal when one key reads as an array index. A JavaScript
+object moves that key. The interpreter answers such a document as an `OrderedDocument`, the pairs in the
+order that the server keeps. `asLiteral` writes it as an `OperatorCall` of `$arrayToObject` over the pairs,
+at every level. The node is an escape-hatch call. The fold never evaluates it again. `constantOf` does not read it.
+
 After the fold, a reader of the emit phase asks only whether a node is a literal. `constantOf` reads
 a literal, an `Injected` node, and a list or a document of them. It never lowers.
 

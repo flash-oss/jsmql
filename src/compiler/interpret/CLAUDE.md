@@ -59,6 +59,8 @@ It may import `src/bson.ts`, `src/errors.ts` and `src/registry/mql.ts`.
   value.
 - A document keeps its key order. A JavaScript object moves a key that reads as an array
   index (`"1"`) to the front, so `spellable` refuses a document of two or more keys with such a key.
+  `$arrayToObject` is the one rule that still answers such a document. Its answer is an `OrderedDocument`,
+  the pairs in order. The value is opaque. A rule that reads its keys refuses it.
 - A read that finds nothing is MISSING on the server, and no literal spells missing.
   So `$arrayElemAt` out of range, `$first` of `[]` and `$getField` of an absent key are refusals.
 - An opaque value (a Long, a Decimal128, a Binary, a regex) passes through. No rule computes with it.

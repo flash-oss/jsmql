@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { BSONRegExp, Decimal128, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from "bson";
 import { interpret } from "../src/compiler/interpret/index.ts";
-import { MAX_DEPTH, MAX_SIZE } from "../src/compiler/interpret/values.ts";
+import { MAX_DEPTH, MAX_SIZE, OrderedDocument } from "../src/compiler/interpret/values.ts";
 
 /** The value of the expression. A refusal fails the test. */
 function value(mql: unknown): unknown {
@@ -81,6 +81,134 @@ describe("the walk", () => {
     // A JavaScript object lists "1" before "b", so the BSON order would be lost.
     refused({ b: 1, "1": 2 });
     refused({ $mergeObjects: [{ b: 1 }, { "1": 2 }] });
+  });
+
+  it("answers $arrayToObject with keys that read as array indexes as the pairs in order", () => {
+    const pairs = (...p: [string, unknown][]) => new OrderedDocument(p);
+    expect(
+      value({
+        $arrayToObject: [
+          [
+            ["1", 1],
+            ["0", 2],
+          ],
+        ],
+      }),
+    ).toEqual(pairs(["1", 1], ["0", 2]));
+    expect(
+      value({
+        $arrayToObject: [
+          [
+            ["b", 1],
+            ["0", 2],
+          ],
+        ],
+      }),
+    ).toEqual(pairs(["b", 1], ["0", 2]));
+    // A key that two pairs share keeps its first place and the value of its last pair.
+    expect(
+      value({
+        $arrayToObject: [
+          [
+            ["1", "a"],
+            ["0", "b"],
+            ["1", "c"],
+          ],
+        ],
+      }),
+    ).toEqual(pairs(["1", "c"], ["0", "b"]));
+    // A document at a deeper level keeps its order too.
+    expect(
+      value({
+        $arrayToObject: [
+          [
+            [
+              "1",
+              {
+                $arrayToObject: [
+                  [
+                    ["1", 1],
+                    ["0", 2],
+                  ],
+                ],
+              },
+            ],
+            ["0", 5],
+          ],
+        ],
+      }),
+    ).toEqual(pairs(["1", pairs(["1", 1], ["0", 2])], ["0", 5]));
+    // A document of one key, and a document with no such key, stay plain.
+    expect(value({ $arrayToObject: [[["1", 1]]] })).toEqual({ "1": 1 });
+    expect(
+      Object.keys(
+        value({
+          $arrayToObject: [
+            [
+              ["b", 1],
+              ["a", 2],
+            ],
+          ],
+        }) as object,
+      ),
+    ).toEqual(["b", "a"]);
+    // No rule reads the keys of the pairs. A call that reads them is refused.
+    refused({
+      $objectToArray: {
+        $arrayToObject: [
+          [
+            ["1", 1],
+            ["0", 2],
+          ],
+        ],
+      },
+    });
+    refused({
+      $getField: {
+        field: "1",
+        input: {
+          $arrayToObject: [
+            [
+              ["1", 1],
+              ["0", 2],
+            ],
+          ],
+        },
+      },
+    });
+    refused({
+      $mergeObjects: [
+        {
+          $arrayToObject: [
+            [
+              ["1", 1],
+              ["0", 2],
+            ],
+          ],
+        },
+        { z: 1 },
+      ],
+    });
+    refused({
+      $eq: [
+        {
+          $arrayToObject: [
+            [
+              ["1", 1],
+              ["0", 2],
+            ],
+          ],
+        },
+        {
+          $arrayToObject: [
+            [
+              ["1", 1],
+              ["0", 2],
+            ],
+          ],
+        },
+      ],
+    });
   });
 
   it("is a refusal, not an exception, for a tree that is too deep", () => {

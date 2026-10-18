@@ -22,6 +22,7 @@ import type { Expr } from "../../registry/ast.ts";
 // recognition tests the prototype AND the tag.
 import { bsonTagOf, isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
 import { isDate, isPlainObject as isPlainByPrototype, isRegExp } from "../../bson.ts";
+import { OrderedDocument } from "../interpret/values.ts";
 
 /**
  * Can this value be written as a literal at all?
@@ -121,6 +122,22 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
       elements.push(spelled);
     }
     return { type: "ArrayLiteral", elements, pos };
+  }
+  // A document with index-like keys has no object literal: a JavaScript object would move the key. It is
+  // `$arrayToObject` over the pairs, an escape-hatch call. The fold never evaluates it again.
+  if (value instanceof OrderedDocument) {
+    const pairs: Expr[] = [];
+    for (const [key, held] of value.pairs) {
+      const spelled = leafOf(held, pos, text);
+      if (spelled === null) return null;
+      pairs.push({ type: "ArrayLiteral", elements: [{ type: "StringLiteral", value: key, pos }, spelled], pos });
+    }
+    return {
+      type: "OperatorCall",
+      name: "$arrayToObject",
+      args: [{ type: "ArrayLiteral", elements: [{ type: "ArrayLiteral", elements: pairs, pos }], pos }],
+      pos,
+    };
   }
   if (isPlainObject(value)) {
     const entries: { type: "KeyValueEntry"; key: { kind: "static"; name: string }; value: Expr; pos: number }[] = [];

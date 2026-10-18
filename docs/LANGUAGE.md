@@ -4778,6 +4778,13 @@ jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day:
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
+A constant document keeps the order of its keys. BSON compares a document key by key. A JavaScript object moves a key that reads as an array index (`"1"`) before the other keys. So JSMQL writes such a document as `$arrayToObject` over the pairs, in the order that the server keeps. A method call on that document stays a runtime expression.
+
+```js
+jsmql("$.x = [3, 1, 2].keyBy(n => n % 2);");
+// → [{ $set: { x: { $arrayToObject: [[["1", 1], ["0", 2]]] } } }]
+```
+
 A constant stays a runtime expression when the server does not specify its answer exactly, because JSMQL then cannot know the value. This covers five cases:
 
 - an operator whose answer the server leaves open, for example transcendental math

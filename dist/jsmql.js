@@ -16214,6 +16214,336 @@ function bsonNullary(name2) {
   return null;
 }
 
+// src/compiler/interpret/values.ts
+var NO = { ok: false };
+var ok = (value) => ({ ok: true, value });
+var unspellable = (name2) => ({ ok: false, unspellable: name2 });
+var Failed = class {
+  constructor(answer) {
+    this.answer = answer;
+  }
+};
+var MAX_DEPTH = 400;
+var MAX_SIZE = 1e6;
+var MAX_STEPS = 2e6;
+function withinSize(value) {
+  if (typeof value === "string") return value.length <= MAX_SIZE;
+  if (Array.isArray(value)) return value.length <= MAX_SIZE && value.every(withinSize);
+  return true;
+}
+function isPlain(v) {
+  return isPlainObject(v) && bsonTagOf(v) === void 0;
+}
+function kindOf2(v) {
+  if (v === null) return "null";
+  switch (typeof v) {
+    case "number":
+      return "number";
+    case "string":
+      return "string";
+    case "boolean":
+      return "boolean";
+  }
+  if (Array.isArray(v)) return "array";
+  if (isDate(v)) return "date";
+  if (isObjectId(v)) return "objectId";
+  if (isPlain(v)) return "object";
+  return "other";
+}
+function isValue(v) {
+  switch (typeof v) {
+    case "number":
+    case "boolean":
+      return true;
+    case "string":
+      return isWellFormed(v);
+    case "object":
+      break;
+    default:
+      return false;
+  }
+  if (v === null) return true;
+  if (Array.isArray(v)) return v.every(isValue);
+  if (isDate(v)) return !Number.isNaN(v.getTime());
+  if (isPlain(v)) return Object.values(v).every(isValue);
+  return bsonTagOf(v) !== void 0 || isRegExp(v);
+}
+function inert(v) {
+  switch (kindOf2(v)) {
+    case "other":
+      return false;
+    case "array":
+      return v.every(inert);
+    case "object":
+      return Object.values(v).every(inert);
+    default:
+      return true;
+  }
+}
+function truthOf(v) {
+  switch (kindOf2(v)) {
+    case "null":
+      return false;
+    case "number":
+      return v !== 0;
+    case "boolean":
+      return v;
+    case "string":
+    case "array":
+    case "object":
+    case "date":
+    case "objectId":
+      return true;
+    default:
+      return null;
+  }
+}
+var isWellFormed = (s) => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+function compareCodePoints(a, b) {
+  const n2 = Math.min(a.length, b.length);
+  for (let i = 0; i < n2; i++) {
+    let x = a.charCodeAt(i);
+    let y = b.charCodeAt(i);
+    if (x === y) continue;
+    if (x >= 55296 && y >= 55296) {
+      x = x >= 57344 ? x - 2048 : x + 8192;
+      y = y >= 57344 ? y - 2048 : y + 8192;
+    }
+    return x < y ? -1 : 1;
+  }
+  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+}
+function keyOf(v) {
+  switch (kindOf2(v)) {
+    case "null":
+      return "z";
+    case "number":
+      return `n${v}`;
+    case "string":
+      return `s${JSON.stringify(v)}`;
+    case "boolean":
+      return v ? "t" : "f";
+    case "date":
+      return `d${v.getTime()}`;
+    case "objectId":
+      return `o${objectIdHex(v)}`;
+    case "array":
+      return `[${v.map(keyOf).join(",")}]`;
+    case "object":
+      return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${keyOf(x)}`).join(",")}}`;
+    default:
+      return `?${String(v)}`;
+  }
+}
+function sameValue(a, b) {
+  const kind = kindOf2(a);
+  if (kind !== kindOf2(b)) return false;
+  switch (kind) {
+    case "null":
+      return true;
+    case "number":
+    case "string":
+    case "boolean":
+      return a === b && Object.is(a, -0) === Object.is(b, -0);
+    case "date":
+      return a.getTime() === b.getTime();
+    case "objectId":
+      return objectIdHex(a) === objectIdHex(b);
+    case "array": {
+      const x = a;
+      const y = b;
+      return x.length === y.length && x.every((v, i) => sameValue(v, y[i]));
+    }
+    case "object": {
+      const x = a;
+      const y = b;
+      const kx = Object.keys(x);
+      const ky = Object.keys(y);
+      return kx.length === ky.length && kx.every((k, i) => k === ky[i] && sameValue(x[k], y[k]));
+    }
+    default:
+      return false;
+  }
+}
+var KIND_RANK = {
+  null: 1,
+  number: 2,
+  string: 3,
+  object: 4,
+  array: 5,
+  objectId: 7,
+  boolean: 8,
+  date: 9
+};
+var TAG_RANK = {
+  MinKey: 0,
+  Int32: 2,
+  Long: 2,
+  Double: 2,
+  Decimal128: 2,
+  Binary: 6,
+  Timestamp: 10,
+  BSONRegExp: 11,
+  MaxKey: 12
+};
+function rankOf(v) {
+  const kind = kindOf2(v);
+  if (kind !== "other") return KIND_RANK[kind];
+  return isRegExp(v) ? TAG_RANK.BSONRegExp : TAG_RANK[bsonTagOf(v) ?? ""];
+}
+var signOf = (n2) => n2 < 0 ? -1 : n2 > 0 ? 1 : 0;
+function compareValues(a, b) {
+  const ra = rankOf(a);
+  const rb = rankOf(b);
+  if (ra === void 0 || rb === void 0) return void 0;
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  const ka = kindOf2(a);
+  if (ka !== kindOf2(b)) return void 0;
+  switch (ka) {
+    case "null":
+      return 0;
+    case "number":
+      return a < b ? -1 : a > b ? 1 : 0;
+    case "string":
+      return signOf(compareCodePoints(a, b));
+    case "boolean":
+      return a === b ? 0 : a ? 1 : -1;
+    case "date":
+      return signOf(a.getTime() - b.getTime());
+    case "objectId":
+      return signOf(compareCodePoints(objectIdHex(a), objectIdHex(b)));
+    case "array": {
+      const x = a;
+      const y = b;
+      for (let i = 0; i < Math.min(x.length, y.length); i++) {
+        const c = compareValues(x[i], y[i]);
+        if (c === void 0) return void 0;
+        if (c !== 0) return c;
+      }
+      return signOf(x.length - y.length);
+    }
+    case "object": {
+      const x = Object.entries(a);
+      const y = Object.entries(b);
+      for (let i = 0; i < Math.min(x.length, y.length); i++) {
+        const [px, py] = [rankOf(x[i][1]), rankOf(y[i][1])];
+        if (px === void 0 || py === void 0) return void 0;
+        if (px !== py) return px < py ? -1 : 1;
+        const byName = signOf(compareCodePoints(x[i][0], y[i][0]));
+        if (byName !== 0) return byName;
+        const c = compareValues(x[i][1], y[i][1]);
+        if (c !== 0) return c;
+      }
+      return signOf(x.length - y.length);
+    }
+    default:
+      return ra === TAG_RANK.MinKey || ra === TAG_RANK.MaxKey ? 0 : void 0;
+  }
+}
+var isInt32 = (n2) => typeof n2 === "number" && Number.isInteger(n2) && n2 >= -2147483648 && n2 <= 2147483647;
+function nameIfUnspellable(value) {
+  switch (kindOf2(value)) {
+    case "number": {
+      const n2 = value;
+      if (Number.isNaN(n2)) return "NaN";
+      if (!Number.isFinite(n2)) return String(n2);
+      return Object.is(n2, -0) ? "-0" : null;
+    }
+    case "array":
+      for (const v of value) {
+        const name2 = nameIfUnspellable(v);
+        if (name2 !== null) return name2;
+      }
+      return null;
+    case "object":
+      for (const v of Object.values(value)) {
+        const name2 = nameIfUnspellable(v);
+        if (name2 !== null) return name2;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+var isIndexKey = (k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295;
+var OrderedDocument = class {
+  constructor(pairs) {
+    this.pairs = pairs;
+  }
+};
+function losesKeyOrder(value, unordered) {
+  switch (kindOf2(value)) {
+    case "array":
+      return value.some((v) => losesKeyOrder(v, unordered));
+    case "object": {
+      const keys = Object.keys(value);
+      if (!unordered(value) && keys.length > 1) {
+        if (keys.some(isIndexKey)) return true;
+      }
+      return Object.values(value).some((v) => losesKeyOrder(v, unordered));
+    }
+    default:
+      return false;
+  }
+}
+function spellable(value, unordered = () => false) {
+  if (value === void 0 || losesKeyOrder(value, unordered)) return NO;
+  const name2 = nameIfUnspellable(value);
+  if (name2 === null) return withinSize(value) ? ok(value) : NO;
+  return name2 === "-0" ? NO : unspellable(name2);
+}
+function losesPrecision(result, ...operands) {
+  return Number.isFinite(result) && operands.every(Number.isSafeInteger) && !Number.isSafeInteger(result);
+}
+function exactDecimal(n2) {
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, Math.abs(n2));
+  const high = bits.getUint32(0);
+  const raw = high >>> 20 & 2047;
+  let mantissa = BigInt(high & 1048575) << 32n | BigInt(bits.getUint32(4));
+  let power = -1074;
+  if (raw !== 0) {
+    mantissa |= 1n << 52n;
+    power = raw - 1075;
+  }
+  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
+  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
+}
+function reduceToPlaces(n2, places, mode) {
+  if (!Number.isFinite(n2) || n2 === 0) return n2;
+  const { digits: digits2, exponent } = exactDecimal(n2);
+  const shift2 = exponent + places;
+  if (shift2 >= 0) return n2;
+  const unit = 10n ** BigInt(-shift2);
+  const whole = digits2 / unit;
+  const rest = digits2 % unit;
+  const half = unit / 2n;
+  let rounded = whole;
+  if (mode === "half-even") {
+    rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
+  }
+  let spelt = rounded.toString();
+  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
+  const body = places > 0 ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}` : places < 0 && rounded !== 0n ? spelt + "0".repeat(-places) : spelt;
+  return Number(`${n2 < 0 ? "-" : ""}${body}`);
+}
+function numberSpelling(n2) {
+  if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
+  return String(n2);
+}
+var NumberText = class {
+};
+var startsLikeNumber = (s) => /^-?[0-9]/.test(s);
+function holdsNumberText(v) {
+  if (v instanceof NumberText) return true;
+  if (v instanceof OrderedDocument) return v.pairs.some(([, x]) => holdsNumberText(x));
+  if (Array.isArray(v)) return v.some(holdsNumberText);
+  return isPlain(v) && Object.values(v).some(holdsNumberText);
+}
+var asciiUpper = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
+var asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+var points = (s) => [...s];
+
 // src/compiler/passes/literal.ts
 var NOT_CONSTANT = { ok: false };
 function readLiteral(node) {
@@ -16270,6 +16600,20 @@ function asLiteral(value, pos, text = false) {
       elements.push(spelled3);
     }
     return { type: "ArrayLiteral", elements, pos };
+  }
+  if (value instanceof OrderedDocument) {
+    const pairs = [];
+    for (const [key, held] of value.pairs) {
+      const spelled3 = leafOf(held, pos, text);
+      if (spelled3 === null) return null;
+      pairs.push({ type: "ArrayLiteral", elements: [{ type: "StringLiteral", value: key, pos }, spelled3], pos });
+    }
+    return {
+      type: "OperatorCall",
+      name: "$arrayToObject",
+      args: [{ type: "ArrayLiteral", elements: [{ type: "ArrayLiteral", elements: pairs, pos }], pos }],
+      pos
+    };
   }
   if (isPlainObject2(value)) {
     const entries = [];
@@ -17824,329 +18168,6 @@ function internalError(detail, pos = 0) {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
 }
 
-// src/compiler/interpret/values.ts
-var NO = { ok: false };
-var ok = (value) => ({ ok: true, value });
-var unspellable = (name2) => ({ ok: false, unspellable: name2 });
-var Failed = class {
-  constructor(answer) {
-    this.answer = answer;
-  }
-};
-var MAX_DEPTH = 400;
-var MAX_SIZE = 1e6;
-var MAX_STEPS = 2e6;
-function withinSize(value) {
-  if (typeof value === "string") return value.length <= MAX_SIZE;
-  if (Array.isArray(value)) return value.length <= MAX_SIZE && value.every(withinSize);
-  return true;
-}
-function isPlain(v) {
-  return isPlainObject(v) && bsonTagOf(v) === void 0;
-}
-function kindOf2(v) {
-  if (v === null) return "null";
-  switch (typeof v) {
-    case "number":
-      return "number";
-    case "string":
-      return "string";
-    case "boolean":
-      return "boolean";
-  }
-  if (Array.isArray(v)) return "array";
-  if (isDate(v)) return "date";
-  if (isObjectId(v)) return "objectId";
-  if (isPlain(v)) return "object";
-  return "other";
-}
-function isValue(v) {
-  switch (typeof v) {
-    case "number":
-    case "boolean":
-      return true;
-    case "string":
-      return isWellFormed(v);
-    case "object":
-      break;
-    default:
-      return false;
-  }
-  if (v === null) return true;
-  if (Array.isArray(v)) return v.every(isValue);
-  if (isDate(v)) return !Number.isNaN(v.getTime());
-  if (isPlain(v)) return Object.values(v).every(isValue);
-  return bsonTagOf(v) !== void 0 || isRegExp(v);
-}
-function inert(v) {
-  switch (kindOf2(v)) {
-    case "other":
-      return false;
-    case "array":
-      return v.every(inert);
-    case "object":
-      return Object.values(v).every(inert);
-    default:
-      return true;
-  }
-}
-function truthOf(v) {
-  switch (kindOf2(v)) {
-    case "null":
-      return false;
-    case "number":
-      return v !== 0;
-    case "boolean":
-      return v;
-    case "string":
-    case "array":
-    case "object":
-    case "date":
-    case "objectId":
-      return true;
-    default:
-      return null;
-  }
-}
-var isWellFormed = (s) => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
-function compareCodePoints(a, b) {
-  const n2 = Math.min(a.length, b.length);
-  for (let i = 0; i < n2; i++) {
-    let x = a.charCodeAt(i);
-    let y = b.charCodeAt(i);
-    if (x === y) continue;
-    if (x >= 55296 && y >= 55296) {
-      x = x >= 57344 ? x - 2048 : x + 8192;
-      y = y >= 57344 ? y - 2048 : y + 8192;
-    }
-    return x < y ? -1 : 1;
-  }
-  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
-}
-function keyOf(v) {
-  switch (kindOf2(v)) {
-    case "null":
-      return "z";
-    case "number":
-      return `n${v}`;
-    case "string":
-      return `s${JSON.stringify(v)}`;
-    case "boolean":
-      return v ? "t" : "f";
-    case "date":
-      return `d${v.getTime()}`;
-    case "objectId":
-      return `o${objectIdHex(v)}`;
-    case "array":
-      return `[${v.map(keyOf).join(",")}]`;
-    case "object":
-      return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${keyOf(x)}`).join(",")}}`;
-    default:
-      return `?${String(v)}`;
-  }
-}
-function sameValue(a, b) {
-  const kind = kindOf2(a);
-  if (kind !== kindOf2(b)) return false;
-  switch (kind) {
-    case "null":
-      return true;
-    case "number":
-    case "string":
-    case "boolean":
-      return a === b && Object.is(a, -0) === Object.is(b, -0);
-    case "date":
-      return a.getTime() === b.getTime();
-    case "objectId":
-      return objectIdHex(a) === objectIdHex(b);
-    case "array": {
-      const x = a;
-      const y = b;
-      return x.length === y.length && x.every((v, i) => sameValue(v, y[i]));
-    }
-    case "object": {
-      const x = a;
-      const y = b;
-      const kx = Object.keys(x);
-      const ky = Object.keys(y);
-      return kx.length === ky.length && kx.every((k, i) => k === ky[i] && sameValue(x[k], y[k]));
-    }
-    default:
-      return false;
-  }
-}
-var KIND_RANK = {
-  null: 1,
-  number: 2,
-  string: 3,
-  object: 4,
-  array: 5,
-  objectId: 7,
-  boolean: 8,
-  date: 9
-};
-var TAG_RANK = {
-  MinKey: 0,
-  Int32: 2,
-  Long: 2,
-  Double: 2,
-  Decimal128: 2,
-  Binary: 6,
-  Timestamp: 10,
-  BSONRegExp: 11,
-  MaxKey: 12
-};
-function rankOf(v) {
-  const kind = kindOf2(v);
-  if (kind !== "other") return KIND_RANK[kind];
-  return isRegExp(v) ? TAG_RANK.BSONRegExp : TAG_RANK[bsonTagOf(v) ?? ""];
-}
-var signOf = (n2) => n2 < 0 ? -1 : n2 > 0 ? 1 : 0;
-function compareValues(a, b) {
-  const ra = rankOf(a);
-  const rb = rankOf(b);
-  if (ra === void 0 || rb === void 0) return void 0;
-  if (ra !== rb) return ra < rb ? -1 : 1;
-  const ka = kindOf2(a);
-  if (ka !== kindOf2(b)) return void 0;
-  switch (ka) {
-    case "null":
-      return 0;
-    case "number":
-      return a < b ? -1 : a > b ? 1 : 0;
-    case "string":
-      return signOf(compareCodePoints(a, b));
-    case "boolean":
-      return a === b ? 0 : a ? 1 : -1;
-    case "date":
-      return signOf(a.getTime() - b.getTime());
-    case "objectId":
-      return signOf(compareCodePoints(objectIdHex(a), objectIdHex(b)));
-    case "array": {
-      const x = a;
-      const y = b;
-      for (let i = 0; i < Math.min(x.length, y.length); i++) {
-        const c = compareValues(x[i], y[i]);
-        if (c === void 0) return void 0;
-        if (c !== 0) return c;
-      }
-      return signOf(x.length - y.length);
-    }
-    case "object": {
-      const x = Object.entries(a);
-      const y = Object.entries(b);
-      for (let i = 0; i < Math.min(x.length, y.length); i++) {
-        const [px, py] = [rankOf(x[i][1]), rankOf(y[i][1])];
-        if (px === void 0 || py === void 0) return void 0;
-        if (px !== py) return px < py ? -1 : 1;
-        const byName = signOf(compareCodePoints(x[i][0], y[i][0]));
-        if (byName !== 0) return byName;
-        const c = compareValues(x[i][1], y[i][1]);
-        if (c !== 0) return c;
-      }
-      return signOf(x.length - y.length);
-    }
-    default:
-      return ra === TAG_RANK.MinKey || ra === TAG_RANK.MaxKey ? 0 : void 0;
-  }
-}
-var isInt32 = (n2) => typeof n2 === "number" && Number.isInteger(n2) && n2 >= -2147483648 && n2 <= 2147483647;
-function nameIfUnspellable(value) {
-  switch (kindOf2(value)) {
-    case "number": {
-      const n2 = value;
-      if (Number.isNaN(n2)) return "NaN";
-      if (!Number.isFinite(n2)) return String(n2);
-      return Object.is(n2, -0) ? "-0" : null;
-    }
-    case "array":
-      for (const v of value) {
-        const name2 = nameIfUnspellable(v);
-        if (name2 !== null) return name2;
-      }
-      return null;
-    case "object":
-      for (const v of Object.values(value)) {
-        const name2 = nameIfUnspellable(v);
-        if (name2 !== null) return name2;
-      }
-      return null;
-    default:
-      return null;
-  }
-}
-function losesKeyOrder(value, unordered) {
-  switch (kindOf2(value)) {
-    case "array":
-      return value.some((v) => losesKeyOrder(v, unordered));
-    case "object": {
-      const keys = Object.keys(value);
-      if (!unordered(value) && keys.length > 1) {
-        if (keys.some((k) => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295)) return true;
-      }
-      return Object.values(value).some((v) => losesKeyOrder(v, unordered));
-    }
-    default:
-      return false;
-  }
-}
-function spellable(value, unordered = () => false) {
-  if (value === void 0 || losesKeyOrder(value, unordered)) return NO;
-  const name2 = nameIfUnspellable(value);
-  if (name2 === null) return withinSize(value) ? ok(value) : NO;
-  return name2 === "-0" ? NO : unspellable(name2);
-}
-function losesPrecision(result, ...operands) {
-  return Number.isFinite(result) && operands.every(Number.isSafeInteger) && !Number.isSafeInteger(result);
-}
-function exactDecimal(n2) {
-  const bits = new DataView(new ArrayBuffer(8));
-  bits.setFloat64(0, Math.abs(n2));
-  const high = bits.getUint32(0);
-  const raw = high >>> 20 & 2047;
-  let mantissa = BigInt(high & 1048575) << 32n | BigInt(bits.getUint32(4));
-  let power = -1074;
-  if (raw !== 0) {
-    mantissa |= 1n << 52n;
-    power = raw - 1075;
-  }
-  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
-  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
-}
-function reduceToPlaces(n2, places, mode) {
-  if (!Number.isFinite(n2) || n2 === 0) return n2;
-  const { digits: digits2, exponent } = exactDecimal(n2);
-  const shift2 = exponent + places;
-  if (shift2 >= 0) return n2;
-  const unit = 10n ** BigInt(-shift2);
-  const whole = digits2 / unit;
-  const rest = digits2 % unit;
-  const half = unit / 2n;
-  let rounded = whole;
-  if (mode === "half-even") {
-    rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
-  }
-  let spelt = rounded.toString();
-  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
-  const body = places > 0 ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}` : places < 0 && rounded !== 0n ? spelt + "0".repeat(-places) : spelt;
-  return Number(`${n2 < 0 ? "-" : ""}${body}`);
-}
-function numberSpelling(n2) {
-  if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
-  return String(n2);
-}
-var NumberText = class {
-};
-var startsLikeNumber = (s) => /^-?[0-9]/.test(s);
-function holdsNumberText(v) {
-  if (v instanceof NumberText) return true;
-  if (Array.isArray(v)) return v.some(holdsNumberText);
-  return isPlain(v) && Object.values(v).some(holdsNumberText);
-}
-var asciiUpper = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
-var asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
-var points = (s) => [...s];
-
 // src/compiler/interpret/operand.ts
 var argsOf = (operand) => Array.isArray(operand) ? operand : [operand];
 function evalAll(walk2, nodes, anyOrder = false) {
@@ -19190,8 +19211,10 @@ var arrayToObject = positional(
     if (pairs === null) return NO;
     const unordered = walk2.isSet(list);
     if (unordered && new Set(pairs.map(([k]) => k)).size !== pairs.length) return NO;
+    const kept = new Map(pairs);
+    if (!unordered && kept.size > 1 && [...kept.keys()].some(isIndexKey)) return ok(new OrderedDocument([...kept]));
     const out = {};
-    for (const [k, v] of pairs) setKey(out, k, v);
+    for (const [k, v] of kept) setKey(out, k, v);
     return ok(unordered ? walk2.markSet(out) : out);
   },
   true

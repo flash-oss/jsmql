@@ -19,7 +19,7 @@ import type { Db, MongoClient } from "mongodb";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from "bson";
 import { interpret } from "../src/compiler/interpret/index.ts";
 import { RULES } from "../src/compiler/interpret/rules.ts";
-import { rankOf, sameValue } from "../src/compiler/interpret/values.ts";
+import { OrderedDocument, rankOf, sameValue } from "../src/compiler/interpret/values.ts";
 import { announceSkip, liveClientNow, liveUp } from "./fixtures/live.ts";
 import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
@@ -1333,6 +1333,60 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
   "$lt of every pair of kinds": pairsOf("$lt"),
   "$lte of every pair of kinds": pairsOf("$lte"),
   "$gt of every pair of kinds": pairsOf("$gt"),
+  // A key that reads as an array index keeps its place in a document. The answer is the pairs in order.
+  "$arrayToObject with keys that read as array indexes": [
+    {
+      $arrayToObject: [
+        [
+          ["1", 1],
+          ["0", 2],
+        ],
+      ],
+    },
+    {
+      $arrayToObject: [
+        [
+          ["b", 1],
+          ["1", 2],
+          ["0", 3],
+        ],
+      ],
+    },
+    {
+      $arrayToObject: [
+        [
+          ["10", "x"],
+          ["9", "y"],
+          ["a", null],
+        ],
+      ],
+    },
+    {
+      $arrayToObject: [
+        [
+          ["1", "a"],
+          ["0", "b"],
+          ["1", "c"],
+        ],
+      ],
+    },
+    {
+      $arrayToObject: [
+        [
+          ["4294967295", 1],
+          ["0", 2],
+        ],
+      ],
+    },
+    {
+      $arrayToObject: [
+        [
+          { k: "1", v: [1] },
+          { k: "0", v: { a: 1 } },
+        ],
+      ],
+    },
+  ],
   "$gte of every pair of kinds": pairsOf("$gte"),
   "$cmp of documents and arrays": NESTED_PAIRS("$cmp"),
   "$eq of documents and arrays": NESTED_PAIRS("$eq"),
@@ -1540,6 +1594,14 @@ async function check(db: Db, mql: unknown): Promise<Outcome | string> {
   }
   if ("error" in server)
     return `the interpreter answers ${show(answer.value)}, and the server fails (${server.error}) for ${show(mql)}`;
+  if (answer.value instanceof OrderedDocument) {
+    // A driver reads a document into a JavaScript object, which loses the order. The server lists the pairs in order.
+    const pairs = await serverValue(db, { $objectToArray: mql });
+    const held = answer.value.pairs.map(([k, v]) => ({ k, v }));
+    return "value" in pairs && sameValue(pairs.value, held)
+      ? "compared"
+      : `the interpreter answers the pairs ${show(held)}, and the server lists ${show("value" in pairs ? pairs.value : pairs)} for ${show(mql)}`;
+  }
   const same = answersSet(mql)
     ? JSON.stringify(inAnyOrder(answer.value)) === JSON.stringify(inAnyOrder(server.value))
     : sameValue(answer.value, server.value);
