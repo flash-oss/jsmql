@@ -42,7 +42,8 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("Date", "f()").kind).toBe("rule");
     expect(pick("Date", "f($.ms)").kind).toBe("rule");
     expect(pick("Date", "f($.y, $.m)").kind).toBe("rule");
-    // a constant that reached the row did not fold: the row has a rule, because a live date converts
+    // a constant that reached the row did not fold: the row has a rule, because a live date
+    // converts, and the rule checks the kind before it refuses the value
     expect(pick("Date", 'f("not a date")').kind).toBe("rule");
     // the leftover is stated
     expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });

@@ -781,7 +781,9 @@ const dateRow = (spelling: string) =>
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A date that the source spells with literal parts never reaches this row, because the
         // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
-        // converts (see `ownValue`). The cell refuses a string that no date parser reads.
+        // converts (see `ownValue`). The slot states its kinds, so a constant of another kind,
+        // for example `null`, gets the refusal of a wrong kind. The cell refuses a string that
+        // no date parser reads.
         constant: {
           args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
           emit: ({ args, value, construct }) =>
@@ -4197,6 +4199,7 @@ export const NAMES = {
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
     // MEASURED: { $unset: 1 } → refused: the body must be a string or an array; { $unset: [] } → refused: the array must name at least one field
+    // MEASURED: { $unset: [null] } → refused: each entry of the array must be a string
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -4209,6 +4212,7 @@ export const NAMES = {
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
+    // MEASURED: { $unwind: null } → refused: the body must be a string or a document
     document: "element",
     evaluates: [],
     bodyPositions: { "": "value" },

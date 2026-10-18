@@ -706,7 +706,7 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
   it("reject a non-array arg / non-string entries", () => {
     expect(() => jsmql('$$.pick("name");')).toThrow("'.pick()' argument 1 takes an array, but got a string.");
     expect(() => jsmql("$$.omit([1, 2]);")).toThrow(
-      "'.omit()' element 1 names a field to WRITE. a number is not a name. Use a plain field name, for example 'total'.",
+      "'.omit()' element 1 takes a field NAME to write: a plain string with no '$' and no dot, but got a number.",
     );
   });
 });

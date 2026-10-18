@@ -152,9 +152,10 @@ function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, pr
 }
 
 /**
- * The one wording of a refusal for a value of the wrong kind. The literal checks and the
- * kind check of `select` (see `kindRefusal` in errors.ts) all call it, so each one reads
- * the same. `slot` names a key or an argument, or is "". `found` is the clause after
+ * The one wording of a refusal for a value of the wrong kind. Every such refusal calls it,
+ * for example the literal checks and the kind check of `select` (see `kindRefusal` in
+ * errors.ts), so each one reads the same. `slot` names a key, an argument, an element or
+ * the key of `[…]`, or is "". `found` is the clause after
  * "but", for example `got a string` or `the array holds a number and a string`. `shown` is
  * the call as the source spells it: `'.max()'`, `'+'`, `'$match'`.
  */
@@ -198,10 +199,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") {
       const other = literal(e);
       if (other === null) return;
-      throw new CodegenError(
-        `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
-        e.pos,
-      );
+      throw new CodegenError(wrongKind(`'${spell(name)}'`, slot, TAKES.fieldName, `got ${NOUN[other.kind]}`), e.pos);
     }
     const bad =
       e.value === ""

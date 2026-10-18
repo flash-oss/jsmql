@@ -142,7 +142,7 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
     expect(pipeline("$$.push(...[{ a: 1 }, { a: 2 }]);")).toEqual([
       { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } },
     ]);
-    expect(() => pipeline("$$.push(5);")).toThrow(/this is a number/);
+    expect(() => pipeline("$$.push(5);")).toThrow(/'\$\$\.push\(\)' argument 1 takes a document, but got a number\./);
     // `$documents` runs with no input document, and a `$unionWith` body has no `let` — measured
     expect(() => pipeline("$$.push({ a: $.a });")).toThrow(/has no 'let'/);
     expect(() => pipeline("$$.push(...$$$.archive.filter(o => o.tag === $.tag));")).toThrow(/has no 'let'/);

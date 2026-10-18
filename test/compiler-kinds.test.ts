@@ -75,10 +75,9 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("x[i] takes a key of every kind but null", () => {
-    expect(() => jsmql.expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
-    expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow(
-      "'x[0]' argument 1 takes a value, but got null.",
-    );
+    expect(() => jsmql.expr("$.a[null]")).toThrow("'[…]' key takes a value, but got null.");
+    expect(() => jsmql.expr("$.a?.[null]")).toThrow("'[…]' key takes a value, but got null.");
+    expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow("'[…]' key takes a value, but got null.");
     expect(jsmql.expr('$.o["k"]')).toEqual({ $getField: { field: "k", input: { $ifNull: ["$o", {}] } } });
   });
 
@@ -87,13 +86,41 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(
       "'.startOf()' startOfWeek takes a string, but got null.",
     );
-    expect(() => jsmql.expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
+    const pickNull =
+      "'.pick()' element 1 takes a field NAME to write: a plain string with no '$' and no dot, but got null.";
+    expect(() => jsmql.expr("$.o.pick([null])")).toThrow(pickNull);
+    expect(() => jsmql("$.o = { b: null }; $.r = $.o.pick([$.o.b]);")).toThrow(pickNull);
+    // A string that the server refuses as a name keeps its own refusal.
+    expect(() => jsmql.expr('$.o.pick(["a.b"])')).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
     expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       "'.startOf()' timezone takes a string, but got null.",
     );
     // A read of a field that no stage wrote keeps its own refusal.
     expect(() => jsmql('$.o = {}; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       /reads a field that '\$\.o' does not have/,
+    );
+  });
+
+  it("a callback slot and a document slot of the stream refuse null as a wrong kind", () => {
+    expect(() => jsmql.expr("$.a.map(null)")).toThrow("'.map()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.a.filter(null)")).toThrow("'.filter()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.a.reduce(null, 0)")).toThrow("'.reduce()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.o.mapValues(null)")).toThrow(
+      "'.mapValues()' argument 1 takes a callback, but got null.",
+    );
+    expect(() => jsmql.expr("$.a.groupBy(null)")).toThrow("'.groupBy()' argument 1 takes a key, but got null.");
+    expect(() => jsmql.expr("$.a.differenceBy($.b, null)")).toThrow(
+      "'.differenceBy()' argument 2 takes a key, but got null.",
+    );
+    expect(() => jsmql("$$.filter(null);")).toThrow("'.filter()' argument 1 takes a predicate, but got null.");
+    // A value of another kind keeps the message that names each spelling the slot takes.
+    expect(() => jsmql.expr("$.a.groupBy(1)")).toThrow(/takes a key here — an arrow/);
+    expect(() => jsmql("$$.push($.a, null);")).toThrow(
+      "'$$.push()' argument 2 takes a document, but got null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+    );
+    expect(() => jsmql("$$.concat(null);")).toThrow(/^'\$\$\.concat\(\)' argument 1 takes a document, but got null\./);
+    expect(() => jsmql("$$$.c.push(null);")).toThrow(
+      /^'\$\$\$\.<coll>\.push\(\)' argument 1 takes a document, but got null\./,
     );
   });
 
@@ -636,7 +663,7 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" },
     });
     expect(() => jsmql.expr("new Date($.s.trim(), 1, 1)")).toThrow(
-      /'Date\(\)' argument 1 takes an integer, but got a string\./,
+      /'new Date\(\)' argument 1 takes an integer, but got a string\./,
     );
   });
 
@@ -651,8 +678,16 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
 
   it("a date converts a string, a number or a date", () => {
     expect(() => jsmql.expr("new Date($.a === 1)")).toThrow(
-      /'Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
+      /'new Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
     );
+    expect(() => jsmql.expr("new Date(null)")).toThrow(
+      "'new Date()' argument 1 takes a string, a number or a date, but got null.",
+    );
+    expect(() => jsmql.expr("Date(null)")).toThrow(
+      "'Date()' argument 1 takes a string, a number or a date, but got null.",
+    );
+    // A string that no date parser reads keeps the refusal that names the two date constants.
+    expect(() => jsmql.expr('new Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 
   it("a numeric type converts a string or a number", () => {

@@ -291,6 +291,10 @@ states `neverNull`, whatever its operand.
 | `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |
 | `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields [DEF-038]. |
 
+A `$stage(…)` body passes as written (HR2), so `documentAfter` can meet a body that it
+cannot read, for example `$unwind(null)`. Such a body gives the `unknown`
+effect, and the server judges the stage.
+
 **Each group of stages changes the Env once, where the group stands.** A chain
 link, a write of a `,` run and a stage call are each a group. The Env takes the
 groups in the order of their stages, and it never reads the same stages again. A
