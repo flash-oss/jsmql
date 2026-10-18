@@ -12,7 +12,7 @@
 import type { Expr, FieldFamily, Position, Truth, Type } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, ObjectId, regexValue } from "../../bson.ts";
+import { bigIntToLong, isPlainObject, ObjectId, regexValue } from "../../bson.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
@@ -44,7 +44,7 @@ import {
 } from "../rows.ts";
 import { consult, everyMethodName, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots, type SlotProof } from "./check.ts";
-import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.ts";
+import { neverNullAlwaysOf, operandShapeOf, productionBuilding, productionSpelling, returnsOf } from "../rows.ts";
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -189,15 +189,6 @@ export function lowerValue(node: Expr, env: Env): unknown {
 }
 
 // ── the truth reading ────────────────────────────────────────────────────────
-
-/** The JavaScript boolean of `node` as a VALUE: `Boolean(x)` and `!!x`. See `truthOf`. */
-export function lowerBoolean(node: Expr, env: Env): Truth {
-  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
-  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
-    return lowerTruth(node, env);
-  }
-  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env), true);
-}
 
 export function lowerTruth(node: Expr, env: Env): Truth {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
@@ -1179,10 +1170,28 @@ function chainOf(node: Expr, op: string): Expr[] {
   return out;
 }
 
+/**
+ * The truth of `x` as a value: true or false. A condition reads a number, and a boolean
+ * that may be missing, as its own truth (`truthOf`), so such a truth takes a `$cond`. A
+ * constant folds. A boolean that is there is its own value, and so is the answer of an
+ * operator whose row states a boolean for every operand (`returns: "bool"` and
+ * `neverNull: "always"`, as `$gt` and `$and` do).
+ */
+function booleanOf(truth: unknown, type: Type): unknown {
+  if (typeof truth === "boolean") return truth;
+  if (typeof truth === "number") return truth !== 0;
+  if (type.kinds !== "any" && !type.absent && [...type.kinds].every((k) => k === "bool")) return truth;
+  const keys = isPlainObject(truth) ? Object.keys(truth) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth;
+  return { $cond: [truth, true, false] };
+}
+
 function unary(node: Extract<Expr, { type: "UnaryExpr" }>, env: Env): unknown {
   // `!!x` is the truth of x, as a value
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a unary '${node.op}'`);

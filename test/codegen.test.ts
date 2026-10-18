@@ -4043,10 +4043,10 @@ describe("type casts", () => {
     expect(jsmql.expr("!!($.x > 0)")).toEqual({ $gt: ["$x", 0] });
   });
   it("!! gives true or false for a number, which a condition reads as its own truth", () => {
-    expect(jsmql.expr("!!$.a.size()")).toEqual({ $ne: [{ $size: { $ifNull: ["$a", []] } }, 0] });
+    expect(jsmql.expr("!!$.a.size()")).toEqual({ $cond: [{ $size: { $ifNull: ["$a", []] } }, true, false] });
     expect(jsmql.pipeline("$.n = $.a.size(); $.b = !!$.n;")).toEqual([
       { $set: { n: { $size: { $ifNull: ["$a", []] } } } },
-      { $set: { b: { $ne: ["$n", 0] } } },
+      { $set: { b: { $cond: ["$n", true, false] } } },
     ]);
     // a constant folds
     expect(jsmql.expr("!!0")).toBe(false);

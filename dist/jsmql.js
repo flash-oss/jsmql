@@ -24510,11 +24510,10 @@ var FALSE = mint(false);
 var constantOf2 = (t) => t === TRUE ? true : t === FALSE ? false : null;
 var boolTruth = (doc) => mint(doc);
 var mongoTruthy = (value) => mint(value);
-function truthOf2(value, type2, asValue2 = false) {
+function truthOf2(value, type2) {
   if (isNothing(type2)) return FALSE;
   const kinds = type2.kinds;
-  const own = kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number");
-  if (own && (!asValue2 || [...kinds].every((k) => k === "bool"))) return mint(value);
+  if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
   const tests = [];
   if (type2.absent) tests.push(isNotNullish(value));
   if (mayBe(type2, "bool")) tests.push({ $ne: [value, false] });
@@ -25675,13 +25674,6 @@ function lowerValue(node, env) {
       return exprBlock(node, env, lowerValue);
   }
 }
-function lowerBoolean(node, env) {
-  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
-  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
-    return lowerTruth(node, env);
-  }
-  return truthOf2(lowerValue(nullPassing(node), env), typeOf(node, env), true);
-}
 function lowerTruth(node, env) {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
     const operands = chainOf2(node, node.op).map((e) => lowerTruth(e, childEnv(env, node, "left")));
@@ -26348,9 +26340,19 @@ function chainOf2(node, op) {
   walk2(node);
   return out;
 }
+function booleanOf(truth2, type2) {
+  if (typeof truth2 === "boolean") return truth2;
+  if (typeof truth2 === "number") return truth2 !== 0;
+  if (type2.kinds !== "any" && !type2.absent && [...type2.kinds].every((k) => k === "bool")) return truth2;
+  const keys = isPlainObject(truth2) ? Object.keys(truth2) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth2;
+  return { $cond: [truth2, true, false] };
+}
 function unary2(node, env) {
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a unary '${node.op}'`);
