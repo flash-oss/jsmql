@@ -1900,9 +1900,57 @@ describe("compiler/emit — array methods", () => {
     expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
       "'.slice()' argument 1 takes an integer, but got null.",
     );
-    // a slot that states no kind takes `null` as a value
+    // a slot where `null` is data takes it
     expect(expr("$.a.has(null)")).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
     expect(expr("$.a.indexOf(null)")).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, null] });
+  });
+
+  it("refuses null in every slot where null is not data (HR7)", () => {
+    // a callback, an iteratee and a sort specification
+    expect(() => expr("$.a.filter(null)")).toThrow("'.filter()' argument 1 takes a value, but got null.");
+    expect(() => expr("$.a.sumBy(null)")).toThrow("'.sumBy()' argument 1 takes a value, but got null.");
+    expect(() => expr("$.a.sortBy(null)")).toThrow("'.sortBy()' argument 1 takes a value, but got null.");
+    // a number, a string and an array
+    expect(() => expr("$.n.round(null)")).toThrow("'.round()' argument 1 takes an integer, but got null.");
+    expect(() => expr("$.a.at(null)")).toThrow("'.at()' argument 1 takes an integer, but got null.");
+    expect(() => expr("$.n.clamp(null, 5)")).toThrow("'.clamp()' argument 1 takes a number or a date, but got null.");
+    expect(() => expr("$.n.hypot(3, null)")).toThrow("'.hypot()' argument 2 takes a number, but got null.");
+    expect(() => expr("$.a.join(null)")).toThrow("'.join()' argument 1 takes a string, but got null.");
+    expect(() => expr("$.a.xor(null)")).toThrow("'.xor()' argument 1 takes an array, but got null.");
+    expect(() => expr("$.o.assign(null)")).toThrow("'.assign()' argument 1 takes a value, but got null.");
+    // a global, a static and a constant call that would fold
+    expect(() => expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
+    expect(() => expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");
+    expect(() => expr("Boolean(null)")).toThrow("'Boolean()' argument 1 takes a value, but got null.");
+    expect(() => expr("Date.UTC(null)")).toThrow("'Date.UTC()' argument 1 takes a value, but got null.");
+    expect(() => expr("[1, 2].at(null)")).toThrow("'.at()' argument 1 takes an integer, but got null.");
+    expect(() => jsmql("assert($.a > 1, null);")).toThrow("'assert()' argument 2 takes a string, but got null.");
+    // an option key, also one that the proof shows is null
+    expect(() => expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(
+      "'.startOf()' startOfWeek takes a string, but got null.",
+    );
+    expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
+      "'.startOf()' timezone takes a string, but got null.",
+    );
+    // a stream link
+    expect(() => jsmql("$$.groupBy(null);")).toThrow("'.groupBy()' argument 1 takes a value, but got null.");
+  });
+
+  it("keeps null where it is data", () => {
+    expect(expr("$.a.lastIndexOf(null)")).toBeDefined();
+    expect(expr("$.a.concat(null)")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, [null]] });
+    expect(expr("$.a.without(null)")).toEqual({
+      $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [null]] }] } },
+    });
+    expect(expr("$.a.reduce((a, b) => a, null)")).toEqual({
+      $reduce: { input: { $ifNull: ["$a", []] }, initialValue: null, in: "$$value" },
+    });
+    expect(expr("Array.isArray(null)")).toEqual({ $isArray: [null] });
+    expect(expr("Number.isInteger(null)")).toBe(false);
+    expect(jsmql("$.a.push(null);")).toEqual([{ $set: { a: { $concatArrays: [{ $ifNull: ["$a", []] }, [null]] } } }]);
+    expect(jsmql("$.a.fill(null);")).toEqual([
+      { $set: { a: { $map: { input: { $ifNull: ["$a", []] }, as: "jsmqlUnused", in: null } } } },
+    ]);
   });
 
   it("refuses a value of the wrong kind in each slot whose other rule implies a kind (HR7)", () => {

@@ -399,13 +399,14 @@ $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind 
 operand through `kindOf` in [prove.ts](../../src/compiler/emit/prove.ts). `kindOf`
 answers one kind, `"null"` for a proof with no kind (`isNothing`), or `"unknown"`.
 A slot that states a kind refuses an operand of another proven kind (HR7). A value
-that the proof shows is absent is `null`, and `null` is not the kind of any slot.
-So the check refuses it, as it refuses a written `null`. An unproven value passes,
-and the server judges it.
+that the proof shows is absent is `null`. Every slot refuses `null`, except a slot
+where the row states that `null` is data (`takesNull`). So the check refuses a
+proven `null` as it refuses a written `null`. An unproven value passes, and the
+server judges it.
 
 ```js
-let x = null; $.r = $.a.slice(x);          // ✗ x is null, and the slot takes an integer
-$.o = {}; $.r = $.a.slice($.o?.b);         // ✗ no stage wrote o.b, so the value is absent
+let x = null; $.r = $.a.slice(x);                  // ✗ x is null, and the slot takes an integer
+$.o = { b: null }; $.r = $.a.slice($.o?.b);        // ✗ the stage wrote o.b as null
 $.r = $.a.slice($.n);                      // unknown: the server decides
 // → [{ $set: { r: { $let: { vars: { jsmqlArr: { $ifNull: ["$a", []] } }, in: { $slice: ["$$jsmqlArr", "$n", { $max: [1, { $size: "$$jsmqlArr" }] }] } } } } }]
 ```

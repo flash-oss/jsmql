@@ -27,7 +27,7 @@ import {
   foldNamespaceConstant,
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
-import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
+import { acceptsArgumentCount, isCallable, namespaceNames, takesNullAt } from "../rows.ts";
 import { isMqlShaped } from "./inject.ts";
 import { isDate, isRegExp } from "../../bson.ts";
 
@@ -585,6 +585,8 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
     }
   }
   if (!acceptsArgumentCount(name, args.length, family)) return NOT_CONSTANT;
+  // A `null` where the row refuses one is the slot check's to refuse, so it does not fold.
+  if (args.some((a, i) => a.value === null && !takesNullAt(name, i, family))) return NOT_CONSTANT;
 
   let result: Evaluation;
   try {
@@ -623,6 +625,10 @@ function applyHere(lambda: Any, argNodes: readonly Expr[], env: Constants, depth
  * gates a method call gets: no spread, every rule inside a try/catch, and a
  * result that must be spellable and of a sane size.
  */
+/** Does a call pass a `null` where its row refuses one? Then the slot check refuses it, and no fold runs. */
+const refusesNull = (name: string, args: readonly Arg[]): boolean =>
+  args.some((a, i) => a.value === null && !takesNullAt(name, i));
+
 function applyCall(
   argNodes: readonly Expr[],
   env: Constants,
@@ -791,7 +797,9 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       // The check gates this by the row's count, like a method call: `String("a", "b")`
       // must reach the error it deserves, rather than fold to "a".
       if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
-      return applyCall(node.args as readonly Expr[], env, depth, (args) => foldNamedCall(callee.name as string, args));
+      return applyCall(node.args as readonly Expr[], env, depth, (args) =>
+        refusesNull(callee.name as string, args) ? NOT_CONSTANT : foldNamedCall(callee.name as string, args),
+      );
     }
 
     case "NewExpression": {
@@ -800,7 +808,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       if (env.has(callee.name as string)) return NOT_CONSTANT;
       if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
       return applyCall(node.args as readonly Expr[], env, depth, (args) =>
-        foldConstructor(callee.name as string, args),
+        refusesNull(callee.name as string, args) ? NOT_CONSTANT : foldConstructor(callee.name as string, args),
       );
     }
 

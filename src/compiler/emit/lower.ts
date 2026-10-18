@@ -860,7 +860,6 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. The compiler refuses a rule whose slot cannot take it.
   const argEnv = childEnv(env, node, "args");
-  const kinds = exprArgs.map((a) => kindOf(a, argEnv));
   const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
@@ -871,7 +870,15 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(name, sel.rule.args, exprArgs, kinds, true, recvNode, (e) => lowerValue(e, argEnv));
+    checkSlots(
+      receiver.kind === "namespace" ? `${receiver.name}.${name}()` : name,
+      sel.rule.args,
+      exprArgs,
+      (e) => kindOf(e, argEnv),
+      true,
+      recvNode,
+      (e) => lowerValue(e, argEnv),
+    );
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
@@ -969,8 +976,18 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length);
-  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
-  throw E.refusalFor(sel, name, "", position, node.pos, []);
+  if (sel.kind !== "rule") throw E.refusalFor(sel, name, "", position, node.pos, []);
+  const argEnv = childEnv(env, node, "args");
+  checkSlots(
+    `${name}()`,
+    sel.rule.args,
+    exprArgs,
+    (e) => kindOf(e, argEnv),
+    true,
+    undefined,
+    (e) => lowerValue(e, argEnv),
+  );
+  return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
 }
 
 /** `((x) => …)(a)` and `f(a)`: each parameter bound once by `$let`, the body lowered under them. */
@@ -1140,7 +1157,7 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     spelled,
     sel.rule.args,
     operands,
-    operands.map((e) => kindOf(e, argEnv)),
+    (e) => kindOf(e, argEnv),
     true,
     undefined,
     (e) => lowerValue(e, argEnv),
@@ -1161,7 +1178,7 @@ function checkRoad(key: string, spelled: string, operands: readonly Expr[], env:
     spelled,
     verdict.args,
     operands,
-    operands.map((e) => kindOf(e, env)),
+    (e) => kindOf(e, env),
     true,
     undefined,
     (e) => lowerValue(e, env),

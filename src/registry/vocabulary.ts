@@ -655,6 +655,14 @@ export type Arity = {
    *   $.a * $.b * null   → refused: argument 3 takes a number
    */
   rest?: ArgType | readonly ArgType[];
+  /**
+   * The slots where `null` is data, not a mistake. Every other slot refuses a written
+   * `null`, an injected `null` and a value the proof shows is null (HR7). `"every"` names
+   * every slot; a slot that states a `slotType` still refuses `null` through that kind.
+   *   $.a.has(null)     → accepted: `.has` looks for the value `null`
+   *   $.n.round(null)   → refused: the precision is a number
+   */
+  takesNull?: readonly number[] | "every";
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
   /**

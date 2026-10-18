@@ -4634,7 +4634,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", slotType: { 0: ["string", "regex"] }, exact: 1 },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({
           $ifNull: [
@@ -4731,6 +4731,7 @@ export const NAMES = {
     expr: {
       args: {
         sig: "searchValue",
+        takesNull: [0],
         exact: 1,
         noCallback: {
           0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
@@ -4831,7 +4832,7 @@ export const NAMES = {
     // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ recv, args, pathOf, constant }) => {
         if (recv === null) return null;
         const path = pathOf(recv);
@@ -4862,6 +4863,7 @@ export const NAMES = {
     expr: {
       args: {
         sig: "value",
+        takesNull: [0],
         exact: 1,
         noCallback: {
           0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
@@ -4888,7 +4890,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", slotType: { 0: "int" }, exact: 1 },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
@@ -4970,7 +4972,7 @@ export const NAMES = {
         // constant operands during the optimisation and raises there on a wrong type. So
         // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
-          args: { sig: "...items", atLeast: 1, spread: true },
+          args: { sig: "...items", takesNull: "every", atLeast: 1, spread: true },
           emit: ({ recv, args, value, type, bind }) => {
             // A call with a spread reaches the cell as ONE list, packed by the desugar pass.
             // Its elements are the call's own arguments: an expression, or a spread.
@@ -5235,6 +5237,7 @@ export const NAMES = {
     expr: {
       args: {
         sig: "start[, deleteCount, ...items]",
+        takesNull: "every",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
@@ -5301,7 +5304,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index, value", exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      args: { sig: "index, value", takesNull: [1], exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const idx = bind("idx");
@@ -5625,7 +5628,7 @@ export const NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
+    expr: { args: { sig: "searchValue", takesNull: [0], exact: 1 }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'",
@@ -5726,7 +5729,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", takesNull: [1], exact: 2 },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: r.input, initialValue: value(args[1]), in: r.in } };
@@ -5754,7 +5757,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", takesNull: [1], exact: 2 },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: { $reverseArray: r.input }, initialValue: value(args[1]), in: r.in } };
@@ -5783,7 +5786,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", allowed: [0, 1] },
+      args: { sig: "separator", slotType: { 0: "string" }, allowed: [0, 1] },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ",")),
     },
@@ -6631,7 +6634,7 @@ export const NAMES = {
             required: [],
             optional: ["timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -6668,7 +6671,7 @@ export const NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -6968,7 +6971,7 @@ export const NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -7011,7 +7014,7 @@ export const NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -7056,7 +7059,7 @@ export const NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -7180,7 +7183,7 @@ export const NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"],
           },
@@ -7556,7 +7559,7 @@ export const NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", takesNull: "every", atLeast: 1 },
       emit: ({ recv, args, value, bind }) => {
         const values = args.map((a) => value(a));
         const item = bind("item");
@@ -7564,7 +7567,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", takesNull: "every", atLeast: 1 },
       // `.difference([...values])`: the same predicate over the values as a list.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -7590,7 +7593,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => {
         const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
@@ -7624,7 +7627,7 @@ export const NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -7638,7 +7641,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       // The element's key against the keys of `other`.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -7676,7 +7679,7 @@ export const NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -7690,7 +7693,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       // The element's key against the keys of `other`, one document per distinct key kept.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -7719,7 +7722,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) =>
         uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind),
     },
@@ -7743,7 +7746,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const other = listArgument(value, type, args[0]);
@@ -8093,7 +8096,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[n=0]", allowed: [0, 1] },
+      args: { sig: "[n=0]", slotType: { 0: "int" }, allowed: [0, 1] },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
@@ -8417,7 +8420,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "values", exact: 1 },
+      args: { sig: "values", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, bind, present }) => {
         const values = value(args[0]);
         const i = bind("i");
@@ -8452,7 +8455,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays", atLeast: 1 },
+      args: { sig: "...arrays", rest: "array", atLeast: 1 },
       emit: ({ recv, args, value }) => ({
         $zip: { inputs: [recv, ...args.map((a) => value(a))], useLongestLength: true },
       }),
@@ -9368,7 +9371,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
-      args: { sig: "lower, upper", exact: 2 },
+      args: { sig: "lower, upper", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, exact: 2 },
       emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] }),
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -9390,7 +9393,7 @@ export const NAMES = {
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, allowed: [1, 2] },
       emit: ({ recv, args, pathOf, constant }) => {
         const path = recv === null ? null : pathOf(recv);
         if (path === null) return null;
@@ -9403,7 +9406,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, allowed: [1, 2] },
       emit: ({ recv, args, value }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
@@ -9469,7 +9472,7 @@ export const NAMES = {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
           emit: ({ recv, args, value }) =>
             args[0] === undefined ? { $round: recv } : { $round: [recv, value(args[0])] },
@@ -9501,7 +9504,7 @@ export const NAMES = {
       // MEASURED: $.n.ceil(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) =>
             args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0])),
         },
@@ -9532,7 +9535,7 @@ export const NAMES = {
       // MEASURED: $.n.floor(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) =>
             args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0])),
         },
@@ -9565,11 +9568,11 @@ export const NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] }),
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       // The elements in `other`, one document per distinct element — lodash keeps each value once.
       emit: ({ args, predicate, bind, element }) => {
         const x = bind("x").as;
@@ -9599,7 +9602,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] }),
     },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
@@ -9628,14 +9631,14 @@ export const NAMES = {
         // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
-          args: { sig: "other", exact: 1 },
+          args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
           emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] }),
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value — see its 'stream' cell."),
       },
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       // The elements not in `other`: the predicate `x => !other.includes(x)`, through the filter road.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -9661,7 +9664,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present, bind, type }) =>
         nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] })),
     },
@@ -9684,7 +9687,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present, bind, type }) =>
         nullOr(recv, present, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] })),
     },
@@ -9728,7 +9731,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", slotType: { 0: "string" }, exact: 1 },
       emit: ({ recv, args, value }) => ({
         $regexFind: regexBody(value(args[0]), recv as Expr, () => value(recv as Expr)),
       }),
@@ -10330,7 +10333,7 @@ export const NAMES = {
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
-      args: { sig: "condition[, message]", allowed: [1, 2] },
+      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 1: "string" } },
       // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
       emit: ({ args, truth, value }) => {
         const prefix = "jsmql assertion failed";
@@ -10418,7 +10421,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ args, value }) => ({
         $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }],
       }),
@@ -10442,7 +10445,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ args, value }) => ({
         $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }],
       }),
@@ -10482,7 +10485,10 @@ export const NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
+    expr: {
+      args: { sig: "value", takesNull: [0], exact: 1 },
+      emit: ({ args, value }) => ({ $isArray: [value(args[0])] }),
+    },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(…);'",
@@ -10503,7 +10509,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
@@ -10534,7 +10540,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present, bind, type }) =>
         nullOr(recv, present, bind, (r) => ({
           $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0],
@@ -10742,7 +10748,7 @@ export const NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[base]", allowed: [0, 1] },
+          args: { sig: "[base]", slotType: { 0: "number" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) => {
             const base = args[0];
             if (base === undefined) return { $ln: recv };
@@ -10830,7 +10836,7 @@ export const NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) =>
             args[0] === undefined ? { $trunc: recv } : { $trunc: [recv, value(args[0])] },
         },
@@ -11245,7 +11251,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
+        number: {
+          args: { sig: "x", slotType: { 0: "number" }, exact: 1 },
+          emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }),
+        },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.atan2(y, x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<y>.atan2(<x>)': '$.y.atan2($.x)'.",
@@ -11272,7 +11281,7 @@ export const NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "...values", atLeast: 1 },
+          args: { sig: "...values", rest: "number", atLeast: 1 },
           emit: ({ recv, args, value }) => ({
             $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) },
           }),
@@ -11302,7 +11311,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        number: {
+          args: { sig: "[upper]", slotType: { 0: "number" }, allowed: [0, 1] },
+          emit: (input) => randomOf(input),
+        },
         Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
       },
     },

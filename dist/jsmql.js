@@ -3723,7 +3723,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", slotType: { 0: ["string", "regex"] }, exact: 1 },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $ifNull: [
           { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
@@ -3813,6 +3813,7 @@ var NAMES = {
     expr: {
       args: {
         sig: "searchValue",
+        takesNull: [0],
         exact: 1,
         noCallback: {
           0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
@@ -3909,7 +3910,7 @@ var NAMES = {
     // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         if (recv === null) return null;
         const path = pathOf3(recv);
@@ -3933,6 +3934,7 @@ var NAMES = {
     expr: {
       args: {
         sig: "value",
+        takesNull: [0],
         exact: 1,
         noCallback: {
           0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
@@ -3957,7 +3959,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", slotType: { 0: "int" }, exact: 1 },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
@@ -4036,7 +4038,7 @@ var NAMES = {
         // constant operands during the optimisation and raises there on a wrong type. So
         // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
-          args: { sig: "...items", atLeast: 1, spread: true },
+          args: { sig: "...items", takesNull: "every", atLeast: 1, spread: true },
           emit: ({ recv, args, value, type, bind }) => {
             const first = args[0];
             const list = args.length === 1 && first.type === "ArrayLiteral" && first.packed === true ? first.elements : args;
@@ -4278,6 +4280,7 @@ var NAMES = {
     expr: {
       args: {
         sig: "start[, deleteCount, ...items]",
+        takesNull: "every",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
@@ -4341,7 +4344,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index, value", exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      args: { sig: "index, value", takesNull: [1], exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const idx = bind("idx");
@@ -4653,7 +4656,7 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
+    expr: { args: { sig: "searchValue", takesNull: [0], exact: 1 }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'"
@@ -4742,7 +4745,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", takesNull: [1], exact: 2 },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: r.input, initialValue: value(args[1]), in: r.in } };
@@ -4769,7 +4772,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", takesNull: [1], exact: 2 },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: { $reverseArray: r.input }, initialValue: value(args[1]), in: r.in } };
@@ -4797,7 +4800,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", allowed: [0, 1] },
+      args: { sig: "separator", slotType: { 0: "string" }, allowed: [0, 1] },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
@@ -5606,7 +5609,7 @@ var NAMES = {
             required: [],
             optional: ["timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -5642,7 +5645,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -5934,7 +5937,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -5976,7 +5979,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6020,7 +6023,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6141,7 +6144,7 @@ var NAMES = {
             required: [],
             optional: ["binSize", "timezone", "startOfWeek"],
             closed: true,
-            keyTypes: { binSize: "number", timezone: "string" },
+            keyTypes: { binSize: "number", timezone: "string", startOfWeek: "string" },
             enums: { startOfWeek: WEEKDAY },
             caseInsensitiveKeys: ["startOfWeek"]
           }
@@ -6503,7 +6506,7 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", takesNull: "every", atLeast: 1 },
       emit: ({ recv, args, value, bind }) => {
         const values = args.map((a) => value(a));
         const item = bind("item");
@@ -6511,7 +6514,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", takesNull: "every", atLeast: 1 },
       // `.difference([...values])`: the same predicate over the values as a list.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -6536,7 +6539,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => {
         const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
@@ -6569,7 +6572,7 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -6583,7 +6586,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       // The element's key against the keys of `other`.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6620,7 +6623,7 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -6634,7 +6637,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       // The element's key against the keys of `other`, one document per distinct key kept.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6662,7 +6665,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
@@ -6684,7 +6687,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: { sig: "other, iteratee", slotType: { 0: "array" }, exact: 2 },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const other = listArgument(value, type, args[0]);
@@ -7021,7 +7024,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[n=0]", allowed: [0, 1] },
+      args: { sig: "[n=0]", slotType: { 0: "int" }, allowed: [0, 1] },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
@@ -7337,7 +7340,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "values", exact: 1 },
+      args: { sig: "values", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const values = value(args[0]);
         const i = bind("i");
@@ -7371,7 +7374,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays", atLeast: 1 },
+      args: { sig: "...arrays", rest: "array", atLeast: 1 },
       emit: ({ recv, args, value }) => ({
         $zip: { inputs: [recv, ...args.map((a) => value(a))], useLongestLength: true }
       })
@@ -8245,7 +8248,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
-      args: { sig: "lower, upper", exact: 2 },
+      args: { sig: "lower, upper", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, exact: 2 },
       emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] })
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -8266,7 +8269,7 @@ var NAMES = {
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, allowed: [1, 2] },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
@@ -8279,7 +8282,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", slotType: { 0: ["number", "date"], 1: ["number", "date"] }, allowed: [1, 2] },
       emit: ({ recv, args, value }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
@@ -8342,7 +8345,7 @@ var NAMES = {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $round: recv } : { $round: [recv, value(args[0])] }
         },
@@ -8372,7 +8375,7 @@ var NAMES = {
       // MEASURED: $.n.ceil(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) => args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8401,7 +8404,7 @@ var NAMES = {
       // MEASURED: $.n.floor(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) => args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8432,11 +8435,11 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] })
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       // The elements in `other`, one document per distinct element — lodash keeps each value once.
       emit: ({ args, predicate, bind, element: element2 }) => {
         const x = bind("x").as;
@@ -8465,7 +8468,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
@@ -8493,14 +8496,14 @@ var NAMES = {
         // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
-          args: { sig: "other", exact: 1 },
+          args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
           emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       }
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       // The elements not in `other`: the predicate `x => !other.includes(x)`, through the filter road.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -8525,7 +8528,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
@@ -8546,7 +8549,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
@@ -8587,7 +8590,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", slotType: { 0: "string" }, exact: 1 },
       emit: ({ recv, args, value }) => ({
         $regexFind: regexBody(value(args[0]), recv, () => value(recv))
       })
@@ -9134,7 +9137,7 @@ var NAMES = {
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
-      args: { sig: "condition[, message]", allowed: [1, 2] },
+      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 1: "string" } },
       // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
       emit: ({ args, truth, value }) => {
         const prefix = "jsmql assertion failed";
@@ -9214,7 +9217,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ args, value }) => ({
         $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }]
       })
@@ -9237,7 +9240,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", takesNull: [0], exact: 1 },
       emit: ({ args, value }) => ({
         $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }]
       })
@@ -9275,7 +9278,10 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
+    expr: {
+      args: { sig: "value", takesNull: [0], exact: 1 },
+      emit: ({ args, value }) => ({ $isArray: [value(args[0])] })
+    },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(\u2026);'"
@@ -9295,7 +9301,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
@@ -9325,7 +9331,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", slotType: { 0: "array" }, exact: 1 },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({
         $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0]
       }))
@@ -9523,7 +9529,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[base]", allowed: [0, 1] },
+          args: { sig: "[base]", slotType: { 0: "number" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) => {
             const base = args[0];
             if (base === void 0) return { $ln: recv };
@@ -9605,7 +9611,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", slotType: { 0: "int" }, allowed: [0, 1] },
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $trunc: recv } : { $trunc: [recv, value(args[0])] }
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -10003,7 +10009,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
+        number: {
+          args: { sig: "x", slotType: { 0: "number" }, exact: 1 },
+          emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] })
+        },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.atan2(y, x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<y>.atan2(<x>)': '$.y.atan2($.x)'."
@@ -10029,7 +10038,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "...values", atLeast: 1 },
+          args: { sig: "...values", rest: "number", atLeast: 1 },
           emit: ({ recv, args, value }) => ({
             $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) }
           })
@@ -10058,7 +10067,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        number: {
+          args: { sig: "[upper]", slotType: { 0: "number" }, allowed: [0, 1] },
+          emit: (input) => randomOf(input)
+        },
         Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) }
       }
     },
@@ -10581,7 +10593,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "test, then, else", exact: 3 },
+      args: { sig: "test, then, else", exact: 3, takesNull: "every" },
       emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2]))
     },
     stream: unsupported("'?:' produces a value, not a stage."),
@@ -10602,7 +10614,10 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $ifNull: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, takesNull: "every" },
+      emit: ({ args, value }) => ({ $ifNull: args.map(value) })
+    },
     stream: unsupported("'??' produces a value, not a stage."),
     statement: unsupported("'??' is not a statement \u2014 see its 'where'.")
   }),
@@ -10712,9 +10727,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, false) },
+    filter: {
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
+      emit: (input) => strictEqualityQuery(input, false)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
       emit: ({ args, value }) => ({ $eq: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'===' produces a value, not a stage."),
@@ -10731,9 +10749,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, true) },
+    filter: {
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
+      emit: (input) => strictEqualityQuery(input, true)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
       emit: ({ args, value }) => ({ $ne: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'!==' produces a value, not a stage."),
@@ -10750,7 +10771,10 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, false) },
+    filter: {
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
+      emit: (input) => looseEqualityQuery(input, false)
+    },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'==' produces a value, not a stage."),
     statement: unsupported("'==' is not a statement \u2014 see its 'where'.")
@@ -10766,7 +10790,10 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, true) },
+    filter: {
+      args: { sig: "left, right", exact: 2, takesNull: "every" },
+      emit: (input) => looseEqualityQuery(input, true)
+    },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'!=' produces a value, not a stage."),
     statement: unsupported("'!=' is not a statement \u2014 see its 'where'.")
@@ -10871,7 +10898,7 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
+    filter: { args: { sig: "value, list", exact: 2, takesNull: "every" }, emit: (input) => membershipQuery(input) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x in [ \u2026 ]' produces a value, not a stage."),
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
@@ -11016,7 +11043,10 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, truth }) => ({ $not: truth(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, takesNull: "every" },
+      emit: ({ args, truth }) => ({ $not: truth(args[0]) })
+    },
     stream: unsupported("'!' produces a value, not a stage."),
     statement: unsupported("'!' is not a statement \u2014 see its 'where'.")
   }),
@@ -11074,7 +11104,10 @@ var PRODUCTIONS = {
     returns: "string",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $type: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, takesNull: "every" },
+      emit: ({ args, value }) => ({ $type: value(args[0]) })
+    },
     stream: unsupported("'typeof' produces a value, not a stage."),
     statement: unsupported("'typeof' is not a statement \u2014 see its 'where'.")
   }),
@@ -11917,6 +11950,12 @@ function acceptsArgumentCount(name2, count, family) {
   if (rule.allowed !== void 0) return rule.allowed.includes(count);
   if (rule.atLeast !== void 0) return count >= rule.atLeast;
   return true;
+}
+function takesNullAt(name2, slot, family) {
+  const rule = argCountOf(name2, family);
+  if (rule === void 0) return true;
+  if (rule.slotType?.[slot] !== void 0 || rule.rest !== void 0) return false;
+  return rule.takesNull === "every" || (rule.takesNull ?? []).includes(slot);
 }
 function positionsOf(name2) {
   return row(name2)?.where;
@@ -19037,6 +19076,7 @@ function methodCall(node, env, depth) {
     }
   }
   if (!acceptsArgumentCount(name2, args.length, family)) return NOT_CONSTANT2;
+  if (args.some((a, i) => a.value === null && !takesNullAt(name2, i, family))) return NOT_CONSTANT2;
   let result;
   try {
     result = onNamespace ? foldNamespaceCall(receiverNode.name, name2, args) : foldInstanceCall(receiverValue, name2, args);
@@ -19061,6 +19101,7 @@ function applyHere(lambda, argNodes, env, depth) {
   if (!withinSize(result.value)) return NOT_CONSTANT2;
   return spellable(result.value);
 }
+var refusesNull = (name2, args) => args.some((a, i) => a.value === null && !takesNullAt(name2, i));
 function applyCall(argNodes, env, depth, run) {
   if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
   const args = [];
@@ -19191,7 +19232,12 @@ function at(node, env, depth) {
       }
       if (env.has(callee.name)) return NOT_CONSTANT2;
       if (!acceptsArgumentCount(callee.name, node.args.length)) return NOT_CONSTANT2;
-      return applyCall(node.args, env, depth, (args) => foldNamedCall(callee.name, args));
+      return applyCall(
+        node.args,
+        env,
+        depth,
+        (args) => refusesNull(callee.name, args) ? NOT_CONSTANT2 : foldNamedCall(callee.name, args)
+      );
     }
     case "NewExpression": {
       const callee = node.callee;
@@ -19202,7 +19248,7 @@ function at(node, env, depth) {
         node.args,
         env,
         depth,
-        (args) => foldConstructor(callee.name, args)
+        (args) => refusesNull(callee.name, args) ? NOT_CONSTANT2 : foldConstructor(callee.name, args)
       );
     }
     default:
@@ -22232,6 +22278,8 @@ var takesOf = (t) => {
 };
 var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
 var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}' ${slot} takes ${takes}, but got ${got}.${hint2}`;
+var isNull = (e, kindOf4) => e.type === "NullLiteral" || kindOf4(e) === "null";
+var takesNullAt2 = (args, i) => args.takesNull === "every" || (args.takesNull ?? []).includes(i);
 var argument = (i) => `argument ${Number(i) + 1}`;
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
@@ -22299,7 +22347,7 @@ function checkBodyKeys(body) {
     if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
   }
 }
-function checkBody(name2, rule, args, keys, pos) {
+function checkBody(name2, rule, args, keys, pos, kindOf4, readFirst) {
   if (args.length === 1 && args[0].type === "Injected") return;
   let present2;
   let valueOf2;
@@ -22350,6 +22398,13 @@ function checkBody(name2, rule, args, keys, pos) {
     const v = valueOf2(k);
     if (v !== void 0) checkType(name2, k, v, t);
   }
+  for (const k of present2) {
+    const v = valueOf2(k);
+    if (v === void 0 || !isNull(v, kindOf4)) continue;
+    if (v.type !== "NullLiteral") readFirst?.(v);
+    const t = rule.keyTypes?.[k];
+    throw new CodegenError(wrongKind(name2, k, t === void 0 ? "a value" : TAKES[t], "null"), v.pos);
+  }
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf2(k);
     if (v !== void 0 && v.type !== "Injected" && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
@@ -22361,7 +22416,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
 }
 var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
-function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver, readFirst) {
+function checkSlots(name2, args, operands, kindOf4, hasObjectForm = true, receiver, readFirst) {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
     const n2 = e === void 0 ? null : numberOf(e);
@@ -22398,7 +22453,7 @@ function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos, kindOf4, readFirst);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -22431,7 +22486,11 @@ function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver
     if (e === void 0 || e.type !== "ArrayLiteral") continue;
     for (const el of e.elements) {
       if (el.type === "SpreadElement") continue;
-      checkType(name2, `element ${e.elements.indexOf(el) + 1}`, el, t);
+      const slot = `element ${e.elements.indexOf(el) + 1}`;
+      checkType(name2, slot, el, t);
+      if (kindOf4(el) !== "null") continue;
+      readFirst?.(el);
+      throw new CodegenError(wrongKind(name2, slot, TAKES[t], "null"), el.pos);
     }
   }
   for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
@@ -22466,11 +22525,17 @@ function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver
   }
   for (const [i, t] of slotKinds(args, operands.length)) {
     const e = operands[i];
-    const k = kinds[i];
-    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
+    if (e === void 0) continue;
+    const k = kindOf4(e);
+    if (k === "unknown" || kindFits(k, t)) continue;
     if (k === "null") readFirst?.(e);
     throw new CodegenError(wrongKind(name2, argument(i), takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
   }
+  operands.forEach((e, i) => {
+    if (takesNullAt2(args, i) || !isNull(e, kindOf4)) return;
+    if (e.type !== "NullLiteral") readFirst?.(e);
+    throw new CodegenError(wrongKind(name2, argument(i), "a value", "null"), e.pos);
+  });
 }
 var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
 var MOMENT_FORMAT_TOKENS = [
@@ -23806,7 +23871,7 @@ function leaf(node, env) {
       node.type === "BinaryExpr" ? node.op : name2,
       sel.rule.args,
       args,
-      args.map((a) => kindOf3(a, argEnv)),
+      (a) => kindOf3(a, argEnv),
       true,
       void 0,
       (a) => lowerValue(a, argEnv)
@@ -24966,7 +25031,6 @@ function dispatchOn(node, name2, recvNode, args, env) {
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
-  const kinds = exprArgs.map((a) => kindOf3(a, argEnv));
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -24976,7 +25040,15 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs, kinds, true, recvNode, (e) => lowerValue(e, argEnv));
+    checkSlots(
+      receiver.kind === "namespace" ? `${receiver.name}.${name2}()` : name2,
+      sel.rule.args,
+      exprArgs,
+      (e) => kindOf3(e, argEnv),
+      true,
+      recvNode,
+      (e) => lowerValue(e, argEnv)
+    );
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
@@ -25046,8 +25118,18 @@ function dispatchBare(node, name2, args, env) {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr2);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length);
-  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  throw refusalFor(sel, name2, "", position, node.pos, []);
+  if (sel.kind !== "rule") throw refusalFor(sel, name2, "", position, node.pos, []);
+  const argEnv = childEnv(env, node, "args");
+  checkSlots(
+    `${name2}()`,
+    sel.rule.args,
+    exprArgs,
+    (e) => kindOf3(e, argEnv),
+    true,
+    void 0,
+    (e) => lowerValue(e, argEnv)
+  );
+  return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
 }
 function applyLambda2(lambda, args, env, pos, label, fnName) {
   if (lambda.body === void 0) throw lambdaAsValue(lambda.pos);
@@ -25159,7 +25241,7 @@ function production2(node, key, operands, env) {
     spelled3,
     sel.rule.args,
     operands,
-    operands.map((e) => kindOf3(e, argEnv)),
+    (e) => kindOf3(e, argEnv),
     true,
     void 0,
     (e) => lowerValue(e, argEnv)
@@ -25175,7 +25257,7 @@ function checkRoad(key, spelled3, operands, env) {
     spelled3,
     verdict.args,
     operands,
-    operands.map((e) => kindOf3(e, env)),
+    (e) => kindOf3(e, env),
     true,
     void 0,
     (e) => lowerValue(e, env)
@@ -25857,7 +25939,7 @@ function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
   if (list.elements.length === 0) return [dropAll];
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
-  checkSlots(written2, sel.rule.args, [list], [kindOf3(list, env)], false);
+  checkSlots(written2, sel.rule.args, [list], (e) => kindOf3(e, env), false);
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
   const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
   noStageInDocuments(body.chain, written2, list.pos);
@@ -26209,9 +26291,9 @@ function refuseUnbuiltSugar(value) {
     if (!direct) throw streamAsValue(value.pos);
   }
 }
-var kindsOf3 = (args, env, node) => {
+var proofOf = (env, node) => {
   const argEnv = childEnv(env, node, "args");
-  return args.map((a) => kindOf3(a, argEnv));
+  return (e) => kindOf3(e, argEnv);
 };
 function elementWiseOnDocument(value, env) {
   const links = [];
@@ -26288,7 +26370,7 @@ function refStatement(node, ref, env, first) {
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
   } else {
     if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
-    checkSlots(node.name, sel.rule.args, args, kindsOf3(args, env, node), false);
+    checkSlots(node.name, sel.rule.args, args, proofOf(env, node), false);
     stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
   const out = [];
@@ -26324,7 +26406,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
   } else {
     if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    checkSlots(link.name, sel.rule.args, args, kindsOf3(args, env, link), false);
+    checkSlots(link.name, sel.rule.args, args, proofOf(env, link), false);
     stages = sel.rule.emit(
       stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
     );
@@ -26436,7 +26518,8 @@ function stageStatement(node, env, first) {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
   }
-  checkSlots(name2, sel.rule.args, args, kindsOf3(args, env, node), false);
+  const spelled3 = node.type === "CallExpression" || node.type === "NewExpression" ? `${name2}()` : name2;
+  checkSlots(spelled3, sel.rule.args, args, proofOf(env, node), false);
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   return landed(
     stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),

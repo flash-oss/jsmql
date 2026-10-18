@@ -12,6 +12,7 @@
 
 import type { Arity, ArgType, BodyRule, Expr, Kind } from "../../registry/vocabulary.ts";
 import { kindFits } from "./select.ts";
+import type { Known } from "./prove.ts";
 import { CodegenError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
@@ -145,6 +146,16 @@ const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()
 const wrongKind = (name: string, slot: string, takes: string, got: string, hint = ""): string =>
   `'${spell(name)}' ${slot} takes ${takes}, but got ${got}.${hint}`;
 
+/** What the proof shows of a value: one kind, `"null"`, or "unknown". */
+type KindOf = (e: Expr) => Known;
+
+/** Is the value `null`: written, injected (a `NullLiteral` after the inject pass), or proven? */
+const isNull = (e: Expr, kindOf: KindOf): boolean => e.type === "NullLiteral" || kindOf(e) === "null";
+
+/** Does the row state that `null` is data in slot `i`? */
+const takesNullAt = (args: Arity, i: number): boolean =>
+  args.takesNull === "every" || (args.takesNull ?? []).includes(i);
+
 /** How a message names a positional slot. */
 const argument = (i: number | string): string => `argument ${Number(i) + 1}`;
 
@@ -269,6 +280,8 @@ export function checkBody(
   args: readonly Expr[],
   keys: readonly string[],
   pos: number,
+  kindOf: KindOf,
+  readFirst?: (e: Expr) => unknown,
 ): void {
   // A body the call supplied whole (`.set(${parts})`) is a value, and its keys are the server's to judge.
   if (args.length === 1 && args[0].type === "Injected") return;
@@ -325,6 +338,14 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
+  // `null` is no option value. A key with a stated kind names that kind.
+  for (const k of present) {
+    const v = valueOf(k);
+    if (v === undefined || !isNull(v, kindOf)) continue;
+    if (v.type !== "NullLiteral") readFirst?.(v);
+    const t = rule.keyTypes?.[k];
+    throw new CodegenError(wrongKind(name, k, t === undefined ? "a value" : TAKES[t], "null"), v.pos);
+  }
   // A key the server reads at compile time must hold a constant. The server refuses a
   // field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
@@ -341,7 +362,8 @@ export function checkBody(
 
 /**
  * How the source spells a name. A method gets its dot and parentheses. A stage, an
- * operator and an operator token (`+`) stay as written.
+ * operator, an operator token (`+`) and a name the caller spelled (`Number()`) stay
+ * as written.
  */
 const spell = (name: string): string => (/^[A-Za-z_]\w*$/.test(name) ? `.${name}()` : name);
 
@@ -354,8 +376,8 @@ export function checkSlots(
   name: string,
   args: Arity,
   operands: readonly Expr[],
-  /** What each operand PROVABLY is, aligned with `operands`. */
-  kinds: readonly (Kind | "null" | "unknown")[],
+  /** What an operand PROVABLY is. */
+  kindOf: KindOf,
   /**
    * Does the row state an OBJECT form for this body? When it does, an object
    * literal is exempt from `slotType` — the date accessors take a date OR the
@@ -409,7 +431,7 @@ export function checkSlots(
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos);
+    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos, kindOf, readFirst);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -446,7 +468,11 @@ export function checkSlots(
     if (e === undefined || e.type !== "ArrayLiteral") continue;
     for (const el of e.elements) {
       if (el.type === "SpreadElement") continue;
-      checkType(name, `element ${e.elements.indexOf(el) + 1}`, el as Expr, t as ArgType);
+      const slot = `element ${e.elements.indexOf(el) + 1}`;
+      checkType(name, slot, el as Expr, t as ArgType);
+      if (kindOf(el as Expr) !== "null") continue;
+      readFirst?.(el as Expr);
+      throw new CodegenError(wrongKind(name, slot, TAKES[t as ArgType], "null"), el.pos);
     }
   }
   for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
@@ -489,11 +515,18 @@ export function checkSlots(
   // with `n` a number the program wrote.
   for (const [i, t] of slotKinds(args, operands.length)) {
     const e = operands[i];
-    const k = kinds[i];
-    if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
+    if (e === undefined) continue;
+    const k = kindOf(e);
+    if (k === "unknown" || kindFits(k, t)) continue;
     if (k === "null") readFirst?.(e);
     throw new CodegenError(wrongKind(name, argument(i), takesOf(t), KIND_NOUN[k] ?? `a ${k}`), e.pos);
   }
+  // Every other slot refuses `null` too, unless the row states that `null` is data there.
+  operands.forEach((e, i) => {
+    if (takesNullAt(args, i) || !isNull(e, kindOf)) return;
+    if (e.type !== "NullLiteral") readFirst?.(e);
+    throw new CodegenError(wrongKind(name, argument(i), "a value", "null"), e.pos);
+  });
 }
 
 // ── date formats ─────────────────────────────────────────────────────────────

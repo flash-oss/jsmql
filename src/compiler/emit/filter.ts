@@ -430,7 +430,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
       node.type === "BinaryExpr" ? node.op : name,
       sel.rule.args,
       args,
-      args.map((a) => kindOf(a, argEnv)),
+      (a) => kindOf(a, argEnv),
       true,
       undefined,
       (a) => lowerValue(a, argEnv),

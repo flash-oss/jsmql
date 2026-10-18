@@ -142,3 +142,10 @@ export const regexpKind: Arity = { sig: "regex", exact: 1, slotType: { 0: "regex
 export const roadRule = inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "any" } });
 // @ts-expect-error — the rule of a road is an Arity, so it states its signature
 export const roadRuleNoSig = inCode("src/compiler/emit/lower.ts", { exact: 1 });
+
+// ── `takesNull`: the slots where null is data ────────────────────────────────
+
+export const nullAsData: Arity = { sig: "value", exact: 1, takesNull: [0] };
+export const nullEverywhere: Arity = { sig: "...items", atLeast: 0, takesNull: "every" };
+// @ts-expect-error — "every" is the one word for all slots
+export const nullAll: Arity = { sig: "...items", atLeast: 0, takesNull: "all" };

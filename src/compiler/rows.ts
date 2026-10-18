@@ -311,6 +311,21 @@ export function acceptsArgumentCount(name: string, count: number, family?: Famil
   return true;
 }
 
+/**
+ * Does the row take `null` in slot `slot`? A fold reads the row. A call with a `null` that
+ * the row refuses goes to the slot check, and no fold runs on that call. A name with no
+ * stated rule answers true: nothing refuses the value there.
+ */
+export function takesNullAt(name: string, slot: number, family?: Family): boolean {
+  const rule = argCountOf(name, family) as
+    | { takesNull?: readonly number[] | "every"; slotType?: Readonly<Record<number, unknown>>; rest?: unknown }
+    | undefined;
+  if (rule === undefined) return true;
+  // A slot that states a kind refuses `null` through that kind.
+  if (rule.slotType?.[slot] !== undefined || rule.rest !== undefined) return false;
+  return rule.takesNull === "every" || (rule.takesNull ?? []).includes(slot);
+}
+
 /** The positions a name is legal in, or undefined when there is no such name. */
 export function positionsOf(name: string): readonly Position[] | undefined {
   return row(name)?.where;

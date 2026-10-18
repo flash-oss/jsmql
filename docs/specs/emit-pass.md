@@ -200,9 +200,15 @@ makes sure that every stated rule field has a reader.
 operand as a required parameter, so no site can skip the proof. A slot that
 states a kind refuses an operand that the proof shows is another kind. The
 refusal names the slot: `argument N` for a positional operand, the key for a
-body key, and `element N` for an element of a list. A slot that states a kind
-refuses `null`: a written `null`, an injected `null`, and a value that the
-proof shows is absent. See [types.md § The slot check](types.md#the-slot-check).
+body key, and `element N` for an element of a list.
+
+Every slot and every option key refuses `null`: a written `null`, an injected
+`null`, and a value that the proof shows is absent. The one exception is a
+slot that the row lists in `takesNull`, where `null` is data, for example the
+value that `.has()` looks for. A slot that states a kind names that kind in the
+refusal. A fold leaves such a call alone (`takesNullAt` in `rows.ts`), so a
+constant call such as `String(null)` reaches the check too. See
+[types.md § The slot check](types.md#the-slot-check).
 
 Each operator production states the kinds of its operands, as a method row does.
 Three facts on `Arity` serve the operators:
