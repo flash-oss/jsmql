@@ -169,6 +169,11 @@ The `constant` cell of a row builds the value (`bsonConstant` in `src/bson.ts`, 
 value goes into the MQL as itself, and the constant engine reads it. A constant that the type
 cannot hold is a refusal that names the type that fits.
 
+The cell does not build a constant again when the constant is already a live value of the
+type of the row (`ownValue` in `src/registry/names.ts`). The constant goes to the `$to…` operator of the row, as a
+runtime value does. MEASURED on mongod 9.0: each `$to…` operator gives a value of its own
+type back with the same type and an equal value.
+
 `bson` does not refuse what it cannot hold. The team measured this against 7.2.0:
 
 | written | `bson` answers | JSMQL |

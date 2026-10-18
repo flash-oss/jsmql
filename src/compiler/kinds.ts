@@ -122,6 +122,8 @@ export function kindFits(
     case "array":
     case "object":
     case "date":
+    case "objectId":
+    case "binData":
       return kind === expected;
     case "element":
       return elements === "unknown" || elements.includes(kind);

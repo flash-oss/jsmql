@@ -409,6 +409,8 @@ A row states the rule, never the compiler:
   `.has(null)`. `"value"` takes every kind but `null`, for example the operand
   of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
   neither.
+- A conversion takes a value of its own type, so the slot of a conversion row
+  lists the kind of the row's `returns`. See [bson-types.md](bson-types.md).
 - `"element"` is the kind of one element of the element source: the receiver of
   a method, the last operand of a production.
 - `homogeneous` says that every operand has one kind. The first operand of one

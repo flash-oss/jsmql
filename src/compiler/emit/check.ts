@@ -96,6 +96,8 @@ function matches(lit: Lit, expected: ArgType): boolean {
       return lit.kind === "number" || lit.kind === "bigint" || lit.kind === "string";
     case "date":
     case "timestamp":
+    case "objectId":
+    case "binData":
     case "callback":
       return false;
   }
@@ -116,6 +118,8 @@ const TAKES: Record<ArgType, string> = {
   object: "a document",
   date: "a date",
   timestamp: "a timestamp",
+  objectId: "an ObjectId",
+  binData: "binary data",
   any: "a value",
   value: "a value",
   callback: "a callback",
