@@ -339,8 +339,20 @@ export function exprInputs(
       refuseNull(cb);
       return elementsCallback(cb, count, argEnv, read.value, name);
     },
-    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name, objects), elementOfRecv(), "the element", e.pos),
-    orderBy: (keys, orders) => readableSort(orderBySpec(keys, orders, name), elementOfRecv(), "the element", keys.pos),
+    sortSpec: (e, objects) =>
+      readableSort(
+        sortSpecOf(e, name, (x) => typeOf(x, argEnv), objects),
+        elementOfRecv(),
+        "the element",
+        e.pos,
+      ),
+    orderBy: (keys, orders) =>
+      readableSort(
+        orderBySpec(keys, orders, name, (x) => typeOf(x, argEnv)),
+        elementOfRecv(),
+        "the element",
+        keys.pos,
+      ),
     objIteratee: (cb, mode) => {
       refuseNull(cb);
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
@@ -698,9 +710,25 @@ export function stageInputs(
       return read.block(stages, e);
     },
     sortSpec: (e, objects = true) =>
-      streamSortAsk(readableKeys(sortSpecOf(e, name, objects), e.pos), name, env.chain.element, e.pos),
+      streamSortAsk(
+        readableKeys(
+          sortSpecOf(e, name, (x) => typeOf(x, argEnv), objects),
+          e.pos,
+        ),
+        name,
+        env.chain.element,
+        e.pos,
+      ),
     orderBy: (keys, orders) =>
-      streamSortAsk(readableKeys(orderBySpec(keys, orders, name), keys.pos), name, env.chain.element, keys.pos),
+      streamSortAsk(
+        readableKeys(
+          orderBySpec(keys, orders, name, (x) => typeOf(x, argEnv)),
+          keys.pos,
+        ),
+        name,
+        env.chain.element,
+        keys.pos,
+      ),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);

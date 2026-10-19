@@ -848,14 +848,26 @@ export function pluralNounOfKinds(t: Type): string {
 /** `[...v]` where `v` can never be an array, and is not a string. */
 export const spreadNotAnArray = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'...' in an array spreads an ARRAY, and this value is ${noun}. To keep the value whole, drop the '...'; to spread its elements, give it an array.`,
+    wrongKind(
+      "'...'",
+      "argument 1",
+      "an array",
+      `got ${noun}`,
+      " To keep the value whole, drop the '...'. To spread its elements, give it an array.",
+    ),
     pos,
   );
 
 /** `{ ...v }` where `v` can never be a document, and is not a string. */
 export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'...' in an object spreads a DOCUMENT's fields, and this value is ${noun}. Put the value under a field ('{ value: … }'), or spread a document.`,
+    wrongKind(
+      "'...'",
+      "argument 1",
+      "a document",
+      `got ${noun}`,
+      " Put the value under a field ('{ value: … }'), or spread a document.",
+    ),
     pos,
   );
 

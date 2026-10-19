@@ -22653,11 +22653,23 @@ function pluralNounOfKinds(t) {
   return [...t.kinds].map((k) => ELEMENT_NOUN[k] ?? `${k}s`).join(" or ");
 }
 var spreadNotAnArray = (noun, pos) => new CodegenError(
-  `'...' in an array spreads an ARRAY, and this value is ${noun}. To keep the value whole, drop the '...'; to spread its elements, give it an array.`,
+  wrongKind(
+    "'...'",
+    "argument 1",
+    "an array",
+    `got ${noun}`,
+    " To keep the value whole, drop the '...'. To spread its elements, give it an array."
+  ),
   pos
 );
 var spreadNotADocument = (noun, pos) => new CodegenError(
-  `'...' in an object spreads a DOCUMENT's fields, and this value is ${noun}. Put the value under a field ('{ value: \u2026 }'), or spread a document.`,
+  wrongKind(
+    "'...'",
+    "argument 1",
+    "a document",
+    `got ${noun}`,
+    " Put the value under a field ('{ value: \u2026 }'), or spread a document."
+  ),
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
@@ -24339,7 +24351,22 @@ var fieldName = (e, method) => {
   }
   return e.value;
 };
-function keySortSpec(arg, method, objects = true) {
+var spellings2 = (objects) => `a field name ("age"), a list of them (["age", "name"]), or ${objects ? "directions ({ age: -1 })" : "a key function (x => x.age)"}`;
+function wrongSortKind(arg, method, objects, kind) {
+  const t = kind(arg);
+  if (!cannotBe(t, "string") || !cannotBe(t, "array") || !cannotBe(t, "object")) return null;
+  return new CodegenError(
+    wrongKind(
+      `'.${method}()'`,
+      "argument 1",
+      "a sort specification",
+      `got ${nounOfKinds(t)}`,
+      ` Write ${spellings2(objects)}.`
+    ),
+    arg.pos
+  );
+}
+function keySortSpec(arg, method, kind, objects = true) {
   if (arg.type === "StringLiteral") return { [fieldName(arg, method)]: 1 };
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0)
@@ -24377,10 +24404,7 @@ function keySortSpec(arg, method, objects = true) {
     }
     return spec;
   }
-  throw new CodegenError(
-    `.${method}() takes a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).`,
-    arg.pos
-  );
+  throw wrongSortKind(arg, method, objects, kind) ?? new CodegenError(`.${method}() takes ${spellings2(objects)}.`, arg.pos);
 }
 function keyFunctionSpec(arg, method) {
   if (arg.body === void 0) {
@@ -24450,7 +24474,7 @@ function comparatorSpec(arg, method) {
   }
   return { kind: "keys", spec };
 }
-function sortSpecOf(arg, method, objects = true) {
+function sortSpecOf(arg, method, kind, objects = true) {
   if (arg.type === "Lambda") {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
     if (arg.params.length === 2) return comparatorSpec(arg, method);
@@ -24459,11 +24483,11 @@ function sortSpecOf(arg, method, objects = true) {
       arg.pos
     );
   }
-  return { kind: "keys", spec: keySortSpec(arg, method, objects) };
+  return { kind: "keys", spec: keySortSpec(arg, method, kind, objects) };
 }
-function orderBySpec(keys, orders, method) {
+function orderBySpec(keys, orders, method, kind) {
   if (keys.type === "Lambda") {
-    const ask = sortSpecOf(keys, method);
+    const ask = sortSpecOf(keys, method, kind);
     if (orders === void 0) return ask;
     const dir = sortDirection(orders);
     if (dir === null)
@@ -24478,8 +24502,10 @@ function orderBySpec(keys, orders, method) {
         orders.pos
       );
     }
-    return { kind: "keys", spec: keySortSpec(keys, method) };
+    return { kind: "keys", spec: keySortSpec(keys, method, kind) };
   }
+  const wrong = keys.type === "ArrayLiteral" || keys.type === "StringLiteral" ? null : wrongSortKind(keys, method, true, kind);
+  if (wrong !== null) throw wrong;
   const names = keys.type === "ArrayLiteral" ? keys.elements.map((e) => fieldName(e, method)) : [fieldName(keys, method)];
   const dirs = [];
   if (orders !== void 0) {
@@ -25370,8 +25396,18 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
       refuseNull(cb);
       return elementsCallback(cb, count, argEnv, read3.value, name2);
     },
-    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name2, objects), elementOfRecv(), "the element", e.pos),
-    orderBy: (keys2, orders) => readableSort(orderBySpec(keys2, orders, name2), elementOfRecv(), "the element", keys2.pos),
+    sortSpec: (e, objects) => readableSort(
+      sortSpecOf(e, name2, (x) => typeOf(x, argEnv), objects),
+      elementOfRecv(),
+      "the element",
+      e.pos
+    ),
+    orderBy: (keys2, orders) => readableSort(
+      orderBySpec(keys2, orders, name2, (x) => typeOf(x, argEnv)),
+      elementOfRecv(),
+      "the element",
+      keys2.pos
+    ),
     objIteratee: (cb, mode) => {
       refuseNull(cb);
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 1 || cb.params.length > 2) {
@@ -25590,8 +25626,24 @@ function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 =
       if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
       return read3.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(readableKeys(sortSpecOf(e, name2, objects), e.pos), name2, env.chain.element, e.pos),
-    orderBy: (keys2, orders) => streamSortAsk(readableKeys(orderBySpec(keys2, orders, name2), keys2.pos), name2, env.chain.element, keys2.pos),
+    sortSpec: (e, objects = true) => streamSortAsk(
+      readableKeys(
+        sortSpecOf(e, name2, (x) => typeOf(x, argEnv), objects),
+        e.pos
+      ),
+      name2,
+      env.chain.element,
+      e.pos
+    ),
+    orderBy: (keys2, orders) => streamSortAsk(
+      readableKeys(
+        orderBySpec(keys2, orders, name2, (x) => typeOf(x, argEnv)),
+        keys2.pos
+      ),
+      name2,
+      env.chain.element,
+      keys2.pos
+    ),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);

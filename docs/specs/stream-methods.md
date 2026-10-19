@@ -65,6 +65,8 @@ Each row below describes *lowering*. For the callback spellings a slot accepts, 
 
 A stream sort method emits a `$sort` stage, so `streamSortAsk` in `src/compiler/emit/sort-spec.ts` refuses a spec of more than `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts)) at the sort argument. A sort of an array value lowers to `$sortArray`, which takes more keys, so the value road states no limit. See [aggregation-stages.md § Lowering](aggregation-stages.md#lowering).
 
+A sort argument that can never be a name, a list or a document has the wrong kind (HR7), for example `null`, a number or a date. `sort-spec.ts` reads the proof of such an argument and refuses it with the one wording of a wrong kind ([emit-pass.md § The kind of a slot](emit-pass.md#the-kind-of-a-slot)). The refusal names the kind as a sort specification, and its hint names the spellings. An argument of another kind keeps the message that names each spelling.
+
 | Method | Args | Lowering | Stages emitted |
 |---|---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
