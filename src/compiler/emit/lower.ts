@@ -944,9 +944,15 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   const exprArgs = args.filter(isExpr);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
-  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
   // A refusal names the call as the source spells it: `new Date(…)` or `Date(…)`.
-  const spelled = node.type === "NewExpression" ? `'new ${name}()'` : name;
+  const isNew = node.type === "NewExpression";
+  if (sel.kind === "rule") {
+    const called = isNew ? `new ${name}()` : `${name}()`;
+    const argEnv = childEnv(env, node, "args");
+    checkSlots(called, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
+    return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
+  }
+  const spelled = isNew ? `'new ${name}()'` : name;
   throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 

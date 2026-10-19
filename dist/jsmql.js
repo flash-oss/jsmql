@@ -454,7 +454,9 @@ var dateRow = (spelling) => global_({
       },
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
-      // integer: the server refuses 2024.5 as a year.
+      // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
+      // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
+      // and JSMQL does not cut a value silently, so the compiler refuses a fraction.
       multiple: {
         args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7], rest: "int" },
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
@@ -26226,8 +26228,14 @@ function dispatchBare(node, name2, args, env) {
   const exprArgs = args.filter(isExpr2);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
-  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  const spelled3 = node.type === "NewExpression" ? `'new ${name2}()'` : name2;
+  const isNew = node.type === "NewExpression";
+  if (sel.kind === "rule") {
+    const called = isNew ? `new ${name2}()` : `${name2}()`;
+    const argEnv = childEnv(env, node, "args");
+    checkSlots(called, sel.rule.args, exprArgs, true, void 0, env.site.settling, slotProof(argEnv));
+    return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
+  }
+  const spelled3 = isNew ? `'new ${name2}()'` : name2;
   throw refusalFor(sel, spelled3, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda(lambda, args, env, pos, label, fnName) {

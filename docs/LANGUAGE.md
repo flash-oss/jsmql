@@ -3077,11 +3077,12 @@ The compiler writes the shorter form when the operand proves its kind. A proven 
 
 **Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
 
-A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
+A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
 
 ```js
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
 new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
+new Date(2024, 1.5)                // ✗ each calendar part is an integer; round it with .floor() or .ceil()
 $.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
