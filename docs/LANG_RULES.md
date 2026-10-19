@@ -223,7 +223,7 @@ Three consequences follow from the rule:
 
 - The compiler refuses a `===` between two values of proven different kinds. The test is always false.
 - The compiler refuses a membership test of the wrong kind, for the same reason. An example is `.has(1)` on a proven array of strings.
-- The compiler refuses a literal `null` where the slot needs a kind. `null` is not that kind.
+- The compiler refuses `null` in a slot that takes a value other than `null`. This is true for a `null` that you write, a value that the compiler proves is `null`, and a `null` that your program passes in. A slot where `null` is data takes it, for example an operand of `===` or an item of `.concat()`.
 
 ```js
 [1, "a"].max()               // ✗ .max() takes numbers; the array holds a number and a string
@@ -233,6 +233,9 @@ $.str + 1                    // → { $add: ["$str", 1] }   unknown kind: the se
 $.str.trim() + 1             // ✗ .trim() gives a string
 $.a = "x"; $.b = $.a + 1;    // ✗ the stage proved that a is a string
 ({}).assign("a")             // ✗ .assign() takes documents
+$.a.slice(null)              // ✗ the start of .slice() takes an integer, and null is no integer
+$slice($.a, null)            // → { $slice: ["$a", null] }   as written, by HR2
+$.a.has(null)                // → { $in: [null, { $ifNull: ["$a", []] }] }   null is the value to find
 ```
 
 ## SOFT RULES
