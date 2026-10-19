@@ -124,6 +124,51 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     );
   });
 
+  it("a sort argument of a wrong kind names the sort specification, and the hint names its spellings", () => {
+    const directions = ' Write a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).';
+    const keyFunction =
+      ' Write a field name ("age"), a list of them (["age", "name"]), or a key function (x => x.age).';
+    expect(() => jsmql.expr("$.a.toSorted(null)")).toThrow(
+      `'.toSorted()' argument 1 takes a sort specification, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy(null)")).toThrow(
+      `'.sortBy()' argument 1 takes a sort specification, but got null.${keyFunction}`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy(1)")).toThrow(
+      "'.sortBy()' argument 1 takes a sort specification, but got a number.",
+    );
+    expect(() => jsmql.expr("$.a.sortBy(true)")).toThrow(
+      "'.sortBy()' argument 1 takes a sort specification, but got a boolean.",
+    );
+    expect(() => jsmql.expr('$.a.toSorted(new Date("2020-01-01"))')).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got a date.",
+    );
+    expect(() => jsmql.expr("$.a.orderBy(null)")).toThrow(
+      `'.orderBy()' argument 1 takes a sort specification, but got null.${directions}`,
+    );
+    expect(() => jsmql("$$.sortBy(null);")).toThrow("'.sortBy()' argument 1 takes a sort specification, but got null.");
+    expect(() => jsmql("$$.toSorted($.n * 2);")).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got a number.",
+    );
+    // A value of another kind keeps the message that names each spelling.
+    expect(() => jsmql.expr("$.a.toSorted($.k)")).toThrow(
+      '.toSorted() takes a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).',
+    );
+  });
+
+  it("a spread of a wrong kind names the kind that '...' takes, and the hint keeps the advice", () => {
+    expect(() => jsmql.expr("[...null]")).toThrow(
+      "'...' argument 1 takes an array, but got null. To keep the value whole, drop the '...'. To spread its elements, give it an array.",
+    );
+    expect(() => jsmql.expr("({ ...null })")).toThrow(
+      "'...' argument 1 takes a document, but got null. Put the value under a field ('{ value: … }'), or spread a document.",
+    );
+    expect(() => jsmql.expr("[...($.n * 2)]")).toThrow("'...' argument 1 takes an array, but got a number.");
+    expect(() => jsmql.expr("({ ...[1] })")).toThrow("'...' argument 1 takes a document, but got an array.");
+    // A string keeps its own refusal, because it names the character-wise spelling.
+    expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(/spreads a string into its characters/);
+  });
+
   it("a conversion and the condition of assert() take every kind but null", () => {
     expect(() => jsmql.expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
     expect(() => jsmql.expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");

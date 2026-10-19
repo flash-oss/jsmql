@@ -649,11 +649,9 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("a string or a number is not one");
     expect(() => jsmql('$.x = $.f ? [1] : ["x"]; $$ = $.x;')).toThrow("these elements are numbers or strings");
     expect(() => jsmql('$.x = $.f ? "abc" : 5; $.y = [...$.x];')).toThrow(
-      "'...' in an array spreads an ARRAY, and this value is a string or a number.",
+      "'...' argument 1 takes an array, but got a string or a number.",
     );
-    expect(() => jsmql("$.x = 5; $.y = { ...$.x };")).toThrow(
-      "'...' in an object spreads a DOCUMENT's fields, and this value is a number.",
-    );
+    expect(() => jsmql("$.x = 5; $.y = { ...$.x };")).toThrow("'...' argument 1 takes a document, but got a number.");
     // a string keeps its own message, which names the character-wise spelling
     expect(() => jsmql('$.x = "abc"; $.y = [...$.x];')).toThrow("spreads a string into its characters");
     expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("takes a document, but got a number.");
@@ -669,12 +667,8 @@ describe("types — a refusal reads the whole kind set", () => {
     );
     expect(() => jsmql("$ = $.end - $.start;")).toThrow("a number or a date is not one");
     expect(() => jsmql("$$ = $.a * 2;")).toThrow("a number is one value");
-    expect(() => jsmql("$.y = { ...($.a % 2) };")).toThrow(
-      "'...' in an object spreads a DOCUMENT's fields, and this value is a number.",
-    );
-    expect(() => jsmql("$.y = [...($.a ** 2)];")).toThrow(
-      "'...' in an array spreads an ARRAY, and this value is a number.",
-    );
+    expect(() => jsmql("$.y = { ...($.a % 2) };")).toThrow("'...' argument 1 takes a document, but got a number.");
+    expect(() => jsmql("$.y = [...($.a ** 2)];")).toThrow("'...' argument 1 takes an array, but got a number.");
     expect(() => jsmql("$$$.out.push($.a / 2);")).toThrow("takes a document, but got a number.");
     expect(() => jsmql("$$.push(-$.a);")).toThrow("'$$.push()' argument 1 takes a document, but got a number.");
     expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow("has to return a document — a number is not one.");
