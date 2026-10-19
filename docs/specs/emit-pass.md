@@ -232,8 +232,9 @@ wrong kind calls it. A site is, for example, the check of a literal, or the refu
 a proof (`kindRefusal` in [errors.ts](../../src/compiler/emit/errors.ts)). So each
 refusal names the call as the source spells it, the slot, the kind that the slot
 takes, and what the value is. The slot is `argument N`, an option key, `element N`,
-or the key of `[…]`. A refusal can add a hint after this text, for example the forms
-that the slot takes.
+or the key of `[…]`. A write such as `$ = …` names no slot. A refusal can add a hint
+after this text, for example the forms that the slot takes. A row states the hint of a
+slot in `slotHint`, and the refusal of a proof adds it.
 
 A `$op(…)` call and a `$stage(…)` call pass `UNPROVEN`, so no kind rule judges
 them. When a kind refusal and an error inside an operand both apply, the error

@@ -34,6 +34,8 @@ export type KindFault =
       readonly got: readonly Proven[];
       /** The proof is of the ELEMENTS of the operand: a field that holds an array in a query, or a spread. */
       readonly viaElements?: true;
+      /** The row's `slotHint` for the slot. */
+      readonly hint?: string;
     }
   /** The slot takes an element of the element source, and the operand has no kind that the elements have. */
   | {
@@ -203,7 +205,14 @@ export function faultOf(name: string, rule: Arity, proofs: Proofs): KindFault | 
     const through = asElement !== undefined || (whole === undefined && via) ? ({ viaElements: true } as const) : {};
     return expected === "element" && proofs.elements !== "unknown"
       ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through }
-      : { rule: "slot", slot: i, expected, got: proof, ...through };
+      : {
+          rule: "slot",
+          slot: i,
+          expected,
+          got: proof,
+          ...through,
+          ...(rule.slotHint?.[i] === undefined ? {} : { hint: rule.slotHint[i] }),
+        };
   }
   if (rule.homogeneous === true) {
     // Each operand of known concrete kinds takes part, and the kinds they share must not become empty.

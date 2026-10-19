@@ -255,9 +255,9 @@ describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
     expect(fn({ dbName: "warehouse", collName: "users" })).toEqual([{ $out: { db: "warehouse", coll: "users" } }]);
   });
 
-  it("JSMQL rejects a non-string binding, and the hint asks for a string name", () => {
+  it("JSMQL rejects a non-string binding, and the message asks for a string", () => {
     const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
-    expect(() => fn({ n: 42 })).toThrow(/named when the pipeline is written|must be a string/);
+    expect(() => fn({ n: 42 })).toThrow("'$$$[…]' key takes a string, but got a number.");
   });
 });
 

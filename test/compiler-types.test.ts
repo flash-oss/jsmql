@@ -646,7 +646,7 @@ describe("types — a refusal reads the whole kind set", () => {
   // A value that can NEVER be one is refused, and the message names every kind it can be.
   it("a root write, a stream source, a spread, a union and a merge refuse a value that cannot fit", () => {
     expect(jsmql("$.x = $.f ? { a: 1 } : 5; $ = $.x;")[1]).toEqual({ $replaceWith: "$x" });
-    expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("a string or a number is not one");
+    expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("but got a string or a number.");
     expect(() => jsmql('$.x = $.f ? [1] : ["x"]; $$ = $.x;')).toThrow("these elements are numbers or strings");
     expect(() => jsmql('$.x = $.f ? "abc" : 5; $.y = [...$.x];')).toThrow(
       "'...' argument 1 takes an array, but got a string or a number.",
@@ -662,16 +662,16 @@ describe("types — a refusal reads the whole kind set", () => {
   it("an operator proves the kind that its MQL gives, so each of these positions reads it", () => {
     // `*`, `/`, `%`, `**`, `-x` and the bitwise operators give a number. `-` and `+` give a
     // number or a date. See the `returns` of each production in src/registry/productions.ts.
-    expect(() => jsmql("$ = $.a * 2;")).toThrow(
-      "'$ = …' replaces the document, so the value has to BE a document — a number is not one.",
-    );
-    expect(() => jsmql("$ = $.end - $.start;")).toThrow("a number or a date is not one");
+    expect(() => jsmql("$ = $.a * 2;")).toThrow("'$ = …' takes a document, but got a number.");
+    expect(() => jsmql("$ = $.end - $.start;")).toThrow("but got a number or a date.");
     expect(() => jsmql("$$ = $.a * 2;")).toThrow("a number is one value");
     expect(() => jsmql("$.y = { ...($.a % 2) };")).toThrow("'...' argument 1 takes a document, but got a number.");
     expect(() => jsmql("$.y = [...($.a ** 2)];")).toThrow("'...' argument 1 takes an array, but got a number.");
     expect(() => jsmql("$$$.out.push($.a / 2);")).toThrow("takes a document, but got a number.");
     expect(() => jsmql("$$.push(-$.a);")).toThrow("'$$.push()' argument 1 takes a document, but got a number.");
-    expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow("has to return a document — a number is not one.");
+    expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow(
+      "takes an arrow that returns a document, but the arrow returns a number.",
+    );
     // One branch may be a document, so the value may be one, and it passes.
     expect(jsmql("$ = $.f ? $.sub : $.a * 2;")).toEqual([
       {
@@ -720,7 +720,7 @@ describe.skipIf(up === null)("types — the server refuses each operator's value
 
   it("the server refuses each value as the document, over a number, a date and a missing field alike", async () => {
     for (const body of BODIES) {
-      expect(() => jsmql(`$$.map(d => ${body});`), body).toThrow("has to return a document");
+      expect(() => jsmql(`$$.map(d => ${body});`), body).toThrow("takes an arrow that returns a document");
       const value = jsmql.expr(body.split("d.").join("$."));
       for (const _id of [1, 2]) {
         await expect(

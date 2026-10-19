@@ -831,46 +831,46 @@ describe("lodash iteratee shorthands on stream methods", () => {
     // Universally-invalid MQL — mongod rejects a scalar/array `$replaceWith` root on
     // every deployment, so jsmql rejects it at compile time (parity with `$ = 5`).
     expect(() => jsmql("$$ = $$.map(d => 5);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     expect(() => jsmql('$$ = $$.map(d => "x");')).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a string is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a string. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     expect(() => jsmql("$$ = $$.map(d => true);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a boolean is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a boolean. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     expect(() => jsmql("$$ = $$.map(d => [1, 2]);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — an array is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns an array. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     // A field ref stays allowed — data-dependent, could be a subdocument.
     expect(jsmql("$$ = $$.map(d => d.sub);")).toEqual([{ $replaceWith: "$sub" }]);
     // A `"$sub"` in a callback body is text (HR6), and a string is not a document.
-    expect(() => jsmql('$$ = $$.map(d => "$sub");')).toThrow("a string is not one");
+    expect(() => jsmql('$$ = $$.map(d => "$sub");')).toThrow("but the arrow returns a string.");
   });
 
   it("rejects a computed .map body that the type tracker proves is not a document", () => {
     // `*` lowers to `$multiply`, which gives a number or null. MEASURED, the server refuses
     // both as the root: "'replacement document' must evaluate to an object".
     expect(() => jsmql("$$.map(d => d.a * 2);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     // After `.flatMap`, the parameter is the element, and the body is still a number.
     expect(() => jsmql('$$.flatMap("ids").map(x => x * 2);')).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     // `-` and `+` give a number or a date: a date minus a number is a date.
     expect(() => jsmql("$$.map(d => d.end - d.start);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number or a date is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number or a date. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     expect(() => jsmql("$$.map(d => d.a + d.b);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number or a date is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number or a date. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     // A block body returns its value, and the array reducer appends one: both replace the document.
     expect(() => jsmql("$$.map(d => { const x = d.a; return x * 2; });")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat(d.a * 2), []);")).toThrow(
-      "'.reduce(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+      "'.reduce()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
   });
 
@@ -2064,7 +2064,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("concat with multi-element wrapper is rejected (a bare path or `d` is what is supported)", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);")).toThrow(
-      "'.reduce(d => …)' replaces each document with what the arrow returns, so it has to return a document — an array is not one. Return '({ value: … })' to keep it under a field.",
+      "'.reduce()' argument 1 takes an arrow that returns a document, but the arrow returns an array. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
     );
   });
 
@@ -2546,7 +2546,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(
-      ".sortBy() sorts by a field NAME: a plain string like \"age\", with no leading '$'.",
+      "'.sortBy()' element 1 takes a field name, but got a number. Write a field name, for example \"age\".",
     );
   });
 });

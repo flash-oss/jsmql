@@ -11,12 +11,12 @@ import type { ArgType, Arity, Family, Kind, Position, SlotForm, Type } from "../
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Where } from "../passes/position.ts";
 import { stringify } from "../../stringify.ts";
-import { isPlainObject } from "../../bson.ts";
+import { isPlainObject, isRegExp } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import { hint, takesOf, wrongKind } from "./check.ts";
 import type { Selected } from "./select.ts";
-import type { KindFault, Proven } from "../kinds.ts";
+import { kindOfValue, type KindFault, type Proven } from "../kinds.ts";
 import { constantOf } from "../passes/evaluate.ts";
 import type { Unreadable } from "./type.ts";
 import {
@@ -454,7 +454,13 @@ export const letParamsMustNameVars = (params: readonly string[], keys: readonly 
  */
 export const rootIsArray = (root: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${root} = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root}.<field> = <array>;'.`,
+    wrongKind(
+      `'${root} = …'`,
+      "",
+      "a document",
+      "got an array",
+      ` Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root}.<field> = <array>;'.`,
+    ),
     pos,
   );
 
@@ -585,7 +591,13 @@ export const multiKeyStageDocument = (name: string, keys: number, pos: number): 
  */
 export const rootMustBeDocument = (root: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`,
+    wrongKind(
+      `'${root} = …'`,
+      "",
+      "a document",
+      `got ${noun}`,
+      ` Put the value under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`,
+    ),
     pos,
   );
 
@@ -794,7 +806,7 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
           slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
-          hint(fault.expected, fault.got),
+          fault.hint ?? hint(fault.expected, fault.got),
         ),
         e?.pos ?? pos,
       );
@@ -1068,7 +1080,13 @@ export const optionalOnStream = (pos: number): CodegenError =>
 /** `.map(d => 5)` — the server refuses every non-document root. */
 export const mapMustReturnDocument = (name: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'.${name}(d => …)' replaces each document with what the arrow returns, so it has to return a document — ${noun} is not one. Return '({ value: … })' to keep it under a field.`,
+    wrongKind(
+      `'.${name}()'`,
+      "argument 1",
+      "an arrow that returns a document",
+      `the arrow returns ${noun}`,
+      " The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
+    ),
     pos,
   );
 
@@ -1459,6 +1477,18 @@ const LITERAL_NOUNS: Readonly<Partial<Record<Expr["type"], string>>> = {
   ObjectIdLiteral: "an ObjectId",
 };
 
+/** `$$$[5]`: the key of `$$$[…]` names a collection, so it takes a string. */
+const collectionNameOfWrongKind = (noun: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind("'$$$[…]'", "key", "a string", `got ${noun}`), pos);
+
+/** A known value as the noun a message uses for its kind: "null", "a number", "a date". */
+const nounOfValue = (v: unknown): string => {
+  if (v === null) return "null";
+  if (isRegExp(v)) return "a regular expression";
+  const k = kindOfValue(v);
+  return k === null ? "a value of another kind" : kindNoun(k);
+};
+
 /**
  * `$$$[c]` where `c` cannot name a collection. A value read at run time has no name
  * yet. A value that the call supplies, or that the source writes, must be a plain
@@ -1471,11 +1501,10 @@ export function collectionNameFrom(index: Expr): CodegenError {
           `The run-time value ${stringify(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
           index.pos,
         )
-      : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+      : collectionNameOfWrongKind(nounOfValue(index.value), index.pos);
   }
   const noun = LITERAL_NOUNS[index.type];
-  if (noun !== undefined)
-    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  if (noun !== undefined) return collectionNameOfWrongKind(noun, index.pos);
   return collectionNameMustBeConstant(index.pos);
 }
 

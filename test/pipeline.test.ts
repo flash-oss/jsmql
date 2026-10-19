@@ -392,11 +392,11 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // Both spellings reach the same `writeStages` (src/compiler/emit/statement.ts),
     // so the no-`;` form gets the same actionable rejection as the `;`-form.
     expect(() => jsmql("$ = 5")).toThrow(
-      "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "'$ = …' takes a document, but got a number. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
-    expect(() => jsmql("$ = [1, 2]")).toThrow(/replaces ONE document, and this value is an array/);
+    expect(() => jsmql("$ = [1, 2]")).toThrow(/takes a document, but got an array\./);
     expect(() => jsmql("$ = [1, 2]")).toThrow(
-      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
@@ -494,25 +494,25 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("rejects an array RHS, naming the destination that takes one", () => {
     expect(() => jsmql("[ $ = [] ]")).toThrow(
-      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
   it("rejects an array of scalar literals with the same message — the destination decides first", () => {
     expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(
-      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
   it("rejects scalar number RHS with an actionable error", () => {
     expect(() => jsmql("[ $ = 5 ]")).toThrow(
-      "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "'$ = …' takes a document, but got a number. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
   });
 
   it("rejects string RHS with an actionable error", () => {
     expect(() => jsmql('[ $ = "foo" ]')).toThrow(
-      "'$ = …' replaces the document, so the value has to BE a document — a string is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "'$ = …' takes a document, but got a string. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
   });
 
@@ -555,7 +555,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
     expect(r.errors[0].pos).toBeGreaterThan(0);
     expect(r.errors[0].message).toMatch(
-      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 

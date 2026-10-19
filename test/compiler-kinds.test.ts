@@ -156,6 +156,53 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     );
   });
 
+  it("a root write of a wrong kind names the document, and the hint names the destination", () => {
+    expect(() => jsmql("$ = null;")).toThrow(
+      "'$ = …' takes a document, but got null. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+    );
+    expect(() => jsmql("$ = $.a * 2;")).toThrow("'$ = …' takes a document, but got a number.");
+    expect(() => jsmql("$ = [1];")).toThrow(
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+    );
+    expect(() => jsmql("$$ = $$.map(d => 1);")).toThrow(
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
+    );
+  });
+
+  it("the key of $$$[…] takes a string", () => {
+    expect(() => jsmql("$$$[1] = $$;")).toThrow("'$$$[…]' key takes a string, but got a number.");
+    expect(() => jsmql("$$$[null] = $$;")).toThrow("'$$$[…]' key takes a string, but got null.");
+    const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
+    expect(() => fn({ n: new Date(0) })).toThrow("'$$$[…]' key takes a string, but got a date.");
+  });
+
+  it("a direction and a sort field name of a wrong kind name the slot, and the hint names the forms", () => {
+    const directions = ' Write 1, -1, "asc" or "desc".';
+    expect(() => jsmql.expr("$.a.toSorted({ a: null })")).toThrow(
+      `'.toSorted()' a takes a direction, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr("$.a.toSorted({ a: true })")).toThrow(
+      "'.toSorted()' a takes a direction, but got a boolean.",
+    );
+    expect(() => jsmql.expr('$.a.orderBy(["a"], [null])')).toThrow(
+      `'.orderBy()' element 1 takes a direction, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr('$.a.orderBy("a", null)')).toThrow(
+      `'.orderBy()' argument 2 takes a string, a number or an array, but got null. Write 1, -1, "asc" or "desc", or a list of them.`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy([null])")).toThrow(
+      `'.sortBy()' element 1 takes a field name, but got null. Write a field name, for example "age".`,
+    );
+    // A number that is not a direction keeps the message that names each direction.
+    expect(() => jsmql.expr("$.a.toSorted({ a: 2 })")).toThrow(
+      '.toSorted({ a: … }) takes a direction: 1, -1, "asc" or "desc".',
+    );
+    // The statement form `.sort(…)` reads its argument as `.toSorted(…)` does.
+    expect(() => jsmql("$.a.sort(null);")).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got null.",
+    );
+  });
+
   it("a spread of a wrong kind names the kind that '...' takes, and the hint keeps the advice", () => {
     expect(() => jsmql.expr("[...null]")).toThrow(
       "'...' argument 1 takes an array, but got null. To keep the value whole, drop the '...'. To spread its elements, give it an array.",

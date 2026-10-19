@@ -732,6 +732,12 @@ function randomOf({ recv, args, value, bind, present: present2 }) {
   };
   return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
 }
+var ORDER_BY_ARGS = {
+  sig: "keys[, orders] | { field: dir }",
+  allowed: [1, 2],
+  slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] },
+  slotHint: { 1: ' Write 1, -1, "asc" or "desc", or a list of them.' }
+};
 var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
@@ -4299,11 +4305,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: {
-        sig: "keys[, orders] | { field: dir }",
-        allowed: [1, 2],
-        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
-      },
+      args: ORDER_BY_ARGS,
       emit: ({ recv, args, orderBy, callback: callback2, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
@@ -4325,11 +4327,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: {
-        sig: "keys[, orders] | { field: dir }",
-        allowed: [1, 2],
-        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
-      },
+      args: ORDER_BY_ARGS,
       emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape)
     },
     statement: unsupported(
@@ -22215,6 +22213,115 @@ function checkDateFormat(name2, fmt, pos) {
   }
 }
 
+// src/compiler/kinds.ts
+var UNPROVEN = { args: [], elements: "unknown" };
+function kindFits(kind, expected, elements = "unknown") {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
+  switch (expected) {
+    case "any":
+      return true;
+    case "value":
+      return kind !== "null";
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "orderable":
+      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+    case "regex":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+    case "objectId":
+    case "binData":
+      return kind === expected;
+    case "element":
+      return elements === "unknown" || elements.includes(kind);
+    case "timestamp":
+    case "callback":
+      return false;
+  }
+}
+var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
+var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
+var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
+var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
+var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
+function elementsFaultOf(name2, proofs) {
+  const need = elementsOf(name2);
+  if (need === void 0 || need === "scalar") return null;
+  const takes = (p) => p === "unknown" || p.includes(need);
+  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
+  if (!broken) return null;
+  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
+  return { rule: "elements", expected: need, held: [...new Set(held)] };
+}
+function faultOf(name2, rule, proofs) {
+  let spread = false;
+  for (let i = 0; i < proofs.args.length; i++) {
+    const via = proofs.viaElements?.[i] === true;
+    spread = spread || proofs.packed === true && via;
+    const expected = spread ? rule.rest : slotTypeOf(rule, i);
+    if (expected === void 0 || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
+    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
+    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : {
+      rule: "slot",
+      slot: i,
+      expected,
+      got: proof,
+      ...through,
+      ...rule.slotHint?.[i] === void 0 ? {} : { hint: rule.slotHint[i] }
+    };
+  }
+  if (rule.homogeneous === true) {
+    let shared = null;
+    const taking = [];
+    for (let i = 0; i < proofs.args.length; i++) {
+      const kinds = concreteKinds(proofs.args[i]);
+      if (kinds === null) continue;
+      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
+      if (left.length === 0) {
+        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
+        return {
+          rule: "homogeneous",
+          first: other.slot,
+          firstKinds: other.kinds,
+          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
+          slot: i,
+          got: kinds,
+          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
+        };
+      }
+      shared = left;
+      taking.push({ slot: i, kinds });
+    }
+  }
+  return elementsFaultOf(name2, proofs);
+}
+function kindOfValue(v) {
+  if (typeof v === "number" || typeof v === "bigint") return "number";
+  if (typeof v === "string") return "string";
+  if (typeof v === "boolean") return "bool";
+  if (isDate(v)) return "date";
+  if (Array.isArray(v)) return "array";
+  const tag = bsonTagOf(v);
+  if (tag !== void 0) return BSON_KIND[tag] ?? null;
+  return isPlainObject(v) ? "object" : null;
+}
+
 // src/compiler/emit/errors.ts
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
 var RUNS_ON = {
@@ -22435,7 +22542,13 @@ var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
   pos
 );
 var rootIsArray = (root2, pos) => new CodegenError(
-  `'${root2} = \u2026' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root2}.<field> = <array>;'.`,
+  wrongKind(
+    `'${root2} = \u2026'`,
+    "",
+    "a document",
+    "got an array",
+    ` Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root2}.<field> = <array>;'.`
+  ),
   pos
 );
 var joinNeedsPipeline = (pos) => new CodegenError(
@@ -22497,7 +22610,13 @@ var multiKeyStageDocument = (name2, keys, pos) => new CodegenError(
   pos
 );
 var rootMustBeDocument = (root2, noun, pos) => new CodegenError(
-  `'${root2} = \u2026' replaces the document, so the value has to BE a document \u2014 ${noun} is not one. Put it under a field ('${root2} = { value: \u2026 };'), or write to a field instead ('${root2}.value = \u2026;').`,
+  wrongKind(
+    `'${root2} = \u2026'`,
+    "",
+    "a document",
+    `got ${noun}`,
+    ` Put the value under a field ('${root2} = { value: \u2026 };'), or write to a field instead ('${root2}.value = \u2026;').`
+  ),
   pos
 );
 var cannotDeleteRoot = (root2, pos) => new CodegenError(
@@ -22606,7 +22725,7 @@ function kindRefusal(fault, spelled3, subjects, pos) {
           slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
-          hint(fault.expected, fault.got)
+          fault.hint ?? hint(fault.expected, fault.got)
         ),
         e?.pos ?? pos
       );
@@ -22773,7 +22892,13 @@ var optionalOnStream = (pos) => new CodegenError(
   pos
 );
 var mapMustReturnDocument = (name2, noun, pos) => new CodegenError(
-  `'.${name2}(d => \u2026)' replaces each document with what the arrow returns, so it has to return a document \u2014 ${noun} is not one. Return '({ value: \u2026 })' to keep it under a field.`,
+  wrongKind(
+    `'.${name2}()'`,
+    "argument 1",
+    "an arrow that returns a document",
+    `the arrow returns ${noun}`,
+    " The arrow replaces each document. Return '({ value: \u2026 })' to keep the value under a field."
+  ),
   pos
 );
 var notAFieldOfTheDocument = (name2, pos) => new CodegenError(
@@ -22997,16 +23122,22 @@ var LITERAL_NOUNS = {
   RegexLiteral: "a regular expression",
   ObjectIdLiteral: "an ObjectId"
 };
+var collectionNameOfWrongKind = (noun, pos) => new CodegenError(wrongKind("'$$$[\u2026]'", "key", "a string", `got ${noun}`), pos);
+var nounOfValue = (v) => {
+  if (v === null) return "null";
+  if (isRegExp(v)) return "a regular expression";
+  const k = kindOfValue(v);
+  return k === null ? "a value of another kind" : kindNoun(k);
+};
 function collectionNameFrom(index) {
   if (index.type === "Injected") {
     return typeof index.value === "string" ? new CodegenError(
       `The run-time value ${stringify2(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
       index.pos
-    ) : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+    ) : collectionNameOfWrongKind(nounOfValue(index.value), index.pos);
   }
   const noun = LITERAL_NOUNS[index.type];
-  if (noun !== void 0)
-    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  if (noun !== void 0) return collectionNameOfWrongKind(noun, index.pos);
   return collectionNameMustBeConstant(index.pos);
 }
 var badOutTarget = (name2, pos) => new CodegenError(
@@ -23431,108 +23562,6 @@ var Env = class _Env {
     return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain, this.documents) };
   }
 };
-
-// src/compiler/kinds.ts
-var UNPROVEN = { args: [], elements: "unknown" };
-function kindFits(kind, expected, elements = "unknown") {
-  if (kind === "unknown") return true;
-  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
-  switch (expected) {
-    case "any":
-      return true;
-    case "value":
-      return kind !== "null";
-    case "number":
-    case "int":
-    case "int-or-long":
-      return kind === "number";
-    case "number-or-date":
-      return kind === "number" || kind === "date";
-    case "orderable":
-      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
-    case "string":
-    case "fieldName":
-    case "fieldPath":
-    case "regex":
-      return kind === "string";
-    case "bool":
-    case "array":
-    case "object":
-    case "date":
-    case "objectId":
-    case "binData":
-      return kind === expected;
-    case "element":
-      return elements === "unknown" || elements.includes(kind);
-    case "timestamp":
-    case "callback":
-      return false;
-  }
-}
-var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
-var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
-var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
-var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
-var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
-var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
-function elementsFaultOf(name2, proofs) {
-  const need = elementsOf(name2);
-  if (need === void 0 || need === "scalar") return null;
-  const takes = (p) => p === "unknown" || p.includes(need);
-  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
-  if (!broken) return null;
-  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
-  return { rule: "elements", expected: need, held: [...new Set(held)] };
-}
-function faultOf(name2, rule, proofs) {
-  let spread = false;
-  for (let i = 0; i < proofs.args.length; i++) {
-    const via = proofs.viaElements?.[i] === true;
-    spread = spread || proofs.packed === true && via;
-    const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    if (expected === void 0 || takesCallback(expected)) continue;
-    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
-    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
-    const proof = asElement ?? whole ?? proofs.args[i];
-    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
-    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
-    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : { rule: "slot", slot: i, expected, got: proof, ...through };
-  }
-  if (rule.homogeneous === true) {
-    let shared = null;
-    const taking = [];
-    for (let i = 0; i < proofs.args.length; i++) {
-      const kinds = concreteKinds(proofs.args[i]);
-      if (kinds === null) continue;
-      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
-      if (left.length === 0) {
-        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
-        return {
-          rule: "homogeneous",
-          first: other.slot,
-          firstKinds: other.kinds,
-          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
-          slot: i,
-          got: kinds,
-          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
-        };
-      }
-      shared = left;
-      taking.push({ slot: i, kinds });
-    }
-  }
-  return elementsFaultOf(name2, proofs);
-}
-function kindOfValue(v) {
-  if (typeof v === "number" || typeof v === "bigint") return "number";
-  if (typeof v === "string") return "string";
-  if (typeof v === "boolean") return "bool";
-  if (isDate(v)) return "date";
-  if (Array.isArray(v)) return "array";
-  const tag = bsonTagOf(v);
-  if (tag !== void 0) return BSON_KIND[tag] ?? null;
-  return isPlainObject(v) ? "object" : null;
-}
 
 // src/compiler/emit/prove.ts
 var NAMESPACES = namespaceNames();
@@ -24342,7 +24371,26 @@ function paramPath(e, param) {
   }
   return null;
 }
-var fieldName = (e, method) => {
+function wrongSlotKind(e, method, slot, takes, kinds, hint2, kind) {
+  const t = kind(e);
+  if (kinds.some((k) => !cannotBe(t, k))) return null;
+  return new CodegenError(wrongKind(`'.${method}()'`, slot, takes, `got ${nounOfKinds(t)}`, hint2), e.pos);
+}
+var DIRECTIONS = ' Write 1, -1, "asc" or "desc".';
+var wrongDirection = (e, method, slot, kind) => wrongSlotKind(e, method, slot, "a direction", ["number", "string"], DIRECTIONS, kind);
+var fieldName = (e, method, slot, kind) => {
+  if (e.type !== "StringLiteral") {
+    const wrong = wrongSlotKind(
+      e,
+      method,
+      slot,
+      "a field name",
+      ["string"],
+      ' Write a field name, for example "age".',
+      kind
+    );
+    if (wrong !== null) throw wrong;
+  }
   if (e.type !== "StringLiteral" || e.value === "" || e.value.startsWith("$")) {
     throw new CodegenError(
       `.${method}() sorts by a field NAME: a plain string like "age", with no leading '$'.`,
@@ -24352,31 +24400,26 @@ var fieldName = (e, method) => {
   return e.value;
 };
 var spellings2 = (objects) => `a field name ("age"), a list of them (["age", "name"]), or ${objects ? "directions ({ age: -1 })" : "a key function (x => x.age)"}`;
-function wrongSortKind(arg, method, objects, kind) {
-  const t = kind(arg);
-  if (!cannotBe(t, "string") || !cannotBe(t, "array") || !cannotBe(t, "object")) return null;
-  return new CodegenError(
-    wrongKind(
-      `'.${method}()'`,
-      "argument 1",
-      "a sort specification",
-      `got ${nounOfKinds(t)}`,
-      ` Write ${spellings2(objects)}.`
-    ),
-    arg.pos
-  );
-}
+var wrongSortKind = (arg, method, objects, kind) => wrongSlotKind(
+  arg,
+  method,
+  "argument 1",
+  "a sort specification",
+  ["string", "array", "object"],
+  ` Write ${spellings2(objects)}.`,
+  kind
+);
 function keySortSpec(arg, method, kind, objects = true) {
-  if (arg.type === "StringLiteral") return { [fieldName(arg, method)]: 1 };
+  if (arg.type === "StringLiteral") return { [fieldName(arg, method, "argument 1", kind)]: 1 };
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0)
       throw new CodegenError(`.${method}([fields]) needs at least one field name.`, arg.pos);
     const spec = {};
-    for (const el of arg.elements) {
+    arg.elements.forEach((el, i) => {
       if (el.type === "SpreadElement")
         throw new CodegenError(`.${method}([fields]) lists its field names. '...' cannot spread them in.`, el.pos);
-      spec[fieldName(el, method)] = 1;
-    }
+      spec[fieldName(el, method, `element ${i + 1}`, kind)] = 1;
+    });
     return spec;
   }
   if (arg.type === "ObjectLiteral") {
@@ -24395,7 +24438,7 @@ function keySortSpec(arg, method, kind, objects = true) {
         throw new CodegenError(`.${method}({ \u2026 }) keys are field names, written plainly.`, entry.pos);
       const dir = sortDirection(entry.value);
       if (dir === null) {
-        throw new CodegenError(
+        throw wrongDirection(entry.value, method, entry.key.name, kind) ?? new CodegenError(
           `.${method}({ ${entry.key.name}: \u2026 }) takes a direction: 1, -1, "asc" or "desc".`,
           entry.value.pos
         );
@@ -24506,16 +24549,17 @@ function orderBySpec(keys, orders, method, kind) {
   }
   const wrong = keys.type === "ArrayLiteral" || keys.type === "StringLiteral" ? null : wrongSortKind(keys, method, true, kind);
   if (wrong !== null) throw wrong;
-  const names = keys.type === "ArrayLiteral" ? keys.elements.map((e) => fieldName(e, method)) : [fieldName(keys, method)];
+  const names = keys.type === "ArrayLiteral" ? keys.elements.map((e, i) => fieldName(e, method, `element ${i + 1}`, kind)) : [fieldName(keys, method, "argument 1", kind)];
   const dirs = [];
   if (orders !== void 0) {
-    const list = orders.type === "ArrayLiteral" ? orders.elements : [orders];
-    for (const o of list) {
+    const listed = orders.type === "ArrayLiteral";
+    const list = listed ? orders.elements : [orders];
+    list.forEach((o, i) => {
       const d = sortDirection(o);
       if (d === null)
-        throw new CodegenError(`.${method}(keys, orders) takes 1, -1, "asc" or "desc" for each order.`, o.pos);
+        throw (listed ? wrongDirection(o, method, `element ${i + 1}`, kind) : null) ?? new CodegenError(`.${method}(keys, orders) takes 1, -1, "asc" or "desc" for each order.`, o.pos);
       dirs.push(d);
-    }
+    });
     if (dirs.length > names.length) {
       throw new CodegenError(
         `.${method}(keys, orders) has ${dirs.length} orders for ${names.length} key(s).`,

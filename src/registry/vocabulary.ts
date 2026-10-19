@@ -692,6 +692,11 @@ export type Arity = {
    */
   rest?: ArgType | readonly ArgType[];
   /**
+   * The forms that a slot takes, keyed by slot. A refusal of a wrong kind in that slot
+   * adds it as the hint, for example ` Write 1, -1, "asc" or "desc".`
+   */
+  slotHint?: Readonly<Record<number, string>>;
+  /**
    * Every operand has one kind. The first operand with a PROVEN kind sets it. A later
    * operand with another proven kind is refused. This is the rule of `===` (the test
    * is always false for two kinds) and of `+` (a number and a string never add). An

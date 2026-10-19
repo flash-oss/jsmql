@@ -106,15 +106,15 @@ describe("compiler/emit/statement — the writes", () => {
     // A root replacement has to BE a document. The server refuses every other
     // value, and a literal — or a name whose measured return type says so — is
     // known at compile time.
-    expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
-    expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
+    expect(() => pipeline("$ = 5;")).toThrow(/takes a document, but got a number\./);
+    expect(() => pipeline('$ = "x";')).toThrow(/but got a string\./);
     // `$` is ONE document and `$$` is the stream, so an array names the wrong
     // destination whatever it holds: a list of documents, scalars, or nothing.
     for (const src of ["$ = [{ a: 1 }, { a: 2 }];", "$ = [1, 2];", "$ = [];", "$ = $.items.map(x => ({ v: x }));"]) {
-      expect(() => pipeline(src)).toThrow(/replaces ONE document, and this value is an array/);
+      expect(() => pipeline(src)).toThrow(/takes a document, but got an array\./);
     }
-    expect(() => pipeline("$ = null;")).toThrow(/null is not one/);
-    expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
+    expect(() => pipeline("$ = null;")).toThrow(/takes a document, but got null\./);
+    expect(() => pipeline("$ = $abs($.a);")).toThrow(/takes a document, but got a number\./);
   });
 
   it("`$ = $.method(…)` is the stage that root-replacing object methods emit", () => {
@@ -816,7 +816,7 @@ describe("compiler/emit/statement — the stream road", () => {
     // the stream is never null
     expect(() => pipeline("$$?.$match({ a: 1 });")).toThrow(/never null/);
     // a reshape has to return a document; the server refuses every other root
-    expect(() => pipeline("$$ = $$.map(d => 5);")).toThrow(/has to return a document/);
+    expect(() => pipeline("$$ = $$.map(d => 5);")).toThrow(/takes an arrow that returns a document/);
     // an unwind names a field
     expect(() => pipeline("$$ = $$.flatMap(d => 5);")).toThrow(/names the ARRAY FIELD/);
     // a projection lists field names
@@ -949,7 +949,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // the parameter. In a body over another collection, a `$ = …` fix would write
     // the OUTER document, and the compiler refuses that write.
     const notADocument = (root: string, noun: string): string =>
-      `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`;
+      `'${root} = …' takes a document, but got ${noun}. Put the value under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`;
     expect(() => pipeline("$$.aggregate(o => { o = 5; });")).toThrow(notADocument("o", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = o.a * 2; });")).toThrow(notADocument("o", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = null; });")).toThrow(notADocument("o", "null"));
@@ -962,7 +962,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // A body on the stream reads the same document as `$`, so `$ = …` stays what you wrote.
     expect(() => pipeline("$$.aggregate(o => { $ = 5; });")).toThrow(notADocument("$", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = [1, 2]; });")).toThrow(
-      "'o = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write 'o.<field> = <array>;'.",
+      "'o = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write 'o.<field> = <array>;'.",
     );
     expect(() => pipeline("$$.aggregate(o => { delete o; });")).toThrow(
       "'delete o' would delete the document itself. To replace it, write 'o = { … };'; to drop every field but one, write 'o = { keep: o.keep };'.",

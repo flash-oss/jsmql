@@ -1378,6 +1378,14 @@ function randomOf({ recv, args, value, bind, present }: ExprIn): unknown {
   return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
 }
 
+/** The arguments of `.orderBy()`: lodash's keys and orders, or one `{ field: dir }` spec. */
+const ORDER_BY_ARGS: Arity = {
+  sig: "keys[, orders] | { field: dir }",
+  allowed: [1, 2],
+  slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] },
+  slotHint: { 1: ' Write 1, -1, "asc" or "desc", or a list of them.' },
+};
+
 /**
  * The arguments of `.range()` and `.rangeRight()`: lodash's `end`, or `start` on the
  * receiver with `end[, step]`. `$range` refuses a zero step and a fractional bound.
@@ -5281,11 +5289,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: {
-        sig: "keys[, orders] | { field: dir }",
-        allowed: [1, 2],
-        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] },
-      },
+      args: ORDER_BY_ARGS,
       emit: ({ recv, args, orderBy, callback, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
@@ -5307,11 +5311,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: {
-        sig: "keys[, orders] | { field: dir }",
-        allowed: [1, 2],
-        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] },
-      },
+      args: ORDER_BY_ARGS,
       emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape),
     },
     statement: unsupported(
