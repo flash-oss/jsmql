@@ -667,6 +667,35 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     );
   });
 
+  // MEASURED on mongod: `$dateFromParts` refuses a fraction in each of the seven parts.
+  // JavaScript cuts the fraction off, and JSMQL does not cut a value silently.
+  it.each([0, 1, 2, 3, 4, 5, 6])("a written fraction in calendar part %i is refused", (i) => {
+    const parts = [2020, 1, 15, 4, 5, 6, 7].map((n, j) => (j === i ? "1.5" : String(n)));
+    const source = `new Date(${parts.join(", ")})`;
+    const e = refusal(() => jsmql.expr(source));
+    expect(e.message).toMatch(
+      new RegExp(
+        `^'new Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`,
+      ),
+    );
+    expect(e.pos).toBe(source.indexOf("1.5"));
+  });
+
+  it("a proven fraction in a calendar part is refused, with each spelling of the call", () => {
+    const round = /argument 2 takes an integer, but got a fraction\. Write an integer, or round/;
+    expect(() => jsmql.expr("new Date(2020, 3 / 2)")).toThrow(round);
+    expect(() => jsmql.expr("const m = 1.5; new Date(2020, m)")).toThrow(round);
+    expect(() => jsmql.expr`new Date(2020, ${1.5})`).toThrow(round);
+    expect(() => jsmql.expr.compile(({ m }: { m: number }) => new Date(2020, m))({ m: 1.5 })).toThrow(round);
+    expect(() => jsmql.expr("Date(2020, 1.5)")).toThrow(/^'Date\(\)' argument 2 takes an integer, but got a fraction/);
+    expect(() => jsmql.expr("new Date(2020, null)")).toThrow("'new Date()' argument 2 takes an integer, but got null.");
+  });
+
+  it("whole calendar parts compile, and one fractional number is a millisecond count", () => {
+    expect(jsmql.expr("new Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
+    expect(jsmql.expr("new Date(2020.5)")).toEqual(new Date("1970-01-01T00:00:02.020Z"));
+  });
+
   it("an ObjectId and a UUID convert a string, or a value of their own type", () => {
     expect(() => jsmql.expr("ObjectId($.s.length())")).toThrow(
       /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got a number\./,

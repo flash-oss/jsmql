@@ -819,7 +819,9 @@ const dateRow = (spelling: string) =>
         },
         // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
         // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
-        // integer: the server refuses 2024.5 as a year.
+        // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
+        // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
+        // and JSMQL does not cut a value silently, so the compiler refuses a fraction.
         multiple: {
           args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7], rest: "int" },
           emit: ({ args, value }) => dateFromParts(args.map(value), null),
