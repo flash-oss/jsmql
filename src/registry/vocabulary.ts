@@ -758,6 +758,7 @@ export type Arity = {
  * One spelling that stands in for the arrow in an iteratee slot.
  *
  *   propertyPath         $.rows.uniqBy("id")             means `r => r.id`
+ *   propertyIndex        $.rows.keyBy(5)                 means `r => r[5]` (a whole number)
  *   matchesObject        $.rows.filter({ active: true })  means `r => r.active === true`
  *   matchesPropertyPair  $.rows.filter(["a.b", 1])        means `r => r.a.b === 1`
  *   bareCallable         $.items.map(String)              means `x => String(x)` (a callable global)
@@ -766,7 +767,13 @@ export type Arity = {
  * The list holds no entry for the arrow itself. Every iteratee slot takes an
  * arrow, so an entry for it says nothing. See `NameSpec.iterateeSlots`.
  */
-export type SlotForm = "propertyPath" | "matchesObject" | "matchesPropertyPair" | "bareCallable" | "omitted";
+export type SlotForm =
+  | "propertyPath"
+  | "propertyIndex"
+  | "matchesObject"
+  | "matchesPropertyPair"
+  | "bareCallable"
+  | "omitted";
 
 /**
  * The slot layout of one receiver: which argument slots take an ITERATEE, and what

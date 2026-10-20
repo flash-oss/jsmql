@@ -18,6 +18,7 @@ import { canon } from "./support/canon.ts";
 /** Each form, and the arrow that spells the same meaning. `null` = no arrow does. */
 const SPELLINGS: Readonly<Record<SlotForm, readonly [string, string | null]>> = {
   propertyPath: ['"name"', "x => x.name"],
+  propertyIndex: ["0", "x => x[0]"],
   matchesObject: ["{ active: true }", "x => x.active === true"],
   matchesPropertyPair: ['["active", true]', "x => x.active === true"],
   bareCallable: ["Number", "x => Number(x)"],

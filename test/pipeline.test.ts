@@ -2081,11 +2081,11 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
 // only, so it is correct for every receiver.
 describe("a predicate error never advises a different receiver", () => {
   const VOCABULARY = (m: string) =>
-    `'.${m}()' takes a predicate here — an arrow ('d => …'), a field name ('"status"'), a matcher object ('{ status: "paid" }'), or a '[field, value]' pair ('["status", "paid"]'). Got a number.`;
+    `'.${m}()' takes a predicate here — an arrow ('d => …'), a field name ('"status"'), an index ('0'), a matcher object ('{ status: "paid" }'), or a '[field, value]' pair ('["status", "paid"]'). Got a boolean.`;
   const INDEX = "`b` has no value inside `.filter()` — a stream has no per-document index; leave the parameter unused.";
   for (const receiver of ["$$", "$$$.orders"]) {
     it(`${receiver}: the vocabulary message names the method only`, () => {
-      expect(() => jsmql(`$$ = ${receiver}.filter(123);`)).toThrow(VOCABULARY("filter"));
+      expect(() => jsmql(`$$ = ${receiver}.filter(true);`)).toThrow(VOCABULARY("filter"));
     });
 
     it(`${receiver}: the index-parameter message names the method only`, () => {
@@ -2093,7 +2093,7 @@ describe("a predicate error never advises a different receiver", () => {
     });
 
     it(`${receiver}: .reject keeps step with .filter`, () => {
-      expect(() => jsmql(`$$ = ${receiver}.reject(123);`)).toThrow(VOCABULARY("reject"));
+      expect(() => jsmql(`$$ = ${receiver}.reject(true);`)).toThrow(VOCABULARY("reject"));
     });
   }
 

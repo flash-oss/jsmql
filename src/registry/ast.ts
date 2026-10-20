@@ -213,7 +213,18 @@ export type Expr =
 
   // ── access and application ────────────────────────────────────────────────
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }
-  | { type: "IndexAccess"; object: Expr; index: Expr; optional: boolean; pos: number }
+  | {
+      type: "IndexAccess";
+      object: Expr;
+      index: Expr;
+      optional: boolean;
+      pos: number;
+      /**
+       * The desugar pass wrote this read for an index in an iteratee slot (`.keyBy(5)`).
+       * The emitter refuses it when the elements cannot hold the index.
+       */
+      iteratee?: { readonly method: string; readonly slot: number };
+    }
   /**
    * `wrote` is the name in the SOURCE. It is present only when a pass rewrites this
    * call to another name — `.reverse()` to its immutable twin `.toReversed()`. Every

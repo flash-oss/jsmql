@@ -494,8 +494,8 @@ describe("$$$.coll.find/filter — error cases", () => {
   });
 
   it("non-arrow predicate is rejected with an actionable message", () => {
-    expect(() => jsmql("$.x = $$$.users.find(123);")).toThrow(
-      "'.find()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
+    expect(() => jsmql("$.x = $$$.users.find(true);")).toThrow(
+      "'.find()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a boolean.",
     );
   });
 

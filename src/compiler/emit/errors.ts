@@ -990,6 +990,7 @@ export const notAStreamLink = (name: string, candidates: readonly string[], pos:
 /** One accepted spelling, with the shortest example of it. */
 const SPELLING: Readonly<Record<SlotForm, string>> = {
   propertyPath: `a field name ('"status"')`,
+  propertyIndex: "an index ('0')",
   matchesObject: `a matcher object ('{ status: "paid" }')`,
   matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
   bareCallable: "a callable ('Boolean')",
@@ -1015,6 +1016,8 @@ const ARG_NOUN: Readonly<Record<string, string>> = {
 /**
  * A stage cell asked for a callback and got a shape this slot never takes. The
  * spellings come from the row, so the way out is the one the compiler accepts.
+ * An earlier pass rewrites a whole-number index, so a number that arrives here
+ * in a slot that takes an index is negative or a fraction.
  */
 export const notAnArrow = (
   name: string,
@@ -1022,17 +1025,19 @@ export const notAnArrow = (
   forms: readonly SlotForm[],
   got: { type: string; pos: number },
   slot: number,
-): CodegenError =>
-  got.type === "NullLiteral"
-    ? nullCallback(name, slot, what, got.pos)
-    : new CodegenError(
-        `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
-          got.type === "Ident"
-            ? `the name '${(got as { name?: string }).name}'`
-            : (ARG_NOUN[got.type] ?? "something else")
-        }.`,
-        got.pos,
-      );
+): CodegenError => {
+  if (got.type === "NullLiteral") return nullCallback(name, slot, what, got.pos);
+  const index = (got as { value?: unknown }).value;
+  if (got.type === "NumberLiteral" && forms.includes("propertyIndex") && typeof index === "number") {
+    return notAWholeIndex(name, slot, index, got.pos);
+  }
+  return new CodegenError(
+    `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
+      got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : (ARG_NOUN[got.type] ?? "something else")
+    }.`,
+    got.pos,
+  );
+};
 
 /**
  * `.map(null)` — a `null` in a slot that takes a callback. The compiler refuses it as it
@@ -1041,6 +1046,26 @@ export const notAnArrow = (
  */
 export const nullCallback = (name: string, slot: number, takes: string, pos: number): CodegenError =>
   new CodegenError(wrongKind(`'.${name}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
+
+/** `.keyBy(-1)`, `.keyBy(1.5)` — an index in an iteratee slot that reads no element of an array. */
+export const notAWholeIndex = (name: string, slot: number, index: number, pos: number): CodegenError =>
+  new CodegenError(
+    wrongKind(
+      `'.${name}()'`,
+      `argument ${slot + 1}`,
+      "a whole-number index",
+      index < 0 ? "got a negative number" : "got a fraction",
+      ` In JavaScript, 'x[${index}]' reads no element of an array.`,
+    ),
+    pos,
+  );
+
+/**
+ * `[[1, 2]].keyBy(5)` — an index in an iteratee slot that the elements cannot hold.
+ * `found` says why: the elements are of a kind with no index, or hold fewer items.
+ */
+export const indexNotHeld = (name: string, slot: number, found: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind(`'.${name}()'`, `argument ${slot + 1}`, "an index that each element holds", found), pos);
 
 /** `.filter({})` — a matcher object that names no field to match. */
 export const emptyMatcherObject = (name: string, pos: number): CodegenError =>

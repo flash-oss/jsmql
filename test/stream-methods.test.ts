@@ -677,7 +677,7 @@ describe(".reject(pred) → $match (filter negated)", () => {
       "'.reject(predicate)' requires exactly 1 argument, got 2 — JavaScript's trailing 'thisArg' has no meaning in MQL; drop it",
     );
     expect(() => jsmql("$$.reject(...preds);")).toThrow(
-      "'.reject()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got something else.",
+      "'.reject()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got something else.",
     );
   });
 });
@@ -749,9 +749,9 @@ describe(".groupBy(key) → object collapse", () => {
     ]);
   });
 
-  it("rejects a number as the key", () => {
-    expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(
-      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
+  it("refuses a boolean as the key", () => {
+    expect(() => jsmql("$$ = $$.groupBy(true);")).toThrow(
+      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a boolean.",
     );
   });
 });
@@ -2539,11 +2539,11 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
 
   it("each key-slot error names the method it was called on, not a sibling", () => {
     // `.keyBy`/`.uniqBy` must not demonstrate a sibling like `.countBy("status")` in their own errors.
-    expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(
-      "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
+    expect(() => jsmql(`$.o = $$$.orders.keyBy(true);`)).toThrow(
+      "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a boolean.",
     );
-    expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(
-      "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
+    expect(() => jsmql(`$.o = $$$.orders.uniqBy(true);`)).toThrow(
+      "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a boolean.",
     );
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(
       "'.sortBy()' element 1 takes a field name, but got a number. Write a field name, for example \"age\".",

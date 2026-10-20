@@ -414,7 +414,12 @@ function writtenKey(entry: object): string | null {
  * (its `iterateeSlots`), never this rewrite's. The rewrite only tells a global
  * apart from a binding, and a name that needs `new` is not callable bare.
  */
-function asArrow(arg: object | undefined, forms: readonly string[], pos: number): object | undefined {
+function asArrow(
+  arg: object | undefined,
+  forms: readonly string[],
+  pos: number,
+  iteratee: { readonly method: string; readonly slot: number },
+): object | undefined {
   const accepts = (form: string): boolean => forms.includes(form);
 
   if (arg === undefined) {
@@ -429,6 +434,21 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
 
   if (a.type === "StringLiteral" && accepts("propertyPath") && typeof a.value === "string") {
     return { type: "Lambda", params: [param], body: pathOn(param, a.value, pos), pos };
+  }
+
+  // lodash's `_.property(5)`: each element read at index 5. A negative number or a
+  // fraction reads no element in JavaScript. It stays as written, and the emitter refuses it.
+  const n = a.value;
+  if (
+    a.type === "NumberLiteral" &&
+    accepts("propertyIndex") &&
+    typeof n === "number" &&
+    Number.isInteger(n) &&
+    n >= 0
+  ) {
+    const object = { type: "Ident", name: param, pos, minted: true };
+    const body = { type: "IndexAccess", object, index: { ...a }, optional: false, pos, iteratee };
+    return { type: "Lambda", params: [param], body, pos };
   }
 
   if (a.type === "ObjectLiteral" && accepts("matchesObject") && a.entries !== undefined) {
@@ -553,7 +573,7 @@ const iterateeShorthand: Rule = {
       const slot = Number(key);
       // An absent slot is the `omitted` case, and only when it is the next slot.
       if (slot > args.length) continue;
-      const arrow = asArrow(args[slot], forms as readonly string[], n.pos);
+      const arrow = asArrow(args[slot], forms as readonly string[], n.pos, { method: n.name, slot });
       if (arrow === undefined) continue;
       next[slot] = arrow;
       changed = true;
