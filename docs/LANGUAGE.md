@@ -3071,7 +3071,7 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
-**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a fraction toward zero, as `new Date(1.7)` does in JavaScript, so the instant is the same.
+**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a run-time fraction toward zero, as JavaScript does, so the instant is the same. The compiler refuses a count that it proves is a fraction, as it refuses a fractional calendar part.
 
 The compiler writes the shorter form when the operand proves its kind. A proven string or date needs no `$toLong`. A proven number needs no `$isNumber` test.
 
@@ -3083,6 +3083,7 @@ A part out of range goes into the next unit, exactly as in JavaScript: `new Date
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
 new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
 new Date(2024, 1.5)                // ✗ each calendar part is an integer; round it with .floor() or .ceil()
+new Date(1.5)                      // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
 $.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```

@@ -783,9 +783,32 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     expect(() => jsmql.expr("new Date(2020, null)")).toThrow("'new Date()' argument 2 takes an integer, but got null.");
   });
 
-  it("whole calendar parts compile, and one fractional number is a millisecond count", () => {
+  it("whole calendar parts compile", () => {
     expect(jsmql.expr("new Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
-    expect(jsmql.expr("new Date(2020.5)")).toEqual(new Date("1970-01-01T00:00:02.020Z"));
+  });
+
+  // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
+  // and JSMQL does not cut a value silently.
+  it.each([
+    ["written", () => jsmql.expr("new Date(2020.5)"), 9],
+    ["folded", () => jsmql.expr("new Date(3 / 2)"), 11],
+    ["bound", () => jsmql.expr("const n = 2020.5; new Date(n)"), 27],
+    ["interpolated", () => jsmql.expr`new Date(${2020.5})`, 9],
+    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => new Date(n))({ n: 2020.5 }), 20],
+  ])("a %s fraction as the millisecond count is refused", (_, run, pos) => {
+    const e = refusal(run);
+    expect(e.message).toMatch(
+      /^'new Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
+    );
+    expect(e.pos).toBe(pos);
+  });
+
+  it("a whole millisecond count, a string and a value of unknown kind convert", () => {
+    expect(jsmql.expr("new Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
+    expect(jsmql.expr("new Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
+    expect(jsmql.expr(`new Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
+    expect(jsmql.expr("new Date($.n)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } });
+    expect(() => jsmql.expr("Date(2020.5)")).toThrow(/^'Date\(\)' argument 1 takes an integer, but got a fraction/);
   });
 
   it("an ObjectId and a UUID convert a string, or a value of their own type", () => {

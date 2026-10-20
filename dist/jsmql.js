@@ -421,9 +421,12 @@ var dateRow = (spelling) => global_({
       // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
       // converts (see `ownValue`). The slot states its kinds, so a constant of another kind,
       // for example `null`, gets the refusal of a wrong kind. The cell refuses a string that
-      // no date parser reads.
+      // no date parser reads. A number is a count of milliseconds, and the count is an integer.
+      // MEASURED: `$toDate` cuts a fraction toward zero (2020.5 → 2020 ms, -2020.5 → -2020 ms).
+      // JavaScript cuts it the same way, and JSMQL does not cut a value silently, so the
+      // compiler refuses a fraction, as the calendar parts do.
       constant: {
-        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] }, integer: [0] },
         emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toDate") ?? construct(
           spelling,
           `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
@@ -20482,7 +20485,7 @@ function instantOf2(args) {
   if (args.length === 0) return null;
   if (args.length === 1) {
     const [a] = args;
-    if (typeof a === "number") return Number.isFinite(a) && !Number.isNaN(new Date(a).getTime()) ? new Date(a) : null;
+    if (typeof a === "number") return Number.isInteger(a) && !Number.isNaN(new Date(a).getTime()) ? new Date(a) : null;
     if (typeof a !== "string") return null;
     const parsed = new Date(a);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
