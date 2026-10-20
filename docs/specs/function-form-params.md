@@ -29,6 +29,7 @@ Two optional slots, each an **object destructure**. The parser classifies each b
 | Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
 > The toolbox slot is types-only convenience. The **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which surfaces every stage and operator as an ambient global, with no need to list them per call site. Listing `$` (and any operator) in the toolbox lets the arrow type-check even without that import.
+> The toolbox type `JsmqlToolbox` is `any`, so an arrow declared separately from the call also type-checks. That arrow has its own toolbox type, with a required member for each name. An index signature cannot give a required member.
 
 When both slots appear, the only legal order is `(params, { $, … })`. A shorter combination also works: `(params)`, `({ $, … })`, and `()`. Anything else, such as a third slot, a bare-identifier or bare-`$` slot, or the toolbox before params, throws `FunctionInputError` and states the actual and expected shape.
 

@@ -65,8 +65,14 @@ export class FunctionInputError extends ParseError {
   }
 }
 
-/** The toolbox an arrow destructures: `$`, `$$`, `$$$`, `$$$$` and every `$op`. */
-export type JsmqlToolbox = { [K in `$${string}`]: any };
+/**
+ * The toolbox an arrow destructures: `$`, `$$`, `$$$`, `$$$$` and every `$op`.
+ *
+ * It is `any`, not an index signature over `$${string}`. An arrow declared separately from the
+ * call gets its own parameter type, with a required member per name it destructures. An
+ * index signature cannot give a required member, so TypeScript refuses that arrow.
+ */
+export type JsmqlToolbox = any;
 export type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;
 export type JsmqlInput = string | JsmqlFn;
 export type JsmqlOutput = object | object[];
