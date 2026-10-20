@@ -48,6 +48,11 @@ const DOC = {
     { k: "x", v: 3 },
   ],
   nested: [[1, 2], [3]],
+  // rows of six, for the index shorthand (`.keyBy(5)`)
+  rows: [
+    [1, 2, 3, 4, 5, 6],
+    [7, 8, 9, 0, 1, 2],
+  ],
   pairs: [["k", 1]],
   mixed: [0, 1, "", "a", null, false, true],
   // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
@@ -760,6 +765,7 @@ describe("compiler/emit — object methods", () => {
                     "dup",
                     "docs",
                     "nested",
+                    "rows",
                     "pairs",
                     "mixed",
                     "mo",
@@ -1879,8 +1885,68 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr('$.s.indexOfSubstring("b", "2")')).toThrow(
       "'.indexOfSubstring()' argument 2 takes an integer, but got a string.",
     );
-    expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
+    expect(() => expr("$.a.map(true)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
+  });
+});
+
+/** lodash's `_.groupBy` and `_.countBy` over rows, keyed by one index: the answers the server must give. */
+const byIndex = (rows: readonly (readonly number[])[], i: number) => ({
+  groups: rows.reduce<Record<string, number[][]>>((o, r) => ({ ...o, [r[i]]: [...(o[r[i]] ?? []), [...r]] }), {}),
+  counts: rows.reduce<Record<string, number>>((o, r) => ({ ...o, [r[i]]: (o[r[i]] ?? 0) + 1 }), {}),
+});
+
+describe("compiler/emit — a whole number in an iteratee slot is lodash's `_.property(n)`", () => {
+  it("emits for each method family what the arrow `x => x[n]` emits", () => {
+    const same = (short: string, long: string, js: (d: typeof DOC) => unknown) => {
+      expect(compiled(short, js)).toEqual(expr(long));
+    };
+    same("$.rows.keyBy(5)", "$.rows.keyBy(x => x[5])", (d) => Object.fromEntries(d.rows.map((r) => [r[5], r])));
+    same("$.rows.groupBy(0)", "$.rows.groupBy(x => x[0])", (d) => byIndex(d.rows, 0).groups);
+    same("$.rows.countBy(3)", "$.rows.countBy(x => x[3])", (d) => byIndex(d.rows, 3).counts);
+    same("$.rows.filter(3)", "$.rows.filter(x => x[3])", (d) => d.rows.filter((r) => r[3]));
+    same("$.rows.map(1)", "$.rows.map(x => x[1])", (d) => d.rows.map((r) => r[1]));
+    same("$.rows.sumBy(4)", "$.rows.sumBy(x => x[4])", (d) => d.rows.reduce((s, r) => s + r[4], 0));
+    same("$.rows.differenceBy($.nested, 0)", "$.rows.differenceBy($.nested, x => x[0])", (d) =>
+      d.rows.filter((r) => !d.nested.some((m) => m[0] === r[0])),
+    );
+    // a constant receiver folds, and a constant or injected index means the same arrow
+    expect(expr("[[1, 2, 3, 4, 5, 6], [7, 8, 9, 0, 1, 2]].keyBy(5)")).toEqual({
+      $arrayToObject: [
+        [
+          ["6", [1, 2, 3, 4, 5, 6]],
+          ["2", [7, 8, 9, 0, 1, 2]],
+        ],
+      ],
+    });
+    expect(expr("$.rows.keyBy(2 + 3)")).toEqual(expr("$.rows.keyBy(x => x[5])"));
+    expect(jsmql.expr`$.rows.keyBy(${5})`).toEqual(expr("$.rows.keyBy(x => x[5])"));
+  });
+
+  it("means the same arrow in a filter and on a stream link", () => {
+    expect(jsmql("$.rows.some(3)")).toEqual(jsmql("$.rows.some(x => x[3])"));
+    expect(jsmql("$$.groupBy(0);")).toEqual(jsmql("$$.groupBy(d => d[0]);"));
+  });
+
+  it("refuses an index that the elements cannot hold, and an index that reads no element", () => {
+    expect(() => expr("[[1, 2], [3, 4]].keyBy(5)")).toThrow(
+      "'.keyBy()' argument 1 takes an index that each element holds, but an element holds 2 items.",
+    );
+    expect(() => jsmql("$.a = [[1, 2], [3, 4]]; $.b = $.a.groupBy(5);")).toThrow(
+      "'.groupBy()' argument 1 takes an index that each element holds, but an element holds 2 items.",
+    );
+    expect(() => expr("[1, 2].keyBy(0)")).toThrow(
+      "'.keyBy()' argument 1 takes an index that each element holds, but the elements are numbers.",
+    );
+    expect(() => expr('["ab", "cd"].map(0)')).toThrow(
+      "'.map()' argument 1 takes an index that each element holds, but the elements are strings.",
+    );
+    expect(() => expr("$.rows.keyBy(-1)")).toThrow(
+      "'.keyBy()' argument 1 takes a whole-number index, but got a negative number. In JavaScript, 'x[-1]' reads no element of an array.",
+    );
+    expect(() => expr("$.rows.keyBy(1.5)")).toThrow(
+      "'.keyBy()' argument 1 takes a whole-number index, but got a fraction. In JavaScript, 'x[1.5]' reads no element of an array.",
+    );
   });
 });
 

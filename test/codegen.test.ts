@@ -2500,7 +2500,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
       expect(() => jsmql.expr(src)).toThrow(/got 2 — JavaScript's trailing 'thisArg'/);
     }
     // The shape check still wins where it says more than a count could.
-    expect(() => jsmql.expr("$.a.map(5)")).toThrow(
+    expect(() => jsmql.expr("$.a.map(true)")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
     );
     // `.reduce` legitimately takes two, and is unaffected.
@@ -3189,7 +3189,7 @@ describe("bare built-in callbacks", () => {
   // rejection must stay the method's own form list — never an internal var name.
   it("a stream method rejects a bare built-in with its own spelling list", () => {
     expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).toThrow(
-      "'.countBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got the name 'String'.",
+      "'.countBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got the name 'String'.",
     );
     expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).not.toThrow(/jsmql[A-Z]/);
   });

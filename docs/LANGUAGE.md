@@ -2333,6 +2333,7 @@ Every higher-order value method accepts the same lodash vocabulary of iteratees 
 | shorthand | example | equivalent arrow |
 |---|---|---|
 | property string (dotted paths are allowed) | `.map("addr.city")` | `x => x.addr.city` |
+| property index (a whole number) | `.keyBy(5)` | `x => x[5]` |
 | `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
 | `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` can be anything |
 | `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.has("a") && x.tags.has("b")` — a subset, like lodash's |
@@ -2341,6 +2342,18 @@ Every higher-order value method accepts the same lodash vocabulary of iteratees 
 | omitted (identity) | `.uniq()` | `x => x` |
 
 An iteratee context reads the result as a value: `.map("name")` takes the field. A predicate context reads the result as a boolean: `.filter("active")` keeps the truthy elements.
+
+A whole number is lodash's `_.property(n)`: it reads each element at that index. It suits a list of rows:
+
+```js
+[["a", 1], ["b", 2]].map(1)       // → [1, 2]
+$.rows.keyBy(5)                   // ≡ $.rows.keyBy(x => x[5]): each row under the key row[5]
+[[1, 2], [3, 4]].keyBy(5)         // ✗ each row holds 2 items, so no row has an index 5
+[1, 2].keyBy(0)                   // ✗ a number has no index
+$.rows.keyBy(-1)                  // ✗ JavaScript's x[-1] reads no element of an array; write .at(-1) in an arrow
+```
+
+JSMQL refuses the index when it proves that the elements cannot hold it. Elements of unknown kind, such as the elements of `$.rows`, are accepted. A document element is accepted too. The index reads the field with that name. A string element is refused, although JavaScript reads `"ab"[0]` as `"a"`. To read a character, write the arrow: `.map(s => s[0])`.
 
 The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further: `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A value that is not a plain object or an array of constants compares with `===`.
 

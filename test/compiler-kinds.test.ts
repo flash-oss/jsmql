@@ -114,7 +114,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     );
     expect(() => jsmql("$$.filter(null);")).toThrow("'.filter()' argument 1 takes a predicate, but got null.");
     // A value of another kind keeps the message that names each spelling the slot takes.
-    expect(() => jsmql.expr("$.a.groupBy(1)")).toThrow(/takes a key here — an arrow/);
+    expect(() => jsmql.expr("$.a.groupBy(true)")).toThrow(/takes a key here — an arrow/);
     expect(() => jsmql("$$.push($.a, null);")).toThrow(
       "'$$.push()' argument 2 takes a document, but got null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
     );
@@ -668,14 +668,14 @@ describe("kinds — a literal array is judged by each position, a computed array
 describe("kinds — an iteratee slot that gets no arrow is a refusal, never an internal error", () => {
   it("names the spellings the slot takes", () => {
     for (const method of ["groupBy", "countBy"]) {
-      const e = refusal(() => jsmql.expr(`$.a.${method}(5)`));
+      const e = refusal(() => jsmql.expr(`$.a.${method}(true)`));
       expect(e.message).toMatch(new RegExp(`'\\.${method}\\(\\)' takes a key here`));
       expect(e.message).not.toMatch(/internal error/);
     }
   });
 
   it("covers a predicate slot too", () => {
-    expect(() => jsmql.expr("$.a.reject(5)")).toThrow(/'\.reject\(\)' takes a predicate here/);
+    expect(() => jsmql.expr("$.a.reject(true)")).toThrow(/'\.reject\(\)' takes a predicate here/);
   });
 });
 
@@ -713,10 +713,10 @@ describe("kinds — a spread argument is judged by the kind of its elements", ()
 
 describe("kinds — a cell's own refusal of the shape of an argument comes first", () => {
   it("a callback slot names every spelling that it takes, whatever the kind of the argument", () => {
-    expect(() => jsmql.expr("$.a.map(5)")).toThrow(/takes an arrow with an expression body/);
+    expect(() => jsmql.expr("$.a.map(true)")).toThrow(/takes an arrow with an expression body/);
     expect(() => jsmql.expr("$.a.reduce(5, 0)")).toThrow(/takes a two- or three-parameter arrow/);
     expect(() => jsmql.expr("$.a.mapValues(5)")).toThrow(/takes a one- or two-parameter arrow/);
-    expect(() => jsmql.pipeline("$$.filter(5);")).toThrow(/an arrow \('d => …'\), a field name/);
+    expect(() => jsmql.pipeline("$$.filter(true);")).toThrow(/an arrow \('d => …'\), a field name/);
     expect(() => jsmql.pipeline("$$.reduce(5, 0);")).toThrow(/takes a two-parameter arrow/);
   });
 });

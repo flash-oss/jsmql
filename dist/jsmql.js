@@ -4482,7 +4482,7 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $unwind needs a field path, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] }
     },
@@ -4530,7 +4530,7 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $replaceWith needs a document, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] }
     },
@@ -4564,9 +4564,9 @@ var NAMES = {
     // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
     params: { value: ["value", "index", "receiver"], stream: ["value"] },
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -4600,7 +4600,9 @@ var NAMES = {
     // `$limit: 1`, and yields ONE document. See src/compiler/emit/join.ts.
     picksOne: "filter",
     params: ["value", "index", "receiver"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "element",
     where: ["value"],
     filter: viaFallback,
@@ -4626,7 +4628,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value", "index"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
@@ -4659,7 +4663,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "receiver"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "element",
     where: ["value"],
     filter: viaFallback,
@@ -4687,7 +4693,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value", "index"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
@@ -4742,7 +4750,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "receiver"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
@@ -4783,7 +4793,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "receiver"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "bool",
     neverNull: true,
     where: ["value"],
@@ -6344,7 +6356,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "number",
     neverNull: true,
     readsNullAsEmpty: true,
@@ -6376,7 +6390,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "number",
     readsNullAsEmpty: true,
     where: ["value", "group"],
@@ -6407,7 +6423,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "element",
     where: ["value"],
     filter: viaFallback,
@@ -6443,7 +6461,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "element",
     where: ["value"],
     filter: viaFallback,
@@ -6505,9 +6525,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6556,9 +6576,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6647,9 +6667,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element may be a document.
-      stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -6706,9 +6726,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element may be a document.
-      stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -6763,7 +6783,9 @@ var NAMES = {
     passesNull: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "array",
     neverNull: "always",
     where: ["value"],
@@ -6789,7 +6811,9 @@ var NAMES = {
     passesNull: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 1: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "array",
     neverNull: "always",
     where: ["value"],
@@ -7198,9 +7222,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7252,9 +7276,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7305,7 +7329,9 @@ var NAMES = {
     passesNull: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "array",
     neverNull: true,
     where: ["value"],
@@ -7332,7 +7358,9 @@ var NAMES = {
     passesNull: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: "array",
     neverNull: true,
     where: ["value"],
@@ -7596,9 +7624,11 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"]
+      },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: { recordOf: "element" }, stream: "stream" },
     neverNull: true,
@@ -7630,9 +7660,11 @@ var NAMES = {
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"]
+      },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: { recordOf: "same" }, stream: "stream", Object: { recordOf: { arg: 0 } } },
     neverNull: true,
@@ -7672,9 +7704,11 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"]
+      },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: { recordOf: "number" }, stream: "stream" },
     neverNull: true,
@@ -7708,7 +7742,9 @@ var NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
+    iterateeSlots: {
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
     returns: { tuple: ["same", "same"] },
     neverNull: true,
     where: ["value"],
@@ -7739,9 +7775,9 @@ var NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -20333,7 +20369,7 @@ function writtenKey(entry) {
   if (e.type !== "KeyValueEntry" || e.key?.kind !== "static") return null;
   return typeof e.key.name === "string" ? e.key.name : null;
 }
-function asArrow(arg, forms, pos) {
+function asArrow(arg, forms, pos, iteratee) {
   const accepts = (form) => forms.includes(form);
   if (arg === void 0) {
     if (!accepts("omitted")) return void 0;
@@ -20344,6 +20380,12 @@ function asArrow(arg, forms, pos) {
   const param = freshParam("x", arg);
   if (a.type === "StringLiteral" && accepts("propertyPath") && typeof a.value === "string") {
     return { type: "Lambda", params: [param], body: pathOn(param, a.value, pos), pos };
+  }
+  const n2 = a.value;
+  if (a.type === "NumberLiteral" && accepts("propertyIndex") && typeof n2 === "number" && Number.isInteger(n2) && n2 >= 0) {
+    const object = { type: "Ident", name: param, pos, minted: true };
+    const body = { type: "IndexAccess", object, index: { ...a }, optional: false, pos, iteratee };
+    return { type: "Lambda", params: [param], body, pos };
   }
   if (a.type === "ObjectLiteral" && accepts("matchesObject") && a.entries !== void 0) {
     if (a.entries.length === 0) return void 0;
@@ -20430,7 +20472,7 @@ var iterateeShorthand = {
     for (const [key, forms] of Object.entries(layout)) {
       const slot = Number(key);
       if (slot > args.length) continue;
-      const arrow = asArrow(args[slot], forms, n2.pos);
+      const arrow = asArrow(args[slot], forms, n2.pos, { method: n2.name, slot });
       if (arrow === void 0) continue;
       next[slot] = arrow;
       changed = true;
@@ -22849,6 +22891,7 @@ var notAStreamLink = (name2, candidates, pos) => {
 };
 var SPELLING2 = {
   propertyPath: `a field name ('"status"')`,
+  propertyIndex: "an index ('0')",
   matchesObject: `a matcher object ('{ status: "paid" }')`,
   matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
   bareCallable: "a callable ('Boolean')",
@@ -22866,11 +22909,29 @@ var ARG_NOUN = {
   ObjectLiteral: "an object",
   ArrayLiteral: "an array"
 };
-var notAnArrow = (name2, what, forms, got, slot) => got.type === "NullLiteral" ? nullCallback(name2, slot, what, got.pos) : new CodegenError(
-  `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
-  got.pos
-);
+var notAnArrow = (name2, what, forms, got, slot) => {
+  if (got.type === "NullLiteral") return nullCallback(name2, slot, what, got.pos);
+  const index = got.value;
+  if (got.type === "NumberLiteral" && forms.includes("propertyIndex") && typeof index === "number") {
+    return notAWholeIndex(name2, slot, index, got.pos);
+  }
+  return new CodegenError(
+    `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
+    got.pos
+  );
+};
 var nullCallback = (name2, slot, takes, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
+var notAWholeIndex = (name2, slot, index, pos) => new CodegenError(
+  wrongKind(
+    `'.${name2}()'`,
+    `argument ${slot + 1}`,
+    "a whole-number index",
+    index < 0 ? "got a negative number" : "got a fraction",
+    ` In JavaScript, 'x[${index}]' reads no element of an array.`
+  ),
+  pos
+);
+var indexNotHeld = (name2, slot, found2, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, "an index that each element holds", found2), pos);
 var emptyMatcherObject = (name2, pos) => new CodegenError(
   `'.${name2}({ \u2026 })' matches a document by its fields, and '{}' names none. Write the field to match \u2014 '.${name2}({ status: "paid" })' \u2014 or an arrow \u2014 '.${name2}(d => d.status === "paid")'.`,
   pos
@@ -25276,11 +25337,27 @@ var childEnv = (env, node, key) => {
   if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at2;
   return at2.inside(null);
 };
-function callback(cb, env, read3, refusal) {
+function checkIndexHeld(node, elements) {
+  if (node.iteratee === void 0) return;
+  const { method, slot } = node.iteratee;
+  const i = node.index.value;
+  for (const element of elements) {
+    if (cannotBe(element, "array") && cannotBe(element, "object") && !isNothing(element)) {
+      throw indexNotHeld(method, slot, `the elements are ${pluralNounOfKinds(element)}`, node.pos);
+    }
+    if (isOnly(element, "array") && element.items !== void 0 && element.items.length <= i) {
+      const n2 = element.items.length;
+      throw indexNotHeld(method, slot, `an element holds ${n2} item${n2 === 1 ? "" : "s"}`, node.pos);
+    }
+  }
+}
+var elementsOf3 = (recv) => recv.items ?? [flattenOnce(recv)];
+function callback(cb, env, read3, refusal, receiver) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
+  if (cb.body.type === "IndexAccess" && cb.body.iteratee !== void 0) checkIndexHeld(cb.body, elementsOf3(receiver()));
   const bound = env.param(cb.params[0], ANY, cb.pos);
   return { as: bound.as, ref: bound.ref, in: read3(cb.body, childEnv(bound.env, cb, "body")) };
 }
@@ -25295,7 +25372,9 @@ function arrayCallback(cb, recv, recvNode, env, read3, name2, present2 = false) 
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element = recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
+  const recvType = recvNode === void 0 ? ANY : typeOf(recvNode, env);
+  const element = flattenOnce(recvType);
+  if (cb.body.type === "IndexAccess" && cb.body.iteratee !== void 0) checkIndexHeld(cb.body, elementsOf3(recvType));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
     const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element, cb.pos);
@@ -25407,7 +25486,8 @@ function elementsCallback(cb, count, env, read3, name2) {
 function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read3.value(env.site.settling ? e : settled(e), argEnv);
-  const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
+  const recvType = () => recvNode === void 0 ? ANY : typeOf(recvNode, env);
+  const elementOfRecv = () => flattenOnce(recvType());
   const notArrow = (cb, what) => {
     const slot = Math.max(0, args.indexOf(cb));
     return notAnArrow(name2, what, slotFormsOf(name2, "array", slot), cb, slot);
@@ -25426,8 +25506,8 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read3.truth(e, argEnv),
     boolean: (e) => read3.boolean(e, argEnv),
-    iteratee: (cb) => callback(cb, argEnv, read3.value, () => notArrow(cb, "a key")),
-    predicate: (cb) => callback(cb, argEnv, read3.truth, () => notArrow(cb, "a predicate")),
+    iteratee: (cb) => callback(cb, argEnv, read3.value, () => notArrow(cb, "a key"), recvType),
+    predicate: (cb) => callback(cb, argEnv, read3.truth, () => notArrow(cb, "a predicate"), recvType),
     callback: (cb, mode) => {
       refuseNull(cb);
       return arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read3.value : read3.truth, name2, present2);
@@ -26141,6 +26221,7 @@ function refuseUnreadable(node, env) {
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
   checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"), ["key"]);
+  if (node.iteratee !== void 0) checkIndexHeld(node, [typeOf(node.object, objEnv)]);
   if (node.index.type === "StringLiteral") {
     const name2 = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name2, false);

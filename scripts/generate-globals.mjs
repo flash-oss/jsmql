@@ -462,11 +462,11 @@ const VALUE_METHOD_SKIP = {
 // element-typed iteratee/predicate params below are permissive on purpose —
 // jsmql validates the real argument at compile time; the TS type only needs to
 // not *reject* valid jsmql (so optional/loose beats strict).
-const ITER = "iteratee: string | ((value: T) => any)";
+const ITER = "iteratee: string | number | ((value: T) => any)";
 // Optional-iteratee form for the identity-defaulting collapse methods
 // (`keyBy`/`groupBy`/`countBy` — omitting the iteratee counts/groups by identity).
-const OPT_ITER = "iteratee?: string | ((value: T) => any)";
-const PRED = "predicate: string | [string, any] | Record<string, any> | ((value: T) => any)";
+const OPT_ITER = "iteratee?: string | number | ((value: T) => any)";
+const PRED = "predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)";
 const VALUE_METHOD_SIGNATURES = {
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
   uniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy — `_.uniq`." },

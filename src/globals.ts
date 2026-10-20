@@ -3504,7 +3504,7 @@ declare global {
     /** Drop falsy elements — `_.compact`. */
     compact(): T[];
     /** Count elements by iteratee (omit for identity) — `_.countBy`. */
-    countBy(iteratee?: string | ((value: T) => any)): Record<string, number>;
+    countBy(iteratee?: string | number | ((value: T) => any)): Record<string, number>;
     /** The values that `other` does not hold, each once. */
     difference(other: any[]): T[];
     /** Difference by iteratee — `_.differenceBy`. */
@@ -3514,9 +3514,9 @@ declare global {
     /** All but the last `n` elements — `_.dropRight`. */
     dropRight(n?: number): T[];
     /** Drop the trailing matching run — `_.dropRightWhile`. */
-    dropRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    dropRightWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** Drop the leading matching run — `_.dropWhile`. */
-    dropWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    dropWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** First element — `_.first`. */
     first(): T;
     /** Flatten one level deep — `_.flatten`. */
@@ -3526,7 +3526,7 @@ declare global {
     /** `[key, value]` pairs → object — `_.fromPairs`. */
     fromPairs(): Record<string, any>;
     /** Group elements by iteratee (omit for identity) — `_.groupBy`. */
-    groupBy(iteratee?: string | ((value: T) => any)): Record<string, T[]>;
+    groupBy(iteratee?: string | number | ((value: T) => any)): Record<string, T[]>;
     /** Is `value` an element; a string tests a substring with `.includes()`. */
     has(value: any): boolean;
     /** First element — `_.head`. */
@@ -3544,21 +3544,21 @@ declare global {
     /** Does this array hold every element of `other`. */
     isSupersetOf(other: any[]): boolean;
     /** Index elements by iteratee (omit for identity) — `_.keyBy`. */
-    keyBy(iteratee?: string | ((value: T) => any)): Record<string, T>;
+    keyBy(iteratee?: string | number | ((value: T) => any)): Record<string, T>;
     /** Last element — `_.last`. */
     last(): T;
     /** Maximum element — `_.max`. */
     max(): T;
     /** Element with the max iteratee value — `_.maxBy`. */
-    maxBy(iteratee: string | ((value: T) => any)): T;
+    maxBy(iteratee: string | number | ((value: T) => any)): T;
     /** Arithmetic mean — `_.mean`. */
     mean(): number;
     /** Mean of iteratee values — `_.meanBy`. */
-    meanBy(iteratee: string | ((value: T) => any)): number;
+    meanBy(iteratee: string | number | ((value: T) => any)): number;
     /** Minimum element — `_.min`. */
     min(): T;
     /** Element with the min iteratee value — `_.minBy`. */
-    minBy(iteratee: string | ((value: T) => any)): T;
+    minBy(iteratee: string | number | ((value: T) => any)): T;
     /** Element at index `n` (negative counts from the end) — `_.nth`. */
     nth(n?: number): T;
     /** Multi-key sort — `_.orderBy`. Parallel iteratees + orders, or a `{ field: dir }` object (directions inline). */
@@ -3567,9 +3567,9 @@ declare global {
       orders?: ("asc" | "desc") | ("asc" | "desc")[],
     ): T[];
     /** Split into `[matching, rest]` — `_.partition`. */
-    partition(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
+    partition(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
     /** Elements the predicate rejects — `_.reject`. */
-    reject(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    reject(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** One random element — `_.sample`. */
     sample(): T;
     /** `n` random elements — `_.sampleSize`. */
@@ -3581,11 +3581,11 @@ declare global {
     /** Duplicate-free copy of a sorted array — `_.sortedUniq`. */
     sortedUniq(): T[];
     /** `.sortedUniq` with an iteratee — `_.sortedUniqBy`. */
-    sortedUniqBy(iteratee: string | ((value: T) => any)): T[];
+    sortedUniqBy(iteratee: string | number | ((value: T) => any)): T[];
     /** Sum of the elements — `_.sum`. */
     sum(): number;
     /** Sum of iteratee values — `_.sumBy`. */
-    sumBy(iteratee: string | ((value: T) => any)): number;
+    sumBy(iteratee: string | number | ((value: T) => any)): number;
     /** The values that only one of the two arrays holds — the same answer as `.xor()`. */
     symmetricDifference(other: T[]): T[];
     /** All but the first element — `_.tail`. */
@@ -3595,9 +3595,9 @@ declare global {
     /** Last `n` elements — `_.takeRight`. */
     takeRight(n?: number): T[];
     /** Trailing run matching the predicate — `_.takeRightWhile`. */
-    takeRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    takeRightWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** Leading run matching the predicate — `_.takeWhile`. */
-    takeWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    takeWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** The values of both arrays, each once — `_.union`. */
     union(other: T[]): T[];
     /** Union by iteratee — `_.unionBy`. */
@@ -3605,7 +3605,7 @@ declare global {
     /** Duplicate-free copy — `_.uniq`. */
     uniq(): T[];
     /** Duplicate-free by iteratee — `_.uniqBy`. */
-    uniqBy(iteratee: string | ((value: T) => any)): T[];
+    uniqBy(iteratee: string | number | ((value: T) => any)): T[];
     /** Inverse of `.zip` — `_.unzip`. */
     unzip(): any[][];
     /** Exclude the given values — `_.without`. */

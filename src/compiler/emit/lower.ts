@@ -49,7 +49,7 @@ import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
-import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
+import { onOwnStream, checkIndexHeld, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, boolTruth, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
@@ -687,6 +687,7 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
   checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"), ["key"]);
+  if (node.iteratee !== undefined) checkIndexHeld(node, [typeOf(node.object, objEnv)]);
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);

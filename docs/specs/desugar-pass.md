@@ -163,6 +163,27 @@ position, because that gave two answers for one link.
 | `{f: 1}` | `$.items.filter({f: 1})` → a matcher | `$.items.toSorted({f: 1})` → a DIRECTION |
 | `["a", "b"]` | `$.items.find(["a", "b"])` → a path/value pair | `$.items.toSorted(["a", "b"])` → two sort keys |
 
+`propertyIndex` is a whole-number literal, lodash's `_.property(n)`. The fold
+runs after each round of the rules (see § The driver), so a constant (`2 + 3`)
+and an injected number reach the rule as a literal too. The rule writes the arrow `x => x[n]`. The read carries
+an `iteratee` mark, the method and the slot. The emitter needs the mark to refuse
+an index that the elements cannot hold. The plain arrow has no such refusal:
+
+```
+$.rows.keyBy(5)              →  $.rows.keyBy(x => x[5])   (the same MQL)
+[[1, 2], [3, 4]].keyBy(5)    →  ✗ an element holds 2 items
+[1, 2].keyBy(0)              →  ✗ the elements are numbers
+$.rows.keyBy(-1)             →  ✗ not rewritten; x[-1] reads no element of an array
+```
+
+`checkIndexHeld` (src/compiler/emit/inputs.ts) reads the receiver's proof: one
+proof per position of a list of fixed length, else the proof of every element.
+It refuses an element that can be neither an array nor a document. It also
+refuses an array of fixed length that ends at or before the index. An element of unknown kind
+passes. A negative number or a fraction stays as written, and the slot's
+refusal names the whole-number rule. A stream cell whose arrow must return a
+document or a field path (`.map`, `.flatMap`) does not list the form.
+
 A matcher is lodash's `_.matches`, a PARTIAL deep match, and `matchTests` reads
 it as such. A nested object narrows the path (`{ a: { b: { c: 3 } } }` →
 `x.a.b.c === 3`; it says nothing about `a.b.d`). An array of constants is a
