@@ -124,7 +124,7 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
         thrown = e;
       }
       expect(thrown).toBeInstanceOf(Error);
-      expect((thrown as Error).message).toBe(message);
+      expect((thrown as Error).message.replace(/\n  at line [\s\S]*$/, "")).toBe(message);
       expect((thrown as { pos: number }).pos).toBe(pos);
     });
   }

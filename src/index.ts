@@ -86,6 +86,32 @@ function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
 
 const fnSource = (fn: (...args: never[]) => unknown): string => Function.prototype.toString.call(fn).trim();
 
+/**
+ * Run `run`. A compile error that it throws gets the line, the column and the source line
+ * of its `.pos` at the end of its message, so a test runner shows where the fault is.
+ */
+function framed<T>(src: string, run: () => T): T {
+  try {
+    return run();
+  } catch (e) {
+    if (e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) {
+      const before = src.slice(0, e.pos).split("\n");
+      const line = before.length;
+      const column = before[line - 1].length + 1;
+      const gutter = `${line} | `;
+      // The caret line keeps each tab of the source line, so the caret stays under the fault.
+      const pad = before[line - 1].replace(/[^\t]/g, " ");
+      const frame = `\n  at line ${line}, column ${column}:\n${gutter}${src.split("\n")[line - 1]}\n${" ".repeat(gutter.length)}${pad}^`;
+      // Read the stack first: V8 builds it on the first read, from the message at that time.
+      const stack = e.stack;
+      const old = e.message;
+      e.message += frame;
+      if (stack) e.stack = stack.replace(old, e.message);
+    }
+    throw e;
+  }
+}
+
 /** Does the value contain itself? A plain object or array only; a Date or an ObjectId is a leaf. */
 function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
   if (value === null || typeof value !== "object") return false;
@@ -393,19 +419,22 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
 function oneShot(mode: Mode, api: string, input: JsmqlInput | TemplateStringsArray, values: unknown[]): JsmqlOutput {
   if (isTemplateStringsArray(input)) {
     const t = templateSource(input, values);
-    return lowerMode(mode, api, parseInput(t.src).program, t.values);
+    return framed(t.src, () => lowerMode(mode, api, parseInput(t.src).program, t.values));
   }
   if (typeof input === "function") {
-    const parsed = parseInput(fnSource(input));
-    if (parsed.params.length > 0) {
-      throw new FunctionInputError(
-        `${api}() in its one-shot form takes an arrow with the toolbox only: '({ $ }) => …'. A parameter destructure needs values. Use ${api}.compile(fn)(params).`,
-        parsed.params[0].pos,
-      );
-    }
-    return lowerMode(mode, api, parsed.program, NONE);
+    const src = fnSource(input);
+    return framed(src, () => {
+      const parsed = parseInput(src);
+      if (parsed.params.length > 0) {
+        throw new FunctionInputError(
+          `${api}() in its one-shot form takes an arrow with the toolbox only: '({ $ }) => …'. A parameter destructure needs values. Use ${api}.compile(fn)(params).`,
+          parsed.params[0].pos,
+        );
+      }
+      return lowerMode(mode, api, parsed.program, NONE);
+    });
   }
-  if (typeof input === "string") return lowerMode(mode, api, parseInput(input).program, NONE);
+  if (typeof input === "string") return framed(input, () => lowerMode(mode, api, parseInput(input).program, NONE));
   const ty = input === null ? "null" : typeof input;
   throw new TypeError(`${api}() expects a string, an arrow function, or a template literal — got ${ty}.`);
 }
@@ -431,23 +460,24 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
         0,
       );
     }
-    const parsed = parseInput(src);
-    return (params?: P): R => {
-      const given = (params ?? {}) as Record<string, unknown>;
-      const values = new Map<string, unknown>();
-      for (const b of parsed.params) {
-        if (!Object.prototype.hasOwnProperty.call(given, b.key)) {
-          const expected = b.key === b.name ? `'${b.key}'` : `'${b.key}' (bound to '${b.name}' in the body)`;
-          throw new CodegenError(
-            `${expected} is a parameter of this query, and it is missing. Pass it: ${api}(fn)({ ${b.key}: … }).`,
-            b.pos,
-          );
+    const parsed = framed(src, () => parseInput(src));
+    return (params?: P): R =>
+      framed(src, () => {
+        const given = (params ?? {}) as Record<string, unknown>;
+        const values = new Map<string, unknown>();
+        for (const b of parsed.params) {
+          if (!Object.prototype.hasOwnProperty.call(given, b.key)) {
+            const expected = b.key === b.name ? `'${b.key}'` : `'${b.key}' (bound to '${b.name}' in the body)`;
+            throw new CodegenError(
+              `${expected} is a parameter of this query, and it is missing. Pass it: ${api}(fn)({ ${b.key}: … }).`,
+              b.pos,
+            );
+          }
+          checkValue(given[b.key], 0, b.key);
+          values.set(b.name, given[b.key]);
         }
-        checkValue(given[b.key], 0, b.key);
-        values.set(b.name, given[b.key]);
-      }
-      return lowerMode(mode, api, parsed.program, values) as R;
-    };
+        return lowerMode(mode, api, parsed.program, values) as R;
+      });
   }
   return compile;
 }
@@ -497,7 +527,8 @@ function validateInput(
 ): ValidationResult {
   try {
     if (isTemplateStringsArray(input)) {
-      jsmql(input, ...values);
+      const t = templateSource(input, values);
+      lowerMode("auto", "jsmql", parseInput(t.src).program, t.values);
     } else {
       const src = typeof input === "function" ? fnSource(input as (...args: never[]) => unknown) : (input as string);
       const parsed = parseInput(src);

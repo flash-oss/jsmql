@@ -163,7 +163,7 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
       try {
         return { ok: f() };
       } catch (e) {
-        return { error: (e as Error).message };
+        return { error: (e as Error).message.replace(/\n  at line [\s\S]*$/, "") };
       }
     };
     const a = run(() => tag(v));

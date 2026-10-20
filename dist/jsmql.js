@@ -28035,6 +28035,28 @@ function isTemplateStringsArray(x) {
   return Array.isArray(x) && Array.isArray(x.raw);
 }
 var fnSource = (fn) => Function.prototype.toString.call(fn).trim();
+function framed(src, run) {
+  try {
+    return run();
+  } catch (e) {
+    if (e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) {
+      const before = src.slice(0, e.pos).split("\n");
+      const line = before.length;
+      const column = before[line - 1].length + 1;
+      const gutter = `${line} | `;
+      const pad2 = before[line - 1].replace(/[^\t]/g, " ");
+      const frame = `
+  at line ${line}, column ${column}:
+${gutter}${src.split("\n")[line - 1]}
+${" ".repeat(gutter.length)}${pad2}^`;
+      const stack = e.stack;
+      const old = e.message;
+      e.message += frame;
+      if (stack) e.stack = stack.replace(old, e.message);
+    }
+    throw e;
+  }
+}
 function isCircular(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (value === null || typeof value !== "object") return false;
   if (!Array.isArray(value) && !isPlainObject(value)) return false;
@@ -28269,19 +28291,22 @@ function lowerMode(mode, api, parsed, values) {
 function oneShot(mode, api, input, values) {
   if (isTemplateStringsArray(input)) {
     const t = templateSource(input, values);
-    return lowerMode(mode, api, parseInput(t.src).program, t.values);
+    return framed(t.src, () => lowerMode(mode, api, parseInput(t.src).program, t.values));
   }
   if (typeof input === "function") {
-    const parsed = parseInput(fnSource(input));
-    if (parsed.params.length > 0) {
-      throw new FunctionInputError(
-        `${api}() in its one-shot form takes an arrow with the toolbox only: '({ $ }) => \u2026'. A parameter destructure needs values. Use ${api}.compile(fn)(params).`,
-        parsed.params[0].pos
-      );
-    }
-    return lowerMode(mode, api, parsed.program, NONE);
+    const src = fnSource(input);
+    return framed(src, () => {
+      const parsed = parseInput(src);
+      if (parsed.params.length > 0) {
+        throw new FunctionInputError(
+          `${api}() in its one-shot form takes an arrow with the toolbox only: '({ $ }) => \u2026'. A parameter destructure needs values. Use ${api}.compile(fn)(params).`,
+          parsed.params[0].pos
+        );
+      }
+      return lowerMode(mode, api, parsed.program, NONE);
+    });
   }
-  if (typeof input === "string") return lowerMode(mode, api, parseInput(input).program, NONE);
+  if (typeof input === "string") return framed(input, () => lowerMode(mode, api, parseInput(input).program, NONE));
   const ty = input === null ? "null" : typeof input;
   throw new TypeError(`${api}() expects a string, an arrow function, or a template literal \u2014 got ${ty}.`);
 }
@@ -28300,8 +28325,8 @@ function makeCompile(mode, api) {
         0
       );
     }
-    const parsed = parseInput(src);
-    return (params) => {
+    const parsed = framed(src, () => parseInput(src));
+    return (params) => framed(src, () => {
       const given = params ?? {};
       const values = /* @__PURE__ */ new Map();
       for (const b of parsed.params) {
@@ -28316,7 +28341,7 @@ function makeCompile(mode, api) {
         values.set(b.name, given[b.key]);
       }
       return lowerMode(mode, api, parsed.program, values);
-    };
+    });
   }
   return compile2;
 }
@@ -28338,7 +28363,8 @@ function updateDispatch(input, ...values) {
 function validateInput(input, ...values) {
   try {
     if (isTemplateStringsArray(input)) {
-      jsmql(input, ...values);
+      const t = templateSource(input, values);
+      lowerMode("auto", "jsmql", parseInput(t.src).program, t.values);
     } else {
       const src = typeof input === "function" ? fnSource(input) : input;
       const parsed = parseInput(src);

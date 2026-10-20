@@ -7944,7 +7944,7 @@ describe("error cases", () => {
   });
   it("near-miss static gets a suggestion, and never a refused static", () => {
     expect(() => jsmql.expr("Date.noww()")).toThrow(/Did you mean 'Date\.now'/);
-    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.$/);
+    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.\n/);
   });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql.expr("$abs(x => x)")).toThrow(
