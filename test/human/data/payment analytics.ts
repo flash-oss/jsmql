@@ -1,8 +1,9 @@
 // The documents for the test "payment analytics" in test/human/human.test.ts.
 //
 // The first group has the full schema with correct values. The second group breaks the
-// schema in one way per document: a missing field, a null, a wrong type, a wrong case,
-// a value outside the date range. A comment on each document names what it breaks.
+// schema, one fault per document. Each fault is a missing field, a null, a wrong type, a
+// wrong case, or a value outside the date range. A comment on each document names what
+// it breaks.
 
 import { Decimal128, Long, ObjectId } from "bson";
 
