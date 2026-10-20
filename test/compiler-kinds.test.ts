@@ -834,11 +834,19 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     expect(() => jsmql.expr('new Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 
-  it("a numeric type converts a string or a number", () => {
-    for (const name of ["Decimal128", "Long", "Int32", "Double", "NumberDecimal", "NumberLong", "NumberInt"]) {
-      expect(() => jsmql.expr(`${name}($.a === 1)`)).toThrow(
-        new RegExp(`'${name}\\(\\)' argument 1 takes a string or a number, but got a boolean\\.`),
-      );
+  it("a numeric type converts a string, a number or a boolean", () => {
+    const ops = {
+      Decimal128: "$toDecimal",
+      Long: "$toLong",
+      Int32: "$toInt",
+      Double: "$toDouble",
+      NumberDecimal: "$toDecimal",
+      NumberLong: "$toLong",
+      NumberInt: "$toInt",
+    };
+    for (const [name, op] of Object.entries(ops)) {
+      expect(jsmql.expr(`${name}($.a === 1)`)).toEqual({ [op]: { $eq: ["$a", 1] } });
+      expect(jsmql.expr(`${name}(true)`)).not.toBeNull();
     }
   });
 });

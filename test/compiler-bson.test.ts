@@ -206,11 +206,8 @@ describe("compiler — a conversion takes a value of its own type", () => {
   });
 
   it("refuses a value of another type", () => {
-    expect(() => jsmql.pipeline("$.x = true; $.r = Double($.x);")).toThrow(
-      /'Double\(\)' argument 1 takes a string or a number, but got a boolean\./,
-    );
     expect(() => jsmql.pipeline(`$.x = new Date("2024-01-01"); $.r = Long($.x);`)).toThrow(
-      /'Long\(\)' argument 1 takes a string or a number, but got a date\./,
+      /'Long\(\)' argument 1 takes a string, a number or a boolean, but got a date\./,
     );
     expect(() => jsmql.pipeline(`$.x = UUID("${UUID_TEXT}"); $.r = ObjectId($.x);`)).toThrow(
       /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got binary data\./,

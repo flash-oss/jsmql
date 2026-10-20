@@ -491,7 +491,8 @@ var bsonValue = (e) => global_({
     byArgs: {
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-        emit: ({ args, value, construct }) => ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])
+        // A boolean constant converts on the server, as a runtime boolean does.
+        emit: ({ args, value, construct }) => typeof value(args[0]) === "boolean" ? { [e.convert]: value(args[0]) } : ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])
       },
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
@@ -10397,6 +10398,7 @@ var NAMES = {
   // `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
+    takes: ["string", "number", "bool"],
     doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toDecimal",
@@ -10406,6 +10408,7 @@ var NAMES = {
   }),
   Long: bsonValue({
     spelling: "Long",
+    takes: ["string", "number", "bool"],
     doc: "A 64-bit integer. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toLong",
@@ -10415,6 +10418,7 @@ var NAMES = {
   }),
   Int32: bsonValue({
     spelling: "Int32",
+    takes: ["string", "number", "bool"],
     doc: "A 32-bit integer. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toInt",
@@ -10424,6 +10428,7 @@ var NAMES = {
   }),
   Double: bsonValue({
     spelling: "Double",
+    takes: ["string", "number", "bool"],
     doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
     returns: "number",
     convert: "$toDouble",
@@ -10445,6 +10450,7 @@ var NAMES = {
   MaxKey: bsonSentinel("MaxKey", "The value that compares above every other type.", "$.grade === MaxKey()"),
   NumberDecimal: bsonValue({
     spelling: "NumberDecimal",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Decimal128`.",
     returns: "number",
     convert: "$toDecimal",
@@ -10454,6 +10460,7 @@ var NAMES = {
   }),
   NumberLong: bsonValue({
     spelling: "NumberLong",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Long`.",
     returns: "number",
     convert: "$toLong",
@@ -10463,6 +10470,7 @@ var NAMES = {
   }),
   NumberInt: bsonValue({
     spelling: "NumberInt",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Int32`.",
     returns: "number",
     convert: "$toInt",

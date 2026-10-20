@@ -871,8 +871,11 @@ const bsonValue = (e: {
       byArgs: {
         constant: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
+          // A boolean constant converts on the server, as a runtime boolean does.
           emit: ({ args, value, construct }: ExprIn) =>
-            ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0]),
+            typeof value(args[0]) === "boolean"
+              ? { [e.convert]: value(args[0]) }
+              : (ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])),
         },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
@@ -11684,6 +11687,7 @@ export const NAMES = {
 
   Decimal128: bsonValue({
     spelling: "Decimal128",
+    takes: ["string", "number", "bool"],
     doc: "A Decimal128 — exact decimal arithmetic. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toDecimal",
@@ -11694,6 +11698,7 @@ export const NAMES = {
   }),
   Long: bsonValue({
     spelling: "Long",
+    takes: ["string", "number", "bool"],
     doc: "A 64-bit integer. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toLong",
@@ -11704,6 +11709,7 @@ export const NAMES = {
   }),
   Int32: bsonValue({
     spelling: "Int32",
+    takes: ["string", "number", "bool"],
     doc: "A 32-bit integer. A constant is a literal; anything else converts.",
     returns: "number",
     convert: "$toInt",
@@ -11714,6 +11720,7 @@ export const NAMES = {
   }),
   Double: bsonValue({
     spelling: "Double",
+    takes: ["string", "number", "bool"],
     doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
     returns: "number",
     convert: "$toDouble",
@@ -11737,6 +11744,7 @@ export const NAMES = {
 
   NumberDecimal: bsonValue({
     spelling: "NumberDecimal",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Decimal128`.",
     returns: "number",
     convert: "$toDecimal",
@@ -11747,6 +11755,7 @@ export const NAMES = {
   }),
   NumberLong: bsonValue({
     spelling: "NumberLong",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Long`.",
     returns: "number",
     convert: "$toLong",
@@ -11757,6 +11766,7 @@ export const NAMES = {
   }),
   NumberInt: bsonValue({
     spelling: "NumberInt",
+    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Int32`.",
     returns: "number",
     convert: "$toInt",

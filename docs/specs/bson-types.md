@@ -174,6 +174,10 @@ type of the row (`ownValue` in `src/registry/names.ts`). The constant goes to th
 runtime value does. MEASURED on mongod 9.0: each `$to…` operator gives a value of its own
 type back with the same type and an equal value.
 
+A numeric row (`Decimal128`, `Long`, `Int32`, `Double` and their mongosh spellings) also
+takes a boolean, because its `$to…` operator reads one: `true` gives 1, `false` gives 0.
+A boolean constant also goes to the `$to…` operator, as a runtime boolean does.
+
 `bson` does not refuse what it cannot hold. The team measured this against 7.2.0:
 
 | written | `bson` answers | JSMQL |
