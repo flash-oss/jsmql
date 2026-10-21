@@ -80,6 +80,7 @@
     "bson6": "npm:bson@^6.10.4",
     "esbuild": "^0.28.0",
     "js-yaml": "^4.1.0",
+    "lil-csv": "^1.4.6",
     "mongodb": "^7.3.0",
     "mongoose": "*",
     "oxfmt": "^0.47.0",
