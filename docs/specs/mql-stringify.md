@@ -56,8 +56,11 @@ The printer picks a few spellings by hand, rather than by a fixed rule:
 
 - **`Long.fromString("…")`**, not `new Long(low, high)`. A reader can check the
   string value, but not the two-word constructor.
-- **`new UUID("…")`** for a Binary of subtype 4, which IS a UUID and reads as
-  one. Every other Binary is `Binary.createFromBase64(base64, subtype)`.
+- **`new UUID("…")`** for a Binary of subtype 4 with 16 bytes, which IS a UUID
+  and reads as one. Every other Binary is `Binary.createFromBase64(base64,
+  subtype)`. The server stores subtype 4 at any length, but `toUUID()` throws
+  for every length other than 16. So a subtype-4 value of another length takes
+  the base64 form.
   MEASURED: a Binary filled one byte at a time over-allocates its buffer (260
   bytes held for 5 written). Only its own `toString` knows where the value
   ends, so the bytes come from there, never from the buffer's length.

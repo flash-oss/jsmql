@@ -21781,9 +21781,11 @@ function bsonSource(tag, v, render) {
       const bytes = own("toString");
       if (bytes === null) return null;
       const sub = Number(o.sub_type ?? 0);
+      const base64 = String(bytes.call(v, "base64"));
       const uuid = own("toUUID");
-      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
-      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
+      if (sub === 4 && uuid !== null && /^[A-Za-z0-9+/]{22}==$/.test(base64))
+        return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(base64)}, ${sub})`;
     }
     case "Timestamp": {
       const t = Number(o.t ?? o.high ?? 0);

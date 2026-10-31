@@ -115,12 +115,16 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
       const bytes = own("toString");
       if (bytes === null) return null;
       const sub = Number(o.sub_type ?? 0);
-      // subtype 4 IS a UUID, and its own spelling reads as one.
-      const uuid = own("toUUID");
-      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
       // MEASURED: a Binary filled a byte at a time over-allocates its buffer (260 bytes
       // held for 5 written), and only its own `toString` knows where the value ends.
-      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
+      const base64 = String(bytes.call(v, "base64"));
+      // Subtype 4 IS a UUID, and its own spelling reads as one. A UUID has 16 bytes:
+      // 22 base64 characters, then "==". The server stores subtype 4 at any length,
+      // and `toUUID()` throws for every length but 16.
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null && /^[A-Za-z0-9+/]{22}==$/.test(base64))
+        return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(base64)}, ${sub})`;
     }
     case "Timestamp": {
       const t = Number(o.t ?? o.high ?? 0);

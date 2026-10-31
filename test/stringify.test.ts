@@ -94,6 +94,14 @@ describe("stringify: the BSON classes", () => {
     );
   });
 
+  it("writes a subtype-4 Binary of any other length as base64 — only 16 bytes are a UUID", () => {
+    // The server stores such a value, and `toUUID()` throws for it.
+    rebuilds(new mongodb.Binary(Buffer.from([1, 2, 3]), 4), 'Binary.createFromBase64("AQID", 4)');
+    // 17 and 18 bytes also take 24 base64 characters.
+    rebuilds(new mongodb.Binary(Buffer.alloc(17, 1), 4), 'Binary.createFromBase64("AQEBAQEBAQEBAQEBAQEBAQE=", 4)');
+    rebuilds(new mongodb.Binary(Buffer.alloc(18, 1), 4), 'Binary.createFromBase64("AQEBAQEBAQEBAQEBAQEBAQEB", 4)');
+  });
+
   it("writes a Timestamp as its two parts", () => {
     rebuilds(new mongodb.Timestamp({ t: 1700000000, i: 7 }), "new Timestamp({ t: 1700000000, i: 7 })");
   });
