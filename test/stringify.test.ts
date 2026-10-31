@@ -172,6 +172,53 @@ describe("stringify: the values JavaScript already spells", () => {
   });
 });
 
+// The text is code that someone pastes and runs. So the printer reads a value through
+// the engine's own readers, never through a method or a tag the value itself sets.
+describe("stringify: the text holds the value, never code from the value", () => {
+  const pasteRuns = (text: string): boolean => {
+    delete (globalThis as { pwned?: unknown }).pwned;
+    asPasted(text);
+    return (globalThis as { pwned?: unknown }).pwned !== undefined;
+  };
+
+  it("builds a regex from its source and flags, not from its own toString", () => {
+    class Shifty extends RegExp {
+      override toString(): string {
+        return "(globalThis.pwned = 1)";
+      }
+    }
+    const text = stringify(jsmql.filter`$.x === ${new Shifty("a", "i")}`);
+    expect(text).toBe("{ x: /a/i }");
+    expect(pasteRuns(text)).toBe(false);
+  });
+
+  it("writes a regex whose pattern holds a slash or a line break as one literal", () => {
+    rebuilds(new RegExp("a/b\nc"), "/a\\/b\\nc/");
+    rebuilds(new RegExp("a\nb"), "/a\\nb/");
+  });
+
+  it("writes an object that only sets the RegExp tag as its fields", () => {
+    const forged = { [Symbol.toStringTag]: "RegExp", source: "(globalThis.pwned = 1)" };
+    const text = stringify({ v: forged });
+    expect(text).toBe('{ v: { source: "(globalThis.pwned = 1)" } }');
+    expect(pasteRuns(text)).toBe(false);
+    // The compiler reads the same slot, so it compares the object as a document.
+    expect(jsmql.filter`$.x === ${forged}`).toEqual({ $expr: { $eq: ["$x", { source: "(globalThis.pwned = 1)" }] } });
+  });
+
+  it("writes an object that only sets the Uint8Array tag as its fields", () => {
+    const forged = { [Symbol.toStringTag]: "Uint8Array", length: 1, 0: "globalThis.pwned = 1" };
+    const text = stringify({ v: forged });
+    expect(text).toBe('{ v: { "0": "globalThis.pwned = 1", length: 1 } }');
+    expect(pasteRuns(text)).toBe(false);
+  });
+
+  it("writes an object that only sets the Date tag as its fields", () => {
+    const forged = { [Symbol.toStringTag]: "Date", at: 1 };
+    expect(stringify({ v: forged })).toBe("{ v: { at: 1 } }");
+  });
+});
+
 describe("stringify: a tag without the data behind it", () => {
   // The compiler passes a plain object through as the value it is, tag and all.
   it("writes an ObjectId-tagged plain object as the object, and does not throw", () => {

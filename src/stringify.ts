@@ -33,14 +33,53 @@ export type StringifyOptions = {
 const tagOf = (v: unknown): string | undefined =>
   typeof v === "object" && v !== null ? ((v as { _bsontype?: string })._bsontype ?? undefined) : undefined;
 
-// What a value IS, read from its internal slot: `instanceof` is false for a Date, a
-// RegExp or a Uint8Array made in another realm, and `Object.prototype.toString` is
-// not. Twins of the recognisers in src/registry/vocabulary.ts, held here so this
-// module stays a leaf. See docs/specs/bson-types.md § Recognition across realms.
+// What a value IS, read from its internal slot through the engine's own readers.
+// `instanceof` is false for a Date, a RegExp or a Uint8Array made in another realm,
+// and each reader below is not. A value's own methods and its `Symbol.toStringTag`
+// say nothing here: a subclass or a plain object can set either one, and the text
+// this module writes is code that someone runs. So each reader answers null for an
+// object that only sets the tag, and the object prints as its fields. The tag test
+// is fast, so it goes first, and the slot reader confirms each match. These are copies
+// of the recognisers in src/registry/vocabulary.ts, held here so this module stays
+// a leaf. See docs/specs/bson-types.md § Recognition across realms.
 const kindOf = (v: unknown): string => Object.prototype.toString.call(v);
-const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]";
-const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]";
-const isBytes = (v: unknown): v is Uint8Array => kindOf(v) === "[object Uint8Array]";
+const getterOf = (proto: object, key: PropertyKey): ((this: unknown) => unknown) =>
+  Object.getOwnPropertyDescriptor(proto, key)!.get!;
+const TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const typedArrayName = getterOf(TYPED_ARRAY, Symbol.toStringTag);
+const typedArrayLength = getterOf(TYPED_ARRAY, "length");
+const regexSource = getterOf(RegExp.prototype, "source");
+const regexFlags = getterOf(RegExp.prototype, "flags");
+
+/** The epoch milliseconds of a real Date, or null. */
+function dateTime(v: unknown): number | null {
+  if (kindOf(v) !== "[object Date]") return null;
+  try {
+    return Date.prototype.getTime.call(v);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A real RegExp as a regex literal, or null. The engine escapes `source` so that the
+ * literal ends where the pattern ends, and `flags` holds flag letters only.
+ */
+function regexLiteral(v: unknown): string | null {
+  if (kindOf(v) !== "[object RegExp]") return null;
+  try {
+    return `/${String(regexSource.call(v))}/${String(regexFlags.call(v))}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The bytes of a real Uint8Array — a Node Buffer is one — or null. */
+function byteValues(v: unknown): number[] | null {
+  if (typedArrayName.call(v) !== "Uint8Array") return null;
+  const bytes = v as Uint8Array;
+  return Array.from({ length: Number(typedArrayLength.call(v)) }, (_, i) => bytes[i]);
+}
 
 /**
  * A key as JavaScript source.
@@ -173,14 +212,15 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
 
   const leaf = (v: unknown): string | null => {
     if (v === null) return "null";
-    if (isDate(v)) {
+    const time = dateTime(v);
+    if (time !== null) {
       // An Invalid Date has no BSON form: the driver stores it as epoch 0, so any
       // spelling would print a value the document does not hold.
-      if (Number.isNaN(v.getTime()))
-        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
-      return `new Date(${str(v.toISOString())})`;
+      if (Number.isNaN(time)) throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(new Date(time).toISOString())})`;
     }
-    if (isRegExp(v)) return String(v);
+    const regex = regexLiteral(v);
+    if (regex !== null) return regex;
     // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
     // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
     // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
@@ -189,7 +229,8 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     // the value the document holds, down to its JavaScript class. Without this, the
     // object branch below walks the byte indices and prints `{ "0": 1, "1": 2 }`,
     // which matches nothing.
-    if (isBytes(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    const bytes = byteValues(v);
+    if (bytes !== null) return `new Uint8Array([${bytes.join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== undefined) {
       const spelled = bsonSource(tag, v, (x) => render(x, 0));

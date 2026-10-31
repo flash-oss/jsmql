@@ -85,6 +85,18 @@ and take the whole document's output down with it. The legacy `_bsontype:
 "ObjectID"` (uppercase D, bson 1.x) is read as an ObjectId, because the
 compiler reads it as one.
 
+## The text holds data, never code
+
+A developer pastes the text and runs it. So no part of the text comes from code
+that the value supplies. The printer reads a Date, a RegExp and a Uint8Array
+through the engine's own readers, and each one reads the internal slot:
+`Date.prototype.getTime`, the `source` and `flags` getters of
+`RegExp.prototype`, and the `length` getter of the typed-array prototype. A
+subclass that overrides `toString` cannot put code in the text. An object that
+only sets `Symbol.toStringTag` prints as its own fields. The engine escapes
+`source`, so a `/` or a line break in a pattern stays inside the literal. Every
+other part of the text is a JSON string literal, a number, or a fixed spelling.
+
 ## Keys
 
 The printer writes a key bare (`age`) when it is a plain JavaScript identifier,

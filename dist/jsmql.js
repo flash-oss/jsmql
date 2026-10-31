@@ -30,9 +30,20 @@ function bsonTagOf(v) {
   return typeof tag === "string" ? tag === "ObjectID" ? "ObjectId" : tag : void 0;
 }
 var kindOf = (v) => Object.prototype.toString.call(v);
-var isDate = (v) => kindOf(v) === "[object Date]";
-var isRegExp = (v) => kindOf(v) === "[object RegExp]";
-var isBytes = (v) => kindOf(v) === "[object Uint8Array]";
+var readsSlot = (read3, v) => {
+  try {
+    read3.call(v);
+    return true;
+  } catch {
+    return false;
+  }
+};
+var slotReader = (proto, key) => Object.getOwnPropertyDescriptor(proto, key).get;
+var regexSource = slotReader(RegExp.prototype, "source");
+var typedArrayName = slotReader(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag);
+var isDate = (v) => kindOf(v) === "[object Date]" && readsSlot(Date.prototype.getTime, v);
+var isRegExp = (v) => kindOf(v) === "[object RegExp]" && readsSlot(regexSource, v);
+var isBytes = (v) => typedArrayName.call(v) === "Uint8Array";
 function isPlainObject(v) {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
@@ -21735,9 +21746,33 @@ function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
 // src/stringify.ts
 var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
 var kindOf3 = (v) => Object.prototype.toString.call(v);
-var isDate3 = (v) => kindOf3(v) === "[object Date]";
-var isRegExp3 = (v) => kindOf3(v) === "[object RegExp]";
-var isBytes2 = (v) => kindOf3(v) === "[object Uint8Array]";
+var getterOf = (proto, key) => Object.getOwnPropertyDescriptor(proto, key).get;
+var TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype);
+var typedArrayName2 = getterOf(TYPED_ARRAY, Symbol.toStringTag);
+var typedArrayLength = getterOf(TYPED_ARRAY, "length");
+var regexSource2 = getterOf(RegExp.prototype, "source");
+var regexFlags = getterOf(RegExp.prototype, "flags");
+function dateTime(v) {
+  if (kindOf3(v) !== "[object Date]") return null;
+  try {
+    return Date.prototype.getTime.call(v);
+  } catch {
+    return null;
+  }
+}
+function regexLiteral(v) {
+  if (kindOf3(v) !== "[object RegExp]") return null;
+  try {
+    return `/${String(regexSource2.call(v))}/${String(regexFlags.call(v))}`;
+  } catch {
+    return null;
+  }
+}
+function byteValues(v) {
+  if (typedArrayName2.call(v) !== "Uint8Array") return null;
+  const bytes = v;
+  return Array.from({ length: Number(typedArrayLength.call(v)) }, (_, i) => bytes[i]);
+}
 function keySource(key) {
   if (key === "__proto__") return `[${JSON.stringify(key)}]`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
@@ -21819,13 +21854,15 @@ function stringify2(value, options) {
   const seen = /* @__PURE__ */ new Set();
   const leaf2 = (v) => {
     if (v === null) return "null";
-    if (isDate3(v)) {
-      if (Number.isNaN(v.getTime()))
-        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
-      return `new Date(${str(v.toISOString())})`;
+    const time = dateTime(v);
+    if (time !== null) {
+      if (Number.isNaN(time)) throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(new Date(time).toISOString())})`;
     }
-    if (isRegExp3(v)) return String(v);
-    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    const regex = regexLiteral(v);
+    if (regex !== null) return regex;
+    const bytes = byteValues(v);
+    if (bytes !== null) return `new Uint8Array([${bytes.join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== void 0) {
       const spelled3 = bsonSource(tag, v, (x) => render(x, 0));

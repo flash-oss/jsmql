@@ -366,16 +366,31 @@ export function bsonTagOf(v: unknown): string | undefined {
  * `instanceof Date` is false for a real Date from another realm — a `vm` context,
  * the sandbox of a test runner, a worker — because each realm has its own `Date`. A
  * parameter value can arrive from any of them. A Date that fails the test takes the
- * expression road and loses the index. `Object.prototype.toString` reads the
+ * expression road and loses the index. The engine's own readers below read the
  * internal slot, and every realm sets that slot the same way. The reason is the same
  * as for `bsonTagOf`: recognition must not depend on a shared prototype.
+ * `Object.prototype.toString` is not such a reader: an object that sets
+ * `Symbol.toStringTag` to "Date" passes it. It is fast, so it goes first, and the
+ * slot reader confirms each match.
  * See docs/specs/bson-types.md § Recognition across realms.
  */
 const kindOf = (v: unknown): string => Object.prototype.toString.call(v);
-export const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]";
-export const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]";
+const readsSlot = (read: (this: unknown) => unknown, v: unknown): boolean => {
+  try {
+    read.call(v);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const slotReader = (proto: object, key: PropertyKey): ((this: unknown) => unknown) =>
+  Object.getOwnPropertyDescriptor(proto, key)!.get!;
+const regexSource = slotReader(RegExp.prototype, "source");
+const typedArrayName = slotReader(Object.getPrototypeOf(Uint8Array.prototype) as object, Symbol.toStringTag);
+export const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]" && readsSlot(Date.prototype.getTime, v);
+export const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]" && readsSlot(regexSource, v);
 /** A Uint8Array. A Node Buffer is one. */
-export const isBytes = (v: unknown): v is Uint8Array => kindOf(v) === "[object Uint8Array]";
+export const isBytes = (v: unknown): v is Uint8Array => typedArrayName.call(v) === "Uint8Array";
 /**
  * A plain object: one that holds nothing but its own properties. It is not an array,
  * and its prototype is null or the root `Object.prototype` of WHICHEVER realm made it

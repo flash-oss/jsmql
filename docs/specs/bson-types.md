@@ -103,12 +103,15 @@ every kind of recognition. Each reads what a value IS:
 
 | recogniser | reads |
 |---|---|
-| `isDate`, `isRegExp`, `isBytes` | the internal slot, through `Object.prototype.toString` — `[object Date]` from every realm |
+| `isDate`, `isRegExp`, `isBytes` | the internal slot, through the engine's own readers: `Date.prototype.getTime`, the `source` getter of `RegExp.prototype`, the `Symbol.toStringTag` getter of the typed-array prototype. Each one reads the slot of a value from any realm. |
 | `isPlainObject` | a non-array object whose prototype is null or a realm's root: the one prototype whose own prototype is null |
 
 `isPlainObject` answers by prototype alone. Whether the object also wears a BSON tag
 is `bsonTagOf`'s question, and a reader that must tell the two apart asks both.
 `src/stringify.ts` holds twins of the three slot readers, so it stays a leaf.
+`Object.prototype.toString` is not a slot reader: an object that sets
+`Symbol.toStringTag` to "Date" passes it. Each recogniser tests that tag first,
+because the test is fast, and a slot reader confirms each match.
 
 `test/cross-realm.test.ts` holds the rule. It builds every kind of value in a `vm`
 context beside the same value from this realm, compiles both down every road a
