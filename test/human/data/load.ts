@@ -9,6 +9,7 @@
 
 import type { Db, Document } from "mongodb";
 import { liveClient } from "../../fixtures/live.ts";
+import { generate } from "lil-csv";
 
 const DB = "jsmql_human";
 
@@ -44,4 +45,18 @@ export async function queryDatabase(mql: object | object[]): Promise<Document[]>
     const coll = db.collection(name);
     return Array.isArray(mql) ? coll.aggregate(mql as Document[]).toArray() : coll.find(mql).toArray();
   });
+}
+
+export async function populateAndQueryDatabase(testName: string, mql: object | object[]): Promise<string> {
+  await populateDatabase(testName);
+  return asPrettyTable(await queryDatabase(mql));
+}
+
+export function asPrettyTable(docs: Document[]): string {
+  const rows = generate(docs)
+    .split("\n")
+    .map((line) => line.split(","));
+  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => (row[i] ?? "").length)));
+  const lines = rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join(" | "));
+  return `\n${lines.join("\n")}\n`;
 }
