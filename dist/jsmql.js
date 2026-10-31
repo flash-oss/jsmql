@@ -13591,7 +13591,7 @@ var Binary = class _Binary extends BSONValue {
     if (!(buffer2 == null) && typeof buffer2 === "string" && !ArrayBuffer.isView(buffer2) && !isAnyArrayBuffer(buffer2) && !Array.isArray(buffer2)) {
       throw new BSONError("Binary can only be constructed from Uint8Array or number[]");
     }
-    this.sub_type = subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT;
+    this.sub_type = (subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT) & 255;
     if (buffer2 == null) {
       this.buffer = ByteUtils.allocate(_Binary.BUFFER_SIZE);
       this.position = 0;
@@ -13686,7 +13686,7 @@ var Binary = class _Binary extends BSONValue {
     if (this.sub_type === _Binary.SUBTYPE_UUID) {
       return new UUID(this.buffer.subarray(0, this.position));
     }
-    throw new BSONError(`Binary sub_type "${this.sub_type}" is not supported for converting to UUID. Only "${_Binary.SUBTYPE_UUID}" is currently supported.`);
+    throw new BSONError(`Binary sub_type "${this.sub_type}" (${typeof this.sub_type}) is not supported for converting to UUID. Only 0x${_Binary.SUBTYPE_UUID.toString(16).padStart(2, "0")} is currently supported.`);
   }
   static createFromHexString(hex, subType) {
     return new _Binary(ByteUtils.fromHex(hex), subType);
@@ -15432,19 +15432,67 @@ var MinKey = class _MinKey extends BSONValue {
     return "new MinKey()";
   }
 };
-var PROCESS_UNIQUE = null;
 var __idCache = /* @__PURE__ */ new WeakMap();
+var byteToHex = [];
+for (let n2 = 0; n2 < 256; n2++)
+  byteToHex.push(n2.toString(16).padStart(2, "0"));
+var hexCharCodeToNibble = new Int8Array(103);
+for (let c = 48; c <= 57; c++)
+  hexCharCodeToNibble[c] = c - 48;
+for (let c = 65; c <= 70; c++)
+  hexCharCodeToNibble[c] = c - 55;
+for (let c = 97; c <= 102; c++)
+  hexCharCodeToNibble[c] = c - 87;
 var ObjectId = class _ObjectId extends BSONValue {
   get _bsontype() {
     return "ObjectId";
   }
-  static index = Math.floor(Math.random() * 16777215);
+  static index = 0;
+  static PROCESS_UNIQUE = null;
+  static resetState = () => {
+    this.index = Math.floor(Math.random() * 16777216);
+    this.PROCESS_UNIQUE = null;
+  };
+  static {
+    this.resetState();
+    const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.("v8") ?? {};
+    if (startupSnapshot?.isBuildingSnapshot?.()) {
+      startupSnapshot?.addDeserializeCallback?.(this.resetState);
+    }
+  }
   static cacheHexString;
-  buffer;
-  constructor(inputId) {
+  i0;
+  i1;
+  i2;
+  i3;
+  setFromBytes(b, offset = 0) {
+    this.i0 = b[offset] << 16 | b[offset + 1] << 8 | b[offset + 2];
+    this.i1 = b[offset + 3] << 16 | b[offset + 4] << 8 | b[offset + 5];
+    this.i2 = b[offset + 6] << 16 | b[offset + 7] << 8 | b[offset + 8];
+    this.i3 = b[offset + 9] << 16 | b[offset + 10] << 8 | b[offset + 11];
+  }
+  setFromHex(s) {
+    const t = hexCharCodeToNibble;
+    this.i0 = t[s.charCodeAt(0)] << 20 | t[s.charCodeAt(1)] << 16 | t[s.charCodeAt(2)] << 12 | t[s.charCodeAt(3)] << 8 | t[s.charCodeAt(4)] << 4 | t[s.charCodeAt(5)];
+    this.i1 = t[s.charCodeAt(6)] << 20 | t[s.charCodeAt(7)] << 16 | t[s.charCodeAt(8)] << 12 | t[s.charCodeAt(9)] << 8 | t[s.charCodeAt(10)] << 4 | t[s.charCodeAt(11)];
+    this.i2 = t[s.charCodeAt(12)] << 20 | t[s.charCodeAt(13)] << 16 | t[s.charCodeAt(14)] << 12 | t[s.charCodeAt(15)] << 8 | t[s.charCodeAt(16)] << 4 | t[s.charCodeAt(17)];
+    this.i3 = t[s.charCodeAt(18)] << 20 | t[s.charCodeAt(19)] << 16 | t[s.charCodeAt(20)] << 12 | t[s.charCodeAt(21)] << 8 | t[s.charCodeAt(22)] << 4 | t[s.charCodeAt(23)];
+  }
+  constructor(inputId, offset) {
     super();
+    if (typeof offset === "number") {
+      this.setFromBytes(inputId, offset);
+      return;
+    }
     let workingId;
     if (typeof inputId === "object" && inputId && "id" in inputId) {
+      if (_ObjectId.is(inputId) && typeof inputId.i0 === "number" && typeof inputId.i1 === "number" && typeof inputId.i2 === "number" && typeof inputId.i3 === "number") {
+        this.i0 = inputId.i0;
+        this.i1 = inputId.i1;
+        this.i2 = inputId.i2;
+        this.i3 = inputId.i3;
+        return;
+      }
       if (typeof inputId.id !== "string" && !ArrayBuffer.isView(inputId.id)) {
         throw new BSONError("Argument passed in must have an id that is of type string or Buffer");
       }
@@ -15457,12 +15505,18 @@ var ObjectId = class _ObjectId extends BSONValue {
       workingId = inputId;
     }
     if (workingId == null) {
-      this.buffer = _ObjectId.generate();
+      const time = Math.floor(Date.now() / 1e3);
+      const inc = _ObjectId.getInc();
+      const pu = _ObjectId.PROCESS_UNIQUE ??= ByteUtils.randomBytes(5);
+      this.i0 = time >>> 8 & 16777215;
+      this.i1 = (time & 255) << 16 | pu[0] << 8 | pu[1];
+      this.i2 = pu[2] << 16 | pu[3] << 8 | pu[4];
+      this.i3 = inc & 16777215;
     } else if (ArrayBuffer.isView(workingId) && workingId.byteLength === 12) {
-      this.buffer = ByteUtils.toLocalBufferType(workingId);
+      this.setFromBytes(workingId instanceof Uint8Array ? workingId : ByteUtils.toLocalBufferType(workingId));
     } else if (typeof workingId === "string") {
       if (_ObjectId.validateHexString(workingId)) {
-        this.buffer = ByteUtils.fromHex(workingId);
+        this.setFromHex(workingId);
         if (_ObjectId.cacheHexString) {
           __idCache.set(this, workingId);
         }
@@ -15474,12 +15528,26 @@ var ObjectId = class _ObjectId extends BSONValue {
     }
   }
   get id() {
-    return this.buffer;
+    const b = ByteUtils.allocateUnsafe(12);
+    b[0] = this.i0 >>> 16 & 255;
+    b[1] = this.i0 >>> 8 & 255;
+    b[2] = this.i0 & 255;
+    b[3] = this.i1 >>> 16 & 255;
+    b[4] = this.i1 >>> 8 & 255;
+    b[5] = this.i1 & 255;
+    b[6] = this.i2 >>> 16 & 255;
+    b[7] = this.i2 >>> 8 & 255;
+    b[8] = this.i2 & 255;
+    b[9] = this.i3 >>> 16 & 255;
+    b[10] = this.i3 >>> 8 & 255;
+    b[11] = this.i3 & 255;
+    return b;
   }
   set id(value) {
-    this.buffer = value;
+    const bytes = value instanceof Uint8Array ? value : ByteUtils.toLocalBufferType(value);
+    this.setFromBytes(bytes);
     if (_ObjectId.cacheHexString) {
-      __idCache.set(this, ByteUtils.toHex(value));
+      __idCache.set(this, ByteUtils.toHex(bytes));
     }
   }
   static validateHexString(string) {
@@ -15500,14 +15568,18 @@ var ObjectId = class _ObjectId extends BSONValue {
       if (__id)
         return __id;
     }
-    const hexString = ByteUtils.toHex(this.id);
+    const i0 = this.i0;
+    const i1 = this.i1;
+    const i2 = this.i2;
+    const i3 = this.i3;
+    const hexString = byteToHex[i0 >>> 16 & 255] + byteToHex[i0 >>> 8 & 255] + byteToHex[i0 & 255] + byteToHex[i1 >>> 16 & 255] + byteToHex[i1 >>> 8 & 255] + byteToHex[i1 & 255] + byteToHex[i2 >>> 16 & 255] + byteToHex[i2 >>> 8 & 255] + byteToHex[i2 & 255] + byteToHex[i3 >>> 16 & 255] + byteToHex[i3 >>> 8 & 255] + byteToHex[i3 & 255];
     if (_ObjectId.cacheHexString) {
       __idCache.set(this, hexString);
     }
     return hexString;
   }
   static getInc() {
-    return _ObjectId.index = (_ObjectId.index + 1) % 16777215;
+    return _ObjectId.index = (_ObjectId.index + 1) % 16777216;
   }
   static generate(time) {
     if ("number" !== typeof time) {
@@ -15516,17 +15588,15 @@ var ObjectId = class _ObjectId extends BSONValue {
     const inc = _ObjectId.getInc();
     const buffer2 = ByteUtils.allocateUnsafe(12);
     NumberUtils.setInt32BE(buffer2, 0, time);
-    if (PROCESS_UNIQUE === null) {
-      PROCESS_UNIQUE = ByteUtils.randomBytes(5);
-    }
+    const PROCESS_UNIQUE = this.PROCESS_UNIQUE ??= ByteUtils.randomBytes(5);
     buffer2[4] = PROCESS_UNIQUE[0];
     buffer2[5] = PROCESS_UNIQUE[1];
     buffer2[6] = PROCESS_UNIQUE[2];
     buffer2[7] = PROCESS_UNIQUE[3];
     buffer2[8] = PROCESS_UNIQUE[4];
     buffer2[11] = inc & 255;
-    buffer2[10] = inc >> 8 & 255;
-    buffer2[9] = inc >> 16 & 255;
+    buffer2[10] = inc >>> 8 & 255;
+    buffer2[9] = inc >>> 16 & 255;
     return buffer2;
   }
   toString(encoding) {
@@ -15546,8 +15616,8 @@ var ObjectId = class _ObjectId extends BSONValue {
     if (otherId === void 0 || otherId === null) {
       return false;
     }
-    if (_ObjectId.is(otherId)) {
-      return this.buffer[11] === otherId.buffer[11] && ByteUtils.equals(this.buffer, otherId.buffer);
+    if (_ObjectId.is(otherId) && typeof otherId.i0 === "number" && typeof otherId.i1 === "number" && typeof otherId.i2 === "number" && typeof otherId.i3 === "number") {
+      return this.i3 === otherId.i3 && this.i0 === otherId.i0 && this.i1 === otherId.i1 && this.i2 === otherId.i2;
     }
     if (typeof otherId === "string") {
       return otherId.toLowerCase() === this.toHexString();
@@ -15561,26 +15631,26 @@ var ObjectId = class _ObjectId extends BSONValue {
   }
   getTimestamp() {
     const timestamp = /* @__PURE__ */ new Date();
-    const time = NumberUtils.getUint32BE(this.buffer, 0);
-    timestamp.setTime(Math.floor(time) * 1e3);
+    const time = this.i0 * 256 + (this.i1 >>> 16);
+    timestamp.setTime(time * 1e3);
     return timestamp;
   }
   static createPk() {
     return new _ObjectId();
   }
   serializeInto(uint8array, index) {
-    uint8array[index] = this.buffer[0];
-    uint8array[index + 1] = this.buffer[1];
-    uint8array[index + 2] = this.buffer[2];
-    uint8array[index + 3] = this.buffer[3];
-    uint8array[index + 4] = this.buffer[4];
-    uint8array[index + 5] = this.buffer[5];
-    uint8array[index + 6] = this.buffer[6];
-    uint8array[index + 7] = this.buffer[7];
-    uint8array[index + 8] = this.buffer[8];
-    uint8array[index + 9] = this.buffer[9];
-    uint8array[index + 10] = this.buffer[10];
-    uint8array[index + 11] = this.buffer[11];
+    uint8array[index] = this.i0 >>> 16 & 255;
+    uint8array[index + 1] = this.i0 >>> 8 & 255;
+    uint8array[index + 2] = this.i0 & 255;
+    uint8array[index + 3] = this.i1 >>> 16 & 255;
+    uint8array[index + 4] = this.i1 >>> 8 & 255;
+    uint8array[index + 5] = this.i1 & 255;
+    uint8array[index + 6] = this.i2 >>> 16 & 255;
+    uint8array[index + 7] = this.i2 >>> 8 & 255;
+    uint8array[index + 8] = this.i2 & 255;
+    uint8array[index + 9] = this.i3 >>> 16 & 255;
+    uint8array[index + 10] = this.i3 >>> 8 & 255;
+    uint8array[index + 11] = this.i3 & 255;
     return 12;
   }
   static createFromTime(time) {
@@ -15941,7 +16011,7 @@ function serializeValue(value, options) {
   if (value === void 0)
     return options.ignoreUndefined ? void 0 : null;
   if (value instanceof Date || isDate2(value)) {
-    const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023188e5;
+    const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023008e5;
     if (options.legacy) {
       return options.relaxed && inRange ? { $date: value.getTime() } : { $date: getISOString(value) };
     }
@@ -16053,21 +16123,20 @@ function parse(text, options) {
     return deserializeValue(value, ejsonOptions);
   });
 }
-function stringify(value, replacer, space, options) {
-  if (space != null && typeof space === "object") {
-    options = space;
-    space = 0;
+function stringify(value, replacerOrOptions, spaceOrOptions, options) {
+  if (spaceOrOptions != null && typeof spaceOrOptions === "object") {
+    options = spaceOrOptions;
+    spaceOrOptions = void 0;
   }
-  if (replacer != null && typeof replacer === "object" && !Array.isArray(replacer)) {
-    options = replacer;
-    replacer = void 0;
-    space = 0;
+  if (replacerOrOptions != null && typeof replacerOrOptions === "object" && !Array.isArray(replacerOrOptions)) {
+    options = replacerOrOptions;
+    replacerOrOptions = void 0;
   }
   const serializeOptions = Object.assign({ relaxed: true, legacy: false }, options, {
     seenObjects: [{ propertyName: "(root)", obj: null }]
   });
   const doc = serializeValue(value, serializeOptions);
-  return JSON.stringify(doc, replacer, space);
+  return JSON.stringify(doc, replacerOrOptions, spaceOrOptions);
 }
 function EJSONserialize(value, options) {
   options = options || {};
@@ -16744,6 +16813,7 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (seen.has(value)) return false;
   seen.add(value);
   if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
+  if (bsonTagOf(value) === "DBRef") return true;
   if (!isPlainObject(value)) return false;
   for (const [k, v] of Object.entries(value)) {
     if (k.startsWith("$") || isMqlShaped(v, seen)) return true;

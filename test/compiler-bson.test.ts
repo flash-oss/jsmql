@@ -5,7 +5,19 @@
 // because a `toEqual` proves what jsmql emits and never that the server accepts it
 // (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BSONRegExp, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
+import {
+  BSONRegExp,
+  DBRef,
+  Decimal128,
+  Double,
+  Int32,
+  Long,
+  MaxKey,
+  MinKey,
+  ObjectId,
+  UUID,
+  type Collection,
+} from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
 
@@ -269,6 +281,52 @@ describe.skipIf(!up)("compiler — each constant finds the stored document", () 
         src,
       ).toEqual([1]);
     }
+  });
+});
+
+// The driver sends a DBRef as the document `{ $ref, $id, $db }`. An expression slot
+// reads that document as an operator call, and the server refuses it — MEASURED.
+// So a passed-in DBRef reads as MQL (HR1): `$literal` where the server evaluates the
+// slot, and the value as written in a query and in an update document.
+describe("compiler — a passed-in DBRef is a value in every slot", () => {
+  const ref = new DBRef("users", new ObjectId(HEX));
+
+  it("takes $literal where the server evaluates the slot", () => {
+    expect(jsmql.expr`${ref}`).toEqual({ $literal: ref });
+    expect(jsmql.expr`$.ref === ${ref}`).toEqual({ $eq: ["$ref", { $literal: ref }] });
+    expect(jsmql.pipeline`$set({ x: ${ref} });`).toEqual([{ $set: { x: { $literal: ref } } }]);
+    expect(jsmql.pipeline`$.x = ${ref};`).toEqual([{ $set: { x: { $literal: ref } } }]);
+    expect(jsmql.pipeline.compile(({ r }: { r: DBRef }, { $ }) => ($.x = r))({ r: ref })).toEqual([
+      { $set: { x: { $literal: ref } } },
+    ]);
+  });
+
+  it("stays as written in a query and in an update document", () => {
+    expect(jsmql.filter`$.ref === ${ref}`).toEqual({ ref });
+    expect(jsmql.pipeline`$match($.ref === ${ref});`).toEqual([{ $match: { ref } }]);
+    expect(jsmql.update`$.x = ${ref}`).toEqual({ $set: { x: ref } });
+  });
+
+  it.skipIf(!up)("runs on the server, and finds the stored reference", async () => {
+    const refs = client!.db("jsmql_compiler_bson").collection("dbref");
+    await refs.deleteMany({});
+    await refs.insertMany([
+      { _id: 1, ref },
+      { _id: 2, ref: new DBRef("users", new ObjectId("507f1f77bcf86cd799439012")) },
+    ]);
+    const ids = (docs: { _id: unknown }[]) => docs.map((d) => d._id);
+    expect(ids(await refs.find(jsmql.filter`$.ref === ${ref}`).toArray())).toEqual([1]);
+    expect(ids(await refs.aggregate(jsmql.pipeline`$match($.ref === ${ref});`).toArray())).toEqual([1]);
+    expect(
+      await refs.aggregate([{ $addFields: { v: jsmql.expr`$.ref === ${ref}` } }, { $project: { v: 1 } }]).toArray(),
+    ).toEqual([
+      { _id: 1, v: true },
+      { _id: 2, v: false },
+    ]);
+    const set = await refs.aggregate(jsmql.pipeline`$set({ x: ${ref} }); $project({ x: 1 });`).toArray();
+    expect(set.map((d) => (d.x as DBRef).oid.toHexString())).toEqual([HEX, HEX]);
+    await refs.updateMany({ _id: 2 }, jsmql.update`$.x = ${ref}`);
+    expect(((await refs.findOne({ _id: 2 }))!.x as DBRef).oid.toHexString()).toBe(HEX);
   });
 });
 

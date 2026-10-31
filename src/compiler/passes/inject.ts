@@ -3,13 +3,14 @@
 // value itself. It is spelled as a literal node when the source could have
 // spelled it, so it folds and compares like anything written. Otherwise it is
 // held as an `Injected` node — a Date, a binary, or anything that READS AS MQL
-// (a string that starts with `$`, or a document with a `$`-key). HR1: an
+// (a string that starts with `$`, or a document with a `$`-key, a DBRef among
+// them). HR1: an
 // injected value is never an operator or a field reference. The value road
 // wraps such a value in `$literal`, and the query road compares it as written.
 // See docs/LANG_RULES.md.
 import type { Expr, Program } from "../../registry/ast.ts";
 import { asLiteral } from "./literal.ts";
-import { isPlainObject, isRegExp } from "../../bson.ts";
+import { bsonTagOf, isPlainObject, isRegExp } from "../../bson.ts";
 
 /** Would the server read this value as MQL: a `$`-string, or a document that holds a `$`-key or such a string? */
 export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
@@ -18,6 +19,9 @@ export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet(
   if (seen.has(value)) return false;
   seen.add(value);
   if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
+  // The driver sends a DBRef as the document `{ $ref, $id, $db }`. MEASURED: mongod
+  // reads it in `$set` as an expression with two names, and refuses it.
+  if (bsonTagOf(value) === "DBRef") return true;
   if (!isPlainObject(value)) return false;
   for (const [k, v] of Object.entries(value)) {
     if (k.startsWith("$") || isMqlShaped(v, seen)) return true;

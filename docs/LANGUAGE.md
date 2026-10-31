@@ -3544,7 +3544,7 @@ $literal(42)                       // { $literal: 42 }         — equivalent to
 $literal({ x: "$foo" })            // { $literal: { x: "$foo" } }
 ```
 
-A value that arrives at **run time** is a value, never syntax. Such a value is a template-tag `${…}` interpolation or a `jsmql.compile()` parameter. It reads as MQL when it is a `"$..."` string or a document with a `$` key. JSMQL then places it by the slot that it fills:
+A value that arrives at **run time** is a value, never syntax. Such a value is a template-tag `${…}` interpolation or a `jsmql.compile()` parameter. It reads as MQL when it is a `"$..."` string or a document with a `$` key. A `DBRef` is such a document, because the driver sends it as `{ $ref, $id, $db }`. JSMQL then places it by the slot that it fills:
 
 - A slot that the server evaluates takes the value inside `$literal`, so user input cannot become a field reference. Such a slot is an expression, a `$set` value, or `$group`'s `_id`, for example.
 - A query compares the value as written (`$.a === ${s}`), and an update document (`jsmql.update`) stores it as written.
