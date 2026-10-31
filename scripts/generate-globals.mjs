@@ -938,11 +938,36 @@ export function loadSpec() {
 }
 
 // ---------------------------------------------------------------------------
-// Type mapping. The jsmql body lets users pass `$.field` paths, literals, and nested
-// `$op(...)` calls: all `any` from TypeScript's perspective. Most argument types stay
-// permissive. Specialise where it adds real developer experience value: enum-like literals
-// (timeUnit, sort direction), pipelines, and query objects.
+// Type mapping. Each YAML type name maps to the TS type that the argument must resolve to,
+// and a multi-name type joins as a union. A name with no TS type maps to `any`, which
+// collapses the union. See docs/specs/globals-generation.md § Type mapping.
 // ---------------------------------------------------------------------------
+
+const TYPE_NAME_TO_TS = {
+  resolvesToNumber: "number",
+  resolvesToInt: "number",
+  resolvesToLong: "number",
+  resolvesToDouble: "number",
+  resolvesToDecimal: "number",
+  number: "number",
+  int: "number",
+  double: "number",
+  long: "number",
+  decimal: "number",
+  resolvesToString: "string",
+  string: "string",
+  resolvesToBool: "boolean",
+  bool: "boolean",
+  resolvesToDate: "Date",
+  date: "Date",
+  resolvesToArray: "unknown[]",
+  array: "unknown[]",
+  resolvesToObject: "Record<string, any>",
+  resolvesToNull: "null",
+  null: "null",
+  resolvesToRegex: "RegExp",
+  regex: "RegExp",
+};
 
 function mapType(t) {
   if (!t) return "any";
@@ -950,7 +975,6 @@ function mapType(t) {
   if (types.includes("timeUnit")) return TIME_UNIT_LITERAL;
   if (types.length === 1) {
     const only = types[0];
-    if (only === "string") return "string";
     if (only === "pipeline") return "unknown[]";
     // `query` and `object` could narrow to `Record<string, any>` in principle,
     // but jsmql accepts richer inputs than the MQL spec shows. `$match` takes a
@@ -960,7 +984,26 @@ function mapType(t) {
     if (only === "query") return "any";
     if (only === "object") return "any";
   }
-  return "any";
+  const out = [...new Set(types.map((n) => TYPE_NAME_TO_TS[n] ?? "any"))];
+  return out.includes("any") ? "any" : out.join(" | ");
+}
+
+// Named positional parameters, one per fixed spec argument. TypeScript refuses a
+// required parameter after an optional one. So an operator with such a list, for
+// example `$slice(expression, position?, n)`, gets two overloads. The first one has
+// no optional parameter, and the second one has every parameter as required.
+function positionalSigs(args) {
+  const param = (a, required) => `${quoteKeyIfNeeded(a.name)}${a.optional && !required ? "?" : ""}: ${mapType(a.type)}`;
+  const sig = (params) => `(${params.join(", ")}): any`;
+  const firstOptional = args.findIndex((a) => a.optional);
+  const trailingOptionals = firstOptional === -1 || args.slice(firstOptional).every((a) => a.optional);
+  if (trailingOptionals) return [sig(args.map((a) => param(a, false)))];
+  return [sig(args.filter((a) => !a.optional).map((a) => param(a, true))), sig(args.map((a) => param(a, true)))];
+}
+
+// The element type of a rest parameter: a union needs parentheses before `[]`.
+function restOf(type) {
+  return type.includes(" | ") ? `(${type})[]` : `${type}[]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,17 +1136,21 @@ function expressionOpCallableType(spec, opDef) {
       const argType = mapType(firstArg?.type);
       // YAML may flag a single-shape operator as variadic. Surface it as rest arguments.
       if (firstArg?.variadic === "array") {
-        return [`(...${argName}: ${argType}[]): any`];
+        return [`(...${argName}: ${restOf(argType)}): any`];
       }
       return [`(${argName}: ${argType}): any`];
     }
     case "array": {
       // jsmql 'array' shape means N positional arguments in jsmql, even though MQL
       // serialises them as an array. From the user's view inside jsmql,
-      // it is `$op(a, b, c)`, not `$op([a, b, c])`.
+      // it is `$op(a, b, c)`, not `$op([a, b, c])`. When the YAML names two or more
+      // fixed arguments, each one becomes a named positional parameter, so the hint
+      // reads `(string: string, start: number, length: number)`.
+      const args = spec?.arguments ?? [];
+      if (args.length >= 2 && args.every((a) => a.variadic === undefined)) return positionalSigs(args);
       const argName = firstArg?.name ?? "expressions";
       const argType = mapType(firstArg?.type);
-      return [`(...${argName}: ${argType}[]): any`];
+      return [`(...${argName}: ${restOf(argType)}): any`];
     }
     case "object": {
       const argsObj = argsObjectForSpec(spec, opDef.shape.keys);
@@ -1122,7 +1169,7 @@ function expressionOpCallableType(spec, opDef) {
       // Two call shapes — single expression OR N positional args.
       const argName = firstArg?.name ?? "expression";
       const argType = mapType(firstArg?.type);
-      return [`(${argName}: ${argType}): any`, `(...${argName}s: ${argType}[]): any`];
+      return [`(${argName}: ${argType}): any`, `(...${argName}s: ${restOf(argType)}): any`];
     }
     default: {
       // Defensive: should be unreachable. The operand shapes form a closed set.
