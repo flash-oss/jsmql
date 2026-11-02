@@ -5,7 +5,7 @@
 // Why? Humans should experience the coding themselves. How it feels to use the language.
 
 import { describe, it, expect } from "vitest";
-import { jsmql } from "../../src";
+import { jsmql, ObjectId } from "../../src";
 import { populateAndQueryDatabase } from "./data/load.ts";
 import "../../src/globals.ts";
 
@@ -55,6 +55,65 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
 2026-03 | 29    | 26      | 5       | 6        | 2        | 2            | 3       | 3      | 2  | 3         | 17.24      | 20.69       | 6.9         | 10.34    
 2026-04 | 12    | 11      | 2       | 1        | 0        | 0            | 0       | 1      | 1  | 1         | 16.67      | 8.33        | 0           | 8.33     
 2099-12 | 1     | 1       | 0       | 0        | 0        | 0            | 0       | 0      | 0  | 0         | 0          | 0           | 0           | 0        
+`);
+  });
+
+  it("transactions with same first+last names", async (ctx) => {
+    const jsmqlFunc = ({ finInstnId }, { $, $$ }) => {
+      $$.filter(
+        // find all active accounts of this institution
+        { status: "active", finInstnId, virtual: true },
+      ).filter(
+        // find accounts where first and last names are same
+        (van) => van.firstName === van.lastName,
+      );
+
+      $$ = $$$.transactions
+        .filter(
+          // start processing the deposits of the above accounts
+          { finInstnId, vanId: $._id, status: "CONFIRMED", direction: "INBOUND" },
+        )
+        .filter(
+          // ignore single name accounts by some banks, we are not interested in such
+          (t) => !t.sender.accountName.startsWith("- ") && !t.sender.accountName.endsWith(" -"),
+        )
+        .orderBy({ createdAt: -1 })
+        .take(100);
+
+      // attach account details to each transaction
+      //$.kycNames = $$$.kycs.find({ _id: $.vanId }).nameDetails;
+
+      $ = {
+        txId: $._id,
+        senderAccountName: $.sender.accountName,
+        kyc: $$$.kycs.find({ _id: $.vanId }).nameDetails, //.pick(["firstName", "middleName", "lastName"]),
+      };
+
+      // leave only the difference with bank's acc. name
+      $$.filter((t) => t.senderAccountName !== (t.kyc.firstName + " " + t.kyc.lastName).toUpperCase());
+    };
+
+    const mql = jsmql.compile(jsmqlFunc)({ finInstnId: new ObjectId("612309871234098712340987") });
+
+    expect(await populateAndQueryDatabase(ctx.task.name, mql)).to.equal(`
+txId                     | senderAccountName | kyc.firstName | kyc.middleName | kyc.lastName
+6960b746f8b86245167c87e3 | SUKARNO           | Sukarno       |                | Sukarno     
+696f57f4b32be86c75b9456b | -SUKARNO          | Sukarno       |                | Sukarno     
+69be5ce0bb86a6485db83f33 |                   | Sukarno       |                | Sukarno     
+69c0495091e4da1ca51d8568 |                   | Sukarno       |                | Sukarno     
+69c2973285178c5adb850067 | 42                | Sukarno       |                | Sukarno     
+69c71e77624190e782bc9649 | SUKARNO SUKARNO   | Sukarno       |                | Sukarno     
+6977f92a8d077641e7166660 | ZHANG WEI         | Wei           | Ming           | Zhang       
+69794481a8b79419c51c8dad | WEI MING ZHANG    | Wei           | Ming           | Zhang       
+697e51ebed1d6ada4ed1a527 | wei zhang         | Wei           | Ming           | Zhang       
+698491bbf576896552d218f3 | MARIA  MARIA      | maria         |                | maria       
+69d14e004022a499e67f1efa | NYOMAN            | Nyoman        |                | Nyoman      
+69d608d8cf99ced357c38fd5 | WAYAN             | Wayan         |                | Wayan       
+69d799583825d93bf7569310 | KADEK             | Kadek         |                | Kadek       
+69dc7365b12f56b6a5b579cf | JOKO              |               |                |             
+69e216c9b44eadbdf6f8a99a | PUTU              |               |                |             
+69e461dcf7217297df82b878 | MADE              |               |                | Made        
+69e938df69d613254716974d | KETUT KETUT       |               |                |             
 `);
   });
 });
