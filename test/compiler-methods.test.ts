@@ -96,8 +96,8 @@ describe("compiler/emit — string methods", () => {
     expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: { $ifNull: ["$s", ""] } } });
     expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: { $ifNull: ["$s", ""] } } });
     expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: { $ifNull: ["$s", ""] } } });
-    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({ $toLower: { $ifNull: ["$s", ""] } });
-    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({ $toUpper: { $ifNull: ["$s", ""] } });
+    expect(compiled("$.s.toLower()", (d) => d.s.toLowerCase())).toEqual({ $toLower: { $ifNull: ["$s", ""] } });
+    expect(compiled("$.s.toUpper()", (d) => d.s.toUpperCase())).toEqual({ $toUpper: { $ifNull: ["$s", ""] } });
     expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: [{ $ifNull: ["$csv", ""] }, ","] });
     expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({ $substrCP: ["$csv", 0, 1] });
     expect(compiled("$.csv.charAt(-1)", (d) => d.csv.charAt(-1))).toBe("");
@@ -474,7 +474,7 @@ describe("compiler/emit — string methods", () => {
     expect(() => expr('$.s.truncate({ separator: " " })')).toThrow(/has no parameter 'separator'/);
     expect(() => expr("$.n.abs().trim()")).toThrow(/not available on a 'number'.*toString/);
     expect(() => expr('$.s.startsWith("A").trim()')).toThrow(/not available on a 'bool'/);
-    expect(() => expr("$.csv.split(',').toUpperCase()")).toThrow(/Map over the array first/);
+    expect(() => expr("$.csv.split(',').toUpper()")).toThrow(/Map over the array first/);
   });
 });
 
@@ -657,7 +657,7 @@ describe("compiler/emit — object methods", () => {
         },
       },
     });
-    expect(compiled("$.o.mapKeys((v, k) => k.toUpperCase())", () => ({ A: 1, B: 2, _C: 3 }))).toEqual({
+    expect(compiled("$.o.mapKeys((v, k) => k.toUpper())", () => ({ A: 1, B: 2, _C: 3 }))).toEqual({
       $arrayToObject: {
         $map: {
           input: { $objectToArray: { $ifNull: ["$o", {}] } },
@@ -2299,6 +2299,12 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     // lodash's `_.toNumber` as a method: JavaScript has no `.toNumber()`, and the refusal names the conversion.
     expect(() => expr("$.n.toNumber()")).toThrow(/'\.toNumber\(\)' is not part of JSMQL.*'\$\.x\.toDouble\(\)'/);
     expect(() => expr("$.a.map(x => x.toNumber())")).toThrow(/'\$\.x\.toDouble\(\)'/);
+    // JavaScript's case methods: JSMQL spells them as lodash and MongoDB do, and the refusal names that spelling.
+    expect(() => expr("$.s.toUpperCase()")).toThrow(/'\.toUpperCase\(\)' is not part of JSMQL.*'\$\.x\.toUpper\(\)'/);
+    expect(() => expr("$.s.toLowerCase()")).toThrow(/'\.toLowerCase\(\)' is not part of JSMQL.*'\$\.x\.toLower\(\)'/);
+    expect(() => expr("$.a.map(x => x.toLowerCase())")).toThrow(/'\$\.x\.toLower\(\)'/);
+    expect(() => jsmql("$.s = $.s.toUpperCase();")).toThrow(/'\$\.x\.toUpper\(\)'/);
+    expect(() => jsmql('$.s.toLowerCase() === "a"')).toThrow(/'\$\.x\.toLower\(\)'/);
     // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
     expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
     expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);
@@ -3155,8 +3161,8 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   trimLeft: ["$.s.trimLeft()"],
   trimEnd: ["$.s.trimEnd()"],
   trimRight: ["$.s.trimRight()"],
-  toLowerCase: ["$.s.toLowerCase()"],
-  toUpperCase: ["$.s.toUpperCase()"],
+  toLower: ["$.s.toLower()"],
+  toUpper: ["$.s.toUpper()"],
   substr: ["$.csv.substr(1)"],
   substring: ["$.csv.substring(1)"],
   charAt: ["$.csv.charAt(0)"],

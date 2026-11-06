@@ -709,7 +709,7 @@ describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pip
       jsmql`
 $match($.status === "active");
 $ = $.pick(["name", "email", "plan", "lastLoginAt"]);
-$.plan = $.plan.toUpperCase();
+$.plan = $.plan.toUpper();
       `,
     ).toEqual([
       { $match: { status: "active" } },
@@ -1065,7 +1065,7 @@ describe("uppercase a user's name through updateOne", { features: ["Update filte
       // aggregation expressions on the RHS) when the second `updateOne` arg
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
-      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
+      expect(jsmql(`$.name = $.name.toUpper()`)).toEqual([
         { $set: { name: { $toUpper: { $ifNull: ["$name", ""] } } } },
       ]);
     },
@@ -1327,7 +1327,7 @@ describe("order eligibility for free shipping", { features: ["Comparisons and bo
 $.cart.total >= 50 &&
 $.customer.status in ["premium", "gold", "platinum"] &&
 $.cart.items.size() < 20 &&
-$.customer.region.trim().toLowerCase() === "us"
+$.customer.region.trim().toLower() === "us"
       `,
     ).toEqual({
       "cart.total": { $gte: 50 },
@@ -1394,7 +1394,7 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { value: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length() > 0`)).toEqual({
+      expect(jsmql.expr(`$.active && $.role.toLower().includes("admin") && $.name.trim().length() > 0`)).toEqual({
         $cond: [
           {
             $and: [
@@ -1609,12 +1609,12 @@ describe("invoice line total with compound tax", { features: ["Arithmetic and Ma
   );
 });
 
-describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["String methods"] }, () => {
+describe("URL slug through .toLower().trim().replaceAll()", { features: ["String methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.articles.aggregate([{ $addFields: { slug: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`\`\${$.articleId}-\${$.title.toLowerCase().trim().replaceAll(" ", "-")}\``)).toEqual({
+      expect(jsmql.expr(`\`\${$.articleId}-\${$.title.toLower().trim().replaceAll(" ", "-")}\``)).toEqual({
         $concat: [
           { $toString: "$articleId" },
           "-",
@@ -1631,12 +1631,12 @@ describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["St
   );
 });
 
-describe("email domain through .split().at().toLowerCase()", { features: ["String methods"] }, () => {
+describe("email domain through .split().at().toLower()", { features: ["String methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
+      expect(jsmql.expr(`$.email.split("@").at(1).toLower()`)).toEqual({
         $toLower: { $ifNull: [{ $arrayElemAt: [{ $split: [{ $ifNull: ["$email", ""] }, "@"] }, 1] }, ""] },
       });
     },
@@ -1677,13 +1677,13 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
   );
 });
 
-describe("audit log line with .toISOString and .charAt(0).toUpperCase", { features: ["Template literals"] }, () => {
+describe("audit log line with .toISOString and .charAt(0).toUpper", { features: ["Template literals"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { logLine: jsmql.expr(...) } }])" },
     () => {
       expect(
-        jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpperCase()}] \${$.event.message}\``),
+        jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpper()}] \${$.event.message}\``),
       ).toEqual({
         $concat: [
           { $dateToString: { date: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } } },
@@ -1942,7 +1942,7 @@ describe("file upload validation with [literal].has + .endsWith", { features: ["
   it("compiles to the expected MQL", { kind: "filter", usage: "db.uploads.find(jsmql(...))" }, () => {
     expect(
       jsmql`
-[".jpg", ".png", ".pdf", ".docx"].has($.file.ext.toLowerCase()) &&
+[".jpg", ".png", ".pdf", ".docx"].has($.file.ext.toLower()) &&
 $.file.name.endsWith($.file.ext) &&
 $.file.size <= 25_000_000
       `,
@@ -3605,7 +3605,7 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
       // the index-friendly query document you would write by hand.
       expect(
         jsmql(`
-          const CLOSED = ["cancelled", "rejected", "refunded"].map(s => s.toUpperCase());
+          const CLOSED = ["cancelled", "rejected", "refunded"].map(s => s.toUpper());
           const CUTOFF = Date("2024-01-01");
           const MAX_RETRIES = 2 ** 4;
           $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES

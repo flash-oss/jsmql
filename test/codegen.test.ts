@@ -1697,7 +1697,7 @@ describe("bracket access", () => {
     expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: { $ifNull: ["$doc", {}] } } });
     // A string method answers null for a missing string, and `$getField` refuses a null
     // name, because it takes only a string. So the key takes the `""` guard.
-    expect(jsmql.expr("$.doc[$.k.toLowerCase()]")).toEqual({
+    expect(jsmql.expr("$.doc[$.k.toLower()]")).toEqual({
       $getField: { field: { $toLower: { $ifNull: ["$k", ""] } }, input: { $ifNull: ["$doc", {}] } },
     });
     expect(jsmql.pipeline('const k = "host"; $set({ v: $.doc[k] });')).toEqual([
@@ -1768,10 +1768,10 @@ describe("bracket access", () => {
     });
   });
   it("string-producing key expression on bare field → $getField directly", () => {
-    // `.toLowerCase()` is statically a string, so the key cannot be an array
+    // `.toLower()` is statically a string, so the key cannot be an array
     // index — the same $getField lowering as a literal key. It may be null, so it
     // takes the `""` guard that `$getField` needs.
-    expect(jsmql.expr("$.map[$.key.toLowerCase()]")).toEqual({
+    expect(jsmql.expr("$.map[$.key.toLower()]")).toEqual({
       $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$map", {}] } },
     });
   });
@@ -2158,11 +2158,11 @@ describe("string methods", () => {
   it("trimRight alias", () => {
     expect(jsmql.expr("$.name.trimRight()")).toEqual({ $rtrim: { input: { $ifNull: ["$name", ""] } } });
   });
-  it("toLowerCase", () => {
-    expect(jsmql.expr("$.name.toLowerCase()")).toEqual({ $toLower: { $ifNull: ["$name", ""] } });
+  it("toLower", () => {
+    expect(jsmql.expr("$.name.toLower()")).toEqual({ $toLower: { $ifNull: ["$name", ""] } });
   });
-  it("toUpperCase", () => {
-    expect(jsmql.expr("$.name.toUpperCase()")).toEqual({ $toUpper: { $ifNull: ["$name", ""] } });
+  it("toUpper", () => {
+    expect(jsmql.expr("$.name.toUpper()")).toEqual({ $toUpper: { $ifNull: ["$name", ""] } });
   });
   it("substr", () => {
     expect(jsmql.expr("$.name.substr(0, 5)")).toEqual({ $substrCP: ["$name", 0, 5] });
@@ -2175,7 +2175,7 @@ describe("string methods", () => {
     expect(jsmql.expr('$.name.indexOfSubstring("@", 2)')).toEqual({ $indexOfCP: [{ $ifNull: ["$name", ""] }, "@", 2] });
   });
   it("indexOf on a known string is refused, and the refusal names indexOfSubstring", () => {
-    expect(() => jsmql.expr('$.name.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
+    expect(() => jsmql.expr('$.name.toLower().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
   it("replace", () => {
     expect(jsmql.expr('$.name.replace("a", "b")')).toEqual({
@@ -2198,7 +2198,7 @@ describe("string methods", () => {
     );
   });
   it("includes on known string → string form", () => {
-    expect(jsmql.expr('$.email.toLowerCase().includes("@")')).toEqual({
+    expect(jsmql.expr('$.email.toLower().includes("@")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0],
     });
   });
@@ -2255,13 +2255,13 @@ describe("string methods", () => {
       `'["length"]' reads a field, and an array has no fields. For the number of elements, write '.size()'.`,
     );
   });
-  it("chained trim then toLowerCase", () => {
-    expect(jsmql.expr("$.name.trim().toLowerCase()")).toEqual({
+  it("chained trim then toLower", () => {
+    expect(jsmql.expr("$.name.trim().toLower()")).toEqual({
       $toLower: { $trim: { input: { $ifNull: ["$name", ""] } } },
     });
   });
-  it("chained toLowerCase then trim", () => {
-    expect(jsmql.expr("$.name.toLowerCase().trim()")).toEqual({
+  it("chained toLower then trim", () => {
+    expect(jsmql.expr("$.name.toLower().trim()")).toEqual({
       $trim: { input: { $toLower: { $ifNull: ["$name", ""] } } },
     });
   });
@@ -2916,8 +2916,8 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     expect(() => jsmql.pipeline(`const s = $.name.trim(); $set({ x: s.map(c => c) });`)).toThrow(
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
-    expect(() => jsmql.pipeline(`const a = $.tags.uniq(); $set({ x: a.toUpperCase() });`)).toThrow(
-      "'.toUpperCase()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
+    expect(() => jsmql.pipeline(`const a = $.tags.uniq(); $set({ x: a.toUpper() });`)).toThrow(
+      "'.toUpper()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpper(…))' — or take one element ('[0]').",
     );
   });
 });
@@ -4716,7 +4716,7 @@ describe("array method additions", () => {
     });
   });
   it(".lastIndexOf on a known string receiver throws", () => {
-    expect(() => jsmql.expr('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/indexOfSubstring/);
+    expect(() => jsmql.expr('$.s.toLower().lastIndexOf("x")')).toThrow(/indexOfSubstring/);
   });
   it(".reduceRight(fn, init) reverses the input array", () => {
     expect(jsmql.expr("$.xs.reduceRight((acc, x) => acc + x, 0)")).toEqual({
@@ -4882,9 +4882,7 @@ describe("array method additions", () => {
     expect(jsmql.expr("[1, 2].toString()")).toEqual({ $toString: [[1, 2]] });
   });
   it('.toString() after a string method under a dot adds no $ifNull: the method reads a missing string as ""', () => {
-    expect(jsmql.expr("$.name.toLowerCase().toString()")).toEqual({
-      $toString: { $toLower: { $ifNull: ["$name", ""] } },
-    });
+    expect(jsmql.expr("$.name.toLower().toString()")).toEqual({ $toString: { $toLower: { $ifNull: ["$name", ""] } } });
   });
   it('.toString() under a dot reads a missing receiver as "", as lodash\'s _.toString does', () => {
     expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: { $ifNull: ["$n", ""] } });
@@ -5763,6 +5761,8 @@ describe("every method declares the receiver family it needs", () => {
     toObjectId: "a MongoDB conversion: the server judges the value",
     toUUID: "a MongoDB conversion: the server judges the value",
     toNumber: "refused on every receiver, and the refusal names '.toDouble()'",
+    toLowerCase: "refused on every receiver, and the refusal names '.toLower()'",
+    toUpperCase: "refused on every receiver, and the refusal names '.toUpper()'",
     isString: "a type test: it asks the type of any value",
     isNumber: "a type test: it asks the type of any value",
     isDouble: "a type test: it asks the type of any value",
@@ -5817,8 +5817,8 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
   });
   it("rejects an array-receiver + string/number/date/object method", () => {
-    expect(() => jsmql.expr("$.name.split(',').toUpperCase()")).toThrow(
-      "'.toUpperCase()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
+    expect(() => jsmql.expr("$.name.split(',').toUpper()")).toThrow(
+      "'.toUpper()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpper(…))' — or take one element ('[0]').",
     );
     expect(() => jsmql.expr("$.items.map(x => x).round(2)")).toThrow(
       "'.round()' is not available on an 'array' — it is defined on 'number', 'Math'. Map over the array first — '.map(x => x.round(…))' — or take one element ('[0]').",
@@ -5828,7 +5828,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
   });
   it("rejects a string/number/object-map receiver + array method", () => {
-    expect(() => jsmql.expr("$.name.toUpperCase().map(x => x)")).toThrow(
+    expect(() => jsmql.expr("$.name.toUpper().map(x => x)")).toThrow(
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr("$.items.size().map(x => x)")).toThrow(
@@ -5867,11 +5867,11 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         in: "$$x",
       },
     });
-    expect(jsmql.expr("$.items.at(0).toLowerCase()")).toEqual({
+    expect(jsmql.expr("$.items.at(0).toLower()")).toEqual({
       $toLower: { $ifNull: [{ $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] }, ""] },
     });
     // Compatible same-family chains compile.
-    expect(jsmql.expr("$.name.toUpperCase().trim()")).toEqual({
+    expect(jsmql.expr("$.name.toUpper().trim()")).toEqual({
       $trim: { input: { $toUpper: { $ifNull: ["$name", ""] } } },
     });
     expect(jsmql.expr("$.items.map(x => x).filter(y => y)")).toEqual({
@@ -5923,7 +5923,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       },
     });
     // A string method on a proven string compiles.
-    expect(jsmql.expr('$.name.toUpperCase().includes("A")')).toEqual({
+    expect(jsmql.expr('$.name.toUpper().includes("A")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toUpper: { $ifNull: ["$name", ""] } }, "A"] }, 0],
     });
     // clamp's result type follows its args (number OR date), so it is uncertain —
@@ -5954,8 +5954,8 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
   });
   it("names the date→string and date→number conversions in the hint", () => {
-    expect(() => jsmql.expr('$.t.plus(1, "day").toUpperCase()')).toThrow(
-      "'.toUpperCase()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
+    expect(() => jsmql.expr('$.t.plus(1, "day").toUpper()')).toThrow(
+      "'.toUpper()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
     );
     expect(() => jsmql.expr('$.t.plus(1, "day").round(2)')).toThrow(
       "'.round()' is not available on a 'date' — it is defined on 'number', 'Math'.",
@@ -6125,8 +6125,8 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("const v = $abs($.n); v.trim()")).toThrow(
       "'.trim()' is not available on a 'number' — it is defined on 'string'. Render the number as a string first: '.toString()'.",
     );
-    expect(() => jsmql.expr('const v = $dateTrunc($.t, "month"); v.toUpperCase()')).toThrow(
-      "'.toUpperCase()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
+    expect(() => jsmql.expr('const v = $dateTrunc($.t, "month"); v.toUpper()')).toThrow(
+      "'.toUpper()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
     );
     expect(() => jsmql.expr("const v = $dateToParts($.t); v.map(x => x)")).toThrow(
       "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
@@ -8003,11 +8003,23 @@ describe("error cases", () => {
     expect(() => jsmql.expr("$.name.frobulate()")).toThrow(/Unknown method/);
   });
   it("near-miss method names get a suggestion", () => {
-    expect(() => jsmql.expr("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLowerCase\(\)'/);
+    expect(() => jsmql.expr("$.name.toLowr()")).toThrow(/Did you mean '\.toLower\(\)'/);
     expect(() => jsmql.expr("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
     // The suggestion list is the METHODS registry itself, so `substring` is in it
     // and a near-miss resolves to it.
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
+  });
+  it("a misspelled renamed method names the method that JSMQL writes", () => {
+    expect(() => jsmql.expr("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLower\(\)'/);
+    expect(() => jsmql.expr("$.name.toUpperCse()")).toThrow(/Did you mean '\.toUpper\(\)'/);
+    expect(() => jsmql.expr("$.n.toNumbr()")).toThrow(/Did you mean '\.toDouble\(\)'/);
+    expect(() => jsmql("$.name = $.name.toLowerCse();")).toThrow(/Did you mean '\.toLower\(\)'/);
+    // A field read on a proven string names the method that runs, not the refused name.
+    expect(() => jsmql.expr("$.s.trim().toUpperCase")).toThrow("Write '.toUpper()' to call the method.");
+  });
+  it("a misspelled method never names a method that refuses in every position", () => {
+    // `.forEach()` refuses everywhere, so a typo of it gets no suggestion.
+    expect(() => jsmql.expr("$.a.forEch(x => x)")).toThrow(/^Unknown method '\.forEch\(\)' at position 3\.\n/);
   });
   it("names a working form for a namespace value, a refused callback and a spread into a JS call", () => {
     expect(() => jsmql.expr("Math + 1")).toThrow(
@@ -8208,12 +8220,12 @@ describe("the string forms of a slice: .substring and .substr", () => {
     expect(() => jsmql.expr('"hello".slice(1, 3)')).toThrow(
       "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
     );
-    expect(() => jsmql.expr("$.name.toLowerCase().slice(0, 3)")).toThrow(
+    expect(() => jsmql.expr("$.name.toLower().slice(0, 3)")).toThrow(
       "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
     );
   });
-  it("substring on a string-typed receiver (toLowerCase result) → $substrCP", () => {
-    expect(jsmql.expr("$.name.toLowerCase().substring(0, 3)")).toEqual({
+  it("substring on a string-typed receiver (toLower result) → $substrCP", () => {
+    expect(jsmql.expr("$.name.toLower().substring(0, 3)")).toEqual({
       $substrCP: [{ $toLower: { $ifNull: ["$name", ""] } }, 0, 3],
     });
   });
@@ -8224,20 +8236,20 @@ describe("the string forms of a slice: .substring and .substr", () => {
     // goes negative when start runs past the end ("".substring(1)), which $substrCP
     // rejects outright.
     const lower = { $toLower: { $ifNull: ["$s", ""] } };
-    expect(jsmql.expr("$.s.toLowerCase().substring(2)")).toEqual({
+    expect(jsmql.expr("$.s.toLower().substring(2)")).toEqual({
       $substrCP: [lower, 2, { $max: [0, { $subtract: [{ $strLenCP: lower }, 2] }] }],
     });
   });
   it("substr(-n) reads the last n characters: the start is strLen - n, floored", () => {
     expect(jsmql.expr('"hello".substr(-3)')).toEqual("llo");
     const lower = { $toLower: { $ifNull: ["$s", ""] } };
-    expect(jsmql.expr("$.s.toLowerCase().substr(-3)")).toEqual({
+    expect(jsmql.expr("$.s.toLower().substr(-3)")).toEqual({
       $substrCP: [lower, { $max: [0, { $subtract: [{ $strLenCP: lower }, 3] }] }, { $strLenCP: lower }],
     });
   });
   it("substr with a non-literal start → runtime $cond normalises the sign", () => {
     const lower = { $toLower: { $ifNull: ["$s", ""] } };
-    expect(jsmql.expr("$.s.toLowerCase().substr($.i)")).toEqual({
+    expect(jsmql.expr("$.s.toLower().substr($.i)")).toEqual({
       $substrCP: [
         lower,
         { $cond: [{ $lt: ["$i", 0] }, { $max: [0, { $add: ["$i", { $strLenCP: lower }] }] }, "$i"] },
@@ -8395,8 +8407,8 @@ describe("template literals", () => {
     });
   });
   it("string-producing interpolations skip the $toString wrap", () => {
-    // .toLowerCase() is statically string-producing — the wrap would be redundant.
-    expect(jsmql.expr("`name=${$.name.toLowerCase()}`")).toEqual({
+    // .toLower() is statically string-producing — the wrap would be redundant.
+    expect(jsmql.expr("`name=${$.name.toLower()}`")).toEqual({
       $concat: ["name=", { $toLower: { $ifNull: ["$name", ""] } }],
     });
   });
@@ -8416,11 +8428,11 @@ describe("array .has()", () => {
       $in: ["active", { $split: [{ $ifNull: ["$csv", ""] }, ","] }],
     });
   });
-  it("a proven string (toLowerCase result) takes .includes, and refuses .has", () => {
-    expect(jsmql.expr('$.email.toLowerCase().includes("@")')).toEqual({
+  it("a proven string (toLower result) takes .includes, and refuses .has", () => {
+    expect(jsmql.expr('$.email.toLower().includes("@")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0],
     });
-    expect(() => jsmql.expr('$.email.toLowerCase().has("@")')).toThrow(
+    expect(() => jsmql.expr('$.email.toLower().has("@")')).toThrow(
       "'.has()' is not available on a 'string' — it is defined on 'array'. For a substring test, write '.includes(x)'.",
     );
   });
@@ -8609,8 +8621,8 @@ describe("optional chaining (?.)", () => {
   it(".trim on a chained optional receiver needs no test", () => {
     expect(jsmql.expr("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
-  it(".toUpperCase on an optional receiver stops the chain", () => {
-    expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({
+  it(".toUpper on an optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.user?.name.toUpper()")).toEqual({
       $cond: [{ $lte: ["$user", null] }, null, { $toUpper: { $ifNull: ["$user.name", ""] } }],
     });
   });
@@ -8795,7 +8807,7 @@ describe("array .indexOf", () => {
     expect(jsmql.expr('["a", "b", "c"].indexOf($.x)')).toEqual({ $indexOfArray: [["a", "b", "c"], "$x"] });
   });
   it("on a known string → refused; a string takes .indexOfSubstring()", () => {
-    expect(() => jsmql.expr('$.email.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
+    expect(() => jsmql.expr('$.email.toLower().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
   it("on a bare field → $indexOfArray over the field, a missing one read as []", () => {
     expect(jsmql.expr('$.email.indexOf("@")')).toEqual({ $indexOfArray: [{ $ifNull: ["$email", []] }, "@"] });
@@ -10260,7 +10272,7 @@ describe("jsmql.expr()", () => {
   });
 
   it("refuses a write, and names jsmql.update() and jsmql.pipeline()", () => {
-    expect(() => jsmql.expr("$.name = $.name.toUpperCase()")).toThrow(
+    expect(() => jsmql.expr("$.name = $.name.toUpper()")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });

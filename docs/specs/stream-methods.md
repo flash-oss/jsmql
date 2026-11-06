@@ -44,9 +44,9 @@ A `stream` cell is a rule on the row, `(in: StageIn) => Stage[]`. It receives th
 
 | Slot | Spellings that mean the same thing |
 |---|---|
-| **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLowerCase()` (materialised — see below) |
+| **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLower()` (materialised — see below) |
 | **Unwind path** — `.flatMap` | the property string `"items"`, or the equivalent bare-path arrow `d => d.items`. No computed form |
-| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) |
+| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLower()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, the key is the match boolean, as lodash `_.matches` gives it) |
 | **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair |
 
 The shorthands are one desugar rule. `iterateeShorthand` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) rewrites every shorthand to the arrow it means, before any cell runs ([desugar-pass.md](desugar-pass.md)). The sort spellings are one service, `sortSpec` / `orderBy` ([src/compiler/emit/sort-spec.ts](../../src/compiler/emit/sort-spec.ts)). Everything downstream asks what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring trap, because it makes `.groupBy(d => d.cat)` and `.groupBy("cat")` two different programs.

@@ -308,7 +308,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
     ]);
     // a method after a field read is a value too, never a link of the body
     expect(
-      compiled("$.s = $$$.orders.find(o => o.userId === $._id).status.toUpperCase();", [
+      compiled("$.s = $$$.orders.find(o => o.userId === $._id).status.toUpper();", [
         { _id: 1, s: "PAID" },
         { _id: 2, s: "PAID" },
         // HR5: under a dot, a string method reads a missing string as ""
@@ -335,7 +335,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       { $unset: "__jsmql" },
     ]);
     expect(
-      compiled("$.t = $$$.orders.filter(o => o.userId === $._id)[1].tag.toUpperCase();", [
+      compiled("$.t = $$$.orders.filter(o => o.userId === $._id)[1].tag.toUpper();", [
         { _id: 1, t: "Y" },
         { _id: 2, t: "" },
         { _id: 3, t: "" },

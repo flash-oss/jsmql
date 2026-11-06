@@ -65,7 +65,7 @@ import { jsmql } from "@koresar/jsmql";
 
 // Arrow form — your prettier/oxfmt handles formatting.
 // No `;` at top level → query Filter (the doc db.coll.find(filter) takes).
-jsmql(({ $ }) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
+jsmql(({ $ }) => $.email.trim().toLower().endsWith("@flash-payments.com"))
 // → { $expr: { $let: { vars: { jsmqlStr: { $ifNull: [{ $toLower: { $trim: { input: "$email" } } }, ""] } },
 //                in: { $eq: [{ $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 19] }] }, 19] }, "@flash-payments.com"] } } } }
 
@@ -146,13 +146,13 @@ $$.toSorted({ revenue: -1 }).take(10);
 // ]
 
 // A write compiles to the PIPELINE form of an update — the form that can compute from the document.
-db.users.updateMany({}, jsmql(({ $ }) => $.name = $.name.toUpperCase()))
+db.users.updateMany({}, jsmql(({ $ }) => $.name = $.name.toUpper()))
 // → [{ $set: { name: { $toUpper: "$name" } } }]
 
 // `jsmql.update()` is the update DOCUMENT — constants only, every write its own operator.
 db.users.updateMany({}, jsmql.update(({ $ }) => { $.score += 1; $.tags.push("seen"); delete $.tmp; }))
 // → { $inc: { score: 1 }, $push: { tags: "seen" }, $unset: { tmp: "" } }
-// A value computed from the document ("$.name.toUpperCase()") is refused there, naming the pipeline form:
+// JSMQL refuses a value that depends on the document ("$.name.toUpper()") there, and the refusal names the pipeline form:
 // in a document-form update the server would store the literal object, not the result.
 
 // Strict-shape entry points — throw if the input would produce the wrong shape.

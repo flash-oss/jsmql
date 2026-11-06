@@ -613,7 +613,7 @@ describe("let bindings — member / method / index access", () => {
   });
 
   it("method call on a let resolves the receiver to its field path", () => {
-    expect(jsmql("let name = $.name; $project({ upper: name.toUpperCase() })")).toEqual([
+    expect(jsmql("let name = $.name; $project({ upper: name.toUpper() })")).toEqual([
       { $set: { "__jsmql.var.name": "$name" } },
       { $project: { upper: { $toUpper: { $ifNull: ["$__jsmql.var.name", ""] } } } },
       { $unset: "__jsmql" },

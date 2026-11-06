@@ -1167,7 +1167,7 @@ export type MongoExprIn = Pick<ExprIn, "name" | "recv" | "args" | "keys" | "valu
 
 /**
  * What a sort argument asks for: keys by NAME, or a key that the compiler COMPUTES
- * from the document (`d => d.cat.toLowerCase()`). MongoDB cannot sort by such a key
+ * from the document (`d => d.cat.toLower()`). MongoDB cannot sort by such a key
  * directly, so the cell writes it to a scratch field and sorts by that field.
  */
 export type SortAsk =

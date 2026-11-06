@@ -146,7 +146,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("method call on a field stays in $expr", () => {
-    expect(jsmql('[$match($.name.toLowerCase() === "alice")]')).toEqual([
+    expect(jsmql('[$match($.name.toLower() === "alice")]')).toEqual([
       { $match: { $expr: { $eq: [{ $toLower: { $ifNull: ["$name", ""] } }, "alice"] } } },
     ]);
   });
@@ -194,7 +194,7 @@ describe("$match translation — typeof → $type", () => {
     );
   });
   it("falls through to $expr when the operand is not a static field path", () => {
-    expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
+    expect(jsmql('[$match(typeof $.name.toLower() === "string")]')).toEqual([
       { $match: { $expr: { $eq: [{ $type: { $toLower: { $ifNull: ["$name", ""] } } }, "string"] } } },
     ]);
   });
@@ -397,7 +397,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
   it("falls through to $expr when the lambda body is index-unfriendly", () => {
     // A method call inside the body has no clean query-doc form — fall through
     // to the expression-level $anyElementTrue translation.
-    expect(jsmql("[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]")).toEqual([
+    expect(jsmql("[$match($.items.some(it => it.tag.toLower() === 'vip'))]")).toEqual([
       {
         $match: {
           $expr: {

@@ -197,6 +197,25 @@ describe("registry — each `valueTwin` names an operator with a value form", ()
   });
 });
 
+describe("registry — each `renamedTo` names a method that runs", () => {
+  // A typo of a renamed name gets the new name as its suggestion. So the new name must
+  // be a method that runs. The old row must refuse everywhere.
+  it("states `renamedTo` only on a row that refuses in every position, and its target lists a position", () => {
+    const wrong: string[] = [];
+    let stated = 0;
+    for (const [name, row] of Object.entries(NAMES) as [string, { renamedTo?: string; where: readonly string[] }][]) {
+      if (row.renamedTo === undefined) continue;
+      stated++;
+      if (row.where.length !== 0) wrong.push(`${name}: renamedTo on a row that lists a position`);
+      const to = (NAMES as Record<string, { where?: readonly string[]; renamedTo?: string }>)[row.renamedTo];
+      if (to === undefined || (to.where?.length ?? 0) === 0 || to.renamedTo !== undefined)
+        wrong.push(`${name}: renamedTo '${row.renamedTo}' is not a method that runs`);
+    }
+    expect(wrong).toEqual([]);
+    expect(stated).toBeGreaterThan(0);
+  });
+});
+
 describe("registry — `keys` and `takesLet` sit on the rows they describe", () => {
   type Facts = { kind?: string; keys?: readonly string[]; takesLet?: true; shape?: unknown; bodyPositions?: unknown };
   const facts = Object.entries(NAMES) as [string, Facts][];

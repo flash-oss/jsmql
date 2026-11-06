@@ -125,7 +125,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
 
   it("refuses a call whose argument count is wrong, so the error still happens", () => {
     // Folding it away would lose the arity error, so the fold declines it.
-    expect(valueOf('"abc".toUpperCase(1)')).toBe("(not constant)");
+    expect(valueOf('"abc".toUpper(1)')).toBe("(not constant)");
     expect(valueOf('"hello".charAt()')).toBe("(not constant)");
   });
 
@@ -239,9 +239,9 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
 
 describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", () => {
   it("folds case the way `$toUpper` does, which is ASCII only", () => {
-    expect(valueOf('"aBc".toUpperCase()')).toBe("ABC");
-    expect(valueOf('"Ä é".toUpperCase()')).toBe("Ä é");
-    expect(valueOf('"ÀÉÎ".toLowerCase()')).toBe("ÀÉÎ");
+    expect(valueOf('"aBc".toUpper()')).toBe("ABC");
+    expect(valueOf('"Ä é".toUpper()')).toBe("Ä é");
+    expect(valueOf('"ÀÉÎ".toLower()')).toBe("ÀÉÎ");
   });
 
   it("rounds a half to the EVEN neighbour, which is what `$round` does", () => {

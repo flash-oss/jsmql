@@ -1184,8 +1184,8 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it("non-registered chain methods (for example .toLowerCase) fall through to the existing expression-form path", () => {
-    // `.toLowerCase()` is not a stream method, so the chain stops peeling there and
+  it("non-registered chain methods (for example .toLower) fall through to the existing expression-form path", () => {
+    // `.toLower()` is not a stream method, so the chain stops peeling there and
     // the rest reads the slot as a value (`joinValue` in src/compiler/emit/join.ts),
     // producing the bulkier but still correct expression form. Unrelated string /
     // array operators on lookup results are unaffected.

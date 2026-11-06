@@ -30,7 +30,7 @@ export type SortSpec = Record<string, 1 | -1>;
 
 /**
  * What a sort argument asks for: keys by NAME; a key COMPUTED from the document
- * — `d => d.cat.toLowerCase()` — which MongoDB cannot sort by directly, so the
+ * — `d => d.cat.toLower()` — which MongoDB cannot sort by directly, so the
  * caller writes it to a scratch field and sorts by that field; or the WHOLE element,
  * which carries a direction and no name.
  */
@@ -284,7 +284,7 @@ export function sortSpecOf(arg: Expr, method: string, kind: KindOf, objects = tr
  * `{ field: dir }` spec.
  */
 export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string, kind: KindOf): SortAsk {
-  // A key function with an optional direction: `.orderBy(d => d.cat.toLowerCase(), -1)`.
+  // A key function with an optional direction: `.orderBy(d => d.cat.toLower(), -1)`.
   if (keys.type === "Lambda") {
     const ask = sortSpecOf(keys, method, kind);
     if (orders === undefined) return ask;

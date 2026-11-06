@@ -384,7 +384,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
     expect(sortBy('$$.orderBy("t", -1).takeWhile(o => o.ok);')).toEqual({ t: -1 });
     expect(sortBy("$$.$sort({ t: 1 }).takeWhile(o => o.ok);")).toEqual({ t: 1 });
     // A computed sort key lives in a scratch field — the window sorts by that.
-    expect(sortBy("$$.sortBy(d => d.cat.toLowerCase()).takeWhile(o => o.ok);")).toEqual({ "__jsmql.tmp.0": 1 });
+    expect(sortBy("$$.sortBy(d => d.cat.toLower()).takeWhile(o => o.ok);")).toEqual({ "__jsmql.tmp.0": 1 });
   });
 
   it("takes the same predicate spellings .filter does", () => {
@@ -2311,7 +2311,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   // document, so it takes one; a `$sort` key / `$unwind` path must be a literal field
   // path, so it cannot. The split below is that line, and nothing else.
   it("a computed key lowers straight into $group._id — no extra stages", () => {
-    expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
+    expect(jsmql(`$$ = $$.countBy(d => d.cat.toLower());`)).toEqual([
       { $group: { _id: { $toLower: { $ifNull: ["$cat", ""] } }, __jsmqlTmp: { $sum: 1 } } },
       {
         $group: {
@@ -2427,7 +2427,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       },
       { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
     ]);
-    expect(jsmql(`$.o = $$$.orders.groupBy(d => d.cat.toLowerCase());`)).toEqual([
+    expect(jsmql(`$.o = $$$.orders.groupBy(d => d.cat.toLower());`)).toEqual([
       {
         $lookup: {
           from: "orders",
@@ -2451,12 +2451,12 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   it("a computed sort key materialises into a scratch field ahead of the $sort", () => {
     // `$sort` needs a literal field path, so unlike `$group._id` the expression cannot
     // go inline — one `$addFields` puts it in a `__jsmql.tmp` slot first.
-    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase());`)).toEqual([
+    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLower());`)).toEqual([
       { $addFields: { "__jsmql.tmp.0": { $toLower: { $ifNull: ["$cat", ""] } } } },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
+    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLower(), -1);`)).toEqual([
       { $addFields: { "__jsmql.tmp.0": { $toLower: { $ifNull: ["$cat", ""] } } } },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },
@@ -2468,14 +2468,14 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   it("a computed sort key's scratch $unset stays out of the way of later stages", () => {
     // The `$sort` must remain adjacent to whatever follows, so the cleanup is held to
     // the end of the chain rather than emitted right after the `$sort`.
-    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);`)).toEqual([
+    expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLower()).take(3);`)).toEqual([
       { $addFields: { "__jsmql.tmp.0": { $toLower: { $ifNull: ["$cat", ""] } } } },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
     // Descending is written directly — there is no reverse-a-previous-sort form.
-    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
+    expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLower(), -1);`)).toEqual([
       { $addFields: { "__jsmql.tmp.0": { $toLower: { $ifNull: ["$cat", ""] } } } },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },

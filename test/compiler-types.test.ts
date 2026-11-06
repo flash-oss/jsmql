@@ -31,12 +31,12 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a string write, then a string method: the method's own form, guarded only while the value may be missing", () => {
-    expect(jsmql("$.s = $.a.trim(); $.t = $.s.toUpperCase();")).toEqual([
+    expect(jsmql("$.s = $.a.trim(); $.t = $.s.toUpper();")).toEqual([
       { $set: { s: { $trim: { input: { $ifNull: ["$a", ""] } } } } },
       { $set: { t: { $toUpper: "$s" } } },
     ]);
     // A literal is there: no guard at all.
-    expect(jsmql('$.s = "abc"; $.t = $.s.toUpperCase();')).toEqual([
+    expect(jsmql('$.s = "abc"; $.t = $.s.toUpper();')).toEqual([
       { $set: { s: "abc" } },
       { $set: { t: { $toUpper: "$s" } } },
     ]);
@@ -570,7 +570,7 @@ describe("types — a `$match` narrows the document for the statements after it"
     expect(jsmql('$match(typeof $.b === "string"); $.u = $.b.trim();')[1]).toEqual({
       $set: { u: { $trim: { input: "$b" } } },
     });
-    expect(jsmql('$$.filter({ status: "a" }); $.s = $.status.toUpperCase();')[1]).toEqual({
+    expect(jsmql('$$.filter({ status: "a" }); $.s = $.status.toUpper();')[1]).toEqual({
       $set: { s: { $toUpper: "$status" } },
     });
     // `n` is a number, or an array holding one (the query language reads an array element by element):

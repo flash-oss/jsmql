@@ -325,14 +325,14 @@ $$.push(...$$$.shipments.aggregate(s => { $group({ _id: s.carrier, n: $sum(1) })
     ]);
   });
 
-  // Group by a COMPUTED key: the email domain through `.split("@").at(1).toLowerCase()`
+  // Group by a COMPUTED key: the email domain through `.split("@").at(1).toLower()`
   // (the string-method chain from realistic.test.ts "email domain"), run as a
   // real $group _id expression.
   it("pipeline: user count by email domain (group by computed string expr)", async () => {
     const rows = await aggregate(
       "users",
       `$$ = $$.filter(u => u.email != null);
-$group({ _id: $.email.split("@").at(1).toLowerCase(), n: $sum(1) });
+$group({ _id: $.email.split("@").at(1).toLower(), n: $sum(1) });
 $sort({ _id: 1 });`,
     );
     expect(rows.map((r) => ({ domain: r._id, n: r.n }))).toEqual([
