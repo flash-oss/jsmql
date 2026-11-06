@@ -3020,7 +3020,7 @@ $.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }
 
 If you know mongosh, its names also work here and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
 
-`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling**, because they are not analytics types. `Timestamp` in particular is MongoDB's *internal* oplog type, not a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``). JSMQL passes it through with no change, and `jsmql.stringify` prints it correctly.
+`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling**, because they are not analytics types. `Timestamp` in particular is MongoDB's *internal* oplog type, not a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``). JSMQL passes it through with no change. For the text that `jsmql.stringify` writes for each type, see [docs/specs/mql-stringify.md](specs/mql-stringify.md).
 
 **`Double` changes the stored type.** The driver writes a whole JavaScript number as an **int**, so `$.a = 1;` stores an int, and `$.a = Double(1);` stores a double.
 
