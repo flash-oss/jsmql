@@ -2819,6 +2819,37 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
       ]);
     }
   });
+
+  it("a `?.` on a callback parameter reads as a `?.` on a field path", async () => {
+    // `.trim()` answers null for null on its own, so the `?.` adds no test. `.size()` does
+    // not, so the test stays, and its second branch reads the proven parameter with no `$ifNull`.
+    const cases: readonly (readonly [string, unknown, unknown])[] = [
+      [
+        "$.v.map(x => x?.trim())",
+        { $map: { input: { $ifNull: ["$v", []] }, as: "x", in: { $trim: { input: "$$x" } } } },
+        [null, "a"],
+      ],
+      [
+        "$.w.map(x => x?.size())",
+        {
+          $map: {
+            input: { $ifNull: ["$w", []] },
+            as: "x",
+            in: { $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] },
+          },
+        },
+        [null, 2],
+      ],
+    ];
+    const scratch = client!.db("jsmql_compiler_methods").collection("optional_param");
+    await scratch.deleteMany({});
+    await scratch.insertOne({ _id: 1, v: [null, " a "], w: [null, [1, 2]] });
+    for (const [src, mql, answer] of cases) {
+      expect(expr(src), src).toEqual(mql);
+      const [doc] = await scratch.aggregate([{ $addFields: { __v: expr(src) } }]).toArray();
+      expect([src, doc.__v]).toEqual([src, answer]);
+    }
+  });
 });
 
 /**

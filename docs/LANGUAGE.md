@@ -682,6 +682,15 @@ $.a?.max()           // `$max` gives null for null, so the chain needs no test
 
 Some operators give `null` for a `null` operand. When each call after the `?.` uses such an operator, the MQL holds no test, because the calls give the same answer.
 
+A `?.` on a callback parameter or a `let` name follows the same rules as a `?.` on a field:
+
+```js
+$.a.map(x => x?.trim())   // `$trim` gives null for null, so no test
+// → { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $trim: { input: "$$x" } } } }
+$.a.map(x => x?.size())   // the test stays; behind it, `x` is there
+// → { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] } } }
+```
+
 **A `?.` with no call after it answers null.** There is nothing to stop. The chain reads as it does with a dot. Where the value is missing, it answers `null`: JavaScript's `undefined`, which a written document holds as `null`. A bracket read is a read too, so `$.o?.[$.k]` answers as `$.o?.p` does. A consumer that takes an empty value supplies its own, as the table below shows.
 
 | Consumer category | Wrapped with | Example |

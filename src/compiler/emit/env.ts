@@ -303,6 +303,16 @@ export class Env {
     return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
   }
 
+  /**
+   * The same Env, with the value of one JavaScript name proven to be there. The second
+   * branch of a `?.` test on a callback parameter or a `let` name runs only when the
+   * test passed, as `proving` does for a field path.
+   */
+  provingName(js: string): Env {
+    const b = this.scope.lookup(js, 0);
+    return new Env(this.scope.declare(js, { ...b, type: present(b.type) }), this.site, this.chain, this.documents);
+  }
+
   /** The same Env, after a write of a value proven `type` at `path` on this level. */
   written(path: string, type: Type): Env {
     return this.withDocument(written(this.documents[this.level], path, type));

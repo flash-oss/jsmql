@@ -224,8 +224,11 @@ the spine takes the presence away: the chain stops, and the value may be null.
 A row that states `passesNull` answers null for a null receiver through its own
 operator. A `?.` stops a chain with a `$cond` null test (`stoppedChain` in
 [lower.ts](../../src/compiler/emit/lower.ts)). That test adds nothing when each call
-after the `?.` states the fact and the `?.` tests a field path. So the compiler emits the
-calls alone, with the path proved present.
+after the `?.` states the fact and the `?.` tests a field path or a name: a callback
+parameter or a `let` name. So the compiler emits the calls alone, with the path or the name
+proved present (`Env.proving` and `Env.provingName` in [env.ts](../../src/compiler/emit/env.ts)).
+When the test stays, its second branch reads the same proof, so a call there takes no dot
+wrap: `x => x?.size()` is `{ $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] }`.
 
 Then the compiler adds no dot wrap: `$.o?.keys()` is
 `{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a

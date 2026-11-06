@@ -23546,6 +23546,15 @@ var Env = class _Env {
   proving(path) {
     return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
   }
+  /**
+   * The same Env, with the value of one JavaScript name proven to be there. The second
+   * branch of a `?.` test on a callback parameter or a `let` name runs only when the
+   * test passed, as `proving` does for a field path.
+   */
+  provingName(js) {
+    const b = this.scope.lookup(js, 0);
+    return new _Env(this.scope.declare(js, { ...b, type: present(b.type) }), this.site, this.chain, this.documents);
+  }
   /** The same Env, after a write of a value proven `type` at `path` on this level. */
   written(path, type2) {
     return this.withDocument(written(this.documents[this.level], path, type2));
@@ -25875,8 +25884,9 @@ function lowerValue(node, env) {
   const stopped = stoppedChain(node);
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
-    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
-    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    const named = base.type === "Ident" && env.scope.has(base.name);
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : named ? env.provingName(base.name) : env;
+    if ((base.type === "FieldRef" || named) && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
     const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond3(gone, null, lowerValue(withoutOptional(node), proved));
   }

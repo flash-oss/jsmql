@@ -100,10 +100,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
-    // the second branch runs only when the test passed, so the path IS there inside it
-    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    // the second branch runs only when the test passed, so the path or the name IS there inside it
+    const named = base.type === "Ident" && env.scope.has(base.name);
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : named ? env.provingName(base.name) : env;
     // each call after the `?.` answers null for null on its own, so the test adds nothing
-    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    if ((base.type === "FieldRef" || named) && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
     const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
