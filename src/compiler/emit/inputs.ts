@@ -20,6 +20,8 @@ import {
   blockWhereValueExpected,
   CodegenError,
   emptyMatcherObject,
+  indexNotHeld,
+  pluralNounOfKinds,
   mapMustReturnDocument,
   nounOfKinds,
   needsPipeline,
@@ -28,6 +30,7 @@ import {
   tooManyCallbackParams,
   notAFieldOfTheDocument,
   notAnArrow,
+  nullCallback,
   unfilledParam,
   valueWhereBlockExpected,
   reducerShape,
@@ -41,7 +44,7 @@ import {
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
-import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of, unreadableAt } from "./type.ts";
+import { ANY, DOCUMENT, cannotBe, flattenOnce, isNothing, isOnly, maybeAbsent, of, unreadableAt } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { truthOf } from "./mode.ts";
@@ -83,6 +86,31 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
 };
 
 /**
+ * `.keyBy(5)` means `x => x[5]`, and the elements must be able to hold index 5. An
+ * array or a document can. A proof of another kind, or of an array of a fixed length
+ * that ends before the index, refuses the call. An element of unknown kind passes.
+ * `elements` holds one proof per position of a receiver of fixed length, else the one
+ * proof of every element. See docs/specs/desugar-pass.md § The iteratee shorthands.
+ */
+export function checkIndexHeld(node: Extract<Expr, { type: "IndexAccess" }>, elements: readonly Type[]): void {
+  if (node.iteratee === undefined) return;
+  const { method, slot } = node.iteratee;
+  const i = (node.index as { value: number }).value;
+  for (const element of elements) {
+    if (cannotBe(element, "array") && cannotBe(element, "object") && !isNothing(element)) {
+      throw indexNotHeld(method, slot, `the elements are ${pluralNounOfKinds(element)}`, node.pos);
+    }
+    if (isOnly(element, "array") && element.items !== undefined && element.items.length <= i) {
+      const n = element.items.length;
+      throw indexNotHeld(method, slot, `an element holds ${n} item${n === 1 ? "" : "s"}`, node.pos);
+    }
+  }
+}
+
+/** The proofs that `checkIndexHeld` reads off a receiver: one per position when its length is fixed. */
+const elementsOf = (recv: Type): readonly Type[] => recv.items ?? [flattenOnce(recv)];
+
+/**
  * A callback bound for a body: the one element parameter is a variable, and the
  * body is lowered under it. Rows with a real renderer bind one parameter here.
  * An index or receiver parameter is a different lowering. No row that
@@ -94,11 +122,14 @@ function callback(
   read: (body: Expr, e: Env) => unknown,
   /** The refusal for an argument that is no arrow. A row that states its iteratee slots never reaches the internal error. */
   refusal: () => CodegenError,
+  /** The receiver's proof. The parameter stays unproven; only the index shorthand reads it. */
+  receiver: () => Type,
 ): { as: string; ref: string; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
+  if (cb.body.type === "IndexAccess" && cb.body.iteratee !== undefined) checkIndexHeld(cb.body, elementsOf(receiver()));
   const bound = env.param(cb.params[0], ANY, cb.pos);
   return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
 }
@@ -136,7 +167,9 @@ function arrayCallback(
   // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
   // The element's own presence holds, not the array's: `$map` over null never runs
   // the body, and an element the row proves present (`.keys()`, `.split()`) is never null.
-  const element = recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env));
+  const recvType = recvNode === undefined ? ANY : typeOf(recvNode, env);
+  const element = flattenOnce(recvType);
+  if (cb.body.type === "IndexAccess" && cb.body.iteratee !== undefined) checkIndexHeld(cb.body, elementsOf(recvType));
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
     // A callback that names no parameter still needs a binder, and it must be a name
@@ -299,11 +332,18 @@ export function exprInputs(
   const value = (e: Expr): unknown =>
     overrides.has(e) ? overrides.get(e) : read.value(env.site.settling ? e : settled(e), argEnv);
   // What one element of the receiver is, for a sort by name.
-  const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
+  const recvType = (): Type => (recvNode === undefined ? ANY : typeOf(recvNode, env));
+  const elementOfRecv = (): Type => flattenOnce(recvType());
   // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
   // rewrites each short spelling that the row accepts, so the refusal names the spellings left.
-  const notArrow = (cb: Expr, what: string): CodegenError =>
-    notAnArrow(name, what, slotFormsOf(name, "array", Math.max(0, args.indexOf(cb))), cb);
+  const notArrow = (cb: Expr, what: string): CodegenError => {
+    const slot = Math.max(0, args.indexOf(cb));
+    return notAnArrow(name, what, slotFormsOf(name, "array", slot), cb, slot);
+  };
+  // A `null` where the slot takes an arrow is a value of the wrong kind (HR7).
+  const refuseNull = (cb: Expr): void => {
+    if (cb.type === "NullLiteral") throw nullCallback(name, Math.max(0, args.indexOf(cb)), "a callback", cb.pos);
+  };
   return {
     name,
     recv,
@@ -315,16 +355,41 @@ export function exprInputs(
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     elementTruth: (ref) => truthOf(ref, elementOfRecv()),
-    iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
+    iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key"), recvType),
     predicate: (cb) =>
-      callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")) as { as: string; ref: string; in: Truth },
-    callback: (cb, mode) =>
-      arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
-    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
-    elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
-    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name, objects), elementOfRecv(), "the element", e.pos),
-    orderBy: (keys, orders) => readableSort(orderBySpec(keys, orders, name), elementOfRecv(), "the element", keys.pos),
+      callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate"), recvType) as {
+        as: string;
+        ref: string;
+        in: Truth;
+      },
+    callback: (cb, mode) => {
+      refuseNull(cb);
+      return arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present);
+    },
+    reducer: (cb, seed) => {
+      refuseNull(cb);
+      return reducerCallback(cb, seed, recv, argEnv, read.value, name);
+    },
+    elements: (cb, count) => {
+      refuseNull(cb);
+      return elementsCallback(cb, count, argEnv, read.value, name);
+    },
+    sortSpec: (e, objects) =>
+      readableSort(
+        sortSpecOf(e, name, (x) => typeOf(x, argEnv), objects),
+        elementOfRecv(),
+        "the element",
+        e.pos,
+      ),
+    orderBy: (keys, orders) =>
+      readableSort(
+        orderBySpec(keys, orders, name, (x) => typeOf(x, argEnv)),
+        elementOfRecv(),
+        "the element",
+        keys.pos,
+      ),
     objIteratee: (cb, mode) => {
+      refuseNull(cb);
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name, (cb as { pos: number }).pos);
       }
@@ -620,7 +685,7 @@ export function stageInputs(
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
       return badMatchesPropertyPair(written, cb.pos);
     }
-    return notAnArrow(written, what, forms, cb);
+    return notAnArrow(written, what, forms, cb, Math.max(0, args.indexOf(cb)));
   };
   /**
    * A callback's body and the env it is lowered under — the parameter IS the
@@ -686,9 +751,25 @@ export function stageInputs(
       return read.block(stages, e);
     },
     sortSpec: (e, objects = true) =>
-      streamSortAsk(readableKeys(sortSpecOf(e, name, objects), e.pos), name, env.chain.element, e.pos),
+      streamSortAsk(
+        readableKeys(
+          sortSpecOf(e, name, (x) => typeOf(x, argEnv), objects),
+          e.pos,
+        ),
+        name,
+        env.chain.element,
+        e.pos,
+      ),
     orderBy: (keys, orders) =>
-      streamSortAsk(readableKeys(orderBySpec(keys, orders, name), keys.pos), name, env.chain.element, keys.pos),
+      streamSortAsk(
+        readableKeys(
+          orderBySpec(keys, orders, name, (x) => typeOf(x, argEnv)),
+          keys.pos,
+        ),
+        name,
+        env.chain.element,
+        keys.pos,
+      ),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);

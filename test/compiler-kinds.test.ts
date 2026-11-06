@@ -3,7 +3,7 @@
 // hatch passes every value as written. See docs/LANG_RULES.md and docs/specs/types.md.
 
 import { describe, expect, it } from "vitest";
-import { MinKey, ObjectId } from "mongodb";
+import { MinKey, ObjectId, Timestamp } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
 import { select, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { CodegenError } from "../src/errors.ts";
@@ -75,10 +75,9 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("x[i] takes a key of every kind but null", () => {
-    expect(() => jsmql.expr("$.a[null]")).toThrow("'x[0]' argument 1 takes a value, but got null.");
-    expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow(
-      "'x[0]' argument 1 takes a value, but got null.",
-    );
+    expect(() => jsmql.expr("$.a[null]")).toThrow("'[…]' key takes a value, but got null.");
+    expect(() => jsmql.expr("$.a?.[null]")).toThrow("'[…]' key takes a value, but got null.");
+    expect(() => jsmql("$.o = { b: null }; $.r = $.a[$.o.b];")).toThrow("'[…]' key takes a value, but got null.");
     expect(jsmql.expr('$.o["k"]')).toEqual({ $getField: { field: "k", input: { $ifNull: ["$o", {}] } } });
   });
 
@@ -87,7 +86,12 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr('$.d.startOf("week", { startOfWeek: null })')).toThrow(
       "'.startOf()' startOfWeek takes a string, but got null.",
     );
-    expect(() => jsmql.expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
+    const pickNull =
+      "'.pick()' element 1 takes a field NAME to write: a plain string with no '$' and no dot, but got null.";
+    expect(() => jsmql.expr("$.o.pick([null])")).toThrow(pickNull);
+    expect(() => jsmql("$.o = { b: null }; $.r = $.o.pick([$.o.b]);")).toThrow(pickNull);
+    // A string that the server refuses as a name keeps its own refusal.
+    expect(() => jsmql.expr('$.o.pick(["a.b"])')).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
     expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       "'.startOf()' timezone takes a string, but got null.",
     );
@@ -95,6 +99,121 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql('$.o = {}; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       /reads a field that '\$\.o' does not have/,
     );
+  });
+
+  it("a callback slot and a document slot of the stream refuse null as a wrong kind", () => {
+    expect(() => jsmql.expr("$.a.map(null)")).toThrow("'.map()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.a.filter(null)")).toThrow("'.filter()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.a.reduce(null, 0)")).toThrow("'.reduce()' argument 1 takes a callback, but got null.");
+    expect(() => jsmql.expr("$.o.mapValues(null)")).toThrow(
+      "'.mapValues()' argument 1 takes a callback, but got null.",
+    );
+    expect(() => jsmql.expr("$.a.groupBy(null)")).toThrow("'.groupBy()' argument 1 takes a key, but got null.");
+    expect(() => jsmql.expr("$.a.differenceBy($.b, null)")).toThrow(
+      "'.differenceBy()' argument 2 takes a key, but got null.",
+    );
+    expect(() => jsmql("$$.filter(null);")).toThrow("'.filter()' argument 1 takes a predicate, but got null.");
+    // A value of another kind keeps the message that names each spelling the slot takes.
+    expect(() => jsmql.expr("$.a.groupBy(true)")).toThrow(/takes a key here — an arrow/);
+    expect(() => jsmql("$$.push($.a, null);")).toThrow(
+      "'$$.push()' argument 2 takes a document, but got null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+    );
+    expect(() => jsmql("$$.concat(null);")).toThrow(/^'\$\$\.concat\(\)' argument 1 takes a document, but got null\./);
+    expect(() => jsmql("$$$.c.push(null);")).toThrow(
+      /^'\$\$\$\.<coll>\.push\(\)' argument 1 takes a document, but got null\./,
+    );
+  });
+
+  it("a sort argument of a wrong kind names the sort specification, and the hint names its spellings", () => {
+    const directions = ' Write a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).';
+    const keyFunction =
+      ' Write a field name ("age"), a list of them (["age", "name"]), or a key function (x => x.age).';
+    expect(() => jsmql.expr("$.a.toSorted(null)")).toThrow(
+      `'.toSorted()' argument 1 takes a sort specification, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy(null)")).toThrow(
+      `'.sortBy()' argument 1 takes a sort specification, but got null.${keyFunction}`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy(1)")).toThrow(
+      "'.sortBy()' argument 1 takes a sort specification, but got a number.",
+    );
+    expect(() => jsmql.expr("$.a.sortBy(true)")).toThrow(
+      "'.sortBy()' argument 1 takes a sort specification, but got a boolean.",
+    );
+    expect(() => jsmql.expr('$.a.toSorted(new Date("2020-01-01"))')).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got a date.",
+    );
+    expect(() => jsmql.expr("$.a.orderBy(null)")).toThrow(
+      `'.orderBy()' argument 1 takes a sort specification, but got null.${directions}`,
+    );
+    expect(() => jsmql("$$.sortBy(null);")).toThrow("'.sortBy()' argument 1 takes a sort specification, but got null.");
+    expect(() => jsmql("$$.toSorted($.n * 2);")).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got a number.",
+    );
+    // A value of another kind keeps the message that names each spelling.
+    expect(() => jsmql.expr("$.a.toSorted($.k)")).toThrow(
+      '.toSorted() takes a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).',
+    );
+  });
+
+  it("a root write of a wrong kind names the document, and the hint names the destination", () => {
+    expect(() => jsmql("$ = null;")).toThrow(
+      "'$ = …' takes a document, but got null. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+    );
+    expect(() => jsmql("$ = $.a * 2;")).toThrow("'$ = …' takes a document, but got a number.");
+    expect(() => jsmql("$ = [1];")).toThrow(
+      "'$ = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+    );
+    expect(() => jsmql("$$ = $$.map(d => 1);")).toThrow(
+      "'.map()' argument 1 takes an arrow that returns a document, but the arrow returns a number. The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
+    );
+  });
+
+  it("the key of $$$[…] takes a string", () => {
+    expect(() => jsmql("$$$[1] = $$;")).toThrow("'$$$[…]' key takes a string, but got a number.");
+    expect(() => jsmql("$$$[null] = $$;")).toThrow("'$$$[…]' key takes a string, but got null.");
+    const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
+    expect(() => fn({ n: new Date(0) })).toThrow("'$$$[…]' key takes a string, but got a date.");
+  });
+
+  it("a direction and a sort field name of a wrong kind name the slot, and the hint names the forms", () => {
+    const directions = ' Write 1, -1, "asc" or "desc".';
+    expect(() => jsmql.expr("$.a.toSorted({ a: null })")).toThrow(
+      `'.toSorted()' a takes a direction, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr("$.a.toSorted({ a: true })")).toThrow(
+      "'.toSorted()' a takes a direction, but got a boolean.",
+    );
+    expect(() => jsmql.expr('$.a.orderBy(["a"], [null])')).toThrow(
+      `'.orderBy()' element 1 takes a direction, but got null.${directions}`,
+    );
+    expect(() => jsmql.expr('$.a.orderBy("a", null)')).toThrow(
+      `'.orderBy()' argument 2 takes a string, a number or an array, but got null. Write 1, -1, "asc" or "desc", or a list of them.`,
+    );
+    expect(() => jsmql.expr("$.a.sortBy([null])")).toThrow(
+      `'.sortBy()' element 1 takes a field name, but got null. Write a field name, for example "age".`,
+    );
+    // A number that is not a direction keeps the message that names each direction.
+    expect(() => jsmql.expr("$.a.toSorted({ a: 2 })")).toThrow(
+      '.toSorted({ a: … }) takes a direction: 1, -1, "asc" or "desc".',
+    );
+    // The statement form `.sort(…)` reads its argument as `.toSorted(…)` does.
+    expect(() => jsmql("$.a.sort(null);")).toThrow(
+      "'.toSorted()' argument 1 takes a sort specification, but got null.",
+    );
+  });
+
+  it("a spread of a wrong kind names the kind that '...' takes, and the hint keeps the advice", () => {
+    expect(() => jsmql.expr("[...null]")).toThrow(
+      "'...' argument 1 takes an array, but got null. To keep the value whole, drop the '...'. To spread its elements, give it an array.",
+    );
+    expect(() => jsmql.expr("({ ...null })")).toThrow(
+      "'...' argument 1 takes a document, but got null. Put the value under a field ('{ value: … }'), or spread a document.",
+    );
+    expect(() => jsmql.expr("[...($.n * 2)]")).toThrow("'...' argument 1 takes an array, but got a number.");
+    expect(() => jsmql.expr("({ ...[1] })")).toThrow("'...' argument 1 takes a document, but got an array.");
+    // A string keeps its own refusal, because it names the character-wise spelling.
+    expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(/spreads a string into its characters/);
   });
 
   it("a conversion and the condition of assert() take every kind but null", () => {
@@ -142,6 +261,58 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(jsmql.expr("$.x in [1, 2]")).toEqual({ $in: ["$x", [1, 2]] });
   });
 
+  it("a null element is an element of the list, so a null needle fits it", () => {
+    expect(jsmql.expr("[1, null].has(null)")).toBe(true);
+    expect(jsmql.expr("null in [1, null]")).toBe(true);
+    expect(jsmql.expr("[1, null].without(null)")).toEqual([1]);
+    expect(jsmql.expr("[1, null].lastIndexOf(null)")).toBe(1);
+    expect(jsmql.expr("null in [1, $.x]")).toEqual({ $in: [null, [1, "$x"]] });
+    expect(jsmql("$.a = [1, null]; $.r = $.a.has(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $in: [null, "$a"] } } },
+    ]);
+    expect(jsmql("$.a = [1, null]; $.r = $.a.indexOf(null);")).toEqual([
+      { $set: { a: [1, null] } },
+      { $set: { r: { $indexOfArray: ["$a", null] } } },
+    ]);
+    // A read that the proof shows is null is a null element too.
+    expect(jsmql("$.o = { b: null }; $.r = [1, $.o.b].has(null);")).toEqual([
+      { $set: { o: { $mergeObjects: [{ b: null }] } } },
+      { $set: { r: { $in: [null, [1, "$o.b"]] } } },
+    ]);
+  });
+
+  it("a null needle is refused where no element is null, and the message names a held null", () => {
+    expect(() => jsmql.expr("[1, 2].has(null)")).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.expr("[1, 2].without(null)")).toThrow(/'\.without\(\)' argument 1 takes an element/);
+    expect(() => jsmql("$.a = [1, 2]; $.r = $.a.has(null);")).toThrow(/'\.has\(\)' argument 1 takes an element/);
+    expect(() => jsmql.expr('[1, null].has("a")')).toThrow(
+      "'.has()' argument 1 takes an element of the array, but got a string, and the array holds numbers or null.",
+    );
+  });
+
+  it("an element of unknown kind makes the elements unknown, as a field path does", () => {
+    // A regular expression and a Timestamp have no kind that the registry names.
+    for (const v of [/a/, new Timestamp({ t: 1, i: 1 })]) {
+      expect(jsmql.expr`[1, ${v}].has("x")`).toEqual({ $in: ["x", [1, v]] });
+      expect(jsmql.expr`"x" in [1, ${v}]`).toEqual({ $in: ["x", [1, v]] });
+      expect(jsmql.expr`[1, ${v}].indexOf("x")`).toEqual({ $indexOfArray: [[1, v], "x"] });
+      expect(jsmql.expr`[1, ${v}].without("x")`).toEqual({
+        $filter: { input: [1, v], as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", ["x"]] }] } },
+      });
+      expect(jsmql`$.a = [1, ${v}]; $.r = $.a.has("x");`).toEqual([
+        { $set: { a: [1, v] } },
+        { $set: { r: { $in: ["x", "$a"] } } },
+      ]);
+      const build = jsmql.compile(({ e }: { e: unknown }, { $ }: { $: any }) => [1, e].has("x"));
+      expect(build({ e: v })).toEqual({ $expr: { $in: ["x", [1, v]] } });
+    }
+    // The compiler still judges an element of a kind that the registry names.
+    expect(() => jsmql.expr`[1, ${new MinKey()}].has("x")`).toThrow(/'\.has\(\)' argument 1 takes an element/);
+  });
+
   it("a call that the program passes in is judged by its kind as a literal is", () => {
     const build = jsmql.compile(({ n }: { n: unknown }, { $ }: { $: any }) => $.s.trim() + n);
     expect(() => build({ n: 1 })).toThrow(/'\+' takes operands of one kind/);
@@ -166,6 +337,31 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(() => jsmql.pipeline('$.n = 1; $match($.n < "x");')).toThrow(/'<' takes operands of one kind/);
   });
 
+  it("a null needle fits a list that holds a null, and is refused by a list that holds none", () => {
+    expect(jsmql.filter("null in [1, null]")).toEqual({ $expr: true });
+    expect(jsmql.filter("null in [1, $.x]")).toEqual({ $expr: { $in: [null, [1, "$x"]] } });
+    expect(jsmql.pipeline("$.a = [1, null]; $match($.a.has(null));")).toEqual([
+      { $set: { a: [1, null] } },
+      { $match: { a: { $elemMatch: { $eq: null } } } },
+    ]);
+    expect(() => jsmql.filter("null in [1, 2]")).toThrow(
+      "'in' argument 1 takes an element of the array, but got null, and the array holds numbers.",
+    );
+    expect(() => jsmql.pipeline("$.a = [1, 2]; $match($.a.has(null));")).toThrow(
+      /'\.has\(\)' argument 1 takes an element of the array, but got null/,
+    );
+  });
+
+  it("an element of unknown kind makes the elements of a list or a field unknown", () => {
+    const re = /a/;
+    expect(jsmql.filter`"x" in [1, ${re}]`).toEqual({ $expr: { $in: ["x", [1, re]] } });
+    expect(jsmql.filter`[1, ${re}].has("x")`).toEqual({ $expr: { $in: ["x", [1, re]] } });
+    expect(jsmql.pipeline`$.a = [1, ${re}]; $match($.a === "x");`).toEqual([
+      { $set: { a: [1, re] } },
+      { $match: { a: "x" } },
+    ]);
+  });
+
   it("a field of unknown kind passes, and the server decides", () => {
     expect(jsmql.pipeline('$match($.n === "x");')).toEqual([{ $match: { n: "x" } }]);
   });
@@ -182,6 +378,41 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags === ["a"]);')).toEqual([
       { $set: { tags: ["a"] } },
       { $match: { $expr: { $eq: ["$tags", ["a"]] } } },
+    ]);
+  });
+
+  // The query cell of an operator states the kinds of its value cell, so the two forms refuse alike.
+  for (const op of ["<", ">", "<=", ">="]) {
+    it(`'${op}' in a query takes the kinds of its value form`, () => {
+      for (const src of [`$.x = null; $.r = $.x ${op} 1;`, `$.x = null; $match($.x ${op} 1);`]) {
+        expect(() => jsmql.pipeline(src)).toThrow(
+          `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got null.`,
+        );
+      }
+      expect(() => jsmql.pipeline(`$.o = { a: 1 }; $match($.o ${op} 1);`)).toThrow(
+        `'${op}' argument 1 takes a number, a string, a date or an ObjectId, but got a document.`,
+      );
+    });
+  }
+
+  it("'in' in a query takes an element of its list, as its value form does", () => {
+    for (const src of ['$.n = 1; $.r = $.n in ["a"];', '$.n = 1; $match($.n in ["a"]);']) {
+      expect(() => jsmql.pipeline(src)).toThrow(
+        "'in' argument 1 takes an element of the array, but got a number, and the array holds strings.",
+      );
+    }
+    // A query tests each element of an array field against the list (SR2).
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in ["a", "b"]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: ["a", "b"] } } },
+    ]);
+    expect(() => jsmql.pipeline('$.tags = [1]; $match($.tags in ["a"]);')).toThrow(
+      "'in' argument 1 takes an element of the array, but got an element of 'tags' that is a number, and the array holds strings.",
+    );
+    // A list that holds an array also tests the whole field.
+    expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in [["a"]]);')).toEqual([
+      { $set: { tags: ["a"] } },
+      { $match: { tags: { $in: [["a"]] } } },
     ]);
   });
 
@@ -389,6 +620,22 @@ describe("kinds — a literal array is judged by each position, a computed array
     expect(() => jsmql.expr("[null].mean()")).toThrow(/'\.mean\(\)' takes numbers, but the array holds null\./);
   });
 
+  it("a null position is judged the same way in a written array and in a read that the proof shows", () => {
+    expect(() => jsmql("$.a = [1, null]; $.r = $.a.max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
+    expect(() => jsmql("$.o = { b: null }; $.r = [1, $.o.b].max();")).toThrow(
+      /'\.max\(\)' takes numbers, but the array holds a number and null\./,
+    );
+  });
+
+  it("a position of a kind that the registry does not name fits, as a field path does", () => {
+    const ts = new Timestamp({ t: 1, i: 1 });
+    expect(jsmql.expr`[1, ${ts}].max()`).toEqual({ $max: [1, ts] });
+    expect(jsmql.expr`[1, ${/a/}].max()`).toEqual({ $max: [1, /a/] });
+    expect(() => jsmql.expr`["a", ${ts}].max()`).toThrow(/'\.max\(\)' takes numbers/);
+  });
+
   it("a null that the call supplies proves no kind", () => {
     expect(jsmql.validate(({ n }: { n: unknown }, { $ }: { $: any }) => [$.x, n].max())).toEqual({
       valid: true,
@@ -429,14 +676,14 @@ describe("kinds — a literal array is judged by each position, a computed array
 describe("kinds — an iteratee slot that gets no arrow is a refusal, never an internal error", () => {
   it("names the spellings the slot takes", () => {
     for (const method of ["groupBy", "countBy"]) {
-      const e = refusal(() => jsmql.expr(`$.a.${method}(5)`));
+      const e = refusal(() => jsmql.expr(`$.a.${method}(true)`));
       expect(e.message).toMatch(new RegExp(`'\\.${method}\\(\\)' takes a key here`));
       expect(e.message).not.toMatch(/internal error/);
     }
   });
 
   it("covers a predicate slot too", () => {
-    expect(() => jsmql.expr("$.a.reject(5)")).toThrow(/'\.reject\(\)' takes a predicate here/);
+    expect(() => jsmql.expr("$.a.reject(true)")).toThrow(/'\.reject\(\)' takes a predicate here/);
   });
 });
 
@@ -474,10 +721,10 @@ describe("kinds — a spread argument is judged by the kind of its elements", ()
 
 describe("kinds — a cell's own refusal of the shape of an argument comes first", () => {
   it("a callback slot names every spelling that it takes, whatever the kind of the argument", () => {
-    expect(() => jsmql.expr("$.a.map(5)")).toThrow(/takes an arrow with an expression body/);
+    expect(() => jsmql.expr("$.a.map(true)")).toThrow(/takes an arrow with an expression body/);
     expect(() => jsmql.expr("$.a.reduce(5, 0)")).toThrow(/takes a two- or three-parameter arrow/);
     expect(() => jsmql.expr("$.a.mapValues(5)")).toThrow(/takes a one- or two-parameter arrow/);
-    expect(() => jsmql.pipeline("$$.filter(5);")).toThrow(/an arrow \('d => …'\), a field name/);
+    expect(() => jsmql.pipeline("$$.filter(true);")).toThrow(/an arrow \('d => …'\), a field name/);
     expect(() => jsmql.pipeline("$$.reduce(5, 0);")).toThrow(/takes a two-parameter arrow/);
   });
 });
@@ -520,8 +767,60 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" },
     });
     expect(() => jsmql.expr("new Date($.s.trim(), 1, 1)")).toThrow(
-      /'Date\(\)' argument 1 takes an integer, but got a string\./,
+      /'new Date\(\)' argument 1 takes an integer, but got a string\./,
     );
+  });
+
+  // MEASURED on mongod: `$dateFromParts` refuses a fraction in each of the seven parts.
+  // JavaScript cuts the fraction off, and JSMQL does not cut a value silently.
+  it.each([0, 1, 2, 3, 4, 5, 6])("a written fraction in calendar part %i is refused", (i) => {
+    const parts = [2020, 1, 15, 4, 5, 6, 7].map((n, j) => (j === i ? "1.5" : String(n)));
+    const source = `new Date(${parts.join(", ")})`;
+    const e = refusal(() => jsmql.expr(source));
+    expect(e.message).toMatch(
+      new RegExp(
+        `^'new Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`,
+      ),
+    );
+    expect(e.pos).toBe(source.indexOf("1.5"));
+  });
+
+  it("a proven fraction in a calendar part is refused, with each spelling of the call", () => {
+    const round = /argument 2 takes an integer, but got a fraction\. Write an integer, or round/;
+    expect(() => jsmql.expr("new Date(2020, 3 / 2)")).toThrow(round);
+    expect(() => jsmql.expr("const m = 1.5; new Date(2020, m)")).toThrow(round);
+    expect(() => jsmql.expr`new Date(2020, ${1.5})`).toThrow(round);
+    expect(() => jsmql.expr.compile(({ m }: { m: number }) => new Date(2020, m))({ m: 1.5 })).toThrow(round);
+    expect(() => jsmql.expr("Date(2020, 1.5)")).toThrow(/^'Date\(\)' argument 2 takes an integer, but got a fraction/);
+    expect(() => jsmql.expr("new Date(2020, null)")).toThrow("'new Date()' argument 2 takes an integer, but got null.");
+  });
+
+  it("whole calendar parts compile", () => {
+    expect(jsmql.expr("new Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
+  });
+
+  // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
+  // and JSMQL does not cut a value silently.
+  it.each([
+    ["written", () => jsmql.expr("new Date(2020.5)"), 9],
+    ["folded", () => jsmql.expr("new Date(3 / 2)"), 11],
+    ["bound", () => jsmql.expr("const n = 2020.5; new Date(n)"), 27],
+    ["interpolated", () => jsmql.expr`new Date(${2020.5})`, 9],
+    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => new Date(n))({ n: 2020.5 }), 20],
+  ])("a %s fraction as the millisecond count is refused", (_, run, pos) => {
+    const e = refusal(run);
+    expect(e.message).toMatch(
+      /^'new Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
+    );
+    expect(e.pos).toBe(pos);
+  });
+
+  it("a whole millisecond count and a string are date constants, and a value of the document is refused", () => {
+    expect(jsmql.expr("new Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
+    expect(jsmql.expr("new Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
+    expect(jsmql.expr(`new Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
+    expect(() => jsmql.expr("new Date($.n)")).toThrow(/Write '<value>\.toDate\(\)'/);
+    expect(() => jsmql.expr("Date(2020.5)")).toThrow(/^'Date\(\)' argument 1 takes an integer, but got a fraction/);
   });
 
   it("an ObjectId and a UUID constant is a string", () => {
@@ -529,10 +828,18 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     expect(() => jsmql.expr("UUID(5)")).toThrow(/'UUID\(\)' argument 1 takes a string, but got a number\./);
   });
 
-  it("a date constant is a string or a number", () => {
+  it("a date constant is a string, a number or a date", () => {
     expect(() => jsmql.expr("new Date(true)")).toThrow(
-      /only an ISO 8601 string or a millisecond count is a date constant/,
+      /'new Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
     );
+    expect(() => jsmql.expr("new Date(null)")).toThrow(
+      "'new Date()' argument 1 takes a string, a number or a date, but got null.",
+    );
+    expect(() => jsmql.expr("Date(null)")).toThrow(
+      "'Date()' argument 1 takes a string, a number or a date, but got null.",
+    );
+    // A string that no date parser reads keeps the refusal that names the two date constants.
+    expect(() => jsmql.expr('new Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 
   it("a numeric constant is a string or a number", () => {

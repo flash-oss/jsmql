@@ -88,3 +88,10 @@ root the entry states, and maps the errors to `validate()` results. See
 
 `validate()` maps the first two to `SYNTAX_ERROR`, the third to `CODEGEN_ERROR`,
 and never throws.
+
+An entry that throws a `LexError`, a `ParseError` or a `CodegenError` adds a frame to the
+message. The frame gives the line and the column of `.pos`, the source line and a caret
+under the fault. A test runner shows the stack, so the frame also goes into `.stack`. The line
+counts from the start of the source that the entry reads. For an arrow, line 1 is the
+first line of the arrow. `validate()` gives the message with no frame, because `.pos`
+already carries the position. `framed()` in `index.ts` builds the frame.

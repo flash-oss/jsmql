@@ -48,7 +48,7 @@ import { neverNullAlwaysOf, operandShapeOf, productionBuilding, productionSpelli
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
-import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
+import { onOwnStream, checkIndexHeld, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, boolTruth, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
@@ -681,7 +681,8 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
-  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"));
+  checkOperandKinds(node, productionBuilding("IndexAccess"), [node.index], childEnv(env, node, "index"), ["key"]);
+  if (node.iteratee !== undefined) checkIndexHeld(node, [typeOf(node.object, objEnv)]);
   if (node.index.type === "StringLiteral") {
     const name = node.index.value;
     const why = unreadable(typeOf(node.object, objEnv), name, false);
@@ -937,8 +938,16 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   const exprArgs = args.filter(isExpr);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
-  if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
-  throw E.refusalFor(sel, name, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
+  // A refusal names the call as the source spells it: `new Date(…)` or `Date(…)`.
+  const isNew = node.type === "NewExpression";
+  if (sel.kind === "rule") {
+    const called = isNew ? `new ${name}()` : `${name}()`;
+    const argEnv = childEnv(env, node, "args");
+    checkSlots(called, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
+    return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
+  }
+  const spelled = isNew ? `'new ${name}()'` : name;
+  throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 
 /** `((x) => …)(a)` and `f(a)`: each parameter bound once by `$let`, the body lowered under them. */
@@ -1125,7 +1134,7 @@ export const slotProof = (env: Env): SlotProof => ({
  * of its own, and that one comes first: this lowers each operand and drops the result.
  * An arrow is not a value, so it is left alone.
  */
-function operandsFirst(operands: readonly Expr[], env: Env): void {
+export function operandsFirst(operands: readonly Expr[], env: Env): void {
   for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
 }
 
@@ -1134,12 +1143,20 @@ function operandsFirst(operands: readonly Expr[], env: Env): void {
  * operand kinds, and this call reads them through the same dispatcher as every other
  * production. The pass owns the count.
  */
-function checkOperandKinds(node: Expr, key: string, operands: readonly Expr[], env: Env): void {
+function checkOperandKinds(
+  node: Expr,
+  key: string,
+  operands: readonly Expr[],
+  env: Env,
+  /** The name of each operand in a message, where the source spells no argument list. */
+  slots?: readonly string[],
+): void {
   const sel = selectProduction(key, operands, env);
   if (sel.kind === "wrongKind") {
     operandsFirst(operands, env);
     throw E.refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], undefined, {
       args: operands,
+      slots,
     });
   }
 }

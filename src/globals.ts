@@ -45,7 +45,7 @@ declare global {
     /** Required. An expression to group documents by. To specify a field path, prefix the field name with a dollar sign $ and enclose it in quotes. Unless $bucket includes a default specification, each input document must resolve the groupBy field path or expression to a value that falls within one of the ranges specified by the boundaries. */
     groupBy?: any;
     /** Required. An array of values based on the groupBy expression that specify the boundaries for each bucket. Each adjacent pair of values acts as the inclusive lower boundary and the exclusive upper boundary for the bucket. You must specify at least two boundaries. The specified values must be in ascending order and all of the same type. The exception is if the values are of mixed numeric types, such as: */
-    boundaries?: any;
+    boundaries?: unknown[];
     /** A literal that specifies the _id of an additional bucket that contains all documents whose groupBy expression result does not fall into a bucket specified by boundaries. If unspecified, each input document must resolve the groupBy expression to a value within one of the bucket ranges specified by boundaries or the operation throws an error. The default value must be less than the lowest boundaries value, or greater than or equal to the highest boundaries value. The default value can be of a different type than the entries in boundaries. */
     default?: any;
     /** A document that specifies the fields to include in the output documents in addition to the _id field. To specify the field to include, you must use accumulator expressions. If you do not specify an output document, the operation returns a count field containing the number of documents in each bucket. If you specify an output document, only the fields specified in the document are returned; i.e. the count field is not returned unless it is explicitly included in the output document. */
@@ -62,7 +62,7 @@ declare global {
     /** Required. An expression to group documents by. To specify a field path, prefix the field name with a dollar sign $ and enclose it in quotes. */
     groupBy?: any;
     /** Required. A positive 32-bit integer that specifies the number of buckets into which input documents are grouped. */
-    buckets?: any;
+    buckets?: number;
     /** A document that specifies the fields to include in the output documents in addition to the _id field. To specify the field to include, you must use accumulator expressions. The default count field is not included in the output document when output is specified. Explicitly specify the count expression as part of the output document to include it. */
     output?: any;
     /** A string that specifies the preferred number series to use to ensure that the calculated boundary edges end on preferred round numbers or their powers of 10. Available only if the all groupBy values are numeric and none of them are NaN. */
@@ -77,15 +77,15 @@ declare global {
    */
   function $changeStream(args: {
     /** A flag indicating whether the stream should report all changes that occur on the deployment, aside from those on internal databases or collections. */
-    allChangesForCluster?: any;
+    allChangesForCluster?: boolean;
     /** Specifies whether change notifications include a copy of the full document when modified by update operations. */
     fullDocument?: any;
     /** Valid values are "off", "whenAvailable", or "required". If set to "off", the "fullDocumentBeforeChange" field of the output document is always omitted. If set to "whenAvailable", the "fullDocumentBeforeChange" field will be populated with the pre-image of the document modified by the current change event if such a pre-image is available, and will be omitted otherwise. If set to "required", then the "fullDocumentBeforeChange" field is always populated and an exception is thrown if the pre-image is not              available. */
     fullDocumentBeforeChange?: any;
     /** Specifies a resume token as the logical starting point for the change stream. Cannot be used with startAfter or startAtOperationTime fields. */
-    resumeAfter?: any;
+    resumeAfter?: number;
     /** Specifies whether to include additional change events, such as such as DDL and index operations. */
-    showExpandedEvents?: any;
+    showExpandedEvents?: boolean;
     /** Specifies a resume token as the logical starting point for the change stream. Cannot be used with resumeAfter or startAtOperationTime fields. */
     startAfter?: any;
     /** Specifies a time as the logical starting point for the change stream. Cannot be used with resumeAfter or startAfter fields. */
@@ -126,11 +126,11 @@ declare global {
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/currentOp/
    */
   function $currentOp(args: {
-    allUsers?: any;
-    idleConnections?: any;
-    idleCursors?: any;
-    idleSessions?: any;
-    localOps?: any;
+    allUsers?: boolean;
+    idleConnections?: boolean;
+    idleCursors?: boolean;
+    idleSessions?: boolean;
+    localOps?: boolean;
   }): any;
   function $currentOp(...args: any[]): any;
   /**
@@ -143,7 +143,7 @@ declare global {
     /** Required. The field to densify. The values of the specified field must either be all numeric values or all dates. Documents that do not contain the specified field continue through the pipeline unmodified. To specify a <field> in an embedded document or in an array, use dot notation. */
     field?: string;
     /** The field(s) that will be used as the partition keys. */
-    partitionByFields?: any;
+    partitionByFields?: unknown[];
     /** Required. Specification for range based densification. */
     range?: any;
   }): any;
@@ -154,7 +154,7 @@ declare global {
    * @minVersion 5.1
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/documents/
    */
-  function $documents(documents: any): any;
+  function $documents(documents: unknown[]): any;
   function $documents(...args: any[]): any;
   /**
    * Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables the creation of multi-faceted aggregations capable of characterizing data across multiple dimensions, or facets, in a single stage.
@@ -174,7 +174,7 @@ declare global {
     /** Specifies an expression to group the documents. In the $fill stage, a group of documents is known as a partition. If you omit partitionBy and partitionByFields, $fill uses one partition for the entire collection. partitionBy and partitionByFields are mutually exclusive. */
     partitionBy?: any;
     /** Specifies an array of fields as the compound key to group the documents. In the $fill stage, each group of documents is known as a partition. If you omit partitionBy and partitionByFields, $fill uses one partition for the entire collection. partitionBy and partitionByFields are mutually exclusive. */
-    partitionByFields?: any;
+    partitionByFields?: unknown[];
     /** Specifies the field or fields to sort the documents within each partition. Uses the same syntax as the $sort stage. */
     sortBy?: any;
     /** Required. Specifies an object containing each field for which to fill missing values. You can specify multiple fields in the output object. The object name is the name of the field to fill. The object value specifies how the field is filled. */
@@ -191,21 +191,21 @@ declare global {
     /** The output field that contains the calculated distance. To specify a field within an embedded document, use dot notation. */
     distanceField?: string;
     /** The factor to multiply all distances returned by the query. For example, use the distanceMultiplier to convert radians, as returned by a spherical query, to kilometers by multiplying by the radius of the Earth. */
-    distanceMultiplier?: any;
+    distanceMultiplier?: number;
     /** This specifies the output field that identifies the location used to calculate the distance. This option is useful when a location field contains multiple locations. To specify a field within an embedded document, use dot notation. */
     includeLocs?: string;
     /** Specify the geospatial indexed field to use when calculating the distance. */
     key?: string;
     /** The maximum distance from the center point that the documents can be. MongoDB limits the results to those documents that fall within the specified distance from the center point. Specify the distance in meters if the specified point is GeoJSON and in radians if the specified point is legacy coordinate pairs. */
-    maxDistance?: any;
+    maxDistance?: number;
     /** The minimum distance from the center point that the documents can be. MongoDB limits the results to those documents that fall outside the specified distance from the center point. Specify the distance in meters for GeoJSON data and in radians for legacy coordinate pairs. */
-    minDistance?: any;
+    minDistance?: number;
     /** Required. The point for which to find the closest documents. */
     near?: any;
     /** Limits the results to the documents that match the query. The query syntax is the usual MongoDB read operation query syntax. You cannot specify a $near predicate in the query field of the $geoNear stage. */
     query?: any;
     /** Determines how MongoDB calculates the distance between two points: - When true, MongoDB uses $nearSphere semantics and calculates distances using spherical geometry. - When false, MongoDB uses $near semantics: spherical geometry for 2dsphere indexes and planar geometry for 2d indexes. Default: false. */
-    spherical?: any;
+    spherical?: boolean;
   }): any;
   function $geoNear(...args: any[]): any;
   /**
@@ -226,7 +226,7 @@ declare global {
     /** Required. Name of the array field added to each output document. Contains the documents traversed in the $graphLookup stage to reach the document. */
     as?: string;
     /** Non-negative integral number specifying the maximum recursion depth. */
-    maxDepth?: any;
+    maxDepth?: number;
     /** Name of the field to add to each traversed document in the search path. The value of this field is the recursion depth for the document, represented as a NumberLong. Recursion depth value starts at zero, so the first lookup corresponds to zero depth. */
     depthField?: string;
     /** A document specifying additional conditions for the recursive search. The syntax is identical to query filter syntax. */
@@ -260,7 +260,7 @@ declare global {
    * @minVersion 2.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/limit/
    */
-  function $limit(limit: any): any;
+  function $limit(limit: number): any;
   function $limit(...args: any[]): any;
   /**
    * Lists all active sessions recently in use on the currently connected mongos or mongod instance. These sessions may have not yet propagated to the system.sessions collection.
@@ -270,9 +270,9 @@ declare global {
    */
   function $listLocalSessions(args: {
     /** Returns all sessions for the specified users. If running with access control, the authenticated user must have privileges with listSessions action on the cluster to list sessions for other users. */
-    users?: any;
+    users?: unknown[];
     /** Returns all sessions for all users. If running with access control, the authenticated user must have privileges with listSessions action on the cluster. */
-    allUsers?: any;
+    allUsers?: boolean;
   }): any;
   function $listLocalSessions(...args: any[]): any;
   /**
@@ -304,9 +304,9 @@ declare global {
    */
   function $listSessions(args: {
     /** Returns all sessions for the specified users. If running with access control, the authenticated user must have privileges with listSessions action on the cluster to list sessions for other users. */
-    users?: any;
+    users?: unknown[];
     /** Returns all sessions for all users. If running with access control, the authenticated user must have privileges with listSessions action on the cluster. */
-    allUsers?: any;
+    allUsers?: boolean;
   }): any;
   function $listSessions(...args: any[]): any;
   /**
@@ -348,7 +348,7 @@ declare global {
     /** Required. The output collection. */
     into?: any;
     /** Field or fields that act as a unique identifier for a document. The identifier determines if a results document matches an existing document in the output collection. */
-    on?: any;
+    on?: string | unknown[];
     /** Specifies variables for use in the whenMatched pipeline. */
     let?: any;
     /** The behavior of $merge if a result document and an existing document in the collection have the same value for the specified on field(s). */
@@ -393,7 +393,7 @@ declare global {
     /** An object that specifies how to combine the ranked results. */
     combination?: any;
     /** Required. Set to true to include detailed scoring information. */
-    scoreDetails?: any;
+    scoreDetails?: boolean;
   }): any;
   function $rankFusion(...args: any[]): any;
   /**
@@ -412,7 +412,7 @@ declare global {
    */
   function $replaceRoot(args: {
     /** Required. */
-    newRoot?: any;
+    newRoot?: Record<string, any>;
   }): any;
   function $replaceRoot(...args: any[]): any;
   /**
@@ -422,7 +422,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/replaceWith/
    */
-  function $replaceWith(expression: any): any;
+  function $replaceWith(expression: Record<string, any>): any;
   function $replaceWith(...args: any[]): any;
   /**
    * Randomly selects the specified number of documents from its input.
@@ -432,7 +432,7 @@ declare global {
    */
   function $sample(args: {
     /** Required. The number of documents to randomly select. */
-    size?: any;
+    size?: number;
   }): any;
   function $sample(...args: any[]): any;
   /**
@@ -447,7 +447,7 @@ declare global {
     /** An object that specifies how to combine the scores. */
     combination?: any;
     /** Required. Set to true to include detailed scoring information. */
-    scoreDetails?: any;
+    scoreDetails?: boolean;
   }): any;
   function $scoreFusion(...args: any[]): any;
   /**
@@ -465,7 +465,7 @@ declare global {
     /** Specifies the highlighting options for displaying search terms in their original context. */
     highlight?: any;
     /** Parallelize search across segments on dedicated search nodes. If you don't have separate search nodes on your cluster, Atlas Search ignores this flag. If omitted, defaults to false. */
-    concurrent?: any;
+    concurrent?: boolean;
     /** Document that specifies the count options for retrieving a count of the results. */
     count?: any;
     /** Reference point for retrieving results. searchAfter returns documents starting immediately following the specified reference point. */
@@ -473,11 +473,11 @@ declare global {
     /** Reference point for retrieving results. searchBefore returns documents starting immediately before the specified reference point. */
     searchBefore?: string;
     /** Flag that specifies whether to retrieve a detailed breakdown of the score for the documents in the results. If omitted, defaults to false. */
-    scoreDetails?: any;
+    scoreDetails?: boolean;
     /** Document that specifies the fields to sort the Atlas Search results by in ascending or descending order. */
     sort?: any;
     /** Flag that specifies whether to perform a full document lookup on the backend database or return only stored source fields directly from Atlas Search. */
-    returnStoredSource?: any;
+    returnStoredSource?: boolean;
     /** Document that specifies the tracking option to retrieve analytics information on the search terms. */
     tracking?: any;
   }): any;
@@ -536,7 +536,7 @@ declare global {
    * @minVersion 2.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/skip/
    */
-  function $skip(skip: any): any;
+  function $skip(skip: number): any;
   function $skip(...args: any[]): any;
   /**
    * Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified. For each input document, outputs one document.
@@ -588,7 +588,7 @@ declare global {
     /** The name of a new field to hold the array index of the element. The name cannot start with a dollar sign $. */
     includeArrayIndex?: string;
     /** If true, if the path is null, missing, or an empty array, $unwind outputs the document. If false, if path is null, missing, or an empty array, $unwind does not output a document. The default value is false. */
-    preserveNullAndEmptyArrays?: any;
+    preserveNullAndEmptyArrays?: boolean;
   }): any;
   function $unwind(...args: any[]): any;
   /**
@@ -601,17 +601,17 @@ declare global {
     /** Required. Name of the Atlas Vector Search index to use. */
     index?: string;
     /** Required. Number of documents to return in the results. This value can't exceed the value of numCandidates if you specify numCandidates. */
-    limit?: any;
+    limit?: number;
     /** Required. Indexed vector type field to search. */
     path?: string;
     /** Required. Array of numbers that represent the query vector. The number type must match the indexed field value type. */
-    queryVector?: any;
+    queryVector?: unknown[];
     /** This is required if numCandidates is omitted. false to run ANN search. true to run ENN search. */
-    exact?: any;
+    exact?: boolean;
     /** Any match query that compares an indexed field with a boolean, date, objectId, number (not decimals), string, or UUID to use as a pre-filter. */
     filter?: any;
     /** This field is required if exact is false or omitted. Number of nearest neighbors to use during the search. Value must be less than or equal to (<=) 10000. You can't specify a number less than the number of documents to return (limit). */
-    numCandidates?: any;
+    numCandidates?: number;
   }): any;
   function $vectorSearch(...args: any[]): any;
 
@@ -622,7 +622,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/abs/
    */
-  function $abs(value: any): any;
+  function $abs(value: number): any;
   function $abs(...args: any[]): any;
   /**
    * Defines a custom accumulator function.
@@ -634,11 +634,11 @@ declare global {
     /** Required. Function used to initialize the state. The init function receives its arguments from the initArgs array expression. You can specify the function definition as either BSON type Code or String. */
     init?: any;
     /** Arguments passed to the init function. */
-    initArgs?: any;
+    initArgs?: unknown[];
     /** Required. Function used to accumulate documents. The accumulate function receives its arguments from the current state and accumulateArgs array expression. The result of the accumulate function becomes the new state. You can specify the function definition as either BSON type Code or String. */
     accumulate?: any;
     /** Required. Arguments passed to the accumulate function. You can use accumulateArgs to specify what field value(s) to pass to the accumulate function. */
-    accumulateArgs?: any;
+    accumulateArgs?: unknown[];
     /** Required. Function used to merge two internal states. merge must be either a String or Code BSON type. merge returns the combined result of the two merged states. For information on when the merge function is called, see Merge Two States with $merge. */
     merge?: any;
     /** Function used to update the result of the accumulation. */
@@ -653,7 +653,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/acos/
    */
-  function $acos(expression: any): any;
+  function $acos(expression: number): any;
   function $acos(...args: any[]): any;
   /**
    * Returns the inverse hyperbolic cosine (hyperbolic arc cosine) of a value in radians.
@@ -661,7 +661,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/acosh/
    */
-  function $acosh(expression: any): any;
+  function $acosh(expression: number): any;
   function $acosh(...args: any[]): any;
   /**
    * Adds numbers to return the sum, or adds numbers and a date to return a new date. If adding numbers and a date, treats the numbers as milliseconds. Accepts any number of argument expressions, but at most, one expression can resolve to a date.
@@ -669,7 +669,7 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/add/
    */
-  function $add(...expression: any[]): any;
+  function $add(...expression: (number | Date)[]): any;
   function $add(...args: any[]): any;
   /**
    * Returns an array of unique expression values for each group. Order of the array elements is undefined.
@@ -692,7 +692,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/allElementsTrue/
    */
-  function $allElementsTrue(expression: any): any;
+  function $allElementsTrue(expression: unknown[]): any;
   function $allElementsTrue(...args: any[]): any;
   /**
    * Returns true only when all its expressions evaluate to true. Accepts any number of argument expressions.
@@ -708,7 +708,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/anyElementTrue/
    */
-  function $anyElementTrue(expression: any): any;
+  function $anyElementTrue(expression: unknown[]): any;
   function $anyElementTrue(...args: any[]): any;
   /**
    * Returns the element at the specified array index.
@@ -716,7 +716,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/arrayElemAt/
    */
-  function $arrayElemAt(...array: any[]): any;
+  function $arrayElemAt(array: any, idx: number): any;
   function $arrayElemAt(...args: any[]): any;
   /**
    * Converts an array of key value pairs to a document.
@@ -732,7 +732,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/asin/
    */
-  function $asin(expression: any): any;
+  function $asin(expression: number): any;
   function $asin(...args: any[]): any;
   /**
    * Returns the inverse hyperbolic sine (hyperbolic arc sine) of a value in radians.
@@ -740,7 +740,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/asinh/
    */
-  function $asinh(expression: any): any;
+  function $asinh(expression: number): any;
   function $asinh(...args: any[]): any;
   /**
    * Returns the inverse tangent (arc tangent) of a value in radians.
@@ -748,7 +748,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/atan/
    */
-  function $atan(expression: any): any;
+  function $atan(expression: number): any;
   function $atan(...args: any[]): any;
   /**
    * Returns the inverse tangent (arc tangent) of y / x in radians, where y and x are the first and second values passed to the expression respectively.
@@ -756,7 +756,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/atan2/
    */
-  function $atan2(...y: any[]): any;
+  function $atan2(y: number, x: number): any;
   function $atan2(...args: any[]): any;
   /**
    * Returns the inverse hyperbolic tangent (hyperbolic arc tangent) of a value in radians.
@@ -764,7 +764,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/atanh/
    */
-  function $atanh(expression: any): any;
+  function $atanh(expression: number): any;
   function $atanh(...args: any[]): any;
   /**
    * Returns an average of numerical values. Ignores non-numeric values.
@@ -773,8 +773,8 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/avg/
    */
-  function $avg(expression: any): any;
-  function $avg(...expressions: any[]): any;
+  function $avg(expression: number): any;
+  function $avg(...expressions: number[]): any;
   function $avg(...args: any[]): any;
   /**
    * Returns the size of a given string or binary data value's content in bytes.
@@ -790,7 +790,7 @@ declare global {
    * @minVersion 6.3
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bitAnd/
    */
-  function $bitAnd(...expression: any[]): any;
+  function $bitAnd(...expression: number[]): any;
   function $bitAnd(...args: any[]): any;
   /**
    * Returns the result of a bitwise not operation on a single argument or an array that contains a single int or long value.
@@ -798,7 +798,7 @@ declare global {
    * @minVersion 6.3
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bitNot/
    */
-  function $bitNot(expression: any): any;
+  function $bitNot(expression: number): any;
   function $bitNot(...args: any[]): any;
   /**
    * Returns the result of a bitwise or operation on an array of int or long values.
@@ -806,7 +806,7 @@ declare global {
    * @minVersion 6.3
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bitOr/
    */
-  function $bitOr(...expression: any[]): any;
+  function $bitOr(...expression: number[]): any;
   function $bitOr(...args: any[]): any;
   /**
    * Returns the result of a bitwise xor (exclusive or) operation on an array of int and long values.
@@ -814,7 +814,7 @@ declare global {
    * @minVersion 6.3
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bitXor/
    */
-  function $bitXor(...expression: any[]): any;
+  function $bitXor(...expression: number[]): any;
   function $bitXor(...args: any[]): any;
   /**
    * Matches numeric or binary values in which a set of bit positions all have a value of 0.
@@ -866,7 +866,7 @@ declare global {
     /** Required. Specifies the order of results, with syntax similar to $sort. */
     sortBy?: any;
     /** Required. Limits the number of results per group and has to be a positive integral expression that is either a constant or depends on the _id value for $group. */
-    n?: any;
+    n?: number;
   }): any;
   function $bottomN(...args: any[]): any;
   /**
@@ -875,7 +875,7 @@ declare global {
    * @minVersion 4.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bsonSize/
    */
-  function $bsonSize(object: any): any;
+  function $bsonSize(object: Record<string, any> | null): any;
   function $bsonSize(...args: any[]): any;
   /**
    * Returns the smallest integer greater than or equal to the specified number.
@@ -883,7 +883,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/ceil/
    */
-  function $ceil(expression: any): any;
+  function $ceil(expression: number): any;
   function $ceil(...args: any[]): any;
   /**
    * Returns 0 if the two values are equivalent, 1 if the first value is greater than the second, and -1 if the first value is less than the second.
@@ -891,7 +891,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/cmp/
    */
-  function $cmp(...expression1: any[]): any;
+  function $cmp(expression1: any, expression2: any): any;
   function $cmp(...args: any[]): any;
   /**
    * Adds a comment to a query predicate.
@@ -905,7 +905,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/concat/
    */
-  function $concat(...expression: any[]): any;
+  function $concat(...expression: string[]): any;
   function $concat(...args: any[]): any;
   /**
    * Concatenates arrays to return the concatenated array.
@@ -923,7 +923,7 @@ declare global {
    */
   function $cond(args: {
     /** Required. */
-    if?: any;
+    if?: boolean;
     /** Required. */
     then?: any;
     /** Required. */
@@ -940,7 +940,7 @@ declare global {
     /** Required. */
     input?: any;
     /** Required. */
-    to?: any;
+    to?: string | number;
     /** The value to return on encountering an error during conversion, including unsupported type conversions. The arguments can be any valid expression. If unspecified, the operation throws an error upon encountering an error and stops. */
     onError?: any;
     /** The value to return if the input is null or missing. The arguments can be any valid expression. If unspecified, $convert returns null if the input is null or missing. */
@@ -953,7 +953,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/cos/
    */
-  function $cos(expression: any): any;
+  function $cos(expression: number): any;
   function $cos(...args: any[]): any;
   /**
    * Returns the hyperbolic cosine of a value that is measured in radians.
@@ -961,7 +961,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/cosh/
    */
-  function $cosh(expression: any): any;
+  function $cosh(expression: number): any;
   function $cosh(...args: any[]): any;
   /**
    * Returns the population covariance of two numeric expressions.
@@ -969,7 +969,7 @@ declare global {
    * @minVersion 5.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/covariancePop/
    */
-  function $covariancePop(...expression1: any[]): any;
+  function $covariancePop(expression1: number, expression2: number): any;
   function $covariancePop(...args: any[]): any;
   /**
    * Returns the sample covariance of two numeric expressions.
@@ -977,7 +977,7 @@ declare global {
    * @minVersion 5.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/covarianceSamp/
    */
-  function $covarianceSamp(...expression1: any[]): any;
+  function $covarianceSamp(expression1: number, expression2: number): any;
   function $covarianceSamp(...args: any[]): any;
   /**
    * Returns a random object ID
@@ -999,9 +999,9 @@ declare global {
     /** Required. The unit used to measure the amount of time added to the startDate. */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** Required. */
-    amount?: any;
+    amount?: number;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
   }): any;
   function $dateAdd(...args: any[]): any;
   /**
@@ -1018,9 +1018,9 @@ declare global {
     /** Required. The time measurement unit between the startDate and endDate */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** Used when the unit is equal to week. Defaults to Sunday. The startOfWeek parameter is an expression that resolves to a case insensitive string */
-    startOfWeek?: any;
+    startOfWeek?: string;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
   }): any;
   function $dateDiff(...args: any[]): any;
   /**
@@ -1031,21 +1031,21 @@ declare global {
    */
   function $dateFromParts(args: {
     /** Calendar year. Can be any expression that evaluates to a number. */
-    year?: any;
+    year?: number;
     /** Month. Defaults to 1. */
-    month?: any;
+    month?: number;
     /** Day of month. Defaults to 1. */
-    day?: any;
+    day?: number;
     /** Hour. Defaults to 0. */
-    hour?: any;
+    hour?: number;
     /** Minute. Defaults to 0. */
-    minute?: any;
+    minute?: number;
     /** Second. Defaults to 0. */
-    second?: any;
+    second?: number;
     /** Millisecond. Defaults to 0. */
-    millisecond?: any;
+    millisecond?: number;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
   }): any;
   function $dateFromParts(...args: any[]): any;
   /**
@@ -1056,11 +1056,11 @@ declare global {
    */
   function $dateFromString(args: {
     /** Required. The date/time string to convert to a date object. */
-    dateString?: any;
+    dateString?: string;
     /** The date format specification of the dateString. The format can be any expression that evaluates to a string literal, containing 0 or more format specifiers. If unspecified, $dateFromString uses "%Y-%m-%dT%H:%M:%S.%LZ" as the default format but accepts a variety of formats and attempts to parse the dateString if possible. */
-    format?: any;
+    format?: string;
     /** The time zone to use to format the date. */
-    timezone?: any;
+    timezone?: string;
     /** If $dateFromString encounters an error while parsing the given dateString, it outputs the result value of the provided onError expression. This result value can be of any type. If you do not specify onError, $dateFromString throws an error if it cannot parse dateString. */
     onError?: any;
     /** If the dateString provided to $dateFromString is null or missing, it outputs the result value of the provided onNull expression. This result value can be of any type. If you do not specify onNull and dateString is null or missing, then $dateFromString outputs null. */
@@ -1079,9 +1079,9 @@ declare global {
     /** Required. The unit used to measure the amount of time added to the startDate. */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** Required. */
-    amount?: any;
+    amount?: number;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
   }): any;
   function $dateSubtract(...args: any[]): any;
   /**
@@ -1094,9 +1094,9 @@ declare global {
     /** Required. The input date for which to return parts. date can be any expression that resolves to a Date, a Timestamp, or an ObjectID. */
     date?: any;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
     /** If set to true, modifies the output document to use ISO week date fields. Defaults to false. */
-    iso8601?: any;
+    iso8601?: boolean;
   }): any;
   function $dateToParts(...args: any[]): any;
   /**
@@ -1109,9 +1109,9 @@ declare global {
     /** Required. The date to convert to string. Must be a valid expression that resolves to a Date, a Timestamp, or an ObjectID. */
     date?: any;
     /** The date format specification of the dateString. The format can be any expression that evaluates to a string literal, containing 0 or more format specifiers. If unspecified, $dateFromString uses "%Y-%m-%dT%H:%M:%S.%LZ" as the default format but accepts a variety of formats and attempts to parse the dateString if possible. */
-    format?: any;
+    format?: string;
     /** The time zone to use to format the date. */
-    timezone?: any;
+    timezone?: string;
     /** The value to return if the date is null or missing. If unspecified, $dateToString returns null if the date is null or missing. */
     onNull?: any;
   }): any;
@@ -1128,9 +1128,9 @@ declare global {
     /** Required. The unit of time, specified as an expression that must resolve to one of these strings: year, quarter, week, month, day, hour, minute, second. Together, binSize and unit specify the time period used in the $dateTrunc calculation. */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
     /** The numeric time value, specified as an expression that must resolve to a positive non-zero number. Defaults to 1. Together, binSize and unit specify the time period used in the $dateTrunc calculation. */
-    binSize?: any;
+    binSize?: number;
     /** The timezone to carry out the operation. $timezone must be a valid expression that resolves to a string formatted as either an Olson Timezone Identifier or a UTC Offset. If no timezone is provided, the result is displayed in UTC. */
-    timezone?: any;
+    timezone?: string;
     /** The start of the week. Used when unit is week. Defaults to Sunday. */
     startOfWeek?: string;
   }): any;
@@ -1165,7 +1165,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/degreesToRadians/
    */
-  function $degreesToRadians(expression: any): any;
+  function $degreesToRadians(expression: number): any;
   function $degreesToRadians(...args: any[]): any;
   /**
    * Returns the document position (known as the rank) relative to other documents in the $setWindowFields stage partition. There are no gaps in the ranks. Ties receive the same rank.
@@ -1183,7 +1183,7 @@ declare global {
    */
   function $derivative(args: {
     /** Required. */
-    input?: any;
+    input?: number | Date;
     /** A string that specifies the time unit. Use one of these strings: "week", "day","hour", "minute", "second", "millisecond". If the sortBy field is not a date, you must omit a unit. If you specify a unit, you must specify a date in the sortBy field. */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
   }): any;
@@ -1194,7 +1194,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/divide/
    */
-  function $divide(...dividend: any[]): any;
+  function $divide(dividend: number, divisor: number): any;
   function $divide(...args: any[]): any;
   /**
    * Returns the position of a document (known as the document number) in the $setWindowFields stage partition. Ties result in different adjacent document numbers.
@@ -1259,7 +1259,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/exp/
    */
-  function $exp(exponent: any): any;
+  function $exp(exponent: number): any;
   function $exp(...args: any[]): any;
   /**
    * Returns the exponential moving average for the numeric expression.
@@ -1269,11 +1269,11 @@ declare global {
    */
   function $expMovingAvg(args: {
     /** Required. */
-    input?: any;
+    input?: number;
     /** An integer that specifies the number of historical documents that have a significant mathematical weight in the exponential moving average calculation, with the most recent documents contributing the most weight. You must specify either N or alpha. You cannot specify both. The N value is used in this formula to calculate the current result based on the expression value from the current document being read and the previous result of the calculation: */
-    N?: any;
+    N?: number;
     /** A double that specifies the exponential decay value to use in the exponential moving average calculation. A higher alpha value assigns a lower mathematical significance to previous results from the calculation. You must specify either N or alpha. You cannot specify both. */
-    alpha?: any;
+    alpha?: number;
   }): any;
   function $expMovingAvg(...args: any[]): any;
   /**
@@ -1294,9 +1294,9 @@ declare global {
     /** A name for the variable that represents each individual element of the input array. If no name is specified, the variable name defaults to this. */
     as?: string;
     /** Required. An expression that resolves to a boolean value used to determine if an element should be included in the output array. The expression references each element of the input array individually with the variable name specified in as. */
-    cond?: any;
+    cond?: boolean;
     /** A number expression that restricts the number of matching array elements that $filter returns. You cannot specify a limit less than 1. The matching array elements are returned in the order they appear in the input array. If the specified limit is greater than the number of matching array elements, $filter returns all matching array elements. If the limit is null, $filter returns all matching array elements. */
-    limit?: any;
+    limit?: number;
   }): any;
   function $filter(...args: any[]): any;
   /**
@@ -1317,7 +1317,7 @@ declare global {
     /** Required. An expression that resolves to the array from which to return n elements. */
     input?: any;
     /** Required. An expression that resolves to a positive integer. The integer specifies the number of array elements that $firstN returns. */
-    n?: any;
+    n?: number;
   }): any;
   function $firstN(...args: any[]): any;
   /**
@@ -1326,7 +1326,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/floor/
    */
-  function $floor(expression: any): any;
+  function $floor(expression: number): any;
   function $floor(...args: any[]): any;
   /**
    * Defines a custom function.
@@ -1338,7 +1338,7 @@ declare global {
     /** Required. The function definition. You can specify the function definition as either BSON\JavaScript or string. function(arg1, arg2, ...) { ... } */
     body?: any;
     /** Required. Arguments passed to the function body. If the body function does not take an argument, you can specify an empty array [ ]. */
-    args?: any;
+    args?: unknown[];
     /** Required. */
     lang?: string;
   }): any;
@@ -1363,7 +1363,7 @@ declare global {
    */
   function $getField(args: {
     /** Required. Field in the input object for which you want to return a value. field can be any valid expression that resolves to a string constant. If field begins with a dollar sign ($), place the field name inside of a $literal expression to return its value. */
-    field?: any;
+    field?: string;
     /** Default: $$CURRENT A valid expression that contains the field for which you want to return a value. input must resolve to an object, missing, null, or undefined. If omitted, defaults to the document currently being processed in the pipeline ($$CURRENT). */
     input?: any;
   }): any;
@@ -1447,7 +1447,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/indexOfArray/
    */
-  function $indexOfArray(...array: any[]): any;
+  function $indexOfArray(array: unknown[], search: any, start?: number, end?: number): any;
   function $indexOfArray(...args: any[]): any;
   /**
    * Searches a string for an occurrence of a substring and returns the UTF-8 byte index of the first occurrence. If the substring is not found, returns -1.
@@ -1455,7 +1455,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/indexOfBytes/
    */
-  function $indexOfBytes(...string: any[]): any;
+  function $indexOfBytes(string: string, substring: string, start?: number, end?: number): any;
   function $indexOfBytes(...args: any[]): any;
   /**
    * Searches a string for an occurrence of a substring and returns the UTF-8 code point index of the first occurrence. If the substring is not found, returns -1
@@ -1463,7 +1463,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/indexOfCP/
    */
-  function $indexOfCP(...string: any[]): any;
+  function $indexOfCP(string: string, substring: string, start?: number, end?: number): any;
   function $indexOfCP(...args: any[]): any;
   /**
    * Returns the approximation of the area under a curve.
@@ -1473,7 +1473,7 @@ declare global {
    */
   function $integral(args: {
     /** Required. */
-    input?: any;
+    input?: number | Date;
     /** A string that specifies the time unit. Use one of these strings: "week", "day","hour", "minute", "second", "millisecond". If the sortBy field is not a date, you must omit a unit. If you specify a unit, you must specify a date in the sortBy field. */
     unit?: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond";
   }): any;
@@ -1543,7 +1543,7 @@ declare global {
     /** Required. An expression that resolves to the array from which to return n elements. */
     input?: any;
     /** Required. An expression that resolves to a positive integer. The integer specifies the number of array elements that $firstN returns. */
-    n?: any;
+    n?: number;
   }): any;
   function $lastN(...args: any[]): any;
   /**
@@ -1567,7 +1567,7 @@ declare global {
    * @minVersion 5.3
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/linearFill/
    */
-  function $linearFill(expression: any): any;
+  function $linearFill(expression: number): any;
   function $linearFill(...args: any[]): any;
   /**
    * Return a value without parsing. Use for values that the aggregation pipeline may interpret as an expression. For example, use a $literal expression to a string that starts with a dollar sign ($) to avoid parsing as a field path.
@@ -1584,7 +1584,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/ln/
    */
-  function $ln(number: any): any;
+  function $ln(number: number): any;
   function $ln(...args: any[]): any;
   /**
    * Last observation carried forward. Sets values for null and missing fields in a window to the last non-null value for the field.
@@ -1601,7 +1601,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/log/
    */
-  function $log(...number: any[]): any;
+  function $log(number: number, base: number): any;
   function $log(...args: any[]): any;
   /**
    * Calculates the log base 10 of a number.
@@ -1609,7 +1609,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/log10/
    */
-  function $log10(number: any): any;
+  function $log10(number: number): any;
   function $log10(...args: any[]): any;
   /**
    * Returns true if the first value is less than the second.
@@ -1637,9 +1637,9 @@ declare global {
    */
   function $ltrim(args: {
     /** Required. The string to trim. The argument can be any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** The character(s) to trim from the beginning of the input. The argument can be any valid expression that resolves to a string. The $ltrim operator breaks down the string into individual UTF code point to trim from input. If unspecified, $ltrim removes whitespace characters, including the null character. */
-    chars?: any;
+    chars?: string;
   }): any;
   function $ltrim(...args: any[]): any;
   /**
@@ -1650,9 +1650,9 @@ declare global {
    */
   function $map(args: {
     /** Required. An expression that resolves to an array. */
-    input?: any;
+    input?: unknown[];
     /** A name for the variable that represents each individual element of the input array. If no name is specified, the variable name defaults to this. */
-    as?: any;
+    as?: string;
     /** Required. An expression that is applied to each element of the input array. The expression references each element individually with the variable name specified in as. */
     in?: any;
   }): any;
@@ -1677,7 +1677,7 @@ declare global {
     /** Required. An expression that resolves to the array from which to return the maximal n elements. */
     input?: any;
     /** Required. An expression that resolves to a positive integer. The integer specifies the number of array elements that $maxN returns. */
-    n?: any;
+    n?: number;
   }): any;
   function $maxN(...args: any[]): any;
   /**
@@ -1692,7 +1692,7 @@ declare global {
    */
   function $median(args: {
     /** Required. $median calculates the 50th percentile value of this data. input must be a field name or an expression that evaluates to a numeric type. If the expression cannot be converted to a numeric type, the $median calculation ignores it. */
-    input?: any;
+    input?: number | unknown[];
     /** Required. The method that mongod uses to calculate the 50th percentile value. The method must be 'approximate'. */
     method?: any;
   }): any;
@@ -1703,8 +1703,8 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/mergeObjects/
    */
-  function $mergeObjects(document: any): any;
-  function $mergeObjects(...documents: any[]): any;
+  function $mergeObjects(document: Record<string, any>): any;
+  function $mergeObjects(...documents: Record<string, any>[]): any;
   function $mergeObjects(...args: any[]): any;
   /**
    * Access available per-document metadata related to the aggregation operation.
@@ -1742,7 +1742,7 @@ declare global {
     /** Required. An expression that resolves to the array from which to return the maximal n elements. */
     input?: any;
     /** Required. An expression that resolves to a positive integer. The integer specifies the number of array elements that $maxN returns. */
-    n?: any;
+    n?: number;
   }): any;
   function $minN(...args: any[]): any;
   /**
@@ -1759,7 +1759,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/mod/
    */
-  function $mod(...dividend: any[]): any;
+  function $mod(dividend: number, divisor: number): any;
   function $mod(...args: any[]): any;
   /**
    * Returns the month for a date as a number between 1 (January) and 12 (December).
@@ -1775,7 +1775,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/multiply/
    */
-  function $multiply(...expression: any[]): any;
+  function $multiply(...expression: number[]): any;
   function $multiply(...args: any[]): any;
   /**
    * Returns true if the values are not equivalent.
@@ -1846,9 +1846,9 @@ declare global {
    */
   function $percentile(args: {
     /** Required. $percentile calculates the percentile values of this data. input must be a field name or an expression that evaluates to a numeric type. If the expression cannot be converted to a numeric type, the $percentile calculation ignores it. */
-    input?: any;
+    input?: number | unknown[];
     /** Required. $percentile calculates a percentile value for each element in p. The elements represent percentages and must evaluate to numeric values in the range 0.0 to 1.0, inclusive. $percentile returns results in the same order as the elements in p. */
-    p?: any;
+    p?: unknown[];
     /** Required. The method that mongod uses to calculate the percentile value. The method must be 'approximate'. */
     method?: any;
   }): any;
@@ -1859,7 +1859,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/pow/
    */
-  function $pow(...number: any[]): any;
+  function $pow(number: number, exponent: number): any;
   function $pow(...args: any[]): any;
   /**
    * Returns an array of values that result from applying an expression to each document.
@@ -1876,7 +1876,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/radiansToDegrees/
    */
-  function $radiansToDegrees(expression: any): any;
+  function $radiansToDegrees(expression: number): any;
   function $radiansToDegrees(...args: any[]): any;
   /**
    * Returns a random float between 0 and 1
@@ -1892,7 +1892,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/range/
    */
-  function $range(...start: any[]): any;
+  function $range(start: number, end: number, step?: number): any;
   function $range(...args: any[]): any;
   /**
    * Returns the document position (known as the rank) relative to other documents in the $setWindowFields stage partition.
@@ -1910,7 +1910,7 @@ declare global {
    */
   function $reduce(args: {
     /** Required. Can be any valid expression that resolves to an array. If the argument resolves to a value of null or refers to a missing field, $reduce returns null. If the argument does not resolve to an array or null nor refers to a missing field, $reduce returns an error. */
-    input?: any;
+    input?: unknown[];
     /** Required. The initial cumulative value set before in is applied to the first element of the input array. */
     initialValue?: any;
     /** Required. A valid expression that $reduce applies to each element in the input array in left-to-right order. Wrap the input value with $reverseArray to yield the equivalent of applying the combining expression from right-to-left. During evaluation of the in expression, two variables will be available: - value is the variable that represents the cumulative value of the expression. - this is the variable that refers to the element being processed. */
@@ -1931,9 +1931,9 @@ declare global {
    */
   function $regexFind(args: {
     /** Required. The string on which you wish to apply the regex pattern. Can be a string or any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** Required. The regex pattern to apply. Can be any valid expression that resolves to either a string or regex pattern /<pattern>/. When using the regex /<pattern>/, you can also specify the regex options i and m (but not the s or x options) */
-    regex?: any;
+    regex?: string | RegExp;
     options?: string;
   }): any;
   function $regexFind(...args: any[]): any;
@@ -1945,9 +1945,9 @@ declare global {
    */
   function $regexFindAll(args: {
     /** Required. The string on which you wish to apply the regex pattern. Can be a string or any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** Required. The regex pattern to apply. Can be any valid expression that resolves to either a string or regex pattern /<pattern>/. When using the regex /<pattern>/, you can also specify the regex options i and m (but not the s or x options) */
-    regex?: any;
+    regex?: string | RegExp;
     options?: string;
   }): any;
   function $regexFindAll(...args: any[]): any;
@@ -1959,9 +1959,9 @@ declare global {
    */
   function $regexMatch(args: {
     /** Required. The string on which you wish to apply the regex pattern. Can be a string or any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** Required. The regex pattern to apply. Can be any valid expression that resolves to either a string or regex pattern /<pattern>/. When using the regex /<pattern>/, you can also specify the regex options i and m (but not the s or x options) */
-    regex?: any;
+    regex?: string | RegExp;
     options?: string;
   }): any;
   function $regexMatch(...args: any[]): any;
@@ -1974,11 +1974,11 @@ declare global {
    */
   function $replaceAll(args: {
     /** Required. The string on which you wish to apply the find. Can be any valid expression that resolves to a string or a null. If input refers to a field that is missing, $replaceAll returns null. */
-    input?: any;
+    input?: string | null;
     /** Required. The string to search for within the given input. Can be any valid expression that resolves to a string or a null. If find refers to a field that is missing, $replaceAll returns null. */
-    find?: any;
+    find?: string | null | RegExp;
     /** Required. The string to use to replace all matched instances of find in input. Can be any valid expression that resolves to a string or a null. */
-    replacement?: any;
+    replacement?: string | null;
   }): any;
   function $replaceAll(...args: any[]): any;
   /**
@@ -1989,11 +1989,11 @@ declare global {
    */
   function $replaceOne(args: {
     /** Required. The string on which you wish to apply the find. Can be any valid expression that resolves to a string or a null. If input refers to a field that is missing, $replaceAll returns null. */
-    input?: any;
+    input?: string | null;
     /** Required. The string to search for within the given input. Can be any valid expression that resolves to a string or a null. If find refers to a field that is missing, $replaceAll returns null. */
-    find?: any;
+    find?: string | null;
     /** Required. The string to use to replace all matched instances of find in input. Can be any valid expression that resolves to a string or a null. */
-    replacement?: any;
+    replacement?: string | null;
   }): any;
   function $replaceOne(...args: any[]): any;
   /**
@@ -2002,7 +2002,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/reverseArray/
    */
-  function $reverseArray(expression: any): any;
+  function $reverseArray(expression: unknown[]): any;
   function $reverseArray(...args: any[]): any;
   /**
    * Rounds a number to a whole integer or to a specified decimal place.
@@ -2010,8 +2010,8 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/round/
    */
-  function $round(number: any): any;
-  function $round(...numbers: any[]): any;
+  function $round(number: number): any;
+  function $round(...numbers: number[]): any;
   function $round(...args: any[]): any;
   /**
    * Removes whitespace characters, including null, or the specified characters from the end of a string.
@@ -2021,9 +2021,9 @@ declare global {
    */
   function $rtrim(args: {
     /** Required. The string to trim. The argument can be any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** The character(s) to trim from the beginning of the input. The argument can be any valid expression that resolves to a string. The $ltrim operator breaks down the string into individual UTF code point to trim from input. If unspecified, $ltrim removes whitespace characters, including the null character. */
-    chars?: any;
+    chars?: string;
   }): any;
   function $rtrim(...args: any[]): any;
   /**
@@ -2047,7 +2047,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/setDifference/
    */
-  function $setDifference(...expression1: any[]): any;
+  function $setDifference(expression1: any, expression2: any): any;
   function $setDifference(...args: any[]): any;
   /**
    * Returns true if the input sets have the same distinct elements. Accepts two or more argument expressions.
@@ -2055,7 +2055,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/setEquals/
    */
-  function $setEquals(...expression: any[]): any;
+  function $setEquals(...expression: unknown[][]): any;
   function $setEquals(...args: any[]): any;
   /**
    * Adds, updates, or removes a specified field in a document. You can use $setField to add, update, or remove fields with names that contain periods (.) or start with dollar signs ($).
@@ -2065,9 +2065,9 @@ declare global {
    */
   function $setField(args: {
     /** Required. Field in the input object that you want to add, update, or remove. field can be any valid expression that resolves to a string constant. */
-    field?: any;
+    field?: string;
     /** Required. Document that contains the field that you want to add or update. input must resolve to an object, missing, null, or undefined. */
-    input?: any;
+    input?: Record<string, any>;
     /** Required. The value that you want to assign to field. value can be any valid expression. Set to $$REMOVE to remove field from the input document. */
     value?: any;
   }): any;
@@ -2086,7 +2086,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/setIsSubset/
    */
-  function $setIsSubset(...expression1: any[]): any;
+  function $setIsSubset(expression1: unknown[], expression2: unknown[]): any;
   function $setIsSubset(...args: any[]): any;
   /**
    * Returns a set with elements that appear in any of the input sets.
@@ -2094,7 +2094,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/setUnion/
    */
-  function $setUnion(...expression: any[]): any;
+  function $setUnion(...expression: unknown[][]): any;
   function $setUnion(...args: any[]): any;
   /**
    * Returns the value from an expression applied to a document in a specified position relative to the current document in the $setWindowFields stage partition.
@@ -2106,7 +2106,7 @@ declare global {
     /** Required. Specifies an expression to evaluate and return in the output. */
     output?: any;
     /** Required. Specifies an integer with a numeric document position relative to the current document in the output. For example: 1 specifies the document position after the current document. -1 specifies the document position before the current document. -2 specifies the document position that is two positions before the current document. */
-    by?: any;
+    by?: number;
     /** Required. Specifies an optional default expression to evaluate if the document position is outside of the implicit $setWindowFields stage window. The implicit window contains all the documents in the partition. The default expression must evaluate to a constant value. If you do not specify a default expression, $shift returns null for documents whose positions are outside of the implicit $setWindowFields stage window. */
     default?: any;
   }): any;
@@ -2117,7 +2117,7 @@ declare global {
    * @minVersion 8.1
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sigmoid/
    */
-  function $sigmoid(expression: any): any;
+  function $sigmoid(expression: number): any;
   function $sigmoid(...args: any[]): any;
   /**
    * Returns the sine of a value that is measured in radians.
@@ -2125,7 +2125,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sin/
    */
-  function $sin(expression: any): any;
+  function $sin(expression: number): any;
   function $sin(...args: any[]): any;
   /**
    * Returns the hyperbolic sine of a value that is measured in radians.
@@ -2133,7 +2133,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sinh/
    */
-  function $sinh(expression: any): any;
+  function $sinh(expression: number): any;
   function $sinh(...args: any[]): any;
   /**
    * Returns the number of elements in the array. Accepts a single expression as argument.
@@ -2141,7 +2141,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/size/
    */
-  function $size(expression: any): any;
+  function $size(expression: unknown[]): any;
   function $size(...args: any[]): any;
   /**
    * Returns a subset of an array.
@@ -2149,7 +2149,8 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/slice/
    */
-  function $slice(...expression: any[]): any;
+  function $slice(expression: unknown[], n: number): any;
+  function $slice(expression: unknown[], position: number, n: number): any;
   function $slice(...args: any[]): any;
   /**
    * Sorts the elements of an array.
@@ -2170,7 +2171,7 @@ declare global {
    * @minVersion 3.4
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/split/
    */
-  function $split(...string: any[]): any;
+  function $split(string: string, delimiter: string | RegExp): any;
   function $split(...args: any[]): any;
   /**
    * Calculates the square root.
@@ -2178,7 +2179,7 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sqrt/
    */
-  function $sqrt(number: any): any;
+  function $sqrt(number: number): any;
   function $sqrt(...args: any[]): any;
   /**
    * Calculates the population standard deviation of the input values. Use if the values encompass the entire population of data you want to represent and do not wish to generalize about a larger population. $stdDevPop ignores non-numeric values.
@@ -2188,8 +2189,8 @@ declare global {
    * @minVersion 5.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/stdDevPop/
    */
-  function $stdDevPop(expression: any): any;
-  function $stdDevPop(...expressions: any[]): any;
+  function $stdDevPop(expression: number): any;
+  function $stdDevPop(...expressions: number[]): any;
   function $stdDevPop(...args: any[]): any;
   /**
    * Calculates the sample standard deviation of the input values. Use if the values encompass a sample of a population of data from which to generalize about the population. $stdDevSamp ignores non-numeric values.
@@ -2198,8 +2199,8 @@ declare global {
    * @minVersion 5.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/stdDevSamp/
    */
-  function $stdDevSamp(expression: any): any;
-  function $stdDevSamp(...expressions: any[]): any;
+  function $stdDevSamp(expression: number): any;
+  function $stdDevSamp(...expressions: number[]): any;
   function $stdDevSamp(...args: any[]): any;
   /**
    * Returns the number of UTF-8 encoded bytes in a string.
@@ -2207,7 +2208,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/strLenBytes/
    */
-  function $strLenBytes(expression: any): any;
+  function $strLenBytes(expression: string): any;
   function $strLenBytes(...args: any[]): any;
   /**
    * Returns the number of UTF-8 code points in a string.
@@ -2215,7 +2216,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/strLenCP/
    */
-  function $strLenCP(expression: any): any;
+  function $strLenCP(expression: string): any;
   function $strLenCP(...args: any[]): any;
   /**
    * Performs case-insensitive string comparison and returns: 0 if two strings are equivalent, 1 if the first string is greater than the second, and -1 if the first string is less than the second.
@@ -2223,7 +2224,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/strcasecmp/
    */
-  function $strcasecmp(...expression1: any[]): any;
+  function $strcasecmp(expression1: string, expression2: string): any;
   function $strcasecmp(...args: any[]): any;
   /**
    * Deprecated. Use $substrBytes or $substrCP.
@@ -2231,7 +2232,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/substr/
    */
-  function $substr(...string: any[]): any;
+  function $substr(string: string, start: number, length: number): any;
   function $substr(...args: any[]): any;
   /**
    * Returns the substring of a string. Starts with the character at the specified UTF-8 byte index (zero-based) in the string and continues for the specified number of bytes.
@@ -2239,7 +2240,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/substrBytes/
    */
-  function $substrBytes(...string: any[]): any;
+  function $substrBytes(string: string, start: number, length: number): any;
   function $substrBytes(...args: any[]): any;
   /**
    * Returns the substring of a string. Starts with the character at the specified UTF-8 code point (CP) index (zero-based) in the string and continues for the number of code points specified.
@@ -2247,7 +2248,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/substrCP/
    */
-  function $substrCP(...string: any[]): any;
+  function $substrCP(string: string, start: number, length: number): any;
   function $substrCP(...args: any[]): any;
   /**
    * Returns the result of subtracting the second value from the first. If the two values are numbers, return the difference. If the two values are dates, return the difference in milliseconds. If the two values are a date and a number in milliseconds, return the resulting date. Accepts two argument expressions. If the two values are a date and a number, specify the date argument first as it is not meaningful to subtract a date from a number.
@@ -2255,7 +2256,7 @@ declare global {
    * @minVersion 2.6
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/subtract/
    */
-  function $subtract(...expression1: any[]): any;
+  function $subtract(expression1: number | Date, expression2: number | Date): any;
   function $subtract(...args: any[]): any;
   /**
    * Returns a sum of numerical values. Ignores non-numeric values.
@@ -2264,8 +2265,8 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sum/
    */
-  function $sum(expression: any): any;
-  function $sum(...expressions: any[]): any;
+  function $sum(expression: number | unknown[]): any;
+  function $sum(...expressions: (number | unknown[])[]): any;
   function $sum(...args: any[]): any;
   /**
    * Evaluates a series of case expressions. When it finds an expression which evaluates to true, $switch executes a specified expression and breaks out of the control flow.
@@ -2275,7 +2276,7 @@ declare global {
    */
   function $switch(args: {
     /** Required. An array of control branch documents. Each branch is a document with the following fields: - case Can be any valid expression that resolves to a boolean. If the result is not a boolean, it is coerced to a boolean value. More information about how MongoDB evaluates expressions as either true or false can be found here. - then Can be any valid expression. The branches array must contain at least one branch document. */
-    branches?: any;
+    branches?: unknown[];
     /** The path to take if no branch case expression evaluates to true. Although optional, if default is unspecified and no branch case evaluates to true, $switch returns an error. */
     default?: any;
   }): any;
@@ -2286,7 +2287,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/tan/
    */
-  function $tan(expression: any): any;
+  function $tan(expression: number): any;
   function $tan(...args: any[]): any;
   /**
    * Returns the hyperbolic tangent of a value that is measured in radians.
@@ -2294,7 +2295,7 @@ declare global {
    * @minVersion 4.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/tanh/
    */
-  function $tanh(expression: any): any;
+  function $tanh(expression: number): any;
   function $tanh(...args: any[]): any;
   /**
    * Performs text search.
@@ -2371,7 +2372,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/toLower/
    */
-  function $toLower(expression: any): any;
+  function $toLower(expression: string): any;
   function $toLower(...args: any[]): any;
   /**
    * Converts a string to an object.
@@ -2409,7 +2410,7 @@ declare global {
    * @minVersion 3.0
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/toUpper/
    */
-  function $toUpper(expression: any): any;
+  function $toUpper(expression: string): any;
   function $toUpper(...args: any[]): any;
   /**
    * Returns the top element within a group according to the specified sort order.
@@ -2438,7 +2439,7 @@ declare global {
     /** Required. Specifies the order of results, with syntax similar to $sort. */
     sortBy?: any;
     /** Required. limits the number of results per group and has to be a positive integral expression that is either a constant or depends on the _id value for $group. */
-    n?: any;
+    n?: number;
   }): any;
   function $topN(...args: any[]): any;
   /**
@@ -2449,9 +2450,9 @@ declare global {
    */
   function $trim(args: {
     /** Required. The string to trim. The argument can be any valid expression that resolves to a string. */
-    input?: any;
+    input?: string;
     /** The character(s) to trim from the beginning of the input. The argument can be any valid expression that resolves to a string. The $ltrim operator breaks down the string into individual UTF code point to trim from input. If unspecified, $ltrim removes whitespace characters, including the null character. */
-    chars?: any;
+    chars?: string;
   }): any;
   function $trim(...args: any[]): any;
   /**
@@ -2460,8 +2461,8 @@ declare global {
    * @minVersion 3.2
    * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/trunc/
    */
-  function $trunc(number: any): any;
-  function $trunc(...numbers: any[]): any;
+  function $trunc(number: number): any;
+  function $trunc(...numbers: number[]): any;
   function $trunc(...args: any[]): any;
   /**
    * Returns the incrementing ordinal from a timestamp as a long.
@@ -2496,9 +2497,9 @@ declare global {
    */
   function $unsetField(args: {
     /** Required. Field in the input object that you want to add, update, or remove. field can be any valid expression that resolves to a string constant. */
-    field?: any;
+    field?: string;
     /** Required. Document that contains the field that you want to add or update. input must resolve to an object, missing, null, or undefined. */
-    input?: any;
+    input?: Record<string, any>;
   }): any;
   function $unsetField(...args: any[]): any;
   /**
@@ -2525,11 +2526,11 @@ declare global {
    */
   function $zip(args: {
     /** Required. An array of expressions that resolve to arrays. The elements of these input arrays combine to form the arrays of the output array. If any of the inputs arrays resolves to a value of null or refers to a missing field, $zip returns null. If any of the inputs arrays does not resolve to an array or null nor refers to a missing field, $zip returns an error. */
-    inputs?: any;
+    inputs?: unknown[];
     /** A boolean which specifies whether the length of the longest array determines the number of arrays in the output array. The default value is false: the shortest array length determines the number of arrays in the output array. */
-    useLongestLength?: any;
+    useLongestLength?: boolean;
     /** An array of default element values to use if the input arrays have different lengths. You must specify useLongestLength: true along with this field, or else $zip will return an error. If useLongestLength: true but defaults is empty or not specified, $zip uses null as the default value. If specifying a non-empty defaults, you must specify a default for each input array or else $zip will return an error. */
-    defaults?: any;
+    defaults?: unknown[];
   }): any;
   function $zip(...args: any[]): any;
 
@@ -3504,7 +3505,7 @@ declare global {
     /** Drop falsy elements — `_.compact`. */
     compact(): T[];
     /** Count elements by iteratee (omit for identity) — `_.countBy`. */
-    countBy(iteratee?: string | ((value: T) => any)): Record<string, number>;
+    countBy(iteratee?: string | number | ((value: T) => any)): Record<string, number>;
     /** The values that `other` does not hold, each once. */
     difference(other: any[]): T[];
     /** Difference by iteratee — `_.differenceBy`. */
@@ -3514,9 +3515,9 @@ declare global {
     /** All but the last `n` elements — `_.dropRight`. */
     dropRight(n?: number): T[];
     /** Drop the trailing matching run — `_.dropRightWhile`. */
-    dropRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    dropRightWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** Drop the leading matching run — `_.dropWhile`. */
-    dropWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    dropWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** First element — `_.first`. */
     first(): T;
     /** Flatten one level deep — `_.flatten`. */
@@ -3526,7 +3527,7 @@ declare global {
     /** `[key, value]` pairs → object — `_.fromPairs`. */
     fromPairs(): Record<string, any>;
     /** Group elements by iteratee (omit for identity) — `_.groupBy`. */
-    groupBy(iteratee?: string | ((value: T) => any)): Record<string, T[]>;
+    groupBy(iteratee?: string | number | ((value: T) => any)): Record<string, T[]>;
     /** Is `value` an element; a string tests a substring with `.includes()`. */
     has(value: any): boolean;
     /** First element — `_.head`. */
@@ -3544,21 +3545,21 @@ declare global {
     /** Does this array hold every element of `other`. */
     isSupersetOf(other: any[]): boolean;
     /** Index elements by iteratee (omit for identity) — `_.keyBy`. */
-    keyBy(iteratee?: string | ((value: T) => any)): Record<string, T>;
+    keyBy(iteratee?: string | number | ((value: T) => any)): Record<string, T>;
     /** Last element — `_.last`. */
     last(): T;
     /** Maximum element — `_.max`. */
     max(): T;
     /** Element with the max iteratee value — `_.maxBy`. */
-    maxBy(iteratee: string | ((value: T) => any)): T;
+    maxBy(iteratee: string | number | ((value: T) => any)): T;
     /** Arithmetic mean — `_.mean`. */
     mean(): number;
     /** Mean of iteratee values — `_.meanBy`. */
-    meanBy(iteratee: string | ((value: T) => any)): number;
+    meanBy(iteratee: string | number | ((value: T) => any)): number;
     /** Minimum element — `_.min`. */
     min(): T;
     /** Element with the min iteratee value — `_.minBy`. */
-    minBy(iteratee: string | ((value: T) => any)): T;
+    minBy(iteratee: string | number | ((value: T) => any)): T;
     /** Element at index `n` (negative counts from the end) — `_.nth`. */
     nth(n?: number): T;
     /** Multi-key sort — `_.orderBy`. Parallel iteratees + orders, or a `{ field: dir }` object (directions inline). */
@@ -3567,9 +3568,9 @@ declare global {
       orders?: ("asc" | "desc") | ("asc" | "desc")[],
     ): T[];
     /** Split into `[matching, rest]` — `_.partition`. */
-    partition(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
+    partition(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): [T[], T[]];
     /** Elements the predicate rejects — `_.reject`. */
-    reject(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    reject(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** One random element — `_.sample`. */
     sample(): T;
     /** `n` random elements — `_.sampleSize`. */
@@ -3581,11 +3582,11 @@ declare global {
     /** Duplicate-free copy of a sorted array — `_.sortedUniq`. */
     sortedUniq(): T[];
     /** `.sortedUniq` with an iteratee — `_.sortedUniqBy`. */
-    sortedUniqBy(iteratee: string | ((value: T) => any)): T[];
+    sortedUniqBy(iteratee: string | number | ((value: T) => any)): T[];
     /** Sum of the elements — `_.sum`. */
     sum(): number;
     /** Sum of iteratee values — `_.sumBy`. */
-    sumBy(iteratee: string | ((value: T) => any)): number;
+    sumBy(iteratee: string | number | ((value: T) => any)): number;
     /** The values that only one of the two arrays holds — the same answer as `.xor()`. */
     symmetricDifference(other: T[]): T[];
     /** All but the first element — `_.tail`. */
@@ -3595,9 +3596,9 @@ declare global {
     /** Last `n` elements — `_.takeRight`. */
     takeRight(n?: number): T[];
     /** Trailing run matching the predicate — `_.takeRightWhile`. */
-    takeRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    takeRightWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** Leading run matching the predicate — `_.takeWhile`. */
-    takeWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    takeWhile(predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** The values of both arrays, each once — `_.union`. */
     union(other: T[]): T[];
     /** Union by iteratee — `_.unionBy`. */
@@ -3605,7 +3606,7 @@ declare global {
     /** Duplicate-free copy — `_.uniq`. */
     uniq(): T[];
     /** Duplicate-free by iteratee — `_.uniqBy`. */
-    uniqBy(iteratee: string | ((value: T) => any)): T[];
+    uniqBy(iteratee: string | number | ((value: T) => any)): T[];
     /** Inverse of `.zip` — `_.unzip`. */
     unzip(): any[][];
     /** Exclude the given values — `_.without`. */

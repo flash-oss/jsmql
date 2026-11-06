@@ -13,7 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
-import { statementBodyOf } from "../src/compiler/rows.ts";
+import { everyStageName, statementBodyOf } from "../src/compiler/rows.ts";
+import { jsmql } from "../src/index.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -105,15 +106,15 @@ describe("compiler/emit/statement — the writes", () => {
     // A root replacement has to BE a document. The server refuses every other
     // value, and a literal — or a name whose measured return type says so — is
     // known at compile time.
-    expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
-    expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
+    expect(() => pipeline("$ = 5;")).toThrow(/takes a document, but got a number\./);
+    expect(() => pipeline('$ = "x";')).toThrow(/but got a string\./);
     // `$` is ONE document and `$$` is the stream, so an array names the wrong
     // destination whatever it holds: a list of documents, scalars, or nothing.
     for (const src of ["$ = [{ a: 1 }, { a: 2 }];", "$ = [1, 2];", "$ = [];", "$ = $.items.map(x => ({ v: x }));"]) {
-      expect(() => pipeline(src)).toThrow(/replaces ONE document, and this value is an array/);
+      expect(() => pipeline(src)).toThrow(/takes a document, but got an array\./);
     }
-    expect(() => pipeline("$ = null;")).toThrow(/null is not one/);
-    expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
+    expect(() => pipeline("$ = null;")).toThrow(/takes a document, but got null\./);
+    expect(() => pipeline("$ = $abs($.a);")).toThrow(/takes a document, but got a number\./);
   });
 
   it("`$ = $.method(…)` is the stage that root-replacing object methods emit", () => {
@@ -516,6 +517,22 @@ describe("compiler/emit/statement — a stage body that you write passes through
       { $bucketAuto: { groupBy: "$a", buckets: 2, granularity: "nope" } },
     ]);
   });
+
+  it("takes a body that no reading can prove, at every stage", () => {
+    // DELIBERATELY invalid: mongod refuses each of these bodies. The document proof
+    // reads such a body as an unknown document, and the stage passes as written.
+    expect(pipeline("$unwind(null); $.b = $.a;")).toEqual([{ $unwind: null }, { $set: { b: "$a" } }]);
+    expect(pipeline("$unset([null]); $.b = $.a;")).toEqual([{ $unset: [null] }, { $set: { b: "$a" } }]);
+    for (const stage of everyStageName()) {
+      expect(() => pipeline(`${stage}(null);`), stage).not.toThrow();
+      // A stage between two writes can break a place rule. That refusal points at the stage.
+      const src = `$.a = 1; ${stage}(null); $.b = $.a;`;
+      for (const e of jsmql.validate(src).errors) {
+        expect(e.code, `${stage}: ${e.message}`).toBe("CODEGEN_ERROR");
+        expect(e.pos, `${stage}: ${e.message}`).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe("compiler/emit/statement — bindings between stages", () => {
@@ -799,11 +816,11 @@ describe("compiler/emit/statement — the stream road", () => {
     // the stream is never null
     expect(() => pipeline("$$?.$match({ a: 1 });")).toThrow(/never null/);
     // a reshape has to return a document; the server refuses every other root
-    expect(() => pipeline("$$ = $$.map(d => 5);")).toThrow(/has to return a document/);
+    expect(() => pipeline("$$ = $$.map(d => 5);")).toThrow(/takes an arrow that returns a document/);
     // an unwind names a field
     expect(() => pipeline("$$ = $$.flatMap(d => 5);")).toThrow(/names the ARRAY FIELD/);
     // a projection lists field names
-    expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/names a field to WRITE/);
+    expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/takes a field NAME to write/);
     // an argument that is neither an arrow nor a shorthand
     expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
     // An unknown JavaScript link names the nearest one. A `$`-named link is your own MQL,
@@ -937,7 +954,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // the parameter. In a body over another collection, a `$ = …` fix would write
     // the OUTER document, and the compiler refuses that write.
     const notADocument = (root: string, noun: string): string =>
-      `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`;
+      `'${root} = …' takes a document, but got ${noun}. Put the value under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`;
     expect(() => pipeline("$$.aggregate(o => { o = 5; });")).toThrow(notADocument("o", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = o.a * 2; });")).toThrow(notADocument("o", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = null; });")).toThrow(notADocument("o", "null"));
@@ -950,7 +967,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // A body on the stream reads the same document as `$`, so `$ = …` stays what you wrote.
     expect(() => pipeline("$$.aggregate(o => { $ = 5; });")).toThrow(notADocument("$", "a number"));
     expect(() => pipeline("$$.aggregate(o => { o = [1, 2]; });")).toThrow(
-      "'o = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write 'o.<field> = <array>;'.",
+      "'o = …' takes a document, but got an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write 'o.<field> = <array>;'.",
     );
     expect(() => pipeline("$$.aggregate(o => { delete o; });")).toThrow(
       "'delete o' would delete the document itself. To replace it, write 'o = { … };'; to drop every field but one, write 'o = { keep: o.keep };'.",

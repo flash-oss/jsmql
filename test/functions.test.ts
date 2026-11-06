@@ -300,7 +300,7 @@ describe("reusable functions — review-driven hardening", () => {
   });
 
   it("a non-function bare callback still gets the generic lambda-required error", () => {
-    expect(() => jsmql("$ = { a: $.items.map(5) };")).toThrow(
+    expect(() => jsmql("$ = { a: $.items.map(true) };")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
     );
   });

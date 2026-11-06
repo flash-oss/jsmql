@@ -30,7 +30,7 @@ import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
-import { holderOf, lowerTruth, lowerValue, readablePath, slotProof } from "./lower.ts";
+import { holderOf, lowerTruth, lowerValue, operandsFirst, readablePath, slotProof } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
 import { proofsFor, typeOf } from "./prove.ts";
@@ -425,6 +425,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     : proofsFor(args, env, true, source === undefined ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
   const sel = select(verdict, receiver, shapeOf(args), args.length, proofs);
   if (sel.kind === "wrongKind") {
+    operandsFirst(args, childEnv(env, node, "args"));
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, [], undefined, {
       ...(recv === null ? {} : { receiver: recv }),
       args,

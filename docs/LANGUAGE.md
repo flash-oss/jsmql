@@ -1544,6 +1544,23 @@ $max(1, "a")             // → { $max: [1, "a"] }      the escape hatch passes 
 
 **This is a surprise for a JavaScript developer.** JavaScript adds `"a" + 1` and gives `"a1"`, and MongoDB accepts `{ $max: [1, "a"] }`. JSMQL refuses the first, and the second is yours to write with `$op(…)`. A value of unknown kind always passes, and a value that can have two or more kinds passes when one of them fits. A literal array is the exception: each element is certain, so one element of the wrong kind is enough to refuse it. See [docs/specs/types.md](specs/types.md#the-kind-check).
 
+A slot refuses `null` when it takes a value that is not `null`. This applies to three cases:
+
+- a `null` that you write
+- a value that JSMQL can prove is `null`
+- a `null` that your program passes in, as a `jsmql.compile` parameter or a template `${…}` value
+
+A slot where `null` is data keeps it. Examples are a membership test, the items of `.concat()`, the seed of `.reduce()`, `===`, `??` and `?:`. The escape hatch passes `null` as written.
+
+```js
+$.a.slice(null)          // ✗ the start of .slice() takes an integer, and null is no integer
+$.n + null               // ✗ + takes numbers or strings, and null is neither
+$.a.concat(null)         // → { $concatArrays: [{ $ifNull: ["$a", []] }, [null]] }   null is an item
+$slice($.a, null)        // → { $slice: ["$a", null] }   the escape hatch passes the value as written
+```
+
+For the kind of each argument of a string method, see [String Methods](#string-methods).
+
 ### A read that gives no value
 
 A field read that can give no value on the server is a compile error too. Only an object has fields, and a closed object has only the fields that it names:
@@ -1578,6 +1595,18 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')                         // 
 | `%` | `$mod` | `$.a % $.b` |
 | `**` | `$pow` | `$.base ** 2` |
 | `-x` | `$multiply` by -1 | `-$.amount` |
+
+**An arithmetic operator refuses a proven date.** JSMQL refuses `+`, `-`, `*`, `/`, `%` and `**` when it proves that an operand is a date. Use the date methods instead (see [Date Operations](#date-operations)):
+
+```js
+$.d.startOf("day") - 1                   // ✗ the operand is a date; move a date with .plus() or .minus()
+$.d.startOf("day").plus(1, "day")        // → { $dateAdd: { startDate: { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }, unit: "day", amount: 1 } }
+$.end.diff($.start, "day")               // → { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }
+$.d - 1                                  // → { $subtract: ["$d", 1] }   the kind of a bare field is unknown, so the server decides
+$subtract($.end.startOf("day"), $.start) // → { $subtract: [{ $dateTrunc: { date: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }, "$start"] }   as written
+```
+
+**This is a surprise for a JavaScript developer.** JavaScript subtracts two dates and gives the milliseconds between them. In JSMQL, `.diff(other, "millisecond")` gives this number. The escape hatch `$add(…)` or `$subtract(…)` gives the server's own date arithmetic.
 
 **Flat operator chains:** The compiler flattens chained `&&`, `||`, `+`, `*`, and `??` operators into one MongoDB array. It does not nest them:
 ```js
@@ -2306,6 +2335,7 @@ Every higher-order value method accepts the same lodash vocabulary of iteratees 
 | shorthand | example | equivalent arrow |
 |---|---|---|
 | property string (dotted paths are allowed) | `.map("addr.city")` | `x => x.addr.city` |
+| property index (a whole number) | `.keyBy(5)` | `x => x[5]` |
 | `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
 | `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` can be anything |
 | `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.has("a") && x.tags.has("b")` — a subset, like lodash's |
@@ -2314,6 +2344,18 @@ Every higher-order value method accepts the same lodash vocabulary of iteratees 
 | omitted (identity) | `.uniq()` | `x => x` |
 
 An iteratee context reads the result as a value: `.map("name")` takes the field. A predicate context reads the result as a boolean: `.filter("active")` keeps the truthy elements.
+
+A whole number is lodash's `_.property(n)`: it reads each element at that index. It suits a list of rows:
+
+```js
+[["a", 1], ["b", 2]].map(1)       // → [1, 2]
+$.rows.keyBy(5)                   // ≡ $.rows.keyBy(x => x[5]): each row under the key row[5]
+[[1, 2], [3, 4]].keyBy(5)         // ✗ each row holds 2 items, so no row has an index 5
+[1, 2].keyBy(0)                   // ✗ a number has no index
+$.rows.keyBy(-1)                  // ✗ JavaScript's x[-1] reads no element of an array; write .at(-1) in an arrow
+```
+
+JSMQL refuses the index when it proves that the elements cannot hold it. Elements of unknown kind, such as the elements of `$.rows`, are accepted. A document element is accepted too. The index reads the field with that name. A string element is refused, although JavaScript reads `"ab"[0]` as `"a"`. To read a character, write the arrow: `.map(s => s[0])`.
 
 The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further: `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A value that is not a plain object or an array of constants compares with `===`.
 
@@ -3070,17 +3112,17 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `$.field.toDate()`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
-**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a fraction toward zero, as `new Date(1.7)` does in JavaScript, so the instant is the same.
-
-The compiler writes the shorter form when the operand proves its kind. A proven string or date needs no `$toLong`. A proven number needs no `$isNumber` test.
+**A millisecond count converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId, but it refuses an int. A driver sends every whole number below 2^31 as an int. For a count of milliseconds, write `$.ms.toLong().toDate()`. `$toLong` cuts a run-time fraction toward zero, as JavaScript does, so the instant is the same. The compiler refuses a constant count that is a fraction, as it refuses a fractional calendar part.
 
 **Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
 
-A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
+A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
 
 ```js
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
 new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
+new Date(2024, 1.5)                // ✗ each calendar part is an integer; round it with .floor() or .ceil()
+new Date(1.5)                      // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
 $.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
@@ -3163,7 +3205,7 @@ new Date().diff($._id, "day")      // how old is this document?
 
 **Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (it crosses one midnight), and 00:30 to 23:30 the same day is **0 days**.
 
-Moment's subtraction of elapsed time reports the opposite result in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+Moment's subtraction of elapsed time reports the opposite result in both cases. For the elapsed milliseconds, use the unit `"millisecond"`: `$.end.diff($.start, "millisecond")` → `{ $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "millisecond" } }`. Each millisecond is a boundary, so this count is the elapsed time.
 
 **Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` needs:
 

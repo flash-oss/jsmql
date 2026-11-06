@@ -1,9 +1,10 @@
 // Phase 5 — EMIT, and the fold before it. The kind check of HR7: what a value is
 // PROVEN to be against what its slot takes. See docs/specs/types.md § The kind check.
 //
-// One module holds the whole rule, so that the dispatcher (emit/select.ts) and the
-// constant evaluator (passes/evaluate.ts) answer the same question the same way. A
-// constant whose kinds break a rule is not folded, and the emitter then refuses it.
+// One module holds the whole rule. The dispatcher (emit/select.ts) reads it, and the
+// constant fold lowers each constant through the dispatcher. So a constant gets the same
+// answer as a computed value. The fold skips a constant whose kinds break a rule, and the
+// emitter then refuses it.
 // A row states each rule. Nothing here names a row.
 
 import type { ArgType, Arity, Kind } from "../registry/vocabulary.ts";
@@ -33,6 +34,8 @@ export type KindFault =
       readonly got: readonly Proven[];
       /** The proof is of the ELEMENTS of the operand: a field that holds an array in a query, or a spread. */
       readonly viaElements?: true;
+      /** The row's `slotHint` for the slot. */
+      readonly hint?: string;
     }
   /** The slot takes an element of the element source, and the operand has no kind that the elements have. */
   | {
@@ -69,6 +72,11 @@ export type KindFault =
  * for example a literal, and `items[i]` is the proof of position `i`. Each position holds a
  * value that is certain, so the `elements` rule judges each position alone. Without `items`,
  * `elements` is a SET proof: one proof for every position.
+ *
+ * Two more views are for the query road only (SR2). `whole[i]` is the proof of operand `i`
+ * as one value, and a slot that takes an array reads it. `asElement[i]` is the proof of a
+ * field that holds an array, as an `element` slot reads it. The query tests each element of
+ * the field against the element source, so the other operands do not matter there.
  */
 export type Proofs = {
   readonly args: readonly Proof[];
@@ -76,6 +84,8 @@ export type Proofs = {
   readonly items?: readonly Proof[];
   readonly viaElements?: readonly boolean[];
   readonly packed?: true;
+  readonly whole?: readonly Proof[];
+  readonly asElement?: readonly (Proof | undefined)[];
 };
 
 /** No proof at all. A call that no kind rule judges passes this: a `$op(…)` call is the developer's own MQL. */
@@ -122,6 +132,8 @@ export function kindFits(
     case "array":
     case "object":
     case "date":
+    case "objectId":
+    case "binData":
       return kind === expected;
     case "element":
       return elements === "unknown" || elements.includes(kind);
@@ -133,6 +145,10 @@ export function kindFits(
 
 /** MinKey and MaxKey. They sit at the two ends of the BSON order. */
 const isSentinel = (kind: Proven): boolean => kind === "minKey" || kind === "maxKey";
+
+/** Does the slot take an array as one of its kinds? */
+const takesArray = (expected: ArgType | readonly ArgType[]): boolean =>
+  Array.isArray(expected) ? (expected as readonly ArgType[]).includes("array") : expected === "array";
 
 /** Does a proof fit the slot? A value that can have two or more kinds fits when ONE of them fits. */
 const proofFits = (proof: Proof, expected: ArgType | readonly ArgType[], elements: Proof): boolean =>
@@ -155,7 +171,7 @@ const concreteKinds = (proof: Proof): readonly Proven[] | null =>
  * names. A tuple proof breaks the rule when ANY position has no fitting kind. A set proof
  * breaks it only when NO kind fits, because its one proof stands for every position.
  */
-export function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
+function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
   const need = elementsOf(name);
   if (need === undefined || need === "scalar") return null;
   const takes = (p: Proof): boolean => p === "unknown" || p.includes(need);
@@ -181,13 +197,22 @@ export function faultOf(name: string, rule: Arity, proofs: Proofs): KindFault | 
     // slots, so the slots after it are the rest of the row.
     spread = spread || (proofs.packed === true && via);
     const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    const proof = proofs.args[i];
-    if (expected === undefined || takesCallback(expected) || proof === "unknown") continue;
-    if (proofFits(proof, expected, proofs.elements)) continue;
-    const through = via ? ({ viaElements: true } as const) : {};
+    if (expected === undefined || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : undefined;
+    const whole = asElement === undefined && takesArray(expected) ? proofs.whole?.[i] : undefined;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== undefined || (whole === undefined && via) ? ({ viaElements: true } as const) : {};
     return expected === "element" && proofs.elements !== "unknown"
       ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through }
-      : { rule: "slot", slot: i, expected, got: proof, ...through };
+      : {
+          rule: "slot",
+          slot: i,
+          expected,
+          got: proof,
+          ...through,
+          ...(rule.slotHint?.[i] === undefined ? {} : { hint: rule.slotHint[i] }),
+        };
   }
   if (rule.homogeneous === true) {
     // Each operand of known concrete kinds takes part, and the kinds they share must not become empty.
@@ -230,34 +255,4 @@ export function kindOfValue(v: unknown): Kind | null {
   const tag = bsonTagOf(v);
   if (tag !== undefined) return BSON_KIND[tag] ?? null;
   return isPlainObject(v) ? "object" : null;
-}
-
-/** The proof that a known value gives. A null or an undefined proves the kind `"null"`. */
-const proofOfValue = (v: unknown): Proof => {
-  if (v === null || v === undefined) return ["null"];
-  const k = kindOfValue(v);
-  return k === null ? "unknown" : [k];
-};
-
-/**
- * The proofs of a list of known values, as the evaluator reads them. The last value
- * is the element source: a list proves the kinds of its elements.
- */
-export function proofsOfValues(values: readonly unknown[]): Proofs {
-  const last = values[values.length - 1];
-  const kinds = new Set<Kind>();
-  // A known value that is an array is of a fixed length, so each position has a proof of its own.
-  const items: Proof[] = [];
-  if (Array.isArray(last)) {
-    for (const el of last) {
-      const k = el === null || el === undefined ? null : kindOfValue(el);
-      if (k !== null) kinds.add(k);
-      // A null element proves the kind `null`, as a null operand does: it fits only a slot that takes any.
-      items.push(el === null || el === undefined ? ["null"] : k === null ? "unknown" : [k]);
-    }
-  }
-  const elements = kinds.size === 0 ? "unknown" : [...kinds];
-  return Array.isArray(last)
-    ? { args: values.map(proofOfValue), elements, items }
-    : { args: values.map(proofOfValue), elements };
 }

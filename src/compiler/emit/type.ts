@@ -85,20 +85,27 @@ export function proofOf(t: Type): Proof {
 
 /**
  * The proof of ONE element of an array value. An array with no element, or with only
- * null elements, proves nothing about them, so that `[].has(1)` stays legal.
+ * null elements, proves nothing about them, so that `[].has(1)` stays legal. An element
+ * that can be null proves the kind `null` beside its other kinds, so `[1, null].has(null)`
+ * is legal. Only the element's own presence counts, because a missing array holds no element.
  */
 export function elementProofOf(t: Type): Proof {
   const e = elementOf(t);
-  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+  if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
+  return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
 }
 
 /**
  * The proof of EACH position of an array value of a fixed length, or undefined for an
- * array of unknown length. A position that proves nothing, or only null, is unproven.
+ * array of unknown length. A position that proves nothing is unproven. A position that
+ * can be null proves the kind `null`, as a `null` operand does.
  */
 export function itemProofsOf(t: Type): readonly Proof[] | undefined {
   if (!has(t, "array") || t.items === undefined) return undefined;
-  return t.items.map((i) => (i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]));
+  return t.items.map((i): Proof => {
+    if (i.kinds === "any") return "unknown";
+    return i.absent ? [...i.kinds, "null"] : [...i.kinds];
+  });
 }
 
 /** What ONE element of an array value is. A value that may not be an array proves nothing of its elements. */

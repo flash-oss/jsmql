@@ -63,6 +63,7 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
   if (args.length === 0) throw E.unionNeedsArgument(node.pos);
   const out: Stage[] = [];
   let docs: Expr[] = [];
+  const verb = node.type === "MethodCall" ? node.name : "push";
   const flushDocs = (): void => {
     if (docs.length === 0) return;
     // A container whose row bans this stage at ANY depth bans it here too. The
@@ -72,7 +73,7 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
     for (const boundary of env.site.boundaries) {
       if (!bansNestedOf(boundary.stage).includes(DOCUMENTS)) continue;
       throw E.bannedNested(
-        `.${node.type === "MethodCall" ? node.name : "push"}(<document>)`,
+        `.${verb}(<document>)`,
         DOCUMENTS,
         boundary.stage,
         "Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
@@ -82,12 +83,11 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
     // The documents are evaluated with NO input document — a `$unionWith` body runs over nothing.
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
-    const verb = node.type === "MethodCall" ? node.name : "push";
     noStageInDocuments(body.chain, `.${verb}(${verb === "concat" ? "[{ … }]" : "{ … }"})`, node.pos);
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
     docs = [];
   };
-  for (const a of args) {
+  for (const [slot, a] of args.entries()) {
     if (a.type === "SpreadElement") {
       // `$$.push(...[{ … }, { … }])` — JavaScript spreads the list into the arguments,
       // and each element is a document, so they join the same `$documents` batch.
@@ -120,7 +120,7 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
     }
     // A value that is not a document literal: a number, a field, an array …
     if (a.type === "NullLiteral" || a.type === "UndefinedLiteral")
-      throw E.unionArg(a.type === "NullLiteral" ? "null" : "undefined", a.pos);
+      throw E.unionArg(verb, slot, a.type === "NullLiteral" ? "null" : "undefined", a.pos);
     // `.concat(list)` takes the ARRAY, as JavaScript's own `.concat` does, and appends
     // its elements. `.push(list)` would append the array as one element, which is not a
     // document, so it keeps the refusal that names the spread.
@@ -130,7 +130,7 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
       continue;
     }
     const t = typeOf(a, env);
-    if (cannotBe(t, "object")) throw E.unionArg(E.nounOfKinds(t), a.pos);
+    if (cannotBe(t, "object")) throw E.unionArg(verb, slot, E.nounOfKinds(t), a.pos);
     docs.push(a);
   }
   flushDocs();

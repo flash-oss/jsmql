@@ -170,6 +170,71 @@ describe("compiler — jsmql refuses what bson would silently corrupt", () => {
   });
 });
 
+// A conversion takes a value of its own type. The value's own method converts the value on
+// the server. MEASURED: each `$to…` operator gives a value of
+// its own type back unchanged.
+const OWN_TYPE: readonly [string, unknown][] = [
+  [
+    `$.x = 0x${HEX}; $.r = $.x.toObjectId();`,
+    [{ $set: { x: new ObjectId(HEX) } }, { $set: { r: { $toObjectId: "$x" } } }],
+  ],
+  [
+    `$.x = Long("9007199254740993"); $.r = $.x.toLong();`,
+    [{ $set: { x: Long.fromString("9007199254740993") } }, { $set: { r: { $toLong: "$x" } } }],
+  ],
+  [
+    "$.x = Double(1.5); $.r = $.x.toDouble();",
+    [{ $set: { x: new Double(1.5) } }, { $set: { r: { $toDouble: "$x" } } }],
+  ],
+  [
+    `$.x = Decimal128("0.1"); $.r = $.x.toDecimal();`,
+    [{ $set: { x: Decimal128.fromString("0.1") } }, { $set: { r: { $toDecimal: "$x" } } }],
+  ],
+  ["$.x = Int32(3); $.r = $.x.toInt();", [{ $set: { x: new Int32(3) } }, { $set: { r: { $toInt: "$x" } } }]],
+  [
+    `$.x = UUID("${UUID_TEXT}"); $.r = $.x.toUUID();`,
+    [{ $set: { x: new UUID(UUID_TEXT) } }, { $set: { r: { $toUUID: "$x" } } }],
+  ],
+  [
+    `$.x = new Date("2024-01-01"); $.r = $.x.toDate();`,
+    [{ $set: { x: new Date("2024-01-01") } }, { $set: { r: { $toDate: "$x" } } }],
+  ],
+  [`$.x = "a"; $.r = $.x.toString();`, [{ $set: { x: "a" } }, { $set: { r: { $toString: "$x" } } }]],
+  ["$.x = true; $.r = !!$.x;", [{ $set: { x: true } }, { $set: { r: "$x" } }]],
+  ["$.x = 1.5; $.r = $.x.toDouble();", [{ $set: { x: 1.5 } }, { $set: { r: { $toDouble: "$x" } } }]],
+];
+
+describe("compiler — a conversion takes a value of its own type", () => {
+  it("converts a field that an earlier stage proved to hold the type", () => {
+    for (const [src, mql] of OWN_TYPE) expect(pipeline(src), src).toEqual(mql);
+  });
+
+  // A type name is no conversion function. A type name builds a constant. The value's own method converts a value.
+  it("refuses a type name over a value of its own type", () => {
+    expect(() => jsmql.pipeline(`$.r = Long(Long("5"));`)).toThrow(/'Long\(<constant>\)'/);
+    expect(() => jsmql.pipeline(`$.r = UUID(UUID("${UUID_TEXT}"));`)).toThrow(
+      /'UUID\(\)' argument 1 takes a string, but got binary data\./,
+    );
+    expect(() => jsmql.pipeline(`$.x = new Date("2024-01-01"); $.r = Long($.x);`)).toThrow(
+      /Write '<value>\.toLong\(\)'/,
+    );
+    expect(() => jsmql.pipeline(`$.x = UUID("${UUID_TEXT}"); $.r = ObjectId($.x);`)).toThrow(
+      /Write '<value>\.toObjectId\(\)'/,
+    );
+  });
+});
+
+describe.skipIf(!up)("compiler — a conversion of a value of its own type gives the value back", () => {
+  it("answers the same type and an equal value", async () => {
+    for (const [src] of OWN_TYPE) {
+      const stages = [...(jsmql.pipeline(src) as Record<string, unknown>[]), { $project: { x: 1, r: 1 } }];
+      const [d] = await coll!.aggregate(stages).toArray();
+      expect(bsonType(d.r), src).toBe(bsonType(d.x));
+      expect(String(d.r), src).toBe(String(d.x));
+    }
+  });
+});
+
 describe("compiler — the server accepts every document above", () => {
   it("ran each one, or none", async () => {
     if (coll === null) {

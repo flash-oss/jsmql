@@ -174,6 +174,11 @@ The `constant` cell of a row builds the value (`bsonConstant` in `src/bson.ts`, 
 value goes into the MQL as itself, and the constant engine reads it. A constant that the type
 cannot hold is a refusal that names the type that fits.
 
+A type name is no conversion. The cell refuses a constant that is already a live value of
+the type of its row, for example `Long(Long("5"))`. It also refuses a boolean, for example
+`Long(true)`.
+The value's own method converts a value: see [docs/LANGUAGE.md](../LANGUAGE.md) § Type Casting.
+
 `bson` does not refuse what it cannot hold. The team measured this against 7.2.0:
 
 | written | `bson` answers | JSMQL |

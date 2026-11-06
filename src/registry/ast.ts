@@ -135,7 +135,6 @@ export type Expr =
    */
   | { type: "StringLiteral"; value: string; pos: number; text?: true }
   | { type: "BooleanLiteral"; value: boolean; pos: number }
-  /** `injected`: the value came from the call, not from the source, so the kind check (HR7) does not judge it. */
   | { type: "NullLiteral"; pos: number }
   | { type: "UndefinedLiteral"; pos: number }
   | { type: "RegexLiteral"; pattern: string; flags: string; injected?: RegExp; pos: number }
@@ -214,7 +213,18 @@ export type Expr =
 
   // ── access and application ────────────────────────────────────────────────
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }
-  | { type: "IndexAccess"; object: Expr; index: Expr; optional: boolean; pos: number }
+  | {
+      type: "IndexAccess";
+      object: Expr;
+      index: Expr;
+      optional: boolean;
+      pos: number;
+      /**
+       * The desugar pass wrote this read for an index in an iteratee slot (`.keyBy(5)`).
+       * The emitter refuses it when the elements cannot hold the index.
+       */
+      iteratee?: { readonly method: string; readonly slot: number };
+    }
   /**
    * `wrote` is the name in the SOURCE. It is present only when a pass rewrites this
    * call to another name — `.reverse()` to its immutable twin `.toReversed()`. Every

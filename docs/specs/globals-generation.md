@@ -56,7 +56,7 @@ Expression operators (driven by the operand shape the row states — authoritati
 | `shape.kind` | Signature |
 |---|---|
 | `single` | `function $op(expression: type): any;`, or `function $op(...expression: type[]): any;` when the YAML marks the arg `variadic: array`. |
-| `array` | `function $op(...expressions: type[]): any;` (JSMQL's array shape is N positional args, not one array). |
+| `array` | JSMQL's array shape is N positional args, not one array. When the YAML names two or more fixed arguments, each one is a named parameter: `function $op(string: string, start: number, length: number): any;`, with `?` on an optional one. TypeScript refuses a required parameter after an optional one, so such a list gives two overloads: one without the optional parameters, and one with every parameter. Otherwise the signature is `function $op(...expressions: type[]): any;`. |
 | `object` | `function $op(args: { …registry keys… }): any;`, where each registry key is an optional field with its spec arg's type, and its doc starts with "Required." when the spec arg is not optional. |
 | `none` | `function $op(): any;` |
 | `flex` | Two overloads — `(expression: type): any;` and `(...expressions: type[]): any;` — covering both call shapes the parser accepts. |
@@ -65,16 +65,26 @@ Every key of an object signature is optional, because TypeScript completes the k
 
 ### Type mapping
 
-A JSMQL body lets a user pass a `$.field` path, a literal, or a nested `$op(…)` call. TypeScript sees all three as `any`, so most argument types stay permissive. The generator narrows only the few cases that add real value for the user:
+Each YAML type name maps to the TS type that the argument must resolve to. A multi-name type joins as a union, with duplicates removed. A union that contains `any` collapses to `any`. A `$.field` path and a nested `$op(…)` call are `any`, so they fit every typed parameter. A literal of a different type still type-checks through the catch-all overload, because the types never refuse a `$` call.
 
 | YAML `type` | TS type emitted |
 |---|---|
+| `resolvesToNumber`, `resolvesToInt`, `resolvesToLong`, `resolvesToDouble`, `resolvesToDecimal`, `number`, `int`, `double`, `long`, `decimal` | `number` |
+| `resolvesToString`, `string` | `string` |
+| `resolvesToBool`, `bool` | `boolean` |
+| `resolvesToDate`, `date` | `Date` |
+| `resolvesToArray`, `array` | `unknown[]` |
+| `resolvesToObject` | `Record<string, any>` |
+| `resolvesToNull`, `null` | `null` |
+| `resolvesToRegex`, `regex` | `RegExp` |
 | Contains `timeUnit` | `"year" \| "quarter" \| "month" \| "week" \| "day" \| "hour" \| "minute" \| "second" \| "millisecond"` |
-| Singleton `string` (raw, not `resolvesToString`) | `string` |
 | Singleton `pipeline` | `unknown[]` |
-| Singleton `query` | `any` |
-| Singleton `object` | `any` |
-| Anything else (incl. `resolvesToX` unions and unknowns) | `any` |
+| Singleton `query` or `object` (a stage body) | `any` |
+| `resolvesToObjectId`, `resolvesToTimestamp`, `resolvesToBinData`, `resolvesToAny`, `expression`, `T`, `javascript`, and every other name | `any` |
+
+`resolvesToObjectId`, `resolvesToTimestamp` and `resolvesToBinData` map to `any`. A JSMQL ObjectId literal is `0x…` hex, and TypeScript types it as `number`. `ObjectId("…")`, `Timestamp` and `Binary` are `bson` classes, and the globals module does not import `bson`. So a narrower hint would mislead.
+
+MEASURED with the TypeScript language service: the signature help for `$sum(|` shows `$sum(expression: number | unknown[]): any`, then the variadic overload and the catch-all; `$substrCP(|` shows `$substrCP(string: string, start: number, length: number): any`, then the catch-all.
 
 The project sets aside per-operator return-type narrowing (for example `$abs(): number`): it would interfere with method-chain inference on a field ref. `$.foo` is `any`, and `$abs($.foo)` must not suddenly become `number` and reject `.toString()`. It stays typed `: any` until the project designs the broader return-typing story.
 

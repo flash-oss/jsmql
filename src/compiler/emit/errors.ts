@@ -11,12 +11,12 @@ import type { ArgType, Arity, Family, Kind, Position, SlotForm, Type } from "../
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Where } from "../passes/position.ts";
 import { stringify } from "../../stringify.ts";
-import { isPlainObject } from "../../bson.ts";
+import { isPlainObject, isRegExp } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { consult, refusalSentence } from "./consult.ts";
-import { takesOf, wrongKind } from "./check.ts";
+import { hint, takesOf, wrongKind } from "./check.ts";
 import type { Selected } from "./select.ts";
-import type { KindFault, Proven } from "../kinds.ts";
+import { kindOfValue, type KindFault, type Proven } from "../kinds.ts";
 import { constantOf } from "../passes/evaluate.ts";
 import type { Unreadable } from "./type.ts";
 import {
@@ -452,7 +452,13 @@ export const letParamsMustNameVars = (params: readonly string[], keys: readonly 
  */
 export const rootIsArray = (root: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${root} = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root}.<field> = <array>;'.`,
+    wrongKind(
+      `'${root} = …'`,
+      "",
+      "a document",
+      "got an array",
+      ` Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root}.<field> = <array>;'.`,
+    ),
     pos,
   );
 
@@ -583,7 +589,13 @@ export const multiKeyStageDocument = (name: string, keys: number, pos: number): 
  */
 export const rootMustBeDocument = (root: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`,
+    wrongKind(
+      `'${root} = …'`,
+      "",
+      "a document",
+      `got ${noun}`,
+      ` Put the value under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`,
+    ),
     pos,
   );
 
@@ -713,6 +725,7 @@ const ELEMENT_NOUN: Readonly<Record<string, string>> = {
   date: "dates",
   objectId: "ObjectIds",
   binData: "binary data",
+  null: "null",
 };
 
 const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => table[k] ?? `a ${k}`;
@@ -723,6 +736,8 @@ const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => ta
 export type Subjects = {
   readonly receiver?: { readonly pos: number };
   readonly args: readonly { readonly pos: number }[];
+  /** The name of each slot, where the source spells no argument list: the key of `x[k]`. Otherwise the name is `argument N`. */
+  readonly slots?: readonly string[];
 };
 
 /** "a, b or c", with each name once. */
@@ -761,6 +776,9 @@ function operandAt(subjects: Subjects, slot: number): { readonly pos: number } |
   return subjects.args[slot];
 }
 
+/** How a kind message names the slot: the subject's own name, or `argument N`. */
+const slotName = (subjects: Subjects, slot: number): string => subjects.slots?.[slot] ?? `argument ${slot + 1}`;
+
 /** The name of the call as a kind message shows it: `'.max()'`, `'+'`, `'$match'`. */
 function shownName(spelled: string): string {
   if (spelled.startsWith("'")) return spelled;
@@ -772,7 +790,8 @@ function shownName(spelled: string): string {
  * The refusal for a value whose proof shows a kind that its slot never takes. The wording
  * is the one function `wrongKind` of check.ts, as for a literal. The message states what is
  * wrong and names no conversion and no escape hatch, because no one spelling is the right
- * one. See docs/specs/types.md § The kind check.
+ * one. The one exception is the `hint` of check.ts: when a date fills a slot that takes a
+ * number, the message names the date methods. See docs/specs/types.md § The kind check.
  */
 function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos: number): CodegenError {
   const name = shownName(spelled);
@@ -782,9 +801,10 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
       return new CodegenError(
         wrongKind(
           name,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf(fault.expected),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+          fault.hint ?? hint(fault.expected, fault.got),
         ),
         e?.pos ?? pos,
       );
@@ -794,7 +814,7 @@ function kindRefusal(fault: KindFault, spelled: string, subjects: Subjects, pos:
       return new CodegenError(
         wrongKind(
           name,
-          `argument ${fault.slot + 1}`,
+          slotName(subjects, fault.slot),
           takesOf("element"),
           `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`,
         ),
@@ -838,14 +858,26 @@ export function pluralNounOfKinds(t: Type): string {
 /** `[...v]` where `v` can never be an array, and is not a string. */
 export const spreadNotAnArray = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'...' in an array spreads an ARRAY, and this value is ${noun}. To keep the value whole, drop the '...'; to spread its elements, give it an array.`,
+    wrongKind(
+      "'...'",
+      "argument 1",
+      "an array",
+      `got ${noun}`,
+      " To keep the value whole, drop the '...'. To spread its elements, give it an array.",
+    ),
     pos,
   );
 
 /** `{ ...v }` where `v` can never be a document, and is not a string. */
 export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'...' in an object spreads a DOCUMENT's fields, and this value is ${noun}. Put the value under a field ('{ value: … }'), or spread a document.`,
+    wrongKind(
+      "'...'",
+      "argument 1",
+      "a document",
+      `got ${noun}`,
+      " Put the value under a field ('{ value: … }'), or spread a document.",
+    ),
     pos,
   );
 
@@ -962,6 +994,7 @@ export const notAStreamLink = (name: string, candidates: readonly string[], pos:
 /** One accepted spelling, with the shortest example of it. */
 const SPELLING: Readonly<Record<SlotForm, string>> = {
   propertyPath: `a field name ('"status"')`,
+  propertyIndex: "an index ('0')",
   matchesObject: `a matcher object ('{ status: "paid" }')`,
   matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
   bareCallable: "a callable ('Boolean')",
@@ -987,19 +1020,56 @@ const ARG_NOUN: Readonly<Record<string, string>> = {
 /**
  * A stage cell asked for a callback and got a shape this slot never takes. The
  * spellings come from the row, so the way out is the one the compiler accepts.
+ * An earlier pass rewrites a whole-number index, so a number that arrives here
+ * in a slot that takes an index is negative or a fraction.
  */
 export const notAnArrow = (
   name: string,
   what: string,
   forms: readonly SlotForm[],
   got: { type: string; pos: number },
-): CodegenError =>
-  new CodegenError(
+  slot: number,
+): CodegenError => {
+  if (got.type === "NullLiteral") return nullCallback(name, slot, what, got.pos);
+  const index = (got as { value?: unknown }).value;
+  if (got.type === "NumberLiteral" && forms.includes("propertyIndex") && typeof index === "number") {
+    return notAWholeIndex(name, slot, index, got.pos);
+  }
+  return new CodegenError(
     `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
       got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : (ARG_NOUN[got.type] ?? "something else")
     }.`,
     got.pos,
   );
+};
+
+/**
+ * `.map(null)` — a `null` in a slot that takes a callback. The compiler refuses it as it
+ * refuses every value of the wrong kind (HR7). A value of another kind keeps the message that names each
+ * spelling the slot takes. `takes` is the slot's own noun, for example "a key".
+ */
+export const nullCallback = (name: string, slot: number, takes: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind(`'.${name}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
+
+/** `.keyBy(-1)`, `.keyBy(1.5)` — an index in an iteratee slot that reads no element of an array. */
+export const notAWholeIndex = (name: string, slot: number, index: number, pos: number): CodegenError =>
+  new CodegenError(
+    wrongKind(
+      `'.${name}()'`,
+      `argument ${slot + 1}`,
+      "a whole-number index",
+      index < 0 ? "got a negative number" : "got a fraction",
+      ` In JavaScript, 'x[${index}]' reads no element of an array.`,
+    ),
+    pos,
+  );
+
+/**
+ * `[[1, 2]].keyBy(5)` — an index in an iteratee slot that the elements cannot hold.
+ * `found` says why: the elements are of a kind with no index, or hold fewer items.
+ */
+export const indexNotHeld = (name: string, slot: number, found: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind(`'.${name}()'`, `argument ${slot + 1}`, "an index that each element holds", found), pos);
 
 /** `.filter({})` — a matcher object that names no field to match. */
 export const emptyMatcherObject = (name: string, pos: number): CodegenError =>
@@ -1039,7 +1109,13 @@ export const optionalOnStream = (pos: number): CodegenError =>
 /** `.map(d => 5)` — the server refuses every non-document root. */
 export const mapMustReturnDocument = (name: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'.${name}(d => …)' replaces each document with what the arrow returns, so it has to return a document — ${noun} is not one. Return '({ value: … })' to keep it under a field.`,
+    wrongKind(
+      `'.${name}()'`,
+      "argument 1",
+      "an arrow that returns a document",
+      `the arrow returns ${noun}`,
+      " The arrow replaces each document. Return '({ value: … })' to keep the value under a field.",
+    ),
     pos,
   );
 
@@ -1285,10 +1361,16 @@ export const unionNeedsSpread = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$.push(5)` — a stream holds documents. */
-export const unionArg = (noun: string, pos: number): CodegenError =>
+/** `$$.push(5)` — a stream holds documents. `noun` is the kind of the value, for example "a number". */
+export const unionArg = (verb: string, slot: number, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `A stream holds documents, and this is ${noun}. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').`,
+    wrongKind(
+      `'$$.${verb}()'`,
+      `argument ${slot + 1}`,
+      "a document",
+      `got ${noun}`,
+      " Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+    ),
     pos,
   );
 
@@ -1299,10 +1381,16 @@ export const outNeedsStream = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$$.c.push(5)` — one pushed value IS the document written. */
+/** `$$$.c.push(5)` — the pushed value becomes one document. `noun` is the kind of the value. */
 export const mergeNotADocument = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$$$.<coll>.push(<value>)' writes that value AS one document, and ${noun} is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').`,
+    wrongKind(
+      "'$$$.<coll>.push()'",
+      "argument 1",
+      "a document",
+      `got ${noun}`,
+      " The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+    ),
     pos,
   );
 
@@ -1418,6 +1506,18 @@ const LITERAL_NOUNS: Readonly<Partial<Record<Expr["type"], string>>> = {
   ObjectIdLiteral: "an ObjectId",
 };
 
+/** `$$$[5]`: the key of `$$$[…]` names a collection, so it takes a string. */
+const collectionNameOfWrongKind = (noun: string, pos: number): CodegenError =>
+  new CodegenError(wrongKind("'$$$[…]'", "key", "a string", `got ${noun}`), pos);
+
+/** A known value as the noun a message uses for its kind: "null", "a number", "a date". */
+const nounOfValue = (v: unknown): string => {
+  if (v === null) return "null";
+  if (isRegExp(v)) return "a regular expression";
+  const k = kindOfValue(v);
+  return k === null ? "a value of another kind" : kindNoun(k);
+};
+
 /**
  * `$$$[c]` where `c` cannot name a collection. A value read at run time has no name
  * yet. A value that the call supplies, or that the source writes, must be a plain
@@ -1430,11 +1530,10 @@ export function collectionNameFrom(index: Expr): CodegenError {
           `The run-time value ${stringify(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
           index.pos,
         )
-      : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+      : collectionNameOfWrongKind(nounOfValue(index.value), index.pos);
   }
   const noun = LITERAL_NOUNS[index.type];
-  if (noun !== undefined)
-    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  if (noun !== undefined) return collectionNameOfWrongKind(noun, index.pos);
   return collectionNameMustBeConstant(index.pos);
 }
 

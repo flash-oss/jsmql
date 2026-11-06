@@ -42,7 +42,8 @@ function instantOf(args: readonly unknown[]): Date | null {
   if (args.length === 0) return null;
   if (args.length === 1) {
     const [a] = args;
-    if (typeof a === "number") return Number.isFinite(a) && !Number.isNaN(new Date(a).getTime()) ? new Date(a) : null;
+    // A count of milliseconds is an integer. The row refuses a fraction with a position.
+    if (typeof a === "number") return Number.isInteger(a) && !Number.isNaN(new Date(a).getTime()) ? new Date(a) : null;
     if (typeof a !== "string") return null;
     const parsed = new Date(a);
     // An unparsable string is an error that the row raises with a position.

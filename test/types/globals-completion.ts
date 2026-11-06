@@ -207,3 +207,38 @@ void _notNarrowed;
 declare const anyVal: any;
 const _loose = anyVal.uniq().whatever.clamp(0, 1) > 0;
 void _loose;
+
+// ── The documented overload types each argument from the MQL spec ────────────
+// Signature help and hover read the FIRST overload, so it carries the type that the
+// spec says the argument must resolve to. A field ref and a nested `$op(…)` are `any`,
+// so they fit every typed parameter. See globals-generation.md § Type mapping.
+$sum($.price);
+$sum($multiply($.price, $.qty));
+$add($.a, new Date());
+$cond({ if: $.qty >= 250, then: 30, else: 20 });
+$cond($.qty >= 250, 30, 20);
+$dateAdd({ startDate: $.t, unit: "day", amount: 1 });
+// A wrong literal still type-checks: the catch-all overload takes it (a `$` call never errors).
+$sum("text");
+
+// `Parameters<>` reads the LAST overload, the catch-all. These helpers read the FIRST
+// overload. The lines below test the hint, not the catch-all.
+type First3<T> = T extends { (...a: infer A): any; (...b: any): any; (...c: any): any } ? A : never;
+type First2<T> = T extends { (...a: infer A): any; (...b: any): any } ? A : never;
+// Single: `$sum(expression)`.
+const _sumHint: First3<typeof $sum> = [1];
+// @ts-expect-error — the hint for `$sum` takes a number, not a string.
+const _sumHintBad: First3<typeof $sum> = ["text"];
+// Variadic: `$add(...expression)`.
+const _addHint: First2<typeof $add> = [1, new Date()];
+// @ts-expect-error — the hint for `$add` takes a number or a date, not a string.
+const _addHintBad: First2<typeof $add> = [1, "text"];
+// Positional: `$substrCP(string, start, length)`. Each position carries its own type.
+const _substrHint: First2<typeof $substrCP> = ["abc", 0, 1];
+// @ts-expect-error — the hint for the `$substrCP` start takes a number, not a boolean.
+const _substrHintBad: First2<typeof $substrCP> = ["abc", true, 1];
+// Object: `$dateAdd({ startDate, unit, amount, timezone })`.
+const _dateAddHint: First2<typeof $dateAdd> = [{ startDate: new Date(), unit: "day", amount: 1 }];
+// @ts-expect-error — the hint for the `$dateAdd` amount takes a number, not a string.
+const _dateAddHintBad: First2<typeof $dateAdd> = [{ startDate: new Date(), unit: "day", amount: "1" }];
+void [_sumHint, _sumHintBad, _addHint, _addHintBad, _substrHint, _substrHintBad, _dateAddHint, _dateAddHintBad];

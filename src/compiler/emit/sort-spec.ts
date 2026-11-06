@@ -4,7 +4,8 @@
 // A reader, not a lowering: a sort key must be a compile-time field name,
 // because MongoDB sorts by names and never by expressions. So every function
 // here reads a SOURCE node and answers a plain document, or refuses with the
-// spelling that would work. Five spellings, one meaning each:
+// spelling that would work. A refusal of a wrong kind also reads the proof of the
+// argument (`KindOf`). Five spellings, one meaning each:
 //
 //   "age"                      one key, ascending
 //   ["age", "name"]            several keys, all ascending
@@ -18,10 +19,12 @@
 //
 // See docs/specs/stream-methods.md.
 
-import type { Expr } from "../../registry/vocabulary.ts";
+import type { Expr, Kind, Type } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
 import { SORT_KEY_LIMIT } from "../../registry/mql.ts";
-import { tooManySortKeys } from "./errors.ts";
+import { wrongKind } from "./check.ts";
+import { nounOfKinds, tooManySortKeys } from "./errors.ts";
+import { cannotBe } from "./type.ts";
 
 export type SortSpec = Record<string, 1 | -1>;
 
@@ -58,7 +61,47 @@ function paramPath(e: Expr, param: string): string | null {
   return null;
 }
 
-const fieldName = (e: Expr, method: string): string => {
+/** The proof of a value's kinds. The reader asks it only of an argument that no spelling reads. */
+export type KindOf = (e: Expr) => Type;
+
+/**
+ * A value of the wrong kind (HR7) in a sort slot: its proof has none of the kinds that the
+ * slot takes. It returns null when the value can have one of them.
+ */
+function wrongSlotKind(
+  e: Expr,
+  method: string,
+  slot: string,
+  takes: string,
+  kinds: readonly Kind[],
+  hint: string,
+  kind: KindOf,
+): CodegenError | null {
+  const t = kind(e);
+  if (kinds.some((k) => !cannotBe(t, k))) return null;
+  return new CodegenError(wrongKind(`'.${method}()'`, slot, takes, `got ${nounOfKinds(t)}`, hint), e.pos);
+}
+
+/** The hint of a direction slot: the directions that a sort takes. */
+const DIRECTIONS = ' Write 1, -1, "asc" or "desc".';
+
+/** A direction of the wrong kind, for example `{ age: null }`. A number or a string keeps the message that names each direction. */
+const wrongDirection = (e: Expr, method: string, slot: string, kind: KindOf): CodegenError | null =>
+  wrongSlotKind(e, method, slot, "a direction", ["number", "string"], DIRECTIONS, kind);
+
+const fieldName = (e: Expr, method: string, slot: string, kind: KindOf): string => {
+  if (e.type !== "StringLiteral") {
+    const wrong = wrongSlotKind(
+      e,
+      method,
+      slot,
+      "a field name",
+      ["string"],
+      ' Write a field name, for example "age".',
+      kind,
+    );
+    if (wrong !== null) throw wrong;
+  }
   if (e.type !== "StringLiteral" || e.value === "" || e.value.startsWith("$")) {
     throw new CodegenError(
       `.${method}() sorts by a field NAME: a plain string like "age", with no leading '$'.`,
@@ -68,18 +111,37 @@ const fieldName = (e: Expr, method: string): string => {
   return e.value;
 };
 
+/** The spellings of a sort argument, as a refusal names them. lodash's `.sortBy()` takes no directions. */
+const spellings = (objects: boolean): string =>
+  `a field name ("age"), a list of them (["age", "name"]), or ${objects ? "directions ({ age: -1 })" : "a key function (x => x.age)"}`;
+
+/**
+ * A sort argument of the wrong kind (HR7): a value that can never be a name, a list or a
+ * document, for example `null` or a number. It returns null when the value can be one of them.
+ */
+const wrongSortKind = (arg: Expr, method: string, objects: boolean, kind: KindOf): CodegenError | null =>
+  wrongSlotKind(
+    arg,
+    method,
+    "argument 1",
+    "a sort specification",
+    ["string", "array", "object"],
+    ` Write ${spellings(objects)}.`,
+    kind,
+  );
+
 /** `"k"`, `["k", "j"]` or `{ k: dir }` as a spec. `objects` says whether the third form is welcome. */
-export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec {
-  if (arg.type === "StringLiteral") return { [fieldName(arg, method)]: 1 };
+export function keySortSpec(arg: Expr, method: string, kind: KindOf, objects = true): SortSpec {
+  if (arg.type === "StringLiteral") return { [fieldName(arg, method, "argument 1", kind)]: 1 };
   if (arg.type === "ArrayLiteral") {
     if (arg.elements.length === 0)
       throw new CodegenError(`.${method}([fields]) needs at least one field name.`, arg.pos);
     const spec: SortSpec = {};
-    for (const el of arg.elements) {
+    arg.elements.forEach((el, i) => {
       if (el.type === "SpreadElement")
         throw new CodegenError(`.${method}([fields]) lists its field names. '...' cannot spread them in.`, el.pos);
-      spec[fieldName(el as Expr, method)] = 1;
-    }
+      spec[fieldName(el as Expr, method, `element ${i + 1}`, kind)] = 1;
+    });
     return spec;
   }
   if (arg.type === "ObjectLiteral") {
@@ -98,18 +160,20 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
         throw new CodegenError(`.${method}({ … }) keys are field names, written plainly.`, entry.pos);
       const dir = sortDirection(entry.value);
       if (dir === null) {
-        throw new CodegenError(
-          `.${method}({ ${entry.key.name}: … }) takes a direction: 1, -1, "asc" or "desc".`,
-          entry.value.pos,
+        throw (
+          wrongDirection(entry.value, method, entry.key.name, kind) ??
+          new CodegenError(
+            `.${method}({ ${entry.key.name}: … }) takes a direction: 1, -1, "asc" or "desc".`,
+            entry.value.pos,
+          )
         );
       }
       spec[entry.key.name] = dir;
     }
     return spec;
   }
-  throw new CodegenError(
-    `.${method}() takes a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).`,
-    arg.pos,
+  throw (
+    wrongSortKind(arg, method, objects, kind) ?? new CodegenError(`.${method}() takes ${spellings(objects)}.`, arg.pos)
   );
 }
 
@@ -201,7 +265,7 @@ function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string):
 }
 
 /** Any of the four spellings, chosen by the shape of the argument. */
-export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
+export function sortSpecOf(arg: Expr, method: string, kind: KindOf, objects = true): SortAsk {
   if (arg.type === "Lambda") {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
     if (arg.params.length === 2) return comparatorSpec(arg, method);
@@ -210,7 +274,7 @@ export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
       arg.pos,
     );
   }
-  return { kind: "keys", spec: keySortSpec(arg, method, objects) };
+  return { kind: "keys", spec: keySortSpec(arg, method, kind, objects) };
 }
 
 /**
@@ -219,10 +283,10 @@ export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
  * than keys leaves the rest ascending. The one-argument object form is the
  * `{ field: dir }` spec.
  */
-export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string): SortAsk {
+export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string, kind: KindOf): SortAsk {
   // A key function with an optional direction: `.orderBy(d => d.cat.toLowerCase(), -1)`.
   if (keys.type === "Lambda") {
-    const ask = sortSpecOf(keys, method);
+    const ask = sortSpecOf(keys, method, kind);
     if (orders === undefined) return ask;
     const dir = sortDirection(orders);
     if (dir === null)
@@ -237,19 +301,28 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
         orders.pos,
       );
     }
-    return { kind: "keys", spec: keySortSpec(keys, method) };
+    return { kind: "keys", spec: keySortSpec(keys, method, kind) };
   }
+  const wrong =
+    keys.type === "ArrayLiteral" || keys.type === "StringLiteral" ? null : wrongSortKind(keys, method, true, kind);
+  if (wrong !== null) throw wrong;
   const names =
-    keys.type === "ArrayLiteral" ? keys.elements.map((e) => fieldName(e as Expr, method)) : [fieldName(keys, method)];
+    keys.type === "ArrayLiteral"
+      ? keys.elements.map((e, i) => fieldName(e as Expr, method, `element ${i + 1}`, kind))
+      : [fieldName(keys, method, "argument 1", kind)];
   const dirs: (1 | -1)[] = [];
   if (orders !== undefined) {
-    const list = orders.type === "ArrayLiteral" ? (orders.elements as Expr[]) : [orders];
-    for (const o of list) {
+    const listed = orders.type === "ArrayLiteral";
+    const list = listed ? (orders.elements as Expr[]) : [orders];
+    list.forEach((o, i) => {
       const d = sortDirection(o);
       if (d === null)
-        throw new CodegenError(`.${method}(keys, orders) takes 1, -1, "asc" or "desc" for each order.`, o.pos);
+        throw (
+          (listed ? wrongDirection(o, method, `element ${i + 1}`, kind) : null) ??
+          new CodegenError(`.${method}(keys, orders) takes 1, -1, "asc" or "desc" for each order.`, o.pos)
+        );
       dirs.push(d);
-    }
+    });
     if (dirs.length > names.length) {
       throw new CodegenError(
         `.${method}(keys, orders) has ${dirs.length} orders for ${names.length} key(s).`,

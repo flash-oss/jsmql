@@ -163,7 +163,7 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
       try {
         return { ok: f() };
       } catch (e) {
-        return { error: (e as Error).message };
+        return { error: (e as Error).message.replace(/\n  at line [\s\S]*$/, "") };
       }
     };
     const a = run(() => tag(v));
@@ -372,6 +372,6 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
     expect(() => join({ c: "$orders" })).toThrow(
       `The run-time value "$orders" cannot name a collection: the server refuses a name that starts with '$'.`,
     );
-    expect(() => join({ c: 5 })).toThrow("A collection name must be a string, and this value is a number.");
+    expect(() => join({ c: 5 })).toThrow("'$$$[…]' key takes a string, but got a number.");
   });
 });

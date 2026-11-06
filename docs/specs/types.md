@@ -150,8 +150,9 @@ generator can turn it into a TypeScript signature. A row whose result no term
 describes states `"unknown"`.
 
 **An operator production states its result in the same way.** `*` lowers to
-`$multiply`, so its row states a number. `-` states a number or a date (`oneOf`),
-because a date minus a number is a date. `+` has two roads: a string operand makes
+`$multiply`, so its row states a number. `-` states a number or a date (`oneOf`).
+The operands of `-` refuse a proven date. A field of unknown kind can hold a date,
+and a date minus a number is a date. `+` has two roads: a string operand makes
 it `$concat`, and `kindsOf` in [prove.ts](../../src/compiler/emit/prove.ts) proves
 that road a string. Its row states the `$add` road, a number or a date, and two
 numbers prove a number. An operator that gives one of its operands, e.g. `??`,
@@ -289,6 +290,10 @@ states `neverNull`, whatever its operand.
 | `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |
 | `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields [DEF-038]. |
 
+A `$stage(…)` body passes as written (HR2), so `documentAfter` can meet a body that it
+cannot read, for example `$unwind(null)`. Such a body gives the `unknown`
+effect, and the server judges the stage.
+
 **Each group of stages changes the Env once, where the group stands.** A chain
 link, a write of a `,` run and a stage call are each a group. The Env takes the
 groups in the order of their stages, and it never reads the same stages again. A
@@ -396,8 +401,9 @@ $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind 
 
 HR7 says that a value that is PROVEN to have a kind its slot never takes is
 refused, even where the server accepts the MQL. A value of unknown kind passes.
-The rule lives in [kinds.ts](../../src/compiler/kinds.ts), and the fold and the
-dispatcher both read it, so a constant gets the same answer as a computed value.
+The rule lives in [kinds.ts](../../src/compiler/kinds.ts). The dispatcher reads it,
+and the fold lowers each constant through the dispatcher. So a constant gets the same
+answer as a computed value.
 
 A row states the rule, never the compiler:
 
@@ -405,11 +411,17 @@ A row states the rule, never the compiler:
   kind of every other slot. `"any"` is the stated answer for a slot that takes
   every kind, so "takes every kind" and "not yet typed" are different facts.
   `"any"` takes `null` too, because `null` is data there, for example in
-  `.has(null)`. `"value"` takes every kind but `null`, for example the operand
+  `.concat(null)`. `"value"` takes every kind but `null`, for example the operand
   of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
   neither.
 - `"element"` is the kind of one element of the element source: the receiver of
-  a method, the last operand of a production.
+  a method, the last operand of a production. An element that can be null adds
+  the kind `null` to the proof of the elements. So `[1, null].has(null)` passes,
+  and `[1, 2].has(null)` is refused. A source that holds only null elements
+  proves nothing about them. An element of unknown kind makes the proof of the
+  elements unknown, as a field path does. This holds for a value that the call
+  supplies and that has no kind that the registry names, for example a regular
+  expression.
 - `homogeneous` says that every operand has one kind. The first operand of one
   proven kind sets it. An operand of unknown kind, or of two or more kinds, sets no
   kind and breaks no rule.
@@ -425,8 +437,10 @@ Each position of such an array is certain, so the proof of the elements is a TUP
 one proof per position. A tuple breaks the `elements` rule when ANY position has no
 fitting kind. A set of kinds breaks it only when NO kind fits. So `[1, "a"].max()` is
 refused, and `$.nums.map(x => x + 1).max()` passes, because a computed array has one
-proof for all its positions. A position of unknown kind fits. A `null` element proves the kind `null`, so it fits no position that needs numbers. The constant fold reads
-the same rule, so `[1, "a"].sum()` is not folded.
+proof for all its positions. A position of unknown kind fits. A position that is
+null proves the kind `null`, so it fits no position that needs numbers. This holds
+for a written `null` and for a read that the proof shows is null. The constant fold
+reads the same rule, so `[1, "a"].sum()` is not folded.
 
 A slot that takes a callback is not judged here, because the lowering of the callback
 names every spelling that the slot takes. A call with a spread passes its arguments as
@@ -438,23 +452,30 @@ holds for a written `null`, for a `null` that the call supplies, and for a read 
 proof shows is null. A read of a field that no stage wrote keeps its own refusal, which
 names the field. The caller lowers the operands before a kind refusal.
 `jsmql.validate` binds each parameter to a value of no known kind, so a parameter proves
-no kind there.
+no kind there. A refusal of a date in a slot that takes a number names the date methods,
+because each of them is the one spelling for its task.
 
 ```js
 $.str + 1                  // → { $add: ["$str", 1] }   the kind of `$.str` is unknown
 $.str.trim() + 1           // ✗ `.trim()` gives a string, and `+` takes operands of one kind
 $.a = "x"; $.b = $.a + 1;  // ✗ the stage proved that `a` is a string
+$.d.startOf("day") - 1     // ✗ `-` takes numbers; move a date with `.plus()` or `.minus()`
 $max(1, "a")               // → { $max: [1, "a"] }   the escape hatch passes each value as written
 ```
 
-The query road obeys the same rule. The query cell of a comparison states
-`homogeneous`, as its value cell does. One addition comes from SR2: a query
+The query road obeys the same rule. The query cell of an operator states the
+kinds of its value cell, so the two forms refuse the same operands. One addition comes from SR2: a query
 compares a FIELD that holds an array through the elements of the array, so
 `{ tags: "x" }` tests a string against the elements of `tags`. In a query, a
 field that the proof shows to be an array proves the kinds of its elements in
 place of `array`. A field with elements of unknown kind proves nothing. The array
 stays a possible kind when another operand can be an array too, because
 `{ tags: ["a"] }` compares the whole array.
+
+A membership test reads each element
+of the field against the elements of the list, whatever the other operand is. So
+`{ tags: { $in: ["a"] } }` tests a string. The array stays a possible kind only
+when the list can hold an array.
 
 `proofsFor` states this once, for every query cell. The refusal then says that the elements of the field are the
 kind, because the value of the field is an array.
@@ -463,6 +484,8 @@ kind, because the value of the field is an array.
 $.tags = ["a"]; $match($.tags === "x");   // → { $match: { tags: "x" } }   a string meets the string elements
 $.tags = [1];   $match($.tags === "x");   // ✗ the elements are numbers
 $.n = 1;        $match($.n === "x");      // ✗ the stage proved that `n` is a number
+$.tags = ["a"]; $match($.tags in ["a"]);  // → { $match: { tags: { $in: ["a"] } } }
+$.n = 1;        $match($.n in ["a"]);     // ✗ the list holds strings, and `n` is a number
 ```
 
 The ordering operators take an `"orderable"` operand: a number, a string, a date

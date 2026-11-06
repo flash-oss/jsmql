@@ -2464,7 +2464,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
       expect(() => jsmql.expr(src)).toThrow(/got 2 — JavaScript's trailing 'thisArg'/);
     }
     // The shape check still wins where it says more than a count could.
-    expect(() => jsmql.expr("$.a.map(5)")).toThrow(
+    expect(() => jsmql.expr("$.a.map(true)")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
     );
     // `.reduce` legitimately takes two, and is unaffected.
@@ -3070,7 +3070,7 @@ describe("bare built-in callbacks", () => {
   // rejection must stay the method's own form list — never an internal var name.
   it("a stream method rejects a bare built-in with its own spelling list", () => {
     expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).toThrow(
-      "'.countBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got the name 'String'.",
+      "'.countBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got the name 'String'.",
     );
     expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).not.toThrow(/jsmql[A-Z]/);
   });
@@ -3996,7 +3996,7 @@ describe("new Date()", () => {
   });
   it("rejects more than 7 args", () => {
     expect(() => jsmql.expr("new Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(
-      "'Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "'new Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
     );
   });
 });
@@ -8021,7 +8021,7 @@ describe("error cases", () => {
   });
   it("near-miss static gets a suggestion, and never a refused static", () => {
     expect(() => jsmql.expr("Date.noww()")).toThrow(/Did you mean 'Date\.now'/);
-    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.$/);
+    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.\n/);
   });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql.expr("$abs(x => x)")).toThrow(

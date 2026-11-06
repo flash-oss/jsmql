@@ -64,6 +64,7 @@ export const SCRATCH_DBS = [
   "jsmql_compiler_update",
   "jsmql_fold_agrees",
   "jsmql_fold_check",
+  "jsmql_human",
   "jsmql_mode",
   "jsmql_names",
   "jsmql_parity",

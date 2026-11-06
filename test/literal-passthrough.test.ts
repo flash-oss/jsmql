@@ -122,7 +122,7 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
     expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
     // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
     expect(() => jsmql(`$ = "hello";`)).toThrow(
-      "'$ = …' replaces the document, so the value has to BE a document — a string is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "'$ = …' takes a document, but got a string. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
   });
 });

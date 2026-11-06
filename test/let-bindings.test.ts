@@ -15,7 +15,7 @@ const refusal = (src: string): { message: string; pos: number } => {
   try {
     jsmql(src);
   } catch (e) {
-    return { message: (e as Error).message, pos: (e as { pos: number }).pos };
+    return { message: (e as Error).message.replace(/\n  at line [\s\S]*$/, ""), pos: (e as { pos: number }).pos };
   }
   throw new Error(`expected a refusal: ${src}`);
 };

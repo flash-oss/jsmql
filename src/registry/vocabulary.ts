@@ -164,6 +164,9 @@ export type ArgType =
   | "bool"
   | "object"
   | "array"
+  | "objectId"
+  /** Binary data, for example a UUID. */
+  | "binData"
   /**
    * The slot takes a value of every kind, and a literal `null` too. A row states
    * this on purpose, so that "no limit" and "not yet typed" are two different
@@ -704,6 +707,11 @@ export type Arity = {
    */
   rest?: ArgType | readonly ArgType[];
   /**
+   * The forms that a slot takes, keyed by slot. A refusal of a wrong kind in that slot
+   * adds it as the hint, for example ` Write 1, -1, "asc" or "desc".`
+   */
+  slotHint?: Readonly<Record<number, string>>;
+  /**
    * Every operand has one kind. The first operand with a PROVEN kind sets it. A later
    * operand with another proven kind is refused. This is the rule of `===` (the test
    * is always false for two kinds) and of `+` (a number and a string never add). An
@@ -765,6 +773,7 @@ export type Arity = {
  * One spelling that stands in for the arrow in an iteratee slot.
  *
  *   propertyPath         $.rows.uniqBy("id")             means `r => r.id`
+ *   propertyIndex        $.rows.keyBy(5)                 means `r => r[5]` (a whole number)
  *   matchesObject        $.rows.filter({ active: true })  means `r => r.active === true`
  *   matchesPropertyPair  $.rows.filter(["a.b", 1])        means `r => r.a.b === 1`
  *   bareCallable         $.items.map(String)              means `x => String(x)` (a callable global)
@@ -773,7 +782,13 @@ export type Arity = {
  * The list holds no entry for the arrow itself. Every iteratee slot takes an
  * arrow, so an entry for it says nothing. See `NameSpec.iterateeSlots`.
  */
-export type SlotForm = "propertyPath" | "matchesObject" | "matchesPropertyPair" | "bareCallable" | "omitted";
+export type SlotForm =
+  | "propertyPath"
+  | "propertyIndex"
+  | "matchesObject"
+  | "matchesPropertyPair"
+  | "bareCallable"
+  | "omitted";
 
 /**
  * The slot layout of one receiver: which argument slots take an ITERATEE, and what

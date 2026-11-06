@@ -29,6 +29,7 @@ Two optional slots, each an **object destructure**. The parser classifies each b
 | Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
 > The toolbox slot is types-only convenience. The **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which surfaces every stage and operator as an ambient global, with no need to list them per call site. Listing `$` (and any operator) in the toolbox lets the arrow type-check even without that import.
+> The toolbox type `JsmqlToolbox` is `any`, so an arrow declared separately from the call also type-checks. That arrow has its own toolbox type, with a required member for each name. An index signature cannot give a required member.
 
 When both slots appear, the only legal order is `(params, { $, … })`. A shorter combination also works: `(params)`, `({ $, … })`, and `()`. Anything else, such as a third slot, a bare-identifier or bare-`$` slot, or the toolbox before params, throws `FunctionInputError` and states the actual and expected shape.
 
@@ -82,7 +83,7 @@ jsmql.compile(fn)         // parameterised, reusable
 jsmql.validate(input)     // { valid, errors } instead of a throw
 ```
 
-`jsmql.validate` accepts every shape that `jsmql.compile` accepts. It also accepts the one-shot string / function / template-tag shapes of `jsmql()`. So editor tooling can check a parameterised arrow before it passes the arrow to `jsmql.compile`. The check binds each parameter to a value of no known kind (`ParameterValue` in [src/index.ts](../../src/index.ts)). A `null` fails, because a slot that states a kind refuses `null` (HR7).
+`jsmql.validate` accepts every shape that `jsmql.compile` accepts. It also accepts the one-shot string / function / template-tag shapes of `jsmql()`. So editor tooling can check a parameterised arrow before it passes the arrow to `jsmql.compile`. The check binds each parameter to a value of no known kind (`ParameterValue` in [src/index.ts](../../src/index.ts)). The check does not bind `null`, because each slot that takes a value other than `null` refuses `null` (HR7). The call can pass a value of the kind that the slot takes. See [types.md](types.md#the-kind-check).
 
 `jsmql.compile` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — and parses it once (`parseEntry` gives the params, the toolbox names and the program). The returned closure, on each call:
 

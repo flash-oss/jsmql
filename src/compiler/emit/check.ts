@@ -96,6 +96,8 @@ function matches(lit: Lit, expected: ArgType): boolean {
       return lit.kind === "number" || lit.kind === "bigint" || lit.kind === "string";
     case "date":
     case "timestamp":
+    case "objectId":
+    case "binData":
     case "callback":
       return false;
   }
@@ -116,6 +118,8 @@ const TAKES: Record<ArgType, string> = {
   object: "a document",
   date: "a date",
   timestamp: "a timestamp",
+  objectId: "an ObjectId",
+  binData: "binary data",
   any: "a value",
   value: "a value",
   callback: "a callback",
@@ -148,16 +152,28 @@ function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, pr
 }
 
 /**
- * The one wording of a refusal for a value of the wrong kind. The literal checks and the
- * kind check of `select` (see `kindRefusal` in errors.ts) all call it, so each one reads
- * the same. `slot` names a key or an argument, or is "". `found` is the clause after
+ * The one wording of a refusal for a value of the wrong kind. Every such refusal calls it,
+ * for example the literal checks and the kind check of `select` (see `kindRefusal` in
+ * errors.ts), so each one reads the same. `slot` names a key, an argument, an element or
+ * the key of `[…]`, or is "". `found` is the clause after
  * "but", for example `got a string` or `the array holds a number and a string`. `shown` is
  * the call as the source spells it: `'.max()'`, `'+'`, `'$match'`.
  */
 export const wrongKind = (shown: string, slot: string, takes: string, found: string, hint = ""): string =>
   `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found}.${hint}`;
 
-const hint = (expected: ArgType): string => {
+/**
+ * The hint after a refusal of a wrong kind: the spelling to write in place of the value.
+ * `got` holds the refused kinds. When a date fills a slot that takes a number, the hint
+ * names the date methods.
+ */
+export const hint = (expected: ArgType | readonly ArgType[], got: readonly string[] = []): string => {
+  if (Array.isArray(expected)) {
+    return (expected as readonly ArgType[]).includes("number") ? hint("number", got) : "";
+  }
+  if (expected === "number" && got.includes("date")) {
+    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+  }
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
@@ -183,10 +199,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") {
       const other = literal(e);
       if (other === null) return;
-      throw new CodegenError(
-        `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
-        e.pos,
-      );
+      throw new CodegenError(wrongKind(`'${spell(name)}'`, slot, TAKES.fieldName, `got ${NOUN[other.kind]}`), e.pos);
     }
     const bad =
       e.value === ""

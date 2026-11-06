@@ -44,9 +44,9 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("Date", "f($.ms)")).toMatchObject({ kind: "refused" });
     expect((pick("Date", "f($.ms)") as { message: string }).message).toContain("'$.x.toDate()'");
     expect(pick("Date", "f($.y, $.m)").kind).toBe("rule");
-    // a constant that reached the row did not fold: refused, in the developer's terms
-    expect(pick("Date", 'f("not a date")')).toMatchObject({ kind: "refused" });
-    expect((pick("Date", 'f("not a date")') as { message: string }).message).toContain("ISO 8601");
+    // a constant that reached the row did not fold: the row has a rule, because a live date
+    // converts, and the rule checks the kind before it refuses the value
+    expect(pick("Date", 'f("not a date")').kind).toBe("rule");
     // the leftover is stated
     expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
     expect(pick("Date", "f(1, 2, 3, 4, 5, 6, 7, 8)")).toMatchObject({ kind: "wrongCount", got: 8 });
