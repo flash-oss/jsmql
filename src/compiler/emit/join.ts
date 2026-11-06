@@ -144,11 +144,19 @@ function documentBody(link: Link, env: Env): boolean {
  * read of the outer document inside it is interned into `let`.
  */
 export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" | "$unionWith" = "$lookup"): Lookup {
-  // `.length`, `.total`, `[0]` after the links read the joined value. The chain
-  // proper is the outermost method call under them.
+  // `.length`, `.total`, `[0]` after the links read the joined value. A method after
+  // such a read does the same (`.find(p).a.pick([…])`). The chain proper is the run
+  // of method calls directly on `$$$.<coll>`.
   let head: Expr = node;
-  while ((head.type === "MemberAccess" || head.type === "IndexAccess") && head.object.type !== "DatabaseRef") {
-    head = head.object;
+  for (;;) {
+    while ((head.type === "MemberAccess" || head.type === "IndexAccess") && head.object.type !== "DatabaseRef") {
+      head = head.object;
+    }
+    let run: Expr = head;
+    while (run.type === "MethodCall") run = run.object;
+    const read = (run.type === "MemberAccess" || run.type === "IndexAccess") && run.object.type !== "DatabaseRef";
+    if (run === head || !read || (chainBase(run) as { type: string }).type !== "DatabaseRef") break;
+    head = run;
   }
   const { from, links, pos } = foreignChain(head);
   // A `$unionWith` body has no `let`. Its capture is null, and the compiler refuses a read of the outer document inside it.
