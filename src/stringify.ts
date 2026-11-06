@@ -180,11 +180,17 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
       return o.scope === undefined || o.scope === null
         ? `new Code(${str(o.code)})`
         : `new Code(${str(o.code)}, ${render(o.scope)})`;
-    case "DBRef":
+    // The driver sends `$db` when `db` is not null, and it sends "" too. It then sends
+    // each extra field. MEASURED in bson 7.3 and mongosh 2.13.
+    case "DBRef": {
       if (typeof o.collection !== "string") return null;
-      return o.db === undefined || o.db === null || o.db === ""
-        ? `new DBRef(${str(o.collection)}, ${render(o.oid)})`
-        : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+      const hasDb = o.db !== undefined && o.db !== null;
+      const fields = typeof o.fields === "object" && o.fields !== null ? o.fields : {};
+      const args = [str(o.collection), render(o.oid)];
+      if (Object.keys(fields).length > 0) args.push(hasDb ? str(String(o.db)) : "undefined", render(fields));
+      else if (hasDb) args.push(str(String(o.db)));
+      return `new DBRef(${args.join(", ")})`;
+    }
     case "BSONSymbol": {
       const s = text();
       return s === null ? null : `new BSONSymbol(${str(s)})`;

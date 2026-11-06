@@ -43,7 +43,7 @@ const bytes = (doc: Record<string, unknown>): string => Buffer.from(mongodb.BSON
 
 /** Print `value` under the key `v`, assert the text, then assert the bytes survive a paste. */
 function rebuilds(value: unknown, expected: string): void {
-  const text = stringify({ v: value });
+  const text = stringify({ v: value }, { width: Infinity });
   expect(text).toBe(`{ v: ${expected} }`);
   expect(bytes(asPasted(text) as Record<string, unknown>)).toBe(bytes({ v: value }));
 }
@@ -122,6 +122,24 @@ describe("stringify: the BSON classes", () => {
     rebuilds(
       new mongodb.DBRef("users", oid, "other"),
       'new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), "other")',
+    );
+  });
+
+  // The driver sends `$db` whenever `db` is not null, and each extra field after it.
+  it("keeps an empty database name and the extra fields of a DBRef", () => {
+    const oid = new mongodb.ObjectId("507f1f77bcf86cd799439011");
+    rebuilds(new mongodb.DBRef("users", oid, ""), 'new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), "")');
+    rebuilds(
+      new mongodb.DBRef("users", oid, "other", { extra: 1 }),
+      'new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), "other", { extra: 1 })',
+    );
+    rebuilds(
+      new mongodb.DBRef("users", oid, undefined, { extra: 1 }),
+      'new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), undefined, { extra: 1 })',
+    );
+    const ref = new mongodb.DBRef("users", oid, "other", { extra: 1 });
+    expect(stringify(jsmql.filter`$.ref === ${ref}`, { width: Infinity })).toBe(
+      '{ ref: new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), "other", { extra: 1 }) }',
     );
   });
 

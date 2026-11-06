@@ -70,6 +70,12 @@ The printer picks a few spellings by hand, rather than by a fixed rule:
   it as BSON Binary subtype 0, and match that document again with the same
   text. The printer writes it as itself, not as a `Binary` call, so what comes
   back is the value the document holds, down to its JavaScript class.
+- **`new DBRef(collection, id, db, fields)`**. The driver sends `$db`
+  whenever `db` is not null, and it sends `""` too. Then it sends each extra
+  field. So the printer writes `db` on the same rule. It writes the extra fields
+  as the fourth argument. A DBRef with extra fields and no `db` writes `undefined` as the
+  third argument, because the constructor takes the fields fourth. MEASURED:
+  bson 7.3 and mongosh 2.13 rebuild the same value from each form.
 - **`new Double(42)`**, never `42`. A whole-number Double would come back as an
   int. MEASURED on the server: the field's `$type` is `double` after a round
   trip through either runtime.
