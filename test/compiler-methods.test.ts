@@ -2221,6 +2221,9 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(() => expr("String($.n)")).toThrow(/'\$\.x\?\.toString\(\)'/);
     expect(() => expr("Boolean($.neg)")).toThrow(/'!!\$\.x'/);
     expect(() => expr("Number($.n)")).toThrow(/'\$\.x\?\.toDouble\(\)'/);
+    // lodash's `_.toNumber` as a method: JavaScript has no `.toNumber()`, and the refusal names the conversion.
+    expect(() => expr("$.n.toNumber()")).toThrow(/'\.toNumber\(\)' is not part of JSMQL.*'\$\.x\.toDouble\(\)'/);
+    expect(() => expr("$.a.map(x => x.toNumber())")).toThrow(/'\$\.x\.toDouble\(\)'/);
     // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
     expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
     expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);

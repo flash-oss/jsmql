@@ -5762,6 +5762,7 @@ describe("every method declares the receiver family it needs", () => {
     toDate: "a MongoDB conversion: the server judges the value",
     toObjectId: "a MongoDB conversion: the server judges the value",
     toUUID: "a MongoDB conversion: the server judges the value",
+    toNumber: "refused on every receiver, and the refusal names '.toDouble()'",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
     const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();

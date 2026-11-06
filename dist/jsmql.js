@@ -807,6 +807,9 @@ var numberIsNotJsmql = unsupported(
 var booleanIsNotJsmql = unsupported(
   "'Boolean(x)' is not part of JSMQL \u2014 it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'."
 );
+var toNumberIsNotJsmql = unsupported(
+  "'.toNumber()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." + afterStringMethod("toDouble")
+);
 var parseIntIsNotJsmql = unsupported(
   `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.` + afterStringMethod("toDouble")
 );
@@ -4982,6 +4985,20 @@ var NAMES = {
   }),
   // the conversions: one method per MongoDB `$to…` operator, named as the operator is
   toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
+  toNumber: name({
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
+    call: true,
+    on: "any",
+    returns: "number",
+    where: [],
+    filter: toNumberIsNotJsmql,
+    expr: toNumberIsNotJsmql,
+    stream: toNumberIsNotJsmql,
+    statement: toNumberIsNotJsmql,
+    group: toNumberIsNotJsmql,
+    window: toNumberIsNotJsmql
+  }),
   toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
   toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
   toDecimal: conversion({ method: "toDecimal", operator: "$toDecimal", returns: "number", safe: 0 }),
