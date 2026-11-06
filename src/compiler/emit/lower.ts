@@ -215,8 +215,16 @@ export function lowerTruth(node: Expr, env: Env): Truth {
 
 function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: Env): unknown {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
-  const parts: unknown[] = [];
   const inner = childEnv(env, node, "exprs");
+  // One part and no text: `$concat` of one string is that string, and null stays null. A
+  // string that may be missing takes `$toString`, which answers null for it, as `$concat` does.
+  if (node.exprs.length === 1 && node.quasis.every((q) => q === "")) {
+    const e = node.exprs[0];
+    const lowered = lowerValue(e, inner);
+    const safe = chainHasOptional(e) ? ifNull(lowered, "") : lowered;
+    return kindOf(e, inner) === "string" && (chainHasOptional(e) || isPresent(e, inner)) ? safe : { $toString: safe };
+  }
+  const parts: unknown[] = [];
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);

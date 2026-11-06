@@ -351,6 +351,15 @@ string literal, `.toLowerCase()`, `.trim()` and a nested template literal:
 // → { $concat: ["name=", { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }] }
 ```
 
+A template with one expression and no text is the value of that expression as a string. `$concat` of one string is that string, so the compiler emits the part alone:
+
+```js
+`${$.n}`
+// → { $toString: "$n" }
+`${$.s.trim()}`
+// → { $trim: { input: { $ifNull: ["$s", ""] } } }
+```
+
 A template with no expression resolves to a plain string. The escape sequences are `\\`, `` \` ``, `\$`, `\n`, `\t` and `\r`. Templates can nest: `` `outer ${`inner ${$.x}`}` `` works.
 
 ### Booleans

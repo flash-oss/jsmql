@@ -8323,6 +8323,18 @@ describe("template literals", () => {
     // FieldRef has unknown runtime type → wrapped in $toString to match JS coercion semantics.
     expect(jsmql.expr("`hello, ${$.name}!`")).toEqual({ $concat: ["hello, ", { $toString: "$name" }, "!"] });
   });
+  it("one interpolation and no text is the part alone, as a string", () => {
+    // `$concat` of one string is that string, and null stays null. MEASURED: `$toString`
+    // answers null for a null or missing field, as the `$concat` of it does.
+    expect(jsmql.expr("`${$.x}`")).toEqual({ $toString: "$x" });
+    expect(jsmql.expr("`${$.user?.name}`")).toEqual({ $toString: { $ifNull: ["$user.name", ""] } });
+    // a part that is a string and is there takes no wrap
+    expect(jsmql.expr("`${$.s.trim()}`")).toEqual({ $trim: { input: { $ifNull: ["$s", ""] } } });
+    expect(jsmql.pipeline("$.s = $.t.trim(); $.r = `${$.s}`;")).toEqual([
+      { $set: { s: { $trim: { input: { $ifNull: ["$t", ""] } } } } },
+      { $set: { r: "$s" } },
+    ]);
+  });
   it("multiple interpolations", () => {
     expect(jsmql.expr("`${$.first} ${$.last}`")).toEqual({
       $concat: [{ $toString: "$first" }, " ", { $toString: "$last" }],

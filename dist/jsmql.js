@@ -25979,8 +25979,14 @@ function lowerTruth(node, env) {
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
-  const parts = [];
   const inner = childEnv(env, node, "exprs");
+  if (node.exprs.length === 1 && node.quasis.every((q) => q === "")) {
+    const e = node.exprs[0];
+    const lowered = lowerValue(e, inner);
+    const safe = chainHasOptional(e) ? ifNull2(lowered, "") : lowered;
+    return kindOf4(e, inner) === "string" && (chainHasOptional(e) || isPresent(e, inner)) ? safe : { $toString: safe };
+  }
+  const parts = [];
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
