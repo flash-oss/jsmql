@@ -86,6 +86,19 @@ export function queryOwnValue(path: string, test: Readonly<Record<string, unknow
 }
 
 /**
+ * The own value at `path` is one of `values`: the native `$in`. A membership test
+ * compares as `===` does, so a missing field is not null. `$in` reads a null entry
+ * loosely, as `{ f: null }` does, so `$exists` keeps a missing field out. An element
+ * of `$elemMatch` (the path "") is never missing.
+ * MEASURED: `{ s: { $in: [null], $exists: true } }` selects `{ s: null }`, not `{}`.
+ */
+export function queryAmong(path: string, values: readonly unknown[]): QueryDoc {
+  return path !== "" && values.includes(null)
+    ? queryOwnValue(path, { $in: values, $exists: true })
+    : queryOwnValue(path, { $in: values });
+}
+
+/**
  * `test` at `path`, or the field missing or null. A regex test and the null test share
  * one `$in`, which takes the regex in its plain form: `{ s: { $in: [/^$/, null] } }`. An
  * `$elemMatch` body over a value can contain this clause too. Any other test takes an

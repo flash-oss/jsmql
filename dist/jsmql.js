@@ -14,6 +14,9 @@ function queryOwnValue(path, test) {
   if (path === "") return test;
   return { [path]: shorthand(test) };
 }
+function queryAmong(path, values) {
+  return path !== "" && values.includes(null) ? queryOwnValue(path, { $in: values, $exists: true }) : queryOwnValue(path, { $in: values });
+}
 function queryOrMissing(path, test) {
   const keys = Object.keys(test);
   if (keys.length === 1 && keys[0] === "$regex") return queryOwnValue(path, { $in: [test.$regex, null] });
@@ -4025,7 +4028,7 @@ var NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target2, { $in: values });
+        return queryAmong(target2, values);
       }
     },
     expr: {
@@ -10677,7 +10680,7 @@ function membershipQuery(input) {
   if (path === null) return null;
   const c = input.constant(r);
   if (c === null || !Array.isArray(c.value)) return null;
-  return queryOwnValue(path, { $in: c.value });
+  return queryAmong(path, c.value);
 }
 function typeTest(input) {
   const [l, r] = input.args;

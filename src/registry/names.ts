@@ -114,6 +114,7 @@ import {
   isPlainObject,
   SIZE_SLOT,
   objectBody,
+  queryAmong,
   queryOwnValue,
   inCode,
   single,
@@ -5043,7 +5044,7 @@ export const NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target, { $in: values });
+        return queryAmong(target, values);
       },
     },
     expr: {

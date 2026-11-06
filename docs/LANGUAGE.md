@@ -1675,6 +1675,13 @@ const allowed = ["a", "b"];
 $.status in allowed                  // { status: { $in: ["a", "b"] } }
 ```
 
+A membership test compares as `===` does, so a missing field is not `null`. In a filter, a list that holds `null` adds `$exists`, because the query `$in` reads `null` as "null or missing". `.has()` on a list follows the same rule:
+
+```js
+$.s in [null, "a"]                   // { $in: ["$s", [null, "a"]] }; in a filter { s: { $in: [null, "a"], $exists: true } }
+[null, "a"].has($.s)                 // the same MQL
+```
+
 Any other right side is a compile error, and the message names the spelling that works. JavaScript's `in` tests a key, and JSMQL gives that test its own spelling, so the two tests never mix:
 
 | You want | Write | Not |

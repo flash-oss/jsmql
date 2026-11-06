@@ -88,6 +88,11 @@ const AGREE: readonly string[] = [
   "!$.h.has(null)",
   "$.h?.has(null)",
   "$.h.has(null) && $.h.has(1)",
+  // `.has()` tests membership as `===` does: a missing field is not null. `s` is a string or missing.
+  '[null, "x"].has($.s)',
+  '![null, "x"].has($.s)',
+  '$.s in [null, "x"]',
+  "$.it.some(i => [null, 5].has(i.n))",
   // an `$elemMatch` body keeps `$or` and `$nor` over the fields of an element; `it` holds documents
   "$.it.some(i => i.n.inRange(10))",
   "$.it.some(i => i.n > 2 || i.m === 1)",
