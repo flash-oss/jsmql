@@ -2184,6 +2184,12 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(() => filter("$.x.isBoolean()")).toThrow(/'\.isBool\(\)'/);
   });
 
+  it("refuses `.isUndefined()`, and names the comparison with undefined", () => {
+    expect(() => expr("$.x.isUndefined()")).toThrow(/'\$\.x === undefined'/);
+    expect(() => filter("$.x.isUndefined()")).toThrow(/'\$\.x === undefined'/);
+    expect(() => expr("$.items.map(i => i.isUndefined())")).toThrow(/'\$\.x === undefined'/);
+  });
+
   it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
     const epoch = new Date("1970-01-01T00:00:00.000Z");
     expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
