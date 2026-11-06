@@ -28,15 +28,15 @@ describe("various human written unit tests", () => {
       $$.$group({
         _id: $.createdAt.format("%Y-%m"),
         total: $sum(1),
-        cleared: $sum(Long($.wasCleared)),
-        alerted: $sum(Long($.wasAlerted)),
-        reviewed: $sum(Long($.wasReviewed)),
-        rejected: $sum(Long($.wasRejected)),
-        autorejected: $sum(Long($.wasAutoRejected)),
-        queries: $sum(Long($.hasQuery)),
-        google: $sum(Long(svcAsAlerted("google"))),
-        tm: $sum(Long(svcAsAlerted("tm"))),
-        knownName: $sum(Long(svcAsAlerted("knownName"))),
+        cleared: $sum($.wasCleared.toLong()),
+        alerted: $sum($.wasAlerted.toLong()),
+        reviewed: $sum($.wasReviewed.toLong()),
+        rejected: $sum($.wasRejected.toLong()),
+        autorejected: $sum($.wasAutoRejected.toLong()),
+        queries: $sum($.hasQuery.toLong()),
+        google: $sum(svcAsAlerted("google").toLong()),
+        tm: $sum(svcAsAlerted("tm").toLong()),
+        knownName: $sum(svcAsAlerted("knownName").toLong()),
       });
       $$.sortBy("_id");
 
@@ -81,40 +81,37 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
         .orderBy({ createdAt: -1 })
         .take(100);
 
-      // attach account details to each transaction
-      //$.kycNames = $$$.kycs.find({ _id: $.vanId }).nameDetails;
-
       $ = {
         time: $.createdAt,
-        senderAccountName: $.sender.accountName,
+        bankAccountName: $.sender.accountName,
         kyc: $$$.kycs.find({ _id: $.vanId }).nameDetails.pick(["firstName", "middleName", "lastName"]),
       };
 
       // leave only the difference with bank's acc. name
-      $$.filter((t) => t.senderAccountName !== (t.kyc.firstName + " " + t.kyc.lastName).toUpperCase());
+      $$.filter((t) => t.bankAccountName !== (t.kyc.firstName + " " + t.kyc.lastName).toUpperCase());
     };
 
     const mql = jsmql.compile(jsmqlFunc)({ finInstnId: new ObjectId("612309871234098712340987") });
 
     expect(await populateAndQueryDatabase(ctx.task.name, mql)).to.equal(`
-time                     | senderAccountName | kyc.firstName | kyc.middleName | kyc.lastName
-2026-03-28T00:19:03.000Z | SUKARNO SUKARNO   | Sukarno       |                | Sukarno     
-2026-03-24T13:52:50.000Z | 42                | Sukarno       |                | Sukarno     
-2026-03-22T19:56:00.000Z |                   | Sukarno       |                | Sukarno     
-2026-03-21T08:54:56.000Z |                   | Sukarno       |                | Sukarno     
-2026-01-20T10:24:52.000Z | -SUKARNO          | Sukarno       |                | Sukarno     
-2026-01-09T08:07:34.000Z | SUKARNO           | Sukarno       |                | Sukarno     
-2026-01-31T19:03:07.000Z | wei zhang         | Wei           | Ming           | Zhang       
-2026-01-27T23:04:33.000Z | WEI MING ZHANG    | Wei           | Ming           | Zhang       
-2026-01-26T23:30:50.000Z | ZHANG WEI         | Wei           | Ming           | Zhang       
-2026-02-05T12:48:59.000Z | MARIA  MARIA      | maria         |                | maria       
-2026-04-04T17:44:32.000Z | NYOMAN            | Nyoman        |                | Nyoman      
-2026-04-08T07:50:48.000Z | WAYAN             | Wayan         |                | Wayan       
-2026-04-09T12:19:36.000Z | KADEK             | Kadek         |                | Kadek       
-2026-04-13T04:39:01.000Z | JOKO              |               |                |             
-2026-04-17T11:17:29.000Z | PUTU              |               |                |             
-2026-04-19T05:02:20.000Z | MADE              |               |                | Made        
-2026-04-22T21:08:47.000Z | KETUT KETUT       |               |                |             
+time                     | bankAccountName  | kyc.firstName | kyc.middleName | kyc.lastName
+2026-03-28T00:19:03.000Z | SUKARNO SUKARNO  | Sukarno       |                | Sukarno     
+2026-03-24T13:52:50.000Z | 42               | Sukarno       |                | Sukarno     
+2026-03-22T19:56:00.000Z |                  | Sukarno       |                | Sukarno     
+2026-03-21T08:54:56.000Z |                  | Sukarno       |                | Sukarno     
+2026-01-20T10:24:52.000Z | -SUKARNO         | Sukarno       |                | Sukarno     
+2026-01-09T08:07:34.000Z | SUKARNO          | Sukarno       |                | Sukarno     
+2026-01-31T19:03:07.000Z | wei zhang        | Wei           | Ming           | Zhang       
+2026-01-27T23:04:33.000Z | WEI MING ZHANG   | Wei           | Ming           | Zhang       
+2026-01-26T23:30:50.000Z | ZHANG WEI        | Wei           | Ming           | Zhang       
+2026-02-05T12:48:59.000Z | MARIA  MARIA     | maria         |                | maria       
+2026-04-04T17:44:32.000Z | NYOMAN           | Nyoman        |                | Nyoman      
+2026-04-08T07:50:48.000Z | WAYAN            | Wayan         |                | Wayan       
+2026-04-09T12:19:36.000Z | KADEK            | Kadek         |                | Kadek       
+2026-04-13T04:39:01.000Z | JOKO             |               |                |             
+2026-04-17T11:17:29.000Z | PUTU             |               |                |             
+2026-04-19T05:02:20.000Z | MADE             |               |                | Made        
+2026-04-22T21:08:47.000Z | KETUT KETUT      |               |                |             
 `);
   });
 });
