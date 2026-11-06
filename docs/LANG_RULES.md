@@ -70,7 +70,7 @@ $trim($.name, " ", "x")         // → { $trim: ["$name", " ", "x"] }
 
 ```js
 $.s.trim().map(x => x)          // ✗ a string has no .map() method
-new Date("not-a-date")          // ✗ a date constant takes an ISO 8601 string or a millisecond count
+Date("not-a-date")              // ✗ a date constant takes an ISO 8601 string or a millisecond count
 $$$.archive = $$; $.a = 1;      // ✗ the write to archive must stand last
 $divide(10)                     // → { $divide: 10 }   // one operand: the server refuses it
 jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }

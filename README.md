@@ -82,10 +82,10 @@ jsmql(({ $ }) => {
 jsmql('[...$.mods, ...$.room?.mods, "root"].has($.userId)')
 // → { $expr: { $in: ["$userId", { $concatArrays: [{ $ifNull: ["$mods", []] }, { $ifNull: ["$room.mods", []] }, ["root"]] }] } }
 
-// `new Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
-jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
+// `Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
+jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`)
 // → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
-// `new Date()` and `$.field.toDate()` still need server-time evaluation and ride in $expr.
+// `Date()` and `$.field.toDate()` still need server-time evaluation and ride in $expr.
 
 // `ObjectId("…")` / `new ObjectId("…")` mints a live BSON ObjectId — query by _id the obvious way:
 jsmql(`$._id === ObjectId("507f1f77bcf86cd799439011")`)
@@ -124,7 +124,7 @@ jsmql(`$match($.profile != null); $ = $.profile; $ = { ...$, score: $.points * 1
 // Multi-facet aggregation — every value a `$$` chain lowers to one $facet stage
 jsmql(`$ = {
   topByScore: $$.toSorted({ score: -1 }).take(10),
-  recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
+  recent:     $$.filter(o => o.createdAt >= Date("2026-01-01")),
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
 }`);
 // → [{ $facet: {
@@ -298,7 +298,7 @@ With no flag, the CLI picks the output shape the same way `jsmql()` picks it (a 
 A document stays on one line while it fits in 80 columns, and breaks to one entry per line once it does not. `-c`/`--compact` keeps it on one line whatever its length. `--tab` indents with tabs, and `--indent N` indents with N spaces. The output is JavaScript, not JSON. Every **live BSON value** — a `Date`, an `ObjectId`, a `Decimal128`, a regular expression — prints as the expression that rebuilds it, because JSON has no spelling for these values, and a stringified date is a string, which the server then compares as a string:
 
 ```sh
-echo '$.name.match(/^a/i) && $.d >= new Date("2026-01-01")' | jsmql -c
+echo '$.name.match(/^a/i) && $.d >= Date("2026-01-01")' | jsmql -c
 # { name: { $regex: /^a/i }, d: { $gte: new Date("2026-01-01T00:00:00.000Z") } }
 ```
 

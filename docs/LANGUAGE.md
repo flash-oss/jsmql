@@ -110,7 +110,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 // → {age:{$gt:18},status:"active"}
 
 // `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
-jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
+jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`);
 // → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
@@ -130,7 +130,7 @@ jsmql("$foo($.a)");
 
 JSMQL uses the same translation rules that [`$match` uses inside a Pipeline](#match-indexes-by-default). See [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
 
-**`new Date(...)` and indexes.** Take three cases: `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, and `new Date(Date.UTC(2026, 1, 1))`. When each argument of `new Date(...)` is a compile-time literal like these, JSMQL folds the constructor at compile time. It emits a real JS `Date` instance on the right side of the query document. This is the shape that an index on `createdAt` needs. `new Date()` (no argument: the server-side `$$NOW`) and `$.someField.toDate()` go into `$expr`, because the server cannot evaluate them before query time.
+**`Date(...)` and indexes.** Take three cases: `Date("2026-01-01")`, `Date(2026, 1, 1)`, and `Date(Date.UTC(2026, 1, 1))`. When each argument of `Date(...)` is a compile-time literal like these, JSMQL folds the constructor at compile time. It emits a real JS `Date` instance on the right side of the query document. This is the shape that an index on `createdAt` needs. `Date()` (no argument: the server-side `$$NOW`) and `$.someField.toDate()` go into `$expr`, because the server cannot evaluate them before query time.
 
 `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter. MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, and that subdocument matches nothing. The fold prevents this problem.
 
@@ -207,7 +207,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to the JSON of a 
 - Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
 - Number methods and the `Math` constants: `$.n.floor()`, `[$.a, $.b].min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
-- Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
+- Date operations: `Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
 - Escape hatch (direct operator form): `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
 - Comments: `// line` and `/* block */` — same behaviour as JavaScript
@@ -796,7 +796,7 @@ $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 //                 pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]
 
 // A date bound is an expression, so it is `$expr` in that $match
-$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > new Date().minus(1, "year"));
+$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > Date().minus(1, "year"));
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
 //                 pipeline: [{ $match: { $expr: { $gt: ["$createdAt",
 //                   { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }],
@@ -1508,7 +1508,7 @@ JSMQL knows the type of a receiver when the receiver comes from one of these:
 
 - a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number)
 - an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number)
-- `new Date(…)`
+- `Date(…)`
 - a literal or a template string
 - a written field (see [Type-aware dispatch](#type-aware-dispatch))
 
@@ -2836,7 +2836,7 @@ $.scores.map(x => x.toDouble())    // not .map(Number)
 $.items.compact()                  // not .filter(Boolean)
 ```
 
-JSMQL refuses a BSON type name over a value of the document in the same way, and the error names the method: `Long($.x)` names `$.x.toLong()`, and `new Date($.x)` names `$.x.toDate()`. A constant stays a literal: `Long(5)`, `Decimal128("9.99")`, `new Date("2026-01-01")`. See [Type conversion methods](#type-conversion-methods).
+JSMQL refuses a BSON type name over a value of the document in the same way, and the error names the method: `Long($.x)` names `$.x.toLong()`, and `Date($.x)` names `$.x.toDate()`. A constant stays a literal: `Long(5)`, `Decimal128("9.99")`, `Date("2026-01-01")`. See [Type conversion methods](#type-conversion-methods).
 
 `!!x` follows JavaScript's truthy and falsy rules. `!!""` is `false`, `!!0` is `false`, and `!![]` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 
@@ -2894,7 +2894,7 @@ These are value-mode methods on a number field. They run for each document, and 
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
-$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
+$.t.inRange(Date("2024-01-01"), Date("2025-01-01"))           // a date reads the same range test
 $.n.round()            // { $round: { $ifNull: ["$n", 0] } }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
 $.n.round(2)           // { $round: [{ $ifNull: ["$n", 0] }, 2] }
 $.n.ceil()             // { $ceil: { $ifNull: ["$n", 0] } }
@@ -3092,42 +3092,42 @@ Measurements show two more surprises. `Long + Double` promotes to a double and l
 
 ```js
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
-new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
-new Date(2024, 1, 15)              // Date(2024-02-15T00:00:00Z)   (UTC; month 1 = February — months count from 0, as in JS)
-new Date(2024, 11, 31, 23, 59, 58, 999)
+Date("2024-01-01")                 // Date(2024-01-01T00:00:00Z)
+Date(2024, 1, 15)                  // Date(2024-02-15T00:00:00Z)   (UTC; month 1 = February — months count from 0, as in JS)
+Date(2024, 11, 31, 23, 59, 58, 999)
                                    // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form; December is 11
-new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
+Date(Date.UTC(2024, 1, 15))        // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
-new Date()                         // "$$NOW"  (current date/time)
+Date()                             // "$$NOW"  (current date/time)
 Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
 $.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not new Date($.dateString)
 $.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }  — a number of milliseconds, not new Date($.ms)
-new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
+Date($.y, $.m, $.d)                // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
 Date.UTC(2024, 1, 15)              // 1707955200000  (folded — 15 February)
 Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, timezone: "UTC" } } }
 ```
 
-**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `$.field.toDate()`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
+**Constant folding.** When every argument to `Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`Date()`, `$.field.toDate()`) keep the aggregation form. If the constant arguments do not form a valid date (`Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
 **A millisecond count converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId, but it refuses an int. A driver sends every whole number below 2^31 as an int. For a count of milliseconds, write `$.ms.toLong().toDate()`. `$toLong` cuts a run-time fraction toward zero, as JavaScript does, so the instant is the same. The compiler refuses a constant count that is a fraction, as it refuses a fractional calendar part.
 
-**Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
+**Months count from 0, as in JavaScript. `Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
 
-A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
+A part out of range goes into the next unit, exactly as in JavaScript: `Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
 
 ```js
-new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
-new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
-new Date(2024, 1.5)                // ✗ each calendar part is an integer; round it with .floor() or .ceil()
-new Date(1.5)                      // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
+Date(2024, 0, 15)                  // Date(2024-01-15T00:00:00Z)  — January is 0
+Date(2024, 12, 1)                  // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
+Date(2024, 1.5)                    // ✗ each calendar part is an integer; round it with .floor() or .ceil()
+Date(1.5)                          // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
 $.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
 
-**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the *local time* of the runtime. JSMQL reads it as **UTC**: the default of MQL's `$dateFromParts`, or `Date.UTC` for the constant fold. The reason is that "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
+**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the *local time* of the runtime. JSMQL reads it as **UTC**: the default of MQL's `$dateFromParts`, or `Date.UTC` for the constant fold. The reason is that "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
 
 ### Date Getter Methods
 
@@ -3197,7 +3197,7 @@ The method name follows Temporal and Luxon (`.plus`, `.minus`). The `(amount, un
 $.end.diff($.start, "day")
 // { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }
 
-new Date().diff($._id, "day")      // how old is this document?
+Date().diff($._id, "day")          // how old is this document?
 // { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
@@ -3339,9 +3339,9 @@ Write the options form out as an object literal. MongoDB reads these fields by n
 
 The week numbers need no adjustment. `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), and `isoWeekday()` is `$isoDayOfWeek` (1 for Monday). The `startOfWeek` option and the `%U`, `%V`, `%u` and `%w` format specifiers are MongoDB's own.
 
-**Note:** the constructors use the same base, so a getter round trip needs no adjustment. `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first day of the month of the receiver. See [the constructor note](#date-constructor-and-datenow).
+**Note:** the constructors use the same base, so a getter round trip needs no adjustment. `Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first day of the month of the receiver. See [the constructor note](#date-constructor-and-datenow).
 
-**Note:** these methods require a date receiver, so JSMQL rejects a literal that is not a date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong`, so it also accepts a numeric string or a number.
+**Note:** these methods require a date receiver, so JSMQL rejects a literal that is not a date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong`, so it also accepts a numeric string or a number.
 
 ### Date Operator Calls
 
@@ -3818,7 +3818,7 @@ An update filter can be a pipeline element next to an ordinary stage. The same c
 jsmql(`[
   $match($.active),
   $.score += 1,
-  $.lastSeenAt = new Date(),
+  $.lastSeenAt = Date(),
   $sort({ score: -1 })
 ]`)
 // → [
@@ -3982,7 +3982,7 @@ jsmql(`$$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
 
 // Switch source to another collection: drop the current stream, union in filtered foreign docs.
 // The driver call (`db.<original>.aggregate(...)`) keeps its original collection.
-jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new Date("2026-01-01"));`)
+jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= Date("2026-01-01"));`)
 // → [
 //     { $match: { $expr: false } },
 //     { $unionWith: { coll: "transactions",
@@ -4701,7 +4701,7 @@ A `,` continues the declaration, exactly as it does in JavaScript, and a later d
 
 ```js
 jsmql`
-  const start = new Date("2026-08-01"), end = start.plus(1, "month");
+  const start = Date("2026-08-01"), end = start.plus(1, "month");
   $.t.inRange(start, end);
 `;
 // → { t: { $gte: new Date("2026-08-01T00:00:00.000Z"),
@@ -4826,7 +4826,7 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `new Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
+The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
 
 ```js
 jsmql("const a = (3).range().map(() => 7); $.x = a;");
@@ -4854,12 +4854,12 @@ jsmql.expr("$add(1, 2)");
 A folded value is what the **server** would compute, not what JavaScript computes, where the two differ. A month added to 31 January lands on the last day of February, as `$dateAdd` does. `.startOf("week")` gives the Sunday, as `$dateTrunc` does. `.diff(other, "day")` counts the midnights crossed, as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
 
 ```js
-jsmql(`const start = new Date("2026-09-01");
+jsmql(`const start = Date("2026-09-01");
        const end = start.plus(1, "month");
        $.createdAt >= start && $.createdAt < end`);
 // → { createdAt: { $gte: new Date("2026-09-01T00:00:00.000Z"), $lt: new Date("2026-10-01T00:00:00.000Z") } }
 
-jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day: monthStart.format("%Y-%m-%d") })');
+jsmql('const monthStart = Date("2026-09-15").startOf("month"); $match({ day: monthStart.format("%Y-%m-%d") })');
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
@@ -5006,7 +5006,7 @@ A direct `$op(...)` call (for example `$dateDiff`, `$sampleRate`, `$stdDevPop`) 
 
 ```js
 jsmql(({ $, $ifNull, $dateDiff }) =>
-  $ifNull($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }), -1),
+  $ifNull($dateDiff({ startDate: $.lastLoginAt, endDate: Date(), unit: "day" }), -1),
 );
 ```
 
@@ -5162,7 +5162,7 @@ echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --ar
 `jsmql.stringify(document)` writes a compiled document as **the JavaScript that rebuilds it**. This is the text the CLI prints and the playground shows. Paste it into mongosh or a driver script, and it means what your source meant.
 
 ```js
-const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")');
+const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > Date("2026-01-01")');
 
 jsmql.stringify(filter);
 // {
@@ -5634,7 +5634,7 @@ jsmql.expr("$.createdAt.getFullYear()")
 // → { $year: "$createdAt" }
 
 // Days since creation
-jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
+jsmql.expr("$dateDiff($.createdAt, Date(), 'day')")
 // → { $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" } }
 
 // Format date

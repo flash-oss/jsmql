@@ -977,7 +977,7 @@ takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
 [types.md](types.md) § Presence.
 
 The globals follow JavaScript where the two number differently or the server
-holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count
+holds a different equality. `Date(y, m, d, …)` and `Date.UTC(…)` count
 the month from 0, like `getMonth()`, so the month moves up by one on the way
 to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
@@ -1012,7 +1012,7 @@ so the dot and `?.` emit one document. Each conversion except `.toBool()` and `.
 stops the command on `""`, which a string method under a dot gives for a missing string.
 So each refusal that names one of them also names the `?.` right after the field
 (`afterStringMethod` in `src/registry/names.ts`). `.toDate()` is the bare `$toDate`, which
-stops the command on an int, so the refusal of `new Date(x)` also names `.toLong().toDate()`
+stops the command on an int, so the refusal of `Date(x)` also names `.toLong().toDate()`
 for a number of milliseconds (`MILLIS_TO_DATE`). See docs/LANGUAGE.md § Type conversion methods.
 
 ```
