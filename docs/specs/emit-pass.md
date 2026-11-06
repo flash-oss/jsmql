@@ -685,7 +685,8 @@ $.n = $$$.orders.filter(o => o.userId === $._id).size();
 `take`, `aggregate`, a stage link, a `.map` whose body is a provable document
 (the row states `streamBody: "document"`). The first link that is not such a
 link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
-a value `.map` — read the materialised array as a VALUE. A row that states
+a value `.map` — read the materialised array as a VALUE. A method after a field read or an index read
+(`.find(p).name.trim()`) is part of that value too, never a link of the body. A row that states
 `elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
 link only while the body's element is an unwound field; on a stream of whole
 documents it ends the body the same way. `.find` is the one special head
