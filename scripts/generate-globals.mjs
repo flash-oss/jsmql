@@ -496,6 +496,7 @@ const VALUE_METHOD_SIGNATURES = {
   isBool: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a boolean? — `$type`." },
   isDate: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a date? — `$type`." },
   isObjectId: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value an ObjectId? — `$type`." },
+  isArray: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value an array? — `$isArray`." },
   isObject: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a document? An array is not one. — `$type`." },
   isUUID: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a UUID (a binData of subtype 4)?" },
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────

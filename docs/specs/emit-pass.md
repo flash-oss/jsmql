@@ -1018,11 +1018,14 @@ for a number of milliseconds (`MILLIS_TO_DATE`). See docs/LANGUAGE.md § Type co
 A type test, for example `.isString()`, compares the `$type` of the receiver with one
 type name. `typeTest` in `src/registry/names.ts` builds each row. A type test works on
 every kind (`on: "any"`). It states no safe value. `$type` gives `"missing"` for a
-missing receiver, so the test gives false with no `$ifNull`. `.isNumber()` is `$isNumber`.
+missing receiver, so the test gives false with no `$ifNull`. `.isNumber()` is `$isNumber`, and `.isArray()` is `$isArray`.
 The filter cell writes the query form of `typeof x === "<name>"`, `{ x: { $type: "<name>" } }`.
 `.isUUID()` has no query form, because `$type` names each binary subtype `"binData"`. Its
 value cell adds a `$convert` with the format `"uuid"`, which fails on any other subtype.
-The cell binds a computed receiver once in a `$let`. See docs/LANGUAGE.md § Type test methods.
+The cell binds a computed receiver once in a `$let`. A row with `on: "any"` takes every
+value. It takes no namespace. The receiver check (`receiverGate` in `src/compiler/emit/select.ts`)
+refuses `Array.isArray(x)`, and the `sibling` sentence of the `isArray` row names `x.isArray()`.
+The filter road reads a namespace receiver as the value road does. See docs/LANGUAGE.md § Type test methods.
 
 ```
 (5).range(1)          → {"$range":[5,1,-1]}

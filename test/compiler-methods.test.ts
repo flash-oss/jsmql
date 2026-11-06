@@ -2319,8 +2319,11 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("Number.isNaN($.n)", () => Number.isNaN(DOC.n))).toEqual({
       $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
     });
-    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
-    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
+    expect(compiled("$.a.isArray()", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
+    expect(compiled("$.n.isArray()", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
+    expect(compiled("$.nope.isArray()", () => false)).toEqual({ $isArray: "$nope" });
+    // a namespace is no value: the static refuses, and the message names the method
+    expect(() => expr("Array.isArray($.a)")).toThrow(/'\$\.x\.isArray\(\)'/);
     expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
         $map: {
@@ -3307,7 +3310,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   E: ["Math.E"],
   isInteger: ["Number.isInteger($.n)", "Number.isInteger($.nope)"],
   isNaN: ["Number.isNaN($.n)", "Number.isNaN($.nope)"],
-  isArray: ["Array.isArray($.a)", "Array.isArray($.nope)"],
+  isArray: ["$.a.isArray()"],
   isString: ["$.s.isString()"],
   isNumber: ["$.n.isNumber()"],
   isDouble: ["$.n.isDouble()"],

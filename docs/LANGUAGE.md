@@ -2459,11 +2459,12 @@ $.xs.size()                                  // the element count — a string h
 
 ### Bare built-in callbacks
 
-A static that tests one value works bare as the callback, as in plain JavaScript: `Number.isInteger` and `Array.isArray`. Each is sugar for the one-parameter arrow it reads as (`x => Number.isInteger(x)`), and it lowers to exactly what that arrow lowers to:
+A static that tests one value works bare as the callback, as in plain JavaScript: `Number.isInteger`. It is a short form of the one-parameter arrow `x => Number.isInteger(x)`. It lowers to exactly what that arrow lowers to. `Array.isArray` is not a JSMQL name, so write the arrow with the method:
 
 ```js
 $.values.filter(Number.isInteger)   // the whole numbers
-$.rows.some(Array.isArray)          // does any element hold an array?
+$.rows.some(x => x.isArray())       // does any element hold an array?
+$.rows.some(Array.isArray)          // ✗ Array.isArray is not a JSMQL name; the error names x => x.isArray()
 ```
 
 A type name is not a callback, because a type name as a conversion function is not part of JSMQL. Write the arrow with the value's own method. Each refused form gets an error that names the arrow:
@@ -2909,7 +2910,7 @@ It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"o
 
 ### Type test methods
 
-A type test asks for the BSON type of a value. There is one test for each type that a [conversion method](#type-conversion-methods) gives, and one for a document. Each test works on every kind of value, and it gives `true` or `false`:
+A type test asks for the BSON type of a value. There is one test for each type that a [conversion method](#type-conversion-methods) gives, and one each for a document and an array. Each test works on every kind of value, and it gives `true` or `false`:
 
 ```js
 $.name.isString()                  // { $eq: [{ $type: "$name" }, "string"] }
@@ -2922,6 +2923,7 @@ $.flag.isBool()                    // "bool"
 $.at.isDate()                      // "date"
 $.ref.isObjectId()                 // "objectId"
 $.meta.isObject()                  // "object"   — a document; an array is not one
+$.tags.isArray()                   // { $isArray: "$tags" }
 $.id.isUUID()                      // { $and: [{ $eq: [{ $type: "$id" }, "binData"] }, { $ne: [{ $convert: { input: "$id", to: "string", format: "uuid", onError: null } }, null] }] }
 ```
 
@@ -2936,8 +2938,8 @@ $.qty.isNumber() && $.at.isDate()  // { qty: { $type: "number" }, at: { $type: "
 - **A Filter reads an array element by element.** `{ qty: { $type: "number" } }` also selects `qty: [1]`, where the expression form gives `false`. `typeof` has the same reading. See [SR2](LANG_RULES.md).
 - **A type test is MongoDB's type name, not lodash's.** `.isObject()` is `false` for an array, where lodash's `_.isObject([])` is `true`. The boolean test is `.isBool()`, as MongoDB names the type, and JSMQL refuses lodash's `.isBoolean()`.
 - **`.isUUID()` also tests the subtype.** `$type` names each binary value `"binData"`. A UUID is the binary subtype 4, and the query language cannot test a subtype. So `.isUUID()` takes the `$expr` form in a Filter.
+- **`Array.isArray(x)` is not a JSMQL name.** The value's own method is shorter, and one capability gets one spelling. The error names `x.isArray()`.
 - **A type test and a `typeof` comparison give the same MQL.** `$.name.isString()` and `typeof $.name === "string"` are two spellings of one test. `typeof` also gives the type name itself, and it names each BSON type, for example `"regex"` or `"null"`.
-- For an array, write `Array.isArray(x)`. See [Object Operations](#object-operations).
 
 ### Number static predicates
 
@@ -3572,8 +3574,6 @@ $.a.assign($.b, $.c)               // { $mergeObjects: ["$a", "$b", "$c"] }
 ({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   — merge an array of objects
 ({}).assign($.o)                   // { $mergeObjects: [{}, "$o"] }   (a copy of one object)
 $.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }
-
-Array.isArray($.items)             // { $isArray: "$items" }
 
 $getField("fieldName", $.doc)      // { $getField: { field: "fieldName", input: "$doc" } }
 $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: "$doc", value: val } }

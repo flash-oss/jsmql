@@ -2064,12 +2064,12 @@ describe("moderator membership check through [...a, ...b]", { features: ["Array 
   });
 });
 
-describe("arr.max() - arr.min() with Array.isArray guard", { features: ["Array spread"] }, () => {
+describe("arr.max() - arr.min() with an .isArray() guard", { features: ["Array spread"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Array.isArray($.scores) ? $.scores.max() - $.scores.min() : 0`)).toEqual({
+      expect(jsmql.expr(`$.scores.isArray() ? $.scores.max() - $.scores.min() : 0`)).toEqual({
         $cond: [{ $isArray: "$scores" }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
       });
     },

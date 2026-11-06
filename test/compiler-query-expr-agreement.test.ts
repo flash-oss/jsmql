@@ -73,6 +73,8 @@ const AGREE: readonly string[] = [
   "$.a.isString()",
   "!$.a.isBool()",
   "$.a.isDate() || $.a.isBool()",
+  "$.a.isArray()",
+  "!$.a.isArray()",
   "$.a === 1 || $.b === 2",
   "$.b === 2 && $.n > 1",
   "$.a",

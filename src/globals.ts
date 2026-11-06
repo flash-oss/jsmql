@@ -3526,6 +3526,8 @@ declare global {
     intersection(other: any[]): T[];
     /** Intersection by iteratee — `_.intersectionBy`. */
     intersectionBy(...args: any[]): T[];
+    /** Is the value an array? — `$isArray`. */
+    isArray(): boolean;
     /** Is the value a boolean? — `$type`. */
     isBool(): boolean;
     /** Is the value a date? — `$type`. */
@@ -3641,6 +3643,8 @@ declare global {
     escape(): string;
     /** The index of the first `searchString` at or after `position`, in code points, or -1 — `String.prototype.indexOf`. */
     indexOfSubstring(searchString: string, position?: number): number;
+    /** Is the value an array? — `$isArray`. */
+    isArray(): boolean;
     /** Is the value a boolean? — `$type`. */
     isBool(): boolean;
     /** Is the value a date? — `$type`. */
@@ -3733,6 +3737,8 @@ declare global {
     hypot(...values: number[]): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** Is the value an array? — `$isArray`. */
+    isArray(): boolean;
     /** Is the value a boolean? — `$type`. */
     isBool(): boolean;
     /** Is the value a date? — `$type`. */
@@ -3822,6 +3828,8 @@ declare global {
       unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
       timezone?: string,
     ): boolean;
+    /** Is the value an array? — `$isArray`. */
+    isArray(): boolean;
     /** Whether this date's `unit` precedes `other`'s. */
     isBefore(
       other: Date,
@@ -3920,6 +3928,8 @@ declare global {
     week(timezone?: string): number;
   }
   interface Boolean {
+    /** Is the value an array? — `$isArray`. */
+    isArray(): boolean;
     /** Is the value a boolean? — `$type`. */
     isBool(): boolean;
     /** Is the value a date? — `$type`. */

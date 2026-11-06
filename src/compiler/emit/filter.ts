@@ -33,7 +33,7 @@ import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
 import { holderOf, lowerTruth, lowerValue, operandsFirst, readablePath, slotProof } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
-import { proofsFor, typeOf } from "./prove.ts";
+import { proofsFor, sourceFamily, typeOf } from "./prove.ts";
 import { isNothing, unreadable } from "./type.ts";
 import { select, shapeOf, UNPROVEN, type Receiver } from "./select.ts";
 import {
@@ -43,8 +43,11 @@ import {
   positionalKeysOf,
   productionForOperator,
   liftsToOf,
+  namespaceNames,
   takesNoReceiver,
 } from "../rows.ts";
+
+const NAMESPACES = namespaceNames();
 
 /**
  * A predicate's query document. It includes `$expr` where a leaf has no
@@ -416,7 +419,14 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   if (verdict.kind !== "lower" && verdict.kind !== "perFamily") {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
-  const receiver: Receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
+  // A namespace (`Array.isArray(x)`) is no value, so a row that takes any value refuses it.
+  const space = recv === null ? null : sourceFamily(recv);
+  const receiver: Receiver =
+    recv === null
+      ? { kind: "none" }
+      : space !== null && NAMESPACES.has(space)
+        ? { kind: "namespace", name: space as Extract<Receiver, { kind: "namespace" }>["name"] }
+        : { kind: "opaque", lowered: null };
   // A `$`-named call is the developer's own MQL, so no kind rule judges it (HR7). The
   // elements are the receiver's, or those of the last operand of an operator.
   const source = recv ?? args[args.length - 1];

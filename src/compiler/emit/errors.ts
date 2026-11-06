@@ -128,7 +128,7 @@ export function refusalFor(
         pos,
       );
     case "wrongReceiver": {
-      const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
+      const accepts = sel.accepts === "any" ? "any value" : sel.accepts.map((f) => `'${f}'`).join(", ");
       // Several possible kinds arrive joined by " or "; each one takes its own article.
       const got =
         sel.got === null

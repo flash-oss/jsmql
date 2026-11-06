@@ -6142,7 +6142,7 @@ export const NAMES = {
   toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
   toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
 
-  // the type tests: one method per type that a conversion method gives, and one for a document
+  // the type tests: one method per type that a conversion method gives, and one each for a document and an array
   isString: typeTest({ method: "isString", alias: "string", doc: "is the value a string?" }),
   isNumber: typeTest({
     method: "isNumber",
@@ -6171,6 +6171,36 @@ export const NAMES = {
   isDate: typeTest({ method: "isDate", alias: "date", doc: "is the value a date?" }),
   isObjectId: typeTest({ method: "isObjectId", alias: "objectId", doc: "is the value an ObjectId?" }),
   isObject: typeTest({ method: "isObject", alias: "object", doc: "is the value a document? An array is not one." }),
+  isArray: name({
+    doc: "'.isArray()' — is the value an array? Emits $isArray. See docs/LANGUAGE.md.",
+    call: true,
+    on: "any",
+    // `Array.isArray(x)` parses, and the receiver check refuses the namespace with this sentence
+    sibling: {
+      Array:
+        "One capability gets one spelling, and the value's own method is shorter. Write '<value>.isArray()': '$.x.isArray()'. As a callback, write 'x => x.isArray()'.",
+    },
+    returns: "bool",
+    neverNull: true,
+    where: ["value", "filter"],
+    // the query form of `typeof x === "array"`, which reads the value itself and not an element
+    filter: {
+      args: { sig: "", none: true },
+      emit: ({ recv, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        return path === null ? null : queryOwnValue(path, { $type: "array" });
+      },
+    },
+    // the plain operand, and an array literal one level deeper, as `$size` takes it
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $isArray: singleArrayArg(recv) }) },
+    stream: unsupported("'.isArray()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isArray();'",
+    ),
+    group: unsupported("'.isArray()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
   isUUID: name({
     doc: "'.isUUID()' — is the value a UUID, a binData of subtype 4? See docs/LANGUAGE.md.",
     call: true,
@@ -10925,29 +10955,6 @@ export const NAMES = {
     statement: NO_IS_FINITE,
     group: NO_IS_FINITE,
     window: NO_IS_FINITE,
-  }),
-
-  isArray: name({
-    doc: "'Array.isArray(value)' — emits $isArray.",
-    call: true,
-    on: "Array",
-    returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    // the plain operand, and an array literal one level deeper, as `$size` takes it
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({ $isArray: singleArrayArg(value(args[0])) }),
-    },
-    stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(…);'",
-    ),
-    group: unsupported("'Array.isArray()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Array.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
   }),
 
   symmetricDifference: name({

@@ -5774,6 +5774,7 @@ describe("every method declares the receiver family it needs", () => {
     isObjectId: "a type test: it asks the type of any value",
     isObject: "a type test: it asks the type of any value",
     isUUID: "a type test: it asks the type of any value",
+    isArray: "a type test: it asks the type of any value",
     isBoolean: "refused on every receiver, and the refusal names '.isBool()'",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
@@ -8491,11 +8492,18 @@ describe(".fromEntries()", () => {
   });
 });
 
-describe("Array.isArray", () => {
+describe(".isArray()", () => {
   it("on a field", () => {
-    expect(jsmql.expr("Array.isArray($.items)")).toEqual({ $isArray: "$items" });
+    expect(jsmql.expr("$.items.isArray()")).toEqual({ $isArray: "$items" });
+    expect(jsmql("$.items.isArray()")).toEqual({ items: { $type: "array" } });
     // an array literal goes one level deeper, so the server reads it as one argument
-    expect(jsmql.expr("Array.isArray([$.a, 2])")).toEqual({ $isArray: [["$a", 2]] });
+    expect(jsmql.expr("[$.a, 2].isArray()")).toEqual({ $isArray: [["$a", 2]] });
+  });
+
+  it("refuses the static Array.isArray(), and names the method", () => {
+    expect(() => jsmql.expr("Array.isArray($.items)")).toThrow(/'\$\.x\.isArray\(\)'/);
+    expect(() => jsmql("Array.isArray($.items)")).toThrow(/'\$\.x\.isArray\(\)'/);
+    expect(() => jsmql.expr("$.rows.some(Array.isArray)")).toThrow(/'x => x\.isArray\(\)'/);
   });
 });
 

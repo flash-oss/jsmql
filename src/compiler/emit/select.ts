@@ -184,10 +184,16 @@ function familyOf(receiver: Receiver): Family | null {
   }
 }
 
-/** Does the row's `on` admit this receiver? `undefined` (no `on`) and `"any"` admit every receiver. */
+/**
+ * Does the row's `on` accept this receiver? `undefined` (no `on`) accepts every receiver.
+ * `"any"` accepts every VALUE: a namespace such as `Array` is not a value, so
+ * `Array.isArray(x)` is not the method `.isArray()` with an argument.
+ */
 function receiverGate(name: string, receiver: Receiver): Selected | null {
   const on = familiesFor(name);
-  if (on === undefined || on === "any") return null;
+  if (on === undefined) return null;
+  if (on === "any")
+    return receiver.kind === "namespace" ? { kind: "wrongReceiver", name, got: receiver.name, accepts: on } : null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== undefined) return { kind: "wrongReceiver", name, got: receiver.proved, accepts: on };
     // A receiver that can be several families passes when the row takes one of them; one

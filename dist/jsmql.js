@@ -5052,7 +5052,7 @@ var NAMES = {
   toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: /* @__PURE__ */ new Date(0) }),
   toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
   toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
-  // the type tests: one method per type that a conversion method gives, and one for a document
+  // the type tests: one method per type that a conversion method gives, and one each for a document and an array
   isString: typeTest({ method: "isString", alias: "string", doc: "is the value a string?" }),
   isNumber: typeTest({
     method: "isNumber",
@@ -5081,6 +5081,34 @@ var NAMES = {
   isDate: typeTest({ method: "isDate", alias: "date", doc: "is the value a date?" }),
   isObjectId: typeTest({ method: "isObjectId", alias: "objectId", doc: "is the value an ObjectId?" }),
   isObject: typeTest({ method: "isObject", alias: "object", doc: "is the value a document? An array is not one." }),
+  isArray: name({
+    doc: "'.isArray()' \u2014 is the value an array? Emits $isArray. See docs/LANGUAGE.md.",
+    call: true,
+    on: "any",
+    // `Array.isArray(x)` parses, and the receiver check refuses the namespace with this sentence
+    sibling: {
+      Array: "One capability gets one spelling, and the value's own method is shorter. Write '<value>.isArray()': '$.x.isArray()'. As a callback, write 'x => x.isArray()'."
+    },
+    returns: "bool",
+    neverNull: true,
+    where: ["value", "filter"],
+    // the query form of `typeof x === "array"`, which reads the value itself and not an element
+    filter: {
+      args: { sig: "", none: true },
+      emit: ({ recv, pathOf: pathOf3 }) => {
+        const path = recv === null ? null : pathOf3(recv);
+        return path === null ? null : queryOwnValue(path, { $type: "array" });
+      }
+    },
+    // the plain operand, and an array literal one level deeper, as `$size` takes it
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $isArray: singleArrayArg(recv) }) },
+    stream: unsupported("'.isArray()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isArray();'"
+    ),
+    group: unsupported("'.isArray()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   isUUID: name({
     doc: "'.isUUID()' \u2014 is the value a UUID, a binData of subtype 4? See docs/LANGUAGE.md.",
     call: true,
@@ -9611,28 +9639,6 @@ var NAMES = {
     statement: NO_IS_FINITE,
     group: NO_IS_FINITE,
     window: NO_IS_FINITE
-  }),
-  isArray: name({
-    doc: "'Array.isArray(value)' \u2014 emits $isArray.",
-    call: true,
-    on: "Array",
-    returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    // the plain operand, and an array literal one level deeper, as `$size` takes it
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({ $isArray: singleArrayArg(value(args[0])) })
-    },
-    stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(\u2026);'"
-    ),
-    group: unsupported("'Array.isArray()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Array.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
   }),
   symmetricDifference: name({
     doc: "'.symmetricDifference()' \u2014 see docs/LANGUAGE.md.",
@@ -22176,7 +22182,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
         pos
       );
     case "wrongReceiver": {
-      const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
+      const accepts = sel.accepts === "any" ? "any value" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
@@ -25084,7 +25090,9 @@ function familyOf2(receiver) {
 }
 function receiverGate(name2, receiver) {
   const on = familiesFor(name2);
-  if (on === void 0 || on === "any") return null;
+  if (on === void 0) return null;
+  if (on === "any")
+    return receiver.kind === "namespace" ? { kind: "wrongReceiver", name: name2, got: receiver.name, accepts: on } : null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
     if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
@@ -25177,6 +25185,7 @@ function select(verdict, receiver, shaped, count, proofs) {
 }
 
 // src/compiler/emit/filter.ts
+var NAMESPACES2 = namespaceNames();
 function lowerFilter(node, env, jsRead = false) {
   const q = translate(node, env, false, jsRead);
   if (q === null) internalError("a full filter translation answered null");
@@ -25397,7 +25406,8 @@ function leaf(node, env) {
   if (verdict.kind !== "lower" && verdict.kind !== "perFamily") {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
-  const receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
+  const space = recv === null ? null : sourceFamily(recv);
+  const receiver = recv === null ? { kind: "none" } : space !== null && NAMESPACES2.has(space) ? { kind: "namespace", name: space } : { kind: "opaque", lowered: null };
   const source = recv ?? args[args.length - 1];
   const proofs = escape ? UNPROVEN : proofsFor(args, env, true, source === void 0 ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
   const sel = select(verdict, receiver, shapeOf2(args), args.length, proofs);
@@ -26091,7 +26101,7 @@ function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 =
 }
 
 // src/compiler/emit/lower.ts
-var NAMESPACES2 = namespaceNames();
+var NAMESPACES3 = namespaceNames();
 var READ = { value: lowerValue, truth: lowerTruth };
 var positionIn = (env) => positionOf(env.site.where) ?? "value";
 var NOT_EXPR = /* @__PURE__ */ new Set([
@@ -26407,7 +26417,7 @@ function identifier(node, env) {
         throw droppedBinding(b.ref, node.pos);
     }
   }
-  if (NAMESPACES2.has(node.name)) {
+  if (NAMESPACES3.has(node.name)) {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
@@ -26581,7 +26591,7 @@ function indexAccess(node, env) {
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);
-  if (src !== null && NAMESPACES2.has(src))
+  if (src !== null && NAMESPACES3.has(src))
     return { kind: "namespace", name: src };
   if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
@@ -26598,7 +26608,7 @@ function receiverOf(recv, env) {
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
   return { kind: "opaque", lowered, possible };
 }
-var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
+var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
 var METHOD_NAMES = everyMethodName();
