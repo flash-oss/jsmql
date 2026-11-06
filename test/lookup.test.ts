@@ -2063,12 +2063,16 @@ describe("$$$.coll.aggregate — error cases", () => {
       expect(() => jsmql("$.x = $$$.orders.sum();")).toThrow("'.sum()' takes numbers");
     });
 
-    it("a field read (.length / .<field>) and an index are named the same way", () => {
-      expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0).length.aggregate((o) => { $limit(1); });")).toThrow(
-        "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { … })', a stream method or a stage link.",
-      );
+    it("a field read and an index end the chain, so a method after them reads a value", () => {
       expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0)[0].aggregate((o) => { $limit(1); });")).toThrow(
-        "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { … })', a stream method or a stage link.",
+        /'\.aggregate\(\)' produces pipeline stages, not a value/,
+      );
+      expect(() => jsmql("$.x = $$$.orders.find(o => o.v > 0).total.aggregate((o) => { $limit(1); });")).toThrow(
+        /'\.aggregate\(\)' produces pipeline stages, not a value/,
+      );
+      // The compiler refuses `.length` over the joined array, as it does for any array.
+      expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0).length.aggregate((o) => { $limit(1); });")).toThrow(
+        "write '.size()'",
       );
     });
 
