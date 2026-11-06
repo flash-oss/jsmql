@@ -1,5 +1,7 @@
 // The documents for the test "payment analytics" in test/human/human.test.ts.
 //
+// Each document also has fields that the query does not read, as a real document has.
+//
 // The first group has the full schema with correct values. The second group breaks the
 // schema, one fault per document. Each fault is a missing field, a null, a wrong type, a
 // wrong case, or a value outside the date range. A comment on each document names what
@@ -9,15 +11,22 @@ import { Decimal128, Long, ObjectId } from "bson";
 
 const ok = (over: Record<string, unknown> = {}) => ({
   createdAt: new Date("2026-01-15T10:00:00Z"),
+  updatedAt: new Date("2026-01-15T10:05:00Z"),
+  customerId: new ObjectId("65f1c2a9e4b0a1d2c3f40001"),
+  amount: Decimal128.fromString("250.00"),
+  currency: "AUD",
+  reference: "INV-1001",
   payoutStatus: "PAID",
   recommendations: {
     all: "accept",
-    creditor: { google: "accept", tm: "accept", knownName: "accept" },
-    debtor: { google: "accept", tm: "accept", knownName: "accept" },
+    creditor: { google: "accept", tm: "accept", knownName: "accept", sanctions: "accept" },
+    debtor: { google: "accept", tm: "accept", knownName: "accept", sanctions: "accept" },
+    model: "rules-2026.1",
   },
   txData: {
+    channel: "NPP",
     status: { value: "CONFIRMED", history: [{ value: "CREATED" }, { value: "CONFIRMED" }] },
-    aml: { reviewedAt: null },
+    aml: { reviewedAt: null, riskScore: 12 },
     queries: null,
   },
   ...over,
@@ -35,8 +44,9 @@ type Svc = "google" | "tm" | "knownName";
 
 /** The recommendations of one payment: `alerts` names the services that alert, and on which side. */
 const recs = (all: string, alerts: [Side, Svc, string][] = []) => {
-  const side = () => ({ google: "accept", tm: "accept", knownName: "accept" }) as Record<Svc, string>;
-  const r = { all, creditor: side(), debtor: side() };
+  const side = () =>
+    ({ google: "accept", tm: "accept", knownName: "accept", sanctions: "accept" }) as Record<Svc, string>;
+  const r = { all, creditor: side(), debtor: side(), model: "rules-2026.1" };
   for (const [s, svc, rec] of alerts) r[s][svc] = rec;
   return r;
 };
@@ -50,6 +60,7 @@ const clearedAfterReview = (at: string, alerts: [Side, Svc, string][], query = f
     createdAt: new Date(at),
     recommendations: recs("review", alerts),
     txData: {
+      channel: "NPP",
       status: { value: "CONFIRMED", history: [{ value: "CREATED" }, { value: "REVIEWING" }, { value: "CONFIRMED" }] },
       aml: { reviewedAt: new Date(new Date(at).getTime() + 3_600_000) },
       queries: query ? [{ askedAt: new Date(at), text: "Purpose of payment?" }] : null,
@@ -63,6 +74,7 @@ const declinedAfterReview = (at: string, alerts: [Side, Svc, string][], query = 
     payoutStatus: "DECLINED",
     recommendations: recs("reject", alerts),
     txData: {
+      channel: "NPP",
       status: { value: "CANCELLED", history: [{ value: "CREATED" }, { value: "REVIEWING" }, { value: "CANCELLED" }] },
       aml: { reviewedAt: new Date(new Date(at).getTime() + 7_200_000) },
       queries: query ? [{ askedAt: new Date(at), text: "Source of funds?" }] : null,
@@ -75,6 +87,7 @@ const cancelledByCustomer = (at: string) =>
     createdAt: new Date(at),
     payoutStatus: "CANCELLED",
     txData: {
+      channel: "NPP",
       status: { value: "CANCELLED", history: [{ value: "CREATED" }, { value: "CANCELLED" }] },
       aml: {},
       queries: null,
@@ -88,6 +101,7 @@ const inReview = (at: string, alerts: [Side, Svc, string][]) =>
     payoutStatus: "PENDING",
     recommendations: recs("review", alerts),
     txData: {
+      channel: "NPP",
       status: { value: "REVIEWING", history: [{ value: "CREATED" }, { value: "REVIEWING" }] },
       aml: {},
       queries: null,
@@ -108,6 +122,7 @@ export default [
       debtor: { google: "accept", tm: "accept", knownName: "accept" },
     },
     txData: {
+      channel: "NPP",
       status: { value: "CONFIRMED", history: [{ value: "CREATED" }, { value: "REVIEWING" }, { value: "CONFIRMED" }] },
       aml: { reviewedAt: new Date("2026-01-20T09:00:00Z") },
       queries: null,
@@ -123,6 +138,7 @@ export default [
       debtor: { google: "accept", tm: "accept", knownName: "review" },
     },
     txData: {
+      channel: "NPP",
       status: { value: "CANCELLED", history: [{ value: "CREATED" }, { value: "REVIEWING" }, { value: "CANCELLED" }] },
       aml: { reviewedAt: new Date("2026-02-03T13:00:00Z") },
       queries: [{ askedAt: new Date("2026-02-03T12:30:00Z"), text: "Source of funds?" }],
@@ -133,6 +149,7 @@ export default [
     createdAt: new Date("2026-02-10T00:00:00Z"),
     payoutStatus: "CANCELLED",
     txData: {
+      channel: "NPP",
       status: { value: "CANCELLED", history: [{ value: "CREATED" }, { value: "CANCELLED" }] },
       aml: { reviewedAt: null },
       queries: null,

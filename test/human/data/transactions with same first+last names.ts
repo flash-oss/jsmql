@@ -4,6 +4,8 @@
 // other collections. A KYC document has the `_id` of its VAN, and a transaction names its
 // VAN in `vanId`.
 //
+// Each document also has fields that the query does not read, as a real document has.
+//
 // The first group has the full schema with correct values. The second group breaks the
 // schema, one fault per document. A comment on each document names what it tests.
 
@@ -88,13 +90,36 @@ const van = (n: number, firstName: unknown, lastName: unknown = firstName, over:
   virtual: true,
   firstName,
   lastName,
+  accountNumber: String(10_000_000 + n * 7919),
+  bsb: "802-919",
+  currency: "AUD",
+  label: `Savings ${n}`,
+  createdAt: vanId(n).getTimestamp(),
   ...over,
 });
 
-/** The KYC names of VAN number `n`. */
+/** The fields of a KYC document that the query does not read. */
+const kycExtra = (n: number) => ({
+  dateOfBirth: new Date(Date.UTC(1960 + n, n % 12, n)),
+  nationality: n % 2 === 0 ? "ID" : "AU",
+  address: { line1: `${n} Jalan Merdeka`, city: "Denpasar", postcode: "80111", country: "ID" },
+  verification: { status: "VERIFIED", provider: "greenid", checkedAt: vanId(n).getTimestamp() },
+  createdAt: vanId(n).getTimestamp(),
+});
+
+/** The KYC names of VAN number `n`. `nameDetails` holds more fields than the three names. */
 const kyc = (n: number, firstName: unknown, middleName: unknown, lastName: unknown) => ({
   _id: vanId(n),
-  nameDetails: { firstName, middleName, lastName },
+  nameDetails: {
+    title: n % 2 === 0 ? "Mr" : "Ms",
+    firstName,
+    middleName,
+    lastName,
+    fullName: [firstName, middleName, lastName].filter((x) => typeof x === "string" && x !== "").join(" "),
+    nameOnId: true,
+    verifiedAt: vanId(n).getTimestamp(),
+  },
+  ...kycExtra(n),
 });
 
 /** A confirmed inbound payment to VAN number `van`, from a bank account with the name `accountName`. */
@@ -105,7 +130,11 @@ const tx = (n: number, van: number, accountName: unknown, over: Record<string, u
   status: "CONFIRMED",
   direction: "INBOUND",
   amount: 100 + n,
-  sender: { accountName },
+  currency: "AUD",
+  reference: `DEP-${String(n).padStart(4, "0")}`,
+  sender: { accountName, bsb: "062-000", accountNumber: String(20_000_000 + n * 104_729), bankName: "CBA" },
+  createdAt: txId(n).getTimestamp(),
+  updatedAt: new Date(txId(n).getTimestamp().getTime() + 60_000),
   ...over,
 });
 
@@ -176,9 +205,9 @@ export const kycs = [
   kyc(18, "Wayan", null, "Wayan"),
   kyc(19, "Kadek", null, "Kadek"),
   // No KYC for VAN 20.
-  { _id: vanId(21), nameDetails: null },
+  { _id: vanId(21), nameDetails: null, ...kycExtra(21) },
   kyc(22, null, null, "Made"),
-  { _id: String(vanId(23)), nameDetails: { firstName: "Ketut", middleName: null, lastName: "Ketut" } },
+  { ...kyc(23, "Ketut", null, "Ketut"), _id: String(vanId(23)) },
 ];
 
 export const transactions = [
