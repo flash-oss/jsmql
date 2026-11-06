@@ -21,7 +21,7 @@ const SPELLINGS: Readonly<Record<SlotForm, readonly [string, string | null]>> = 
   propertyIndex: ["0", "x => x[0]"],
   matchesObject: ["{ active: true }", "x => x.active === true"],
   matchesPropertyPair: ['["active", true]', "x => x.active === true"],
-  bareCallable: ["Number", "x => Number(x)"],
+  bareCallable: ["Number.isInteger", "x => Number.isInteger(x)"],
   omitted: ["", null],
 };
 const EVERY_FORM = Object.keys(SPELLINGS) as SlotForm[];

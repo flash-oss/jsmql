@@ -28,7 +28,7 @@ describe("HR6 — JSMQL refuses raw MQL as an operand", () => {
     ["[...$ifNull($.a, [])]", refused("$ifNull(…)", "an operand of '...'")],
     ["$.items.concat($ifNull($.extra, []))", refused("$ifNull(…)", "an operand of '.concat()'")],
     ["[$.a, $abs($.b)].max()", refused("$abs(…)", "the receiver of '.max()'")],
-    ["new Date($toLong($.t))", refused("$toLong(…)", "an operand of 'new Date()'")],
+    ["Date($toLong($.t))", refused("$toLong(…)", "an operand of 'Date()'")],
     ["$.code === $literal('$x')", refused("$literal(…)", "an operand of '==='")],
   ];
   it.each(CASES)("%s", (src, message) => {

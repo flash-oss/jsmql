@@ -10,6 +10,7 @@
 import { bsonConstant, bsonNullary, regexValue } from "../../bson.ts";
 import { constantOf, settled } from "../passes/evaluate.ts";
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth, Type } from "../../registry/vocabulary.ts";
+import { queryOrMissing, queryOwnValue } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
 import { orderBySpec, sortSpecOf, streamSortAsk, type SortAsk } from "./sort-spec.ts";
 import { constantIn, literalIn, pathOfIn } from "./filter.ts";
@@ -42,10 +43,11 @@ import {
   unreadableField,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { isPresent, kindOf, typeOf } from "./prove.ts";
+import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, cannotBe, flattenOnce, isNothing, isOnly, maybeAbsent, of, unreadableAt } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
+import { truthOf } from "./mode.ts";
 import { indexedPairs, mongoRegexOptions, sizeOf } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
@@ -68,11 +70,7 @@ function readableSort<A extends SortAsk>(ask: A, t: Type, holder: string, pos: n
 }
 
 /** The two readings of an expression, supplied by lower.ts. */
-export type Reader = {
-  value: (node: Expr, env: Env) => unknown;
-  truth: (node: Expr, env: Env) => Truth;
-  boolean: (node: Expr, env: Env) => Truth;
-};
+export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: Expr, env: Env) => Truth };
 
 /** The Env a child at property `key` of `node` is lowered under — phase 4's answer, applied. */
 export const childEnv = (env: Env, node: object, key: string): Env => {
@@ -356,7 +354,7 @@ export function exprInputs(
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
-    boolean: (e) => read.boolean(e, argEnv),
+    elementTruth: (ref) => truthOf(ref, elementOfRecv()),
     iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key"), recvType),
     predicate: (cb) =>
       callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate"), recvType) as {
@@ -563,6 +561,12 @@ export function filterInputs(
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name, cb.pos);
       return q;
+    },
+    orMissing: (path, test) => {
+      // After a `?.` the call gives null. A receiver that is there reads as itself.
+      const optionalCall = (node as { optional?: boolean }).optional === true;
+      if (optionalCall || recv === null || isPresent(recv, env.at({ at: "value" }))) return queryOwnValue(path, test);
+      return chainHasOptional(recv) ? null : queryOrMissing(path, test);
     },
   };
 }

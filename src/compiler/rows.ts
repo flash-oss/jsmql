@@ -19,7 +19,7 @@ import type {
   Kind,
   SlotForm,
 } from "../registry/vocabulary.ts";
-import { FIELD_FAMILY_TYPES, isSlotLayout } from "../registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES, isDate, isSlotLayout } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
 /** Every row, by name. Null-prototype: `toString` and `valueOf` are real rows. */
@@ -265,7 +265,13 @@ export function elementsOf(name: string): "scalar" | Kind | undefined {
   return (row(name) as { elements?: "scalar" | Kind } | undefined)?.elements;
 }
 
-/** The kind of ONE element of the array a name returns, where its own lowering fixes it. */
+/**
+ * How many arguments a name takes in value position, on a given receiver family.
+ *
+ * The family is not optional in practice: a row with `perFamily` states one count
+ * per family. If this function read only the first branch, it would refuse a call
+ * that the receiver's own family accepts.
+ */
 export function argCountOf(name: string, family?: Family): ArgCount | undefined {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
   if (cell === null || typeof cell !== "object") return undefined;
@@ -277,11 +283,11 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
     return undefined;
   }
   // A cell that dispatches on the ARGUMENT shape accepts what any of its rules
-  // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
+  // accepts. Read as one rule, so `Date(a, b, c, d, e, f, g, h)` is refused
   // by the count no rule states rather than accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
-  // The two refusal keys (`constant`, `otherwise`) state no count: a constant
-  // call is counted by the rule for its class, and the leftover by none.
+  // The refusal keys state no count: a constant call is counted by the rule for its
+  // class, and the leftover by none.
   const byArgs = (cell as { byArgs?: Readonly<Record<string, { args?: ArgCount; unsupported?: string }>> }).byArgs;
   if (byArgs === undefined) return undefined;
   const allowed = new Set<number>();
@@ -339,7 +345,6 @@ type EmitRow = {
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | "object";
   family?: Family;
   spreadAlternative?: string;
-  newKeyword?: "required" | "optional" | "forbidden";
   provides?: unknown;
   token?: string;
 };
@@ -544,18 +549,26 @@ export function productionPassesNullOf(key: string): boolean {
   return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
-/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0, `.toString()` as "")? */
-export function readsNullReceiverOf(name: string): boolean {
-  return (row(name) as { nullReceiverAs?: 0 | "" } | undefined)?.nullReceiverAs !== undefined;
+/** The safe value a row states for a null or missing receiver (`.log()` reads 1, `.toString()` reads ""). */
+function nullReceiverAsOf(name: string): 0 | 1 | "" | false | Date | undefined {
+  return (row(name) as { nullReceiverAs?: 0 | 1 | "" | false | Date } | undefined)?.nullReceiverAs;
 }
 
 /**
- * HR5: the EMPTY value that an array or object method runs on when its receiver is
- * null or missing — `[]` for an array, `{}` for an object — or null for a method
- * of another family. `family` is the receiver's proven family, or null; then the row's own
- * field families decide, and they must agree on one empty value.
+ * HR5: under a dot, a method runs on the SAFE value of its kind when its receiver is
+ * null or missing: `[]` for an array, `{}` for an object, `""` for a string, `0` for a
+ * number, and the epoch for a date. A family with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
+ * `family` is the receiver's proven family, or null; then the row's own field families
+ * decide, and they must agree on one safe value.
  */
-export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | null {
+export function emptyValueOf(
+  name: string,
+  family: string | null,
+): [] | Record<string, never> | "" | 0 | 1 | false | Date | null {
+  const stated = nullReceiverAsOf(name);
+  // a fresh date each time: an emitted document never shares the row's own value
+  if (isDate(stated)) return new Date(stated.getTime());
+  if (stated !== undefined) return stated;
   const own = families(row(name)?.on);
   const fams: readonly string[] =
     family !== null
@@ -566,6 +579,9 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
   if (fams.length === 0) return null;
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
+  if (fams.every((f) => f === "string")) return "";
+  if (fams.every((f) => f === "number")) return 0;
+  if (fams.every((f) => f === "date")) return new Date(0);
   return null;
 }
 
@@ -682,28 +698,24 @@ export function onlyOf(name: string): readonly string[] {
   return (row(name) as { only?: readonly string[] } | undefined)?.only ?? [];
 }
 
-/** Whether `new` is required, optional or forbidden before this global, or undefined for a non-global. */
-export function newKeywordOf(name: string): "required" | "optional" | "forbidden" | undefined {
-  return emitRow(name)?.newKeyword;
-}
-
 /** Does the row for `name` exist, of kind `root` or `global` — a name reached without a receiver? */
 /**
- * Every value-constructing global, with the `new` rule and the doc its row states —
- * `ObjectId`, `Decimal128`, `MinKey`, `Date`, and their mongosh spellings.
+ * Every value-constructing global, with the doc its row states — `ObjectId`,
+ * `Decimal128`, `MinKey`, `Date`, and their mongosh spellings: a global row that
+ * lists the value position.
  *
  * Read for the ambient `declare global` block (scripts/generate-globals.mjs), so a
  * tenth constructor is one ROW and no generator edit.
  */
-export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
-  const out: { name: string; newKeyword: string; doc: string }[] = [];
+export function constructorGlobals(): readonly { name: string; doc: string }[] {
+  const out: { name: string; doc: string }[] = [];
   for (const [name, r] of Object.entries(ROWS) as [
     string,
-    { kind?: string; newKeyword?: string; doc?: string; where?: readonly string[] },
+    { kind?: string; doc?: string; where?: readonly string[] },
   ][]) {
     // A row that lists no position is a refusal (`RegExp`), not a constructor a program uses.
-    if (r?.kind !== "global" || r.newKeyword !== "optional" || (r.where?.length ?? 0) === 0) continue;
-    out.push({ name, newKeyword: r.newKeyword, doc: r.doc ?? "" });
+    if (r?.kind !== "global" || !(r.where ?? []).includes("value")) continue;
+    out.push({ name, doc: r.doc ?? "" });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -858,7 +870,7 @@ export function streamReceiverNames(): string[] {
 }
 
 /**
- * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`.
+ * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `Date(…)`.
  * A row that lists no position (`Math`, `Array`) is a namespace or a refusal, so no
  * suggestion names it.
  */
@@ -868,12 +880,9 @@ export function bareCallableNames(): string[] {
   );
 }
 
-/** Every global that `new` builds: `new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. */
+/** Every global that builds a value: `Date(…)`, `ObjectId(…)`, `Decimal128(…)`. */
 export function constructibleNames(): string[] {
-  return bareCallableNames().filter((n) => {
-    const k = newKeywordOf(n);
-    return k === "required" || k === "optional";
-  });
+  return bareCallableNames().filter((n) => isGlobalName(n) && lists(n, "value"));
 }
 
 /** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */

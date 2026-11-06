@@ -84,6 +84,34 @@ export function queryOwnValue(path: string, test: Readonly<Record<string, unknow
   if (path === "") return test as QueryDoc;
   return { [path]: shorthand(test) };
 }
+
+/**
+ * The own value at `path` is one of `values`: the native `$in`. A membership test
+ * compares as `===` does, so a missing field is not null. `$in` reads a null entry
+ * loosely, as `{ f: null }` does, so `$exists` keeps a missing field out. An element
+ * of `$elemMatch` (the path "") is never missing.
+ * MEASURED: `{ s: { $in: [null], $exists: true } }` selects `{ s: null }`, not `{}`.
+ */
+export function queryAmong(path: string, values: readonly unknown[]): QueryDoc {
+  return path !== "" && values.includes(null)
+    ? queryOwnValue(path, { $in: values, $exists: true })
+    : queryOwnValue(path, { $in: values });
+}
+
+/**
+ * `test` at `path`, or the field missing or null. A regex test and the null test share
+ * one `$in`, which takes the regex in its plain form: `{ s: { $in: [/^$/, null] } }`. An
+ * `$elemMatch` body over a value can contain this clause too. Any other test takes an
+ * `$or` beside the null test. An `$elemMatch` body over a value cannot contain an `$or`,
+ * so the answer is null for the path "".
+ * MEASURED: the server refuses `{ n: { $elemMatch: { $or: [{ $gte: 0 }, { $eq: null }] } } }`.
+ */
+export function queryOrMissing(path: string, test: Readonly<Record<string, unknown>>): QueryDoc | null {
+  const keys = Object.keys(test);
+  if (keys.length === 1 && keys[0] === "$regex") return queryOwnValue(path, { $in: [test.$regex, null] });
+  if (path === "") return null;
+  return { $or: [queryOwnValue(path, test), { [path]: null }] };
+}
 export type Stage = Record<string, unknown>;
 /**
  * The categories that an operator row states. This is a value, not a union that
@@ -934,6 +962,14 @@ export type FilterIn = {
   literalOf: (e: Expr) => { value: unknown } | null;
   /** A predicate arrow of `$elemMatch`, as the query document over one element, or the refusal when the body has no query form. */
   element: (cb: Expr) => QueryDoc;
+  /**
+   * The clause for a test that is true for the safe value of the receiver (HR5). Under a
+   * dot, a missing or null receiver reads as that value, so the clause also matches a
+   * missing or null field (`queryOrMissing`). After a `?.` the call gives null, so the
+   * clause has no null test. A `?.` earlier in the path gives null only where its own
+   * link is missing. The answer is then null, and the cell takes the expression road.
+   */
+  orMissing: (path: string, test: Readonly<Record<string, unknown>>) => QueryDoc | null;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1051,10 +1087,11 @@ export type ExprIn = {
   /** Lower an expression as a CONDITION, with the JavaScript truth rules. See `Truth`. */
   truth: (e: Expr) => Truth;
   /**
-   * The JavaScript boolean of an expression as a VALUE. `truth` reads a condition, and a
-   * condition takes a number as it stands. A value must be `true` or `false`: `Boolean(1)`.
+   * JavaScript's truthiness of one element of the receiver, read at `ref`. The proof of
+   * the element leaves out each test that the element cannot fail: an element that is an
+   * object or null takes the null test alone.
    */
-  boolean: (e: Expr) => Truth;
+  elementTruth: (ref: string) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`. The parameter binds as `$$as` (`ref`). */
   iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
   /**
@@ -1383,11 +1420,11 @@ type ByArgs<In, Out> = {
    * value with no source spelling (a Date, an ObjectId, which the evaluator
    * settles at the call), or a value that the server refuses (`ObjectId("nothex")`,
    * which becomes a refusal in the terms of the developer), or one whose TYPE the
-   * server decides (`Number("3")` is a double, and a folded `3` is an int, so a
-   * rule sends it to the server to convert).
+   * server decides, which a rule sends to the server to convert.
    */
   constant?: Rule<In, Out> | Refusal;
-  dynamic?: Rule<In, Out>;
+  /** A value that the document holds: a rule, or a refusal that names the conversion method. */
+  dynamic?: Rule<In, Out> | Refusal;
   /** Every class that no key above claims. The row states it, so what stays is a decision and not a hole. */
   otherwise: Refusal;
 };

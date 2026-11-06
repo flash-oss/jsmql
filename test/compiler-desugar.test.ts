@@ -315,15 +315,15 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
     expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");
   });
 
-  it("applies a bare callable global, and leaves a name that needs `new` or a binding alone", () => {
+  it("applies a bare callable global, and leaves a binding alone", () => {
     // Which slots take a bare callable is the row's decision (`iterateeSlots`); the
     // rewrite only knows a callable global from everything else.
     expect(arg("$.items.map(Number)")).toBe("Lambda");
     expect(arg("$.items.map(Math.floor)")).toBe("Lambda");
     expect(arg("$.items.map(Date)")).toBe("Lambda");
     expect(arg("$.items.map(Decimal128)")).toBe("Lambda");
-    // `Set` still demands `new`, so it is not callable bare.
-    expect(arg("$.items.map(Set)")).toBe("Ident");
+    // `Set` is a global too; its row refuses the call that the rewrite makes.
+    expect(arg("$.items.map(Set)")).toBe("Lambda");
     expect(arg("$.items.map(f)")).toBe("Ident");
   });
 

@@ -1,6 +1,7 @@
 // The compiler's entry: source in, MQL out, through the five phases.
 //
 //   LEX + PARSE   parse/parser.ts     source → tree
+//   CHECK         passes/no-new.ts    HR8: no `new`;  passes/raw-mql.ts  HR6
 //   FOLD          passes/fold.ts      constants settled
 //   DESUGAR       passes/desugar.ts   sugar rewritten to the forms the rows know (phase 4 runs inside)
 //   EMIT          emit/lower.ts       tree → document, every name checked against its row first
@@ -19,11 +20,13 @@ import { lowerProgram } from "./emit/statement.ts";
 import { lowerUpdate } from "./emit/update.ts";
 import { shapeOf } from "./passes/shape.ts";
 import { rawMqlBoundary } from "./passes/raw-mql.ts";
+import { refuseNew } from "./passes/no-new.ts";
 import { noStages, notAPipeline } from "./emit/errors.ts";
 
 /** A bare aggregation expression: `$.qty * $.price` → `{ $multiply: ["$qty", "$price"] }`. */
 export function expr(source: string): unknown {
   const parsed = parseExpression(source);
+  refuseNew(parsed);
   rawMqlBoundary(parsed, "other");
   const program = desugar(fold(parsed), VALUE);
   return lowerValue(program as Parameters<typeof lowerValue>[0], Env.root(program, "value"));
@@ -35,6 +38,7 @@ export function expr(source: string): unknown {
  */
 export function filter(source: string): Record<string, unknown> {
   const parsed = parseExpression(source);
+  refuseNew(parsed);
   rawMqlBoundary(parsed, "filter");
   const program = desugar(fold(parsed), FILTER);
   return lowerFilter(program as Parameters<typeof lowerFilter>[0], Env.root(program, "filter"));
@@ -52,6 +56,7 @@ export function pipeline(source: string): unknown[] {
   // array — `[1,2].slice(2,2)` settles to `[]` — is a value, and `[]` as written is
   // the empty pipeline.
   if (shapeOf(parsed) !== "pipeline") throw notAPipeline((parsed as { pos: number }).pos);
+  refuseNew(parsed);
   rawMqlBoundary(parsed, "other");
   const program = desugar(fold(parsed), STATEMENT);
   const stages = lowerProgram(program, Env.root(program, "statement"));
@@ -62,6 +67,7 @@ export function pipeline(source: string): unknown[] {
 /** The object form of an update — `updateOne(filter, { $set: { … }, $inc: { … } })` — from writes and update operators. */
 export function update(source: string): Record<string, unknown> {
   const parsed = parse(source);
+  refuseNew(parsed);
   rawMqlBoundary(parsed, "other");
   const program = desugar(fold(parsed), UPDATE_DOC);
   return lowerUpdate(program, Env.root(program, "updateDoc"));

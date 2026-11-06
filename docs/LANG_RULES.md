@@ -70,7 +70,7 @@ $trim($.name, " ", "x")         // → { $trim: ["$name", " ", "x"] }
 
 ```js
 $.s.trim().map(x => x)          // ✗ a string has no .map() method
-new Date("not-a-date")          // ✗ a date constant takes an ISO 8601 string or a millisecond count
+Date("not-a-date")              // ✗ a date constant takes an ISO 8601 string or a millisecond count
 $$$.archive = $$; $.a = 1;      // ✗ the write to archive must stand last
 $divide(10)                     // → { $divide: 10 }   // one operand: the server refuses it
 jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }
@@ -107,19 +107,25 @@ $.t = $$$.orders.$set({ owner: $.tag });    // → let: { jsmql_f0_tag: "$tag" }
 $.t = $$$.orders.$set({ owner: "$tag" });   // → $set: { owner: "$tag" }                                            ← the document from orders
 ```
 
-**HR5 — A dot runs the method on an empty array or object. A `?.` gives `null`.**
+**HR5 — A dot gives a safe value. A `?.` gives `null`.**
 
 A method is a call after a dot, for example `.uniq()`. The value before the dot is the receiver. Each method works on one kind of value, and its name tells which kind. For example, `.length()` works on a string, `.size()` works on an array, and `.pick()` works on an object.
 
-The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`.
+The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`. Under a dot, the method gives a safe value wherever one exists, as lodash does, for every kind of receiver.
 
-**You wrote a dot.** The compiler replaces a missing or `null` receiver with an empty array or object, to match the kind of the method: `[]` for an array method, and `{}` for an object method. The method then runs on that empty array or object. The answer is what the MongoDB operator gives for it. So the answer always has the type that you expect, and it is never `null`.
+**You wrote a dot.** The compiler replaces a missing or `null` receiver with the safe value of the method's kind. The method then runs on that value, and the answer is what the MongoDB operator gives for it. So the answer has the type that you expect:
 
-A string method is the exception. On a missing or `null` string, a string method gives `null`. The reason is that JavaScript throws an error here, and MongoDB has no error to throw inside an expression.
+| Kind of the method | The safe value |
+|---|---|
+| array | `[]` |
+| object | `{}` |
+| string | `""` |
+| number | `0`, or `1` where the operator refuses `0`, for example `.log()` |
+| date | the epoch, `Date(0)` |
 
-A number method gives the safe value, as lodash does. On a missing or `null` number, a dot gives the safe value of the method where one exists. For example, `.clamp()` gives its lower bound. A method with no safe value gives `null`. Most arithmetic methods, for example `.round()`, have no safe value.
+A method that works on every kind, for example `.toString()`, reads the safe value of the kind that it answers. A kind with no safe value, for example an ObjectId, gives `null`.
 
-`.toString()` takes a value of any kind, and it also gives the safe value of lodash. On a missing or `null` value, a dot gives `""`, as `_.toString()` does.
+The safe value of a number follows its operator, as lodash's `_.divide()` reads a missing operand as `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
 
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
@@ -136,7 +142,8 @@ $.a.uniq()          // → the same MQL as above                          → ["
 $.a?.size()         // → the same MQL as above                          → 2
 
 // The document is {}. It has no field `s`.
-$.s.length()        // → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: "$s" }] }   → null
+$.s.length()        // → { $strLenCP: { $ifNull: ["$s", ""] } }       → 0
+$.s?.length()       // → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: "$s" }] }   → null
 
 // The document is { a: { c: 1 } }. The field `a` is there, but `a` has no field `b`.
 $.a?.b.uniq()       // → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: { $ifNull: ["$a.b", []] } }] }   → []
@@ -145,13 +152,18 @@ $.a?.b.uniq()       // → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: 
 $.a?.b.uniq()       // → the same MQL as above                          → null
 
 // The document is {}. It has no field `n`.
-$.n.clamp(0, 9)     // → { $min: [{ $max: ["$n", 0] }, 9] }             → 0
-$.n.round(2)        // → { $round: ["$n", 2] }                          → null
+$.n.round(2)        // → { $round: [{ $ifNull: ["$n", 0] }, 2] }         → 0
+$.n.log()           // → { $ln: { $ifNull: ["$n", 1] } }                 → 0
+$.n?.round(2)       // → { $round: ["$n", 2] }                          → null: $round gives null for null
 $.n.toString()      // → { $toString: { $ifNull: ["$n", ""] } }         → ""
 $.n?.toString()     // → { $toString: "$n" }                            → null: $toString gives null for null
+
+// The document is {}. It has no field `t`.
+$.t.getFullYear()   // → { $year: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }   → 1970
+$.t?.getFullYear()  // → { $year: "$t" }                               → null: $year gives null for null
 ```
 
-When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.
+When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the safe value. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.
 
 Two more facts belong to this rule:
 
@@ -159,7 +171,7 @@ Two more facts belong to this rule:
 
    ```js
    $.tags.indexOf("vip")          // → { $indexOfArray: [{ $ifNull: ["$tags", []] }, "vip"] }
-   $.title.indexOfSubstring(":")  // → { $indexOfCP: ["$title", ":"] }
+   $.title.indexOfSubstring(":")  // → { $indexOfCP: [{ $ifNull: ["$title", ""] }, ":"] }
    $.title.trim().indexOf(":")    // ✗ the receiver is a string; write .indexOfSubstring(":")
    ```
 2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
@@ -181,7 +193,7 @@ Raw MQL cannot be an operand of one of them, at any depth. An object or an array
 ```js
 $ifNull($.a, 0) && $.b > 1          // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be an operand of '&&'.
 $ifNull($.tags, []).map(t => t)     // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be the receiver of '.map()'.
-[$.a, $abs($.b)].max()              // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be the receiver of '.max()'.
+Date.UTC(2020, $abs($.b))           // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of 'Date.UTC()'.
 $.items.concat([$abs($.x)])         // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of '.concat()'.
 $.code === $literal("$x")           // ✗ '$literal(…)' is raw MQL, and raw MQL cannot be an operand of '==='.
 { status: "A" } && $.qty > 5        // ✗ in a Filter: '{ status: … }' is a query document (raw MQL), and raw MQL cannot be an operand of '&&'.
@@ -237,6 +249,19 @@ $.a.slice(null)              // ✗ the start of .slice() takes an integer, and 
 $slice($.a, null)            // → { $slice: ["$a", null] }   as written, by HR2
 $.a.has(null)                // → { $in: [null, { $ifNull: ["$a", []] }] }   null is the value to find
 ```
+
+**HR8 — JSMQL has no `new` keyword.**
+
+You write each constructor as a call: a date is `Date(…)`, and a BSON value is `ObjectId(…)`, `Decimal128(…)` and so on. The compiler refuses every `new X(…)` at the position of `new`. The error names `X(…)` when JSMQL has that call. A name that JSMQL refuses anyway, for example `Set`, keeps its own error, because that error names the JSMQL way. JavaScript's own `Date(…)` returns a string. JSMQL gives the call the date meaning (SR2).
+
+```js
+Date("2026-01-01")           // → a date constant
+Date(2026, 0, 15)            // → the calendar form: 15 January 2026, in UTC
+Date()                       // → "$$NOW"   the date now
+new Date("2026-01-01")       // ✗ no new in JSMQL: write Date("2026-01-01")
+```
+
+A value that your program passes in is JavaScript, not JSMQL. So a `jsmql.compile` parameter or a template `${new Date()}` value can hold a date that `new` made.
 
 ## SOFT RULES
 

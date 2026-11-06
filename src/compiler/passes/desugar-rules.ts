@@ -15,7 +15,6 @@ import {
   isGlobalName,
   iterateeSlotsOf,
   namespaceNames,
-  newKeywordOf,
   mutatorFormOf,
   packsSpreadOf,
   picksOneOf,
@@ -412,7 +411,7 @@ function writtenKey(entry: object): string | null {
  * `.filter(Boolean)`, `.map(ObjectId)` — and means the arrow
  * that applies it to the element. Which slots accept it is the row's decision
  * (its `iterateeSlots`), never this rewrite's. The rewrite only tells a global
- * apart from a binding, and a name that needs `new` is not callable bare.
+ * apart from a binding.
  */
 function asArrow(
   arg: object | undefined,
@@ -526,8 +525,7 @@ const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLit
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
   const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
-    if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
-      return undefined;
+    if (!isGlobalName(callee.name) || !isCallable(callee.name)) return undefined;
     return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
   }
   if (callee.type === "MemberAccess" && isNode(callee.object) && callee.object.type === "Ident") {

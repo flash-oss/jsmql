@@ -19,7 +19,7 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a > 1")).toEqual({ a: { $gt: 1 } });
     expect(filter("1 < $.a")).toEqual({ a: { $gt: 1 } });
     expect(filter("$.a.b.c > 5")).toEqual({ "a.b.c": { $gt: 5 } });
-    expect(filter('$.d > new Date("2024-01-01")')).toEqual({ d: { $gt: new Date("2024-01-01") } });
+    expect(filter('$.d > Date("2024-01-01")')).toEqual({ d: { $gt: new Date("2024-01-01") } });
     expect(String((filter("$._id === 0x507f1f77bcf86cd799439011") as { _id: unknown })._id)).toBe(
       "507f1f77bcf86cd799439011",
     );
@@ -52,7 +52,7 @@ describe("compiler/emit/filter — comparisons", () => {
   it("falls back to $expr where the query language has no form", () => {
     expect(filter("$.a > $.b")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
-    expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
+    expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: { $ifNull: ["$a", 0] } }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
@@ -136,6 +136,10 @@ describe("compiler/emit/filter — && and ||", () => {
   it("folds a chain of .has on one field into $all", () => {
     expect(filter('$.tags.has("a") && $.tags.has("b")')).toEqual({ tags: { $all: ["a", "b"] } });
     expect(filter('$.tags.has("a") && $.other.has("b")')).toEqual({ tags: "a", other: "b" });
+    // A null needle beside another needle stays in the list: the other needle excludes a missing field.
+    expect(filter('$.tags.has(null) && $.tags.has("a")')).toEqual({ tags: { $all: [null, "a"] } });
+    // A list of null needles alone matches a missing field, so each leaf keeps its own clause.
+    expect(filter("$.tags.has(null) && $.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
     // A substring test is a regex, and two regexes on one path stay two clauses.
     expect(filter('$.s.includes("a") && $.s.includes("b")')).toEqual({
       $and: [{ s: { $regex: /a/ } }, { s: { $regex: /b/ } }],
@@ -261,6 +265,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     // `.includes` is the substring test of a string, and the query spelling for it is an
     // escaped `$regex`.
     expect(filter('$.tags.has("x")')).toEqual({ tags: "x" });
+    // Under HR5 a dot reads a missing array as [], which holds no null. `{ tags: null }` matches a missing field.
+    expect(filter("$.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
     expect(filter('["a", "b"].has($.s)')).toEqual({ s: { $in: ["a", "b"] } });
     expect(filter('$.s.includes("x")')).toEqual({ s: { $regex: /x/ } });
     expect(filter('$.s.includes("a.b")')).toEqual({ s: { $regex: /a\.b/ } });
@@ -283,24 +289,75 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
+  it("keeps $and, $or and $nor over the fields of an element inside $elemMatch", () => {
+    expect(filter("$.items.some(i => i.q > 2 || i.r === 1)")).toEqual({
+      items: { $elemMatch: { $or: [{ q: { $gt: 2 } }, { r: 1 }] } },
+    });
+    expect(filter("$.items.some(i => i.n.inRange(10))")).toEqual({
+      items: { $elemMatch: { $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] } },
+    });
+    expect(filter("$.items.some(i => !(i.q === 1))")).toEqual({ items: { $elemMatch: { $nor: [{ q: 1 }] } } });
+    // The server refuses an `$or` over tests of the element itself, so this body takes the expression road.
+    expect(filter('$.tags.some(t => t === "a" || t === "b")')).toEqual({
+      $expr: {
+        $anyElementTrue: {
+          $map: {
+            input: { $ifNull: ["$tags", []] },
+            as: "t",
+            in: { $or: [{ $eq: ["$$t", "a"] }, { $eq: ["$$t", "b"] }] },
+          },
+        },
+      },
+    });
+  });
+
+  it('matches a missing or null string where the test is true for the safe value "" (HR5)', () => {
+    // A dot reads a missing string as "". A query clause never matches a missing field.
+    // So a test that is true for "" takes the null test beside it, in one `$in`.
+    expect(filter('$.s.includes("")')).toEqual({ s: { $in: [/(?:)/, null] } });
+    expect(filter('$.s.startsWith("")')).toEqual({ s: { $in: [/^/, null] } });
+    expect(filter('$.s.endsWith("")')).toEqual({ s: { $in: [/\z/, null] } });
+    expect(filter("$.s.match(/^$/)")).toEqual({ s: { $in: [/^$/, null] } });
+    // The server matches a PCRE anchor on "". JavaScript reads the anchor as a letter.
+    expect(filter("$.s.match(/\\A\\z/)")).toEqual({ s: { $in: [/\A\z/, null] } });
+    // a test that fails on "" keeps its plain clause
+    expect(filter("$.s.match(/a/)")).toEqual({ s: { $regex: /a/ } });
+    // an `$elemMatch` body over a value can contain the `$in` too
+    expect(filter('$.tags.some(t => t.includes(""))')).toEqual({ tags: { $elemMatch: { $in: [/(?:)/, null] } } });
+    // After a `?.` the call gives null. No test is true for null.
+    expect(filter("$.s?.match(/^$/)")).toEqual({ s: { $regex: /^$/ } });
+    // A `?.` earlier in the path gives null only where `a` is missing. The expression road decides.
+    expect(filter('$.a?.b.includes("")')).toEqual({
+      $expr: { $cond: [{ $lte: ["$a", null] }, null, { $gte: [{ $indexOfCP: [{ $ifNull: ["$a.b", ""] }, ""] }, 0] }] },
+    });
+  });
+
   it("lowers .inRange() on a field against constant bounds to an indexable range on that field", () => {
     expect(filter("$.age.inRange(18, 65)")).toEqual({ age: { $gte: 18, $lt: 65 } });
     // the bounds order at COMPILE time, so the swapped spelling is the same clause
     expect(filter("$.age.inRange(65, 18)")).toEqual({ age: { $gte: 18, $lt: 65 } });
-    expect(filter("$.n.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
+    // HR5: a dot reads a missing number as 0. 0 is in [0, 10), so the clause also matches a missing `n`.
+    expect(filter("$.n.inRange(10)")).toEqual({ $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] });
+    expect(filter("$.n.inRange(-1, 1)")).toEqual({ $or: [{ n: { $gte: -1, $lt: 1 } }, { n: null }] });
+    // After a `?.` the call gives null. A range without 0 is never true for a missing `n`.
+    expect(filter("$.n?.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
+    expect(filter("$.n.inRange(-10, 0)")).toEqual({ n: { $gte: -10, $lt: 0 } });
     expect(filter("$.a.b.inRange(1, 2)")).toEqual({ "a.b": { $gte: 1, $lt: 2 } });
     // a date field takes the same clause
-    expect(filter('$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
+    expect(filter('$.t.inRange(Date("2024-01-01"), Date("2025-01-01"))')).toEqual({
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
     // a bound read at run time cannot order here, and keeps the $min/$max expression
+    const n = { $ifNull: ["$n", 0] };
     expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
-      $expr: { $and: [{ $gte: ["$n", { $min: ["$lo", "$hi"] }] }, { $lt: ["$n", { $max: ["$lo", "$hi"] }] }] },
+      $expr: { $and: [{ $gte: [n, { $min: ["$lo", "$hi"] }] }, { $lt: [n, { $max: ["$lo", "$hi"] }] }] },
     });
-    // a number against a date does not compare, so the pair keeps the expression form too
+    // a number against a date does not compare, so the pair keeps the expression form too.
+    // A date bound reads a missing receiver as the epoch.
     const d = new Date("2024-01-01T00:00:00.000Z");
-    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
-      $expr: { $and: [{ $gte: ["$t", { $min: [0, d] }] }, { $lt: ["$t", { $max: [0, d] }] }] },
+    const t = { $ifNull: ["$t", new Date(0)] };
+    expect(filter('$.t.inRange(Date("2024-01-01"))')).toEqual({
+      $expr: { $and: [{ $gte: [t, { $min: [0, d] }] }, { $lt: [t, { $max: [0, d] }] }] },
     });
   });
 
@@ -332,7 +389,7 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
     // a field against a field has no query form: the value cell's shape under `$expr`
     expect(filter("$.s.startsWith($.prefix)")).toEqual({
-      $expr: { $cond: [{ $lte: ["$s", null] }, null, { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] }] },
+      $expr: { $eq: [{ $indexOfCP: [{ $ifNull: ["$s", ""] }, "$prefix"] }, 0] },
     });
   });
 

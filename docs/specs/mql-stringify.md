@@ -54,8 +54,9 @@ method calls a UUID an ObjectId, and prints text that throws in both runtimes.
 
 The printer picks a few spellings by hand, rather than by a fixed rule:
 
-- **`Long.fromString("…")`**, not `new Long(low, high)`. A reader can check the
-  string value, but not the two-word constructor.
+- **`new Long("…")`**, with the value as a string. A number argument is the low
+  32 bits of `new Long(low, high)`, so a value past 2^31 would wrap. MEASURED: bson
+  6, bson 7 and mongosh 2.13 read the string as the whole value.
 - **`new UUID("…")`** for a Binary of subtype 4 with 16 bytes, which IS a UUID
   and reads as one. Every other Binary is `Binary.createFromBase64(base64,
   subtype)`. The server stores subtype 4 at any length, but `toUUID()` throws

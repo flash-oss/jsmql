@@ -306,6 +306,57 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       { $set: { t: "$__jsmql.tmp.0.total" } },
       { $unset: "__jsmql" },
     ]);
+    // a method after a field read is a value too, never a link of the body
+    expect(
+      compiled("$.s = $$$.orders.find(o => o.userId === $._id).status.toUpperCase();", [
+        { _id: 1, s: "PAID" },
+        { _id: 2, s: "PAID" },
+        // HR5: under a dot, a string method reads a missing string as ""
+        { _id: 3, s: "" },
+        { _id: 4, s: "" },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { s: { $toUpper: { $ifNull: ["$__jsmql.tmp.0.status", ""] } } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(
+      compiled("$.n = $$$.orders.find(o => o.userId === $._id).productIds.size();", [
+        { _id: 1, n: 2 },
+        { _id: 2, n: 2 },
+        { _id: 3, n: 0 },
+        { _id: 4, n: 0 },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0.productIds", []] } } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(
+      compiled("$.t = $$$.orders.filter(o => o.userId === $._id)[1].tag.toUpperCase();", [
+        { _id: 1, t: "Y" },
+        { _id: 2, t: "" },
+        { _id: 3, t: "" },
+        { _id: 4, t: "" },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
+      {
+        $set: {
+          t: {
+            $toUpper: {
+              $ifNull: [
+                { $let: { vars: { jsmqlV: { $arrayElemAt: ["$__jsmql.tmp.0", 1] } }, in: "$$jsmqlV.tag" } },
+                "",
+              ],
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
     // inside a stage body the `$lookup` is hoisted ahead of the stage
     expect(compiled("$match($$$.orders.filter(o => o.userId === $._id).size() > 1);", [{ _id: 1 }])).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },

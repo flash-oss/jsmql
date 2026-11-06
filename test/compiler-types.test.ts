@@ -32,8 +32,8 @@ describe("types — a written field carries what its value proved", () => {
 
   it("a string write, then a string method: the method's own form, guarded only while the value may be missing", () => {
     expect(jsmql("$.s = $.a.trim(); $.t = $.s.toUpperCase();")).toEqual([
-      { $set: { s: { $trim: { input: "$a" } } } },
-      { $set: { t: { $cond: [{ $lte: ["$s", null] }, null, { $toUpper: "$s" }] } } },
+      { $set: { s: { $trim: { input: { $ifNull: ["$a", ""] } } } } },
+      { $set: { t: { $toUpper: "$s" } } },
     ]);
     // A literal is there: no guard at all.
     expect(jsmql('$.s = "abc"; $.t = $.s.toUpperCase();')).toEqual([
@@ -45,8 +45,8 @@ describe("types — a written field carries what its value proved", () => {
   it("a `let` takes the type of each value it is assigned", () => {
     expect(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length();")).toEqual([
       { $set: { "__jsmql.var.x": { $add: ["$n", 1] } } },
-      { $set: { "__jsmql.var.x": { $trim: { input: "$s" } } } },
-      { $set: { len: { $cond: [{ $lte: ["$__jsmql.var.x", null] }, null, { $strLenCP: "$__jsmql.var.x" }] } } },
+      { $set: { "__jsmql.var.x": { $trim: { input: { $ifNull: ["$s", ""] } } } } },
+      { $set: { len: { $strLenCP: "$__jsmql.var.x" } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -58,10 +58,10 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a stage that replaces the document forgets every written type", () => {
-    // `v` is a present string, so `.length()` needs no null test. After the replacement
-    // `v` is unknown, so the null test is back.
+    // `v` is a present string, so `.length()` needs no `$ifNull`. After the replacement
+    // `v` is unknown, so the `$ifNull` is back.
     const src = '$.v = $.flag ? "abc" : "de"; $ = { v: $.other }; $.n = $.v.length();';
-    expect(jsmql(src)[2]).toEqual({ $set: { n: { $cond: [{ $lte: ["$v", null] }, null, { $strLenCP: "$v" }] } } });
+    expect(jsmql(src)[2]).toEqual({ $set: { n: { $strLenCP: { $ifNull: ["$v", ""] } } } });
     expect(jsmql('$.v = $.flag ? "abc" : "de"; $.n = $.v.length();')[1]).toEqual({ $set: { n: { $strLenCP: "$v" } } });
   });
 });
@@ -169,14 +169,16 @@ describe.skipIf(up === null)("types — the server agrees", () => {
         { $sort: { _id: 1 } },
       ])
       .toArray();
-    expect(out.map((d) => d.len)).toEqual([2, null]);
+    // `$.s.trim()` on a missing `s` reads `""` (HR5), so the length is 0
+    expect(out.map((d) => d.len)).toEqual([2, 0]);
   });
 });
 
 describe("types — the truthiness check keeps only the tests the value can fail", () => {
   it("a string keeps the empty-string test, and the null test while it may be missing", () => {
+    // `.trim()` under a dot reads a missing string as "" (HR5), so `s` is a string that is there
     expect(jsmql("$.s = $.a.trim(); $.t = $.s ? 1 : 2;")[1]).toEqual({
-      $set: { t: { $cond: [{ $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }, 1, 2] } },
+      $set: { t: { $cond: [{ $ne: ["$s", ""] }, 1, 2] } },
     });
     expect(jsmql('$.u = "x"; $.v = $.u ? 1 : 2;')[1]).toEqual({ $set: { v: { $cond: [{ $ne: ["$u", ""] }, 1, 2] } } });
   });
@@ -188,8 +190,8 @@ describe("types — the truthiness check keeps only the tests the value can fail
 
   it("in a filter, a bare field with a known type takes the query form", () => {
     expect(jsmql("$.b = $.n > 1; $match($.b);")[1]).toEqual({ $match: { b: true } });
-    expect(jsmql("$.s = $.a.trim(); $match($.s);")[1]).toEqual({ $match: { s: { $nin: [null, ""] } } });
-    expect(jsmql("$.n = $.a.length(); $match($.n);")[1]).toEqual({ $match: { n: { $nin: [null, 0] } } });
+    expect(jsmql("$.s = $.a.trim(); $match($.s);")[1]).toEqual({ $match: { s: { $ne: "" } } });
+    expect(jsmql("$.n = $.a.length(); $match($.n);")[1]).toEqual({ $match: { n: { $ne: 0 } } });
     expect(jsmql("$.o = { a: 1 }; $match($.o);")[1]).toEqual({ $match: {} });
     // a value that may be an array stays on the `$expr` road: the query language reads an array element by element
     expect(jsmql("$.v = $.flag ? 0 : [0]; $match($.v);")[1]).toEqual({ $match: { $expr: { $ne: ["$v", 0] } } });
@@ -282,7 +284,7 @@ describe("types — the document after a stage, read off the stage itself", () =
   it("a stage whose output no layout states yet leaves the document unknown", () => {
     // `a` was a present string; after the stage it may be missing, so the null guard is back.
     expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length();')[2]).toEqual({
-      $set: { n: { $cond: [{ $lte: ["$a", null] }, null, { $strLenCP: "$a" }] } },
+      $set: { n: { $strLenCP: { $ifNull: ["$a", ""] } } },
     });
   });
 
@@ -291,7 +293,7 @@ describe("types — the document after a stage, read off the stage itself", () =
     expect(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));')).toEqual([
       { $set: { a: "x" } },
       { $set: { a: "$label" } },
-      { $replaceWith: { n: { $cond: [{ $lte: ["$a", null] }, null, { $strLenCP: "$a" }] } } },
+      { $replaceWith: { n: { $strLenCP: { $ifNull: ["$a", ""] } } } },
     ]);
     // A link that replaced the document took the `let` field with it, as a stage statement does.
     expect(() => jsmql("let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t);")).toThrow(
@@ -409,11 +411,11 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
   });
 
   it("the chain link after a `$set` answers as JavaScript would", async () => {
-    // No fixture document has `label`, so `a` is missing after the `$set`, and `.length()` answers null.
+    // No fixture document has `label`, so `a` is missing after the `$set`, and `.length()` reads `""` and answers 0.
     const out = await coll
       .aggregate(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));') as object[])
       .toArray();
-    expect(out).toEqual([{ n: null }, { n: null }, { n: null }]);
+    expect(out).toEqual([{ n: 0 }, { n: 0 }, { n: 0 }]);
   });
 
   it("a `let` read after `.uniq()` answers as JavaScript would, and no scratch field reaches the answer", async () => {
@@ -521,14 +523,7 @@ describe.skipIf(up === null)(
 describe("types — a call's result follows its row's `returns` term", () => {
   it("`.map(f)` proves an array of what the callback returns", () => {
     expect(jsmql("$.names = $.tags.map(t => t.trim()); $.n = $.names[0].length();")[1]).toEqual({
-      $set: {
-        n: {
-          $let: {
-            vars: { jsmqlRecv: { $arrayElemAt: ["$names", 0] } },
-            in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
-          },
-        },
-      },
+      $set: { n: { $strLenCP: { $ifNull: [{ $arrayElemAt: ["$names", 0] }, ""] } } },
     });
   });
 
@@ -553,7 +548,7 @@ describe("types — a call's result follows its row's `returns` term", () => {
   it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
     expect(
       jsmql('$.items = [{ q: "s" }]; $.first = $.items.filter(i => i.q).head(); $.n = $.first.q.length();')[2],
-    ).toEqual({ $set: { n: { $cond: [{ $lte: ["$first.q", null] }, null, { $strLenCP: "$first.q" }] } } });
+    ).toEqual({ $set: { n: { $strLenCP: { $ifNull: ["$first.q", ""] } } } });
   });
 });
 
@@ -954,7 +949,7 @@ describe("types — a computed key that may be missing reads as the empty name",
   // `$getField` refuses a null name, so the guard stands wherever the proof cannot show the key.
   it("a string key guards what the proof cannot show, and takes no guard where it can", () => {
     expect(jsmql.expr("$.o[$.s.trim()]")).toEqual({
-      $getField: { field: { $ifNull: [{ $trim: { input: "$s" } }, ""] }, input: { $ifNull: ["$o", {}] } },
+      $getField: { field: { $trim: { input: { $ifNull: ["$s", ""] } } }, input: { $ifNull: ["$o", {}] } },
     });
     expect(jsmql('$.s = "a"; $.v = $.o[$.s];')[1]).toEqual({
       $set: { v: { $getField: { field: "$s", input: { $ifNull: ["$o", {}] } } } },
@@ -1045,17 +1040,8 @@ describe("types — a join carries the shape its body made", () => {
     ]);
     // A receiver the fold cannot settle: the element is a string, and index 0 may miss.
     expect(jsmql('$.a = [$.s.trim(), "yy"].take(1); $.n = $.a[0].length();')).toEqual([
-      { $set: { a: { $slice: [[{ $trim: { input: "$s" } }, "yy"], 1] } } },
-      {
-        $set: {
-          n: {
-            $let: {
-              vars: { jsmqlRecv: { $arrayElemAt: ["$a", 0] } },
-              in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
-            },
-          },
-        },
-      },
+      { $set: { a: { $slice: [[{ $trim: { input: { $ifNull: ["$s", ""] } } }, "yy"], 1] } } },
+      { $set: { n: { $strLenCP: { $ifNull: [{ $arrayElemAt: ["$a", 0] }, ""] } } } },
     ]);
   });
 
@@ -1106,10 +1092,12 @@ describe("types — a join carries the shape its body made", () => {
 
   it("a callback parameter carries the element's own presence, not the array's", () => {
     // `$map` over a null `a` never runs the body, and each part of a `.split()` is a string that is there.
-    expect(jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(ObjectId);')).toEqual([
-      { $set: { a: { $split: ["$s", ","] } } },
-      { $set: { n: { $map: { input: { $ifNull: ["$a", []] }, as: "p", in: { $strLenCP: "$$p" } } } } },
-      { $set: { ids: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toObjectId: "$$x" } } } } },
+    expect(
+      jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(x => x.toObjectId());'),
+    ).toEqual([
+      { $set: { a: { $split: [{ $ifNull: ["$s", ""] }, ","] } } },
+      { $set: { n: { $map: { input: "$a", as: "p", in: { $strLenCP: "$$p" } } } } },
+      { $set: { ids: { $map: { input: "$a", as: "x", in: { $toObjectId: "$$x" } } } } },
     ]);
   });
 

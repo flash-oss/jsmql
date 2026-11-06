@@ -9,10 +9,10 @@
 // Those neighbour-reading cases are the ones whose production row says
 // `inCode`, and this file is the file it names.
 
-import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
+import type { Expr, FieldFamily, Position, Truth, Type } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, ObjectId, regexValue } from "../../bson.ts";
+import { bigIntToLong, isPlainObject, ObjectId, regexValue } from "../../bson.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
@@ -24,7 +24,6 @@ import {
   isCallable,
   isGlobalName,
   namespaceNames,
-  newKeywordOf,
   positionalKeysOf,
   productionForNode,
   productionForOperator,
@@ -37,15 +36,14 @@ import {
   constructibleNames,
   positionsOf,
   readsNullAsEmptyOf,
-  readsNullReceiverOf,
   lowersOn,
   productionPassesNullOf,
   passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
+import { consult, everyMethodName, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots, type SlotProof } from "./check.ts";
-import { operandShapeOf, productionBuilding, productionSpelling } from "../rows.ts";
+import { neverNullAlwaysOf, operandShapeOf, productionBuilding, productionSpelling, returnsOf } from "../rows.ts";
 import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -61,7 +59,7 @@ import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
-const READ: Reader = { value: lowerValue, truth: lowerTruth, boolean: lowerBoolean };
+const READ: Reader = { value: lowerValue, truth: lowerTruth };
 
 /** The position the Env stands in, or `value` when phase 4 named a waypoint (a raw `{ $op: … }` in a value slot is a document). */
 const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value";
@@ -102,10 +100,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
-    // the second branch runs only when the test passed, so the path IS there inside it
-    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    // the second branch runs only when the test passed, so the path or the name IS there inside it
+    const named = base.type === "Ident" && env.scope.has(base.name);
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : named ? env.provingName(base.name) : env;
     // each call after the `?.` answers null for null on its own, so the test adds nothing
-    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    if ((base.type === "FieldRef" || named) && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
     const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
@@ -191,15 +190,6 @@ export function lowerValue(node: Expr, env: Env): unknown {
 
 // ── the truth reading ────────────────────────────────────────────────────────
 
-/** The JavaScript boolean of `node` as a VALUE: `Boolean(x)` and `!!x`. See `truthOf`. */
-export function lowerBoolean(node: Expr, env: Env): Truth {
-  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
-  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
-    return lowerTruth(node, env);
-  }
-  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env), true);
-}
-
 export function lowerTruth(node: Expr, env: Env): Truth {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
     const operands = chainOf(node, node.op).map((e) => lowerTruth(e, childEnv(env, node, "left")));
@@ -225,8 +215,16 @@ export function lowerTruth(node: Expr, env: Env): Truth {
 
 function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: Env): unknown {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
-  const parts: unknown[] = [];
   const inner = childEnv(env, node, "exprs");
+  // One part and no text: `$concat` of one string is that string, and null stays null. A
+  // string that may be missing takes `$toString`, which answers null for it, as `$concat` does.
+  if (node.exprs.length === 1 && node.quasis.every((q) => q === "")) {
+    const e = node.exprs[0];
+    const lowered = lowerValue(e, inner);
+    const safe = chainHasOptional(e) ? ifNull(lowered, "") : lowered;
+    return kindOf(e, inner) === "string" && (chainHasOptional(e) || isPresent(e, inner)) ? safe : { $toString: safe };
+  }
+  const parts: unknown[] = [];
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
@@ -500,8 +498,13 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  // A global read without a call — `Number` — is a callable used as a value.
-  if (isGlobalName(node.name) || NAMESPACES.has(node.name)) throw E.callableAsValue(node.name, node.pos);
+  // A global read without a call: a refused one answers with its row's refusal, which
+  // names the way out (`String`), and any other one names its call (`ObjectId`).
+  if (isGlobalName(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+    throw E.callableAsValue(node.name, node.pos);
+  }
   throw new E.UnknownIdentifierError(node.name, node.pos);
 }
 
@@ -785,6 +788,8 @@ const wroteName = (node: Expr, name: string): string =>
 
 /** Every JavaScript name, for a suggestion over a real closed set. */
 const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
+/** Every method name, for a suggestion after a dot on a value. */
+const METHOD_NAMES = everyMethodName();
 
 function methodCall(node: Extract<Expr, { type: "MethodCall" }>, env: Env): unknown {
   return dispatchOn(node, node.name, node.object, node.args, env);
@@ -844,16 +849,12 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       slotProof(childEnv(env, node, "args")),
     );
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
-    // the EMPTY value of its family — `[]` for an array method, `{}` for an object
-    // method — so the operator answers what it answers there, and the cell sees a
-    // receiver that is present. A receiver the proof shows present takes no wrap. A
-    // `?.` never reaches here with an absent receiver: the chain stopped above and
-    // proved the path. A string method keeps its receiver, and answers null itself.
+    // the SAFE value of its kind: `[]`, `{}`, `""`, or the value its row states. The
+    // operator answers on that value, so the cell sees a receiver that is present. A receiver the proof shows present takes no wrap. A `?.` never reaches
+    // here with an absent receiver: the chain stopped above and proved the path.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
-    // A row that reads a missing receiver as a value of its own takes no empty array or
-    // object: `$.s.split(",").toString()` is "" for a missing `s`, not the text of `[]`.
-    const empty = readsNullReceiverOf(name) ? null : emptyValueOf(name, family);
+    const empty = emptyValueOf(name, family);
     // Only where the receiver is a VALUE of the document: inside `$group` or a window
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.
@@ -882,14 +883,14 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     );
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
-  // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
+  // A namespace's suggestion draws from its own members; a value's from every method.
   const near =
     receiver.kind === "namespace"
       ? JS_NAMES.filter((n) => {
           const on = familiesFor(n);
           return on !== undefined && on !== "any" && on.includes(receiver.name) && lowersOn(n, receiver.name);
         })
-      : JS_NAMES;
+      : METHOD_NAMES;
   if (sel.kind === "wrongKind") operandsFirst(exprArgs, argEnv);
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format, {
     receiver: recvNode,
@@ -917,7 +918,7 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, node.pos);
       throw E.notCallable(node.pos);
     }
-    // With or without `new`, the row answers: a row that lists no position refuses both spellings.
+    // The row answers: a row that lists no position refuses the call.
     if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
     throw E.unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
@@ -925,35 +926,37 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
   throw E.notCallable(node.pos);
 }
 
+/**
+ * `new X(…)` that passes/no-new.ts leaves to this phase (HR8): a name the program
+ * binds, which needs the scope, and a row that every position refuses, whose own
+ * refusal names the way.
+ */
 function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env): unknown {
   const { callee } = node;
-  if (callee.type !== "Ident") throw E.unknownClass(null, [], node.pos);
+  if (callee.type !== "Ident") throw E.noNewKeyword(null, node.pos);
   const { name } = callee;
-  if (env.scope.has(name) && env.lookup(name, callee.pos).ref.kind === "function")
-    throw E.newOnFunction(name, node.pos);
-  if (env.scope.has(name) || !isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
-  // A row that lists no position answers with its own refusal for either spelling.
-  if (newKeywordOf(name) === "forbidden" && (positionsOf(name)?.length ?? 0) > 0) {
-    throw E.newOnFunction(name, node.pos);
+  if (env.scope.has(name)) {
+    if (env.lookup(name, callee.pos).ref.kind === "function") throw E.noNewKeyword(name, node.pos);
+    throw E.unknownClass(name, constructibleNames(), node.pos);
   }
+  if (!isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
+  if ((positionsOf(name)?.length ?? 0) > 0) throw E.noNewKeyword(name, node.pos);
   return dispatchBare(node, name, node.args, env);
 }
 
-/** A global called by name — `Number(x)`, `new Date(…)`, `assert(…)`. */
+/** A global called by name — `Number(x)`, `Date(…)`, `assert(…)`. */
 function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: Env): unknown {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
-  // A refusal names the call as the source spells it: `new Date(…)` or `Date(…)`.
-  const isNew = node.type === "NewExpression";
   if (sel.kind === "rule") {
-    const called = isNew ? `new ${name}()` : `${name}()`;
     const argEnv = childEnv(env, node, "args");
-    checkSlots(called, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
+    checkSlots(`${name}()`, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
     return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
   }
-  const spelled = isNew ? `'new ${name}()'` : name;
+  // A refusal names the call as the source spells it: `new Set(…)` or `Set(…)`.
+  const spelled = node.type === "NewExpression" ? `'new ${name}()'` : name;
   throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 
@@ -1194,10 +1197,28 @@ function chainOf(node: Expr, op: string): Expr[] {
   return out;
 }
 
+/**
+ * The truth of `x` as a value: true or false. A condition reads a number, and a boolean
+ * that may be missing, as its own truth (`truthOf`), so such a truth takes a `$cond`. A
+ * constant folds. A boolean that is there is its own value, and so is the answer of an
+ * operator whose row states a boolean for every operand (`returns: "bool"` and
+ * `neverNull: "always"`, as `$gt` and `$and` do).
+ */
+function booleanOf(truth: unknown, type: Type): unknown {
+  if (typeof truth === "boolean") return truth;
+  if (typeof truth === "number") return truth !== 0;
+  if (type.kinds !== "any" && !type.absent && [...type.kinds].every((k) => k === "bool")) return truth;
+  const keys = isPlainObject(truth) ? Object.keys(truth) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth;
+  return { $cond: [truth, true, false] };
+}
+
 function unary(node: Extract<Expr, { type: "UnaryExpr" }>, env: Env): unknown {
-  // `!!x` is `Boolean(x)`: the truth of x, as a value.
+  // `!!x` is the truth of x, as a value
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a unary '${node.op}'`);

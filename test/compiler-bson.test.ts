@@ -1,5 +1,5 @@
 // The BSON value constructors: `ObjectId`, `Decimal128`, `Long`, `Int32`,
-// `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, in both spellings each.
+// `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, each written without `new` (HR8).
 //
 // Every document here is asserted as MQL and, when a mongod is reachable, RUN —
 // because a `toEqual` proves what jsmql emits and never that the server accepts it
@@ -101,24 +101,32 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(filter(`$.tags === Long("5")`)).toEqual({ tags: Long.fromString("5") });
   });
 
-  it("takes both spellings of `new`, and the mongosh names", () => {
-    expect(jsmql.filter(`$.price === new Decimal128("9.99")`)).toEqual(jsmql.filter(`$.price === Decimal128("9.99")`));
+  it("takes the mongosh names, and refuses `new` (HR8)", () => {
+    expect(() => jsmql.filter(`$.price === new Decimal128("9.99")`)).toThrow(
+      "JSMQL has no 'new' keyword. Write 'Decimal128(…)'.",
+    );
     expect(jsmql.filter(`$.price === NumberDecimal("9.99")`)).toEqual(jsmql.filter(`$.price === Decimal128("9.99")`));
     expect(jsmql.filter(`$.n === NumberLong("9007199254740993")`)).toEqual(
       jsmql.filter(`$.n === Long("9007199254740993")`),
     );
     expect(jsmql.filter("$.count === NumberInt(3)")).toEqual(jsmql.filter("$.count === Int32(3)"));
-    expect(jsmql.filter(`$.t > ISODate("2020-01-01")`)).toEqual(jsmql.filter(`$.t > new Date("2020-01-01")`));
-    // JavaScript's bare `Date()` answers a string; jsmql keeps the syntax, not that meaning.
-    expect(jsmql.pipeline("$.a = Date();")).toEqual(jsmql.pipeline("$.a = new Date();"));
+    expect(jsmql.filter(`$.t > ISODate("2020-01-01")`)).toEqual(jsmql.filter(`$.t > Date("2020-01-01")`));
+    // JavaScript's bare `Date()` answers a string; JSMQL keeps the syntax, not that meaning.
+    expect(jsmql.pipeline("$.a = Date();")).toEqual([{ $set: { a: "$$NOW" } }]);
   });
 
-  it("converts a runtime value through the type's own operator", () => {
-    expect(pipeline("$.a = Decimal128($.numText);")).toEqual([{ $set: { a: { $toDecimal: "$numText" } } }]);
-    expect(pipeline("$.a = Long($.numText);")).toEqual([{ $set: { a: { $toLong: "$numText" } } }]);
-    expect(pipeline("$.a = Int32($.numText);")).toEqual([{ $set: { a: { $toInt: "$numText" } } }]);
-    expect(pipeline("$.a = Double($.numText);")).toEqual([{ $set: { a: { $toDouble: "$numText" } } }]);
-    expect(pipeline("$.a = ObjectId($.hexText);")).toEqual([{ $set: { a: { $toObjectId: "$hexText" } } }]);
+  it("refuses a value of the document, and names the value's own conversion method", () => {
+    expect(() => jsmql.pipeline("$.a = Decimal128($.numText);")).toThrow(/Write '<value>\.toDecimal\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Long($.numText);")).toThrow(/Write '<value>\.toLong\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Int32($.numText);")).toThrow(/Write '<value>\.toInt\(\)'/);
+    expect(() => jsmql.pipeline("$.a = Double($.numText);")).toThrow(/Write '<value>\.toDouble\(\)'/);
+    expect(() => jsmql.pipeline("$.a = ObjectId($.hexText);")).toThrow(/Write '<value>\.toObjectId\(\)'/);
+    // the method converts on the server
+    expect(pipeline("$.a = $.numText.toDecimal();")).toEqual([
+      { $set: { a: { $toDecimal: { $ifNull: ["$numText", 0] } } } },
+    ]);
+    expect(pipeline("$.a = $.numText.toLong();")).toEqual([{ $set: { a: { $toLong: { $ifNull: ["$numText", 0] } } } }]);
+    expect(pipeline("$.a = $.hexText.toObjectId();")).toEqual([{ $set: { a: { $toObjectId: "$hexText" } } }]);
   });
 });
 
@@ -176,34 +184,38 @@ describe("compiler — jsmql refuses what bson would silently corrupt", () => {
   });
 });
 
-// HR7: a conversion takes a value of its own type. The value converts on the server, as a
-// runtime value does. MEASURED: each `$to…` operator gives a value of its own type back unchanged.
+// A conversion takes a value of its own type. The value's own method converts the value on
+// the server. MEASURED: each `$to…` operator gives a value of
+// its own type back unchanged.
 const OWN_TYPE: readonly [string, unknown][] = [
   [
-    `$.x = 0x${HEX}; $.r = ObjectId($.x);`,
+    `$.x = 0x${HEX}; $.r = $.x.toObjectId();`,
     [{ $set: { x: new ObjectId(HEX) } }, { $set: { r: { $toObjectId: "$x" } } }],
   ],
   [
-    `$.x = Long("9007199254740993"); $.r = Long($.x);`,
+    `$.x = Long("9007199254740993"); $.r = $.x.toLong();`,
     [{ $set: { x: Long.fromString("9007199254740993") } }, { $set: { r: { $toLong: "$x" } } }],
   ],
-  ["$.x = Double(1.5); $.r = Double($.x);", [{ $set: { x: new Double(1.5) } }, { $set: { r: { $toDouble: "$x" } } }]],
   [
-    `$.x = Decimal128("0.1"); $.r = Decimal128($.x);`,
+    "$.x = Double(1.5); $.r = $.x.toDouble();",
+    [{ $set: { x: new Double(1.5) } }, { $set: { r: { $toDouble: "$x" } } }],
+  ],
+  [
+    `$.x = Decimal128("0.1"); $.r = $.x.toDecimal();`,
     [{ $set: { x: Decimal128.fromString("0.1") } }, { $set: { r: { $toDecimal: "$x" } } }],
   ],
-  ["$.x = Int32(3); $.r = Int32($.x);", [{ $set: { x: new Int32(3) } }, { $set: { r: { $toInt: "$x" } } }]],
+  ["$.x = Int32(3); $.r = $.x.toInt();", [{ $set: { x: new Int32(3) } }, { $set: { r: { $toInt: "$x" } } }]],
   [
-    `$.x = UUID("${UUID_TEXT}"); $.r = UUID($.x);`,
+    `$.x = UUID("${UUID_TEXT}"); $.r = $.x.toUUID();`,
     [{ $set: { x: new UUID(UUID_TEXT) } }, { $set: { r: { $toUUID: "$x" } } }],
   ],
   [
-    `$.x = new Date("2024-01-01"); $.r = Date($.x);`,
+    `$.x = Date("2024-01-01"); $.r = $.x.toDate();`,
     [{ $set: { x: new Date("2024-01-01") } }, { $set: { r: { $toDate: "$x" } } }],
   ],
-  [`$.x = "a"; $.r = String($.x);`, [{ $set: { x: "a" } }, { $set: { r: { $toString: "$x" } } }]],
-  ["$.x = true; $.r = Boolean($.x);", [{ $set: { x: true } }, { $set: { r: "$x" } }]],
-  ["$.x = 1.5; $.r = Number($.x);", [{ $set: { x: 1.5 } }, { $set: { r: { $toDouble: "$x" } } }]],
+  [`$.x = "a"; $.r = $.x.toString();`, [{ $set: { x: "a" } }, { $set: { r: { $toString: "$x" } } }]],
+  ["$.x = true; $.r = !!$.x;", [{ $set: { x: true } }, { $set: { r: "$x" } }]],
+  ["$.x = 1.5; $.r = $.x.toDouble();", [{ $set: { x: 1.5 } }, { $set: { r: { $toDouble: "$x" } } }]],
 ];
 
 describe("compiler — a conversion takes a value of its own type", () => {
@@ -211,18 +223,15 @@ describe("compiler — a conversion takes a value of its own type", () => {
     for (const [src, mql] of OWN_TYPE) expect(pipeline(src), src).toEqual(mql);
   });
 
-  it("converts a constant of the type on the server, and builds nothing", () => {
-    expect(pipeline(`$.r = Long(Long("5"));`)).toEqual([{ $set: { r: { $toLong: Long.fromString("5") } } }]);
-    expect(pipeline("$.r = Long(Int32(3));")).toEqual([{ $set: { r: { $toLong: new Int32(3) } } }]);
-    expect(pipeline(`$.r = UUID(UUID("${UUID_TEXT}"));`)).toEqual([{ $set: { r: { $toUUID: new UUID(UUID_TEXT) } } }]);
-  });
-
-  it("refuses a value of another type", () => {
-    expect(() => jsmql.pipeline(`$.x = new Date("2024-01-01"); $.r = Long($.x);`)).toThrow(
-      /'Long\(\)' argument 1 takes a string, a number or a boolean, but got a date\./,
+  // A type name is no conversion function. A type name builds a constant. The value's own method converts a value.
+  it("refuses a type name over a value of its own type", () => {
+    expect(() => jsmql.pipeline(`$.r = Long(Long("5"));`)).toThrow(/'Long\(<constant>\)'/);
+    expect(() => jsmql.pipeline(`$.r = UUID(UUID("${UUID_TEXT}"));`)).toThrow(
+      /'UUID\(\)' argument 1 takes a string, but got binary data\./,
     );
+    expect(() => jsmql.pipeline(`$.x = Date("2024-01-01"); $.r = Long($.x);`)).toThrow(/Write '<value>\.toLong\(\)'/);
     expect(() => jsmql.pipeline(`$.x = UUID("${UUID_TEXT}"); $.r = ObjectId($.x);`)).toThrow(
-      /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got binary data\./,
+      /Write '<value>\.toObjectId\(\)'/,
     );
   });
 });

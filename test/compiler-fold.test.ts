@@ -272,7 +272,7 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf("(3).log2()")).toBe("(not constant)");
   });
 
-  it("folds `Object.entries` to JavaScript's [key, value] pairs, as the runtime lowering gives them", () => {
+  it("folds `.entries()` to JavaScript's [key, value] pairs, as the runtime lowering gives them", () => {
     // node -e 'Object.entries({ a: 1, b: "x" })' → [["a", 1], ["b", "x"]]
     expect(valueOf('({ a: 1, b: "x" }).entries()')).toEqual([
       ["a", 1],
@@ -286,6 +286,7 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf("({ a: 1, b: 2 }).values()")).toEqual([1, 2]);
     expect(valueOf('[["a", 1], ["b", 2]].fromEntries()')).toEqual({ a: 1, b: 2 });
     expect(valueOf('({ a: 1, b: "x" }).entries().fromEntries()')).toEqual({ a: 1, b: "x" });
+    expect(valueOf("({ a: 1 }).assign({ b: 2 })")).toEqual({ a: 1, b: 2 });
   });
 
   it("folds a `.pickBy` / `.omitBy` predicate with the JavaScript truth rules", () => {
@@ -412,7 +413,7 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     // 0 and `getDay()` says 4 for a Thursday, as the runtime cells do over
     // `$month` and `$dayOfWeek`. The LOCAL-sounding getters read UTC, because
     // `$hour` does — one that read local time would answer differently on every machine.
-    const d = 'new Date("2020-03-05T20:30:40.123Z")';
+    const d = 'Date("2020-03-05T20:30:40.123Z")';
     expect(valueOf(`${d}.getMonth()`)).toBe(2);
     expect(valueOf(`${d}.getDay()`)).toBe(4);
     expect(valueOf(`${d}.getHours()`)).toBe(20);
@@ -422,46 +423,47 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
   });
 
   it("counts the calendar-parts constructor's months from ZERO, as JavaScript does", () => {
-    // `new Date(2020, 1, 1)` is February; `new Date(2024, 12, 1)` rolls over to January 2025.
-    expect(valueOf("new Date(2020, 1, 1).getMonth()")).toBe(1);
-    expect(valueOf("new Date(2024, 12, 1).getFullYear()")).toBe(2025);
-    expect(valueOf("new Date(2024, 0, 15).getMonth()")).toBe(0);
-    expect(valueOf("new Date(2020, 1, 1).getFullYear()")).toBe(2020);
+    // `Date(2020, 1, 1)` is February; `Date(2024, 12, 1)` rolls over to January 2025.
+    expect(valueOf("Date(2020, 1, 1).getMonth()")).toBe(1);
+    expect(valueOf("Date(2024, 12, 1).getFullYear()")).toBe(2025);
+    expect(valueOf("Date(2024, 0, 15).getMonth()")).toBe(0);
+    expect(valueOf("Date(2020, 1, 1).getFullYear()")).toBe(2020);
   });
 
   it("never folds a date that reads the clock", () => {
-    expect(valueOf("new Date()")).toBe("(not constant)");
+    expect(valueOf("Date()")).toBe("(not constant)");
     expect(valueOf("Date.now()")).toBe("(not constant)");
     // An unparseable string is an error the language raises with a position;
     // folding it to `Invalid Date` would swallow that.
-    expect(valueOf('new Date("nope")')).toBe("(not constant)");
+    expect(valueOf('Date("nope")')).toBe("(not constant)");
   });
 
-  it("converts only where the server converts", () => {
-    // never folded: `$toDouble("42")` is a double on the server; a written 42 is an int
+  it("never folds a type name as a conversion function, so its row refuses it", () => {
+    // `Number(…)`, `String(…)` and `Boolean(…)` are not part of JSMQL. A fold here would
+    // hide the refusal and answer a constant.
     expect(valueOf('Number("42")')).toBe("(not constant)");
-    // `$convert` with no `onError` fails on a string it cannot parse.
-    expect(valueOf('Number("nope")')).toBe("(not constant)");
-    // A conversion refuses `null` (HR7), so no fold answers it: the kind check refuses it.
-    expect(valueOf("String(null)")).toBe("(not constant)");
+    expect(valueOf("String(42)")).toBe("(not constant)");
+    expect(valueOf("Boolean(1)")).toBe("(not constant)");
+  });
+
+  it("writes a number into a template as `$toString` writes it", () => {
     // An integer below 10^16 is written digit for digit by `$toString` and by
     // JavaScript; from there the server uses an exponent where JavaScript does not,
     // a fraction's threshold differs, and `-0` keeps its sign on the server only.
-    expect(valueOf("String(42)")).toBe("42");
-    expect(valueOf("String(9999999999999998)")).toBe("9999999999999998");
-    expect(valueOf("String(10000000000000000)")).toBe("(not constant)");
-    expect(valueOf("String(2.5)")).toBe("(not constant)");
-    expect(valueOf("String(-0)")).toBe("(not constant)");
+    expect(valueOf("`${9999999999999998}`")).toBe("9999999999999998");
+    expect(valueOf("`${10000000000000000}`")).toBe("(not constant)");
+    expect(valueOf("`${2.5}`")).toBe("(not constant)");
+    expect(valueOf("`${-0}`")).toBe("(not constant)");
     expect(valueOf("`id-${42}`")).toBe("id-42");
     expect(valueOf("`id-${1e16}`")).toBe("(not constant)");
     expect(valueOf("`id-${0.5}`")).toBe("(not constant)");
   });
 
-  it("leaves `new Set([…])` unfolded, so the row refuses it", () => {
+  it("leaves `Set([…])` unfolded, so the row refuses it", () => {
     // A folded constant never reaches its row. So a fold here would hide the refusal
     // and answer an array that holds the duplicates.
-    expect(valueOf("new Set([1, 2, 2, 3])")).toBe("(not constant)");
-    expect(valueOf("new Set()")).toBe("(not constant)");
+    expect(valueOf("Set([1, 2, 2, 3])")).toBe("(not constant)");
+    expect(valueOf("Set()")).toBe("(not constant)");
   });
 });
 
@@ -472,49 +474,49 @@ describe("compiler/passes/fold — a date's arithmetic is the server's", () => {
   };
 
   it("clamps a calendar step to the target month's last day, as $dateAdd does", () => {
-    expect(iso('new Date("2024-01-31T10:00:00Z").plus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
-    expect(iso('new Date("2024-02-29T10:00:00Z").plus(1, "year")')).toBe("2025-02-28T10:00:00.000Z");
-    expect(iso('new Date("2024-03-31T10:00:00Z").minus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
-    expect(iso('new Date("2026-09-01T00:00:00Z").plus(36, "hour")')).toBe("2026-09-02T12:00:00.000Z");
+    expect(iso('Date("2024-01-31T10:00:00Z").plus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
+    expect(iso('Date("2024-02-29T10:00:00Z").plus(1, "year")')).toBe("2025-02-28T10:00:00.000Z");
+    expect(iso('Date("2024-03-31T10:00:00Z").minus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
+    expect(iso('Date("2026-09-01T00:00:00Z").plus(36, "hour")')).toBe("2026-09-02T12:00:00.000Z");
   });
 
   it("starts the week on Sunday, as $dateTrunc does", () => {
-    expect(iso('new Date("2026-09-16T13:45:30.123Z").startOf("week")')).toBe("2026-09-13T00:00:00.000Z");
-    expect(iso('new Date("2026-11-16T00:00:00Z").startOf("quarter")')).toBe("2026-10-01T00:00:00.000Z");
-    expect(iso('new Date("2026-09-16T13:45:30.123Z").endOf("month")')).toBe("2026-09-30T23:59:59.999Z");
+    expect(iso('Date("2026-09-16T13:45:30.123Z").startOf("week")')).toBe("2026-09-13T00:00:00.000Z");
+    expect(iso('Date("2026-11-16T00:00:00Z").startOf("quarter")')).toBe("2026-10-01T00:00:00.000Z");
+    expect(iso('Date("2026-09-16T13:45:30.123Z").endOf("month")')).toBe("2026-09-30T23:59:59.999Z");
   });
 
   it("counts the boundaries crossed, as $dateDiff does", () => {
-    expect(valueOf('new Date("2026-02-01T00:01:00Z").diff(new Date("2026-01-31T23:59:00Z"), "day")')).toBe(1);
-    expect(valueOf('new Date("2026-01-31T00:00:00Z").diff(new Date("2026-01-01T00:00:00Z"), "month")')).toBe(0);
-    expect(valueOf('new Date("2026-09-13T01:00:00Z").diff(new Date("2026-09-12T23:00:00Z"), "week")')).toBe(1);
-    expect(valueOf('new Date("2026-09-15T00:00:00Z").isSame(new Date("2026-09-01T00:00:00Z"), "month")')).toBe(true);
+    expect(valueOf('Date("2026-02-01T00:01:00Z").diff(Date("2026-01-31T23:59:00Z"), "day")')).toBe(1);
+    expect(valueOf('Date("2026-01-31T00:00:00Z").diff(Date("2026-01-01T00:00:00Z"), "month")')).toBe(0);
+    expect(valueOf('Date("2026-09-13T01:00:00Z").diff(Date("2026-09-12T23:00:00Z"), "week")')).toBe(1);
+    expect(valueOf('Date("2026-09-15T00:00:00Z").isSame(Date("2026-09-01T00:00:00Z"), "month")')).toBe(true);
   });
 
   it("writes $dateToString's specifiers, and leaves one the server refuses", () => {
-    expect(
-      valueOf('new Date("2026-09-16T13:45:30.123Z").format("%Y-%m-%d %H:%M:%S.%L %j %w %u %U %V %G %z %Z %%")'),
-    ).toBe("2026-09-16 13:45:30.123 259 4 3 37 38 2026 +0000 0 %");
+    expect(valueOf('Date("2026-09-16T13:45:30.123Z").format("%Y-%m-%d %H:%M:%S.%L %j %w %u %U %V %G %z %Z %%")')).toBe(
+      "2026-09-16 13:45:30.123 259 4 3 37 38 2026 +0000 0 %",
+    );
     // `%e` is not a specifier the server knows, and `%b` is one the row does not
     // accept: either way the refusal must reach the developer, so neither folds.
-    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%e")')).toBe("(not constant)");
-    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%b")')).toBe("(not constant)");
-    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%Y%")')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T13:45:30.123Z").format("%e")')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T13:45:30.123Z").format("%b")')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T13:45:30.123Z").format("%Y%")')).toBe("(not constant)");
   });
 
   it("rolls a part over as $dateFromParts does, and refuses what the server refuses", () => {
-    expect(iso('new Date("2026-09-16T13:45:30.123Z").set({ month: 13, day: 0 })')).toBe("2026-12-31T13:45:30.123Z");
-    expect(iso('new Date("2026-09-16T13:45:30.123Z").set({ isoWeek: 1, isoDayOfWeek: 1 })')).toBe(
+    expect(iso('Date("2026-09-16T13:45:30.123Z").set({ month: 13, day: 0 })')).toBe("2026-12-31T13:45:30.123Z");
+    expect(iso('Date("2026-09-16T13:45:30.123Z").set({ isoWeek: 1, isoDayOfWeek: 1 })')).toBe(
       "2025-12-29T13:45:30.123Z",
     );
     // ISO and calendar parts mixed; a year the server has no date for; an unknown part
-    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ isoWeek: 1, month: 3 })')).toBe("(not constant)");
-    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ year: 10000 })')).toBe("(not constant)");
-    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ week: 1 })')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T00:00:00Z").set({ isoWeek: 1, month: 3 })')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T00:00:00Z").set({ year: 10000 })')).toBe("(not constant)");
+    expect(valueOf('Date("2026-09-16T00:00:00Z").set({ week: 1 })')).toBe("(not constant)");
   });
 
   it("leaves every form that names a zone other than UTC to the server, and folds the forms that UTC decides", () => {
-    const d = 'new Date("2026-09-16T13:45:30.123Z")';
+    const d = 'Date("2026-09-16T13:45:30.123Z")';
     expect(valueOf(`${d}.plus(1, "month", "Europe/Kyiv")`)).toBe("(not constant)");
     expect(valueOf(`${d}.diff(${d}, "day", "Europe/Kyiv")`)).toBe("(not constant)");
     expect(valueOf(`${d}.format("%Y", "Europe/Kyiv")`)).toBe("(not constant)");
@@ -657,16 +659,16 @@ describe("compiler/passes/evaluate — a constant is what its lowered MQL says",
   });
 
   it("writes a computed Date back as a value that a query compares", () => {
-    expect(filter('$.t > new Date("2026-01-01")')).toEqual({ t: { $gt: new Date("2026-01-01T00:00:00.000Z") } });
+    expect(filter('$.t > Date("2026-01-01")')).toEqual({ t: { $gt: new Date("2026-01-01T00:00:00.000Z") } });
   });
 
   it("reads a date that the source spells before any lowering", () => {
-    expect(pipeline("$.x = new Date(0);")).toEqual([{ $set: { x: new Date(0) } }]);
-    expect(pipeline("$.x = new Date(Date.UTC(2026, 1, 1));")).toEqual([
+    expect(pipeline("$.x = Date(0);")).toEqual([{ $set: { x: new Date(0) } }]);
+    expect(pipeline("$.x = Date(Date.UTC(2026, 1, 1));")).toEqual([
       { $set: { x: new Date("2026-02-01T00:00:00.000Z") } },
     ]);
-    expect(pipeline("$.x = new Date($.n);")).toEqual([
-      { $set: { x: { $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } } } },
+    expect(pipeline("$.x = $.n.toDate();")).toEqual([
+      { $set: { x: { $toDate: { $ifNull: ["$n", new Date("1970-01-01T00:00:00.000Z")] } } } },
     ]);
   });
 });

@@ -147,7 +147,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
 
   it("method call on a field stays in $expr", () => {
     expect(jsmql('[$match($.name.toLowerCase() === "alice")]')).toEqual([
-      { $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "alice"] } } },
+      { $match: { $expr: { $eq: [{ $toLower: { $ifNull: ["$name", ""] } }, "alice"] } } },
     ]);
   });
 
@@ -156,7 +156,9 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("Math call result stays in $expr", () => {
-    expect(jsmql("[$match($.delta.abs() > 5)]")).toEqual([{ $match: { $expr: { $gt: [{ $abs: "$delta" }, 5] } } }]);
+    expect(jsmql("[$match($.delta.abs() > 5)]")).toEqual([
+      { $match: { $expr: { $gt: [{ $abs: { $ifNull: ["$delta", 0] } }, 5] } } },
+    ]);
   });
 
   it("array literal as equality target stays in $expr", () => {
@@ -193,11 +195,7 @@ describe("$match translation — typeof → $type", () => {
   });
   it("falls through to $expr when the operand is not a static field path", () => {
     expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
-      {
-        $match: {
-          $expr: { $eq: [{ $type: { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] } }, "string"] },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $type: { $toLower: { $ifNull: ["$name", ""] } } }, "string"] } } },
     ]);
   });
 });
@@ -216,99 +214,96 @@ describe("$match translation — escape hatch", () => {
   });
 });
 
-describe("$match translation — `new Date(...)` RHS (compile-time fold)", () => {
+describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
   // MongoDB's query language does not evaluate aggregation expressions in
   // operator value slots — `{ $gte: { $toDate: "..." } }` would be compared
-  // as a literal subdoc, never matching anything. When the `new Date(...)`
+  // as a literal subdoc, never matching anything. When the `Date(...)`
   // arguments are themselves compile-time literals we fold to a real Date
   // instance, which BSON compares as a date — index-friendly form.
 
-  it("translates `>=` against `new Date(stringLiteral)` to field-form Date", () => {
-    expect(jsmql('[$match($.createdAt >= new Date("2026-01-01"))]')).toEqual([
+  it("translates `>=` against `Date(stringLiteral)` to field-form Date", () => {
+    expect(jsmql('[$match($.createdAt >= Date("2026-01-01"))]')).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("translates the bug-report shape in bare Filter mode", () => {
-    expect(jsmql('$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")')).toEqual({
+    expect(jsmql('$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")')).toEqual({
       method: "postalDelivery",
       createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") },
     });
   });
 
   it("translates `>`, `<`, `<=` and equality the same way", () => {
-    expect(jsmql('[$match($.createdAt > new Date("2026-01-01"))]')).toEqual([
+    expect(jsmql('[$match($.createdAt > Date("2026-01-01"))]')).toEqual([
       { $match: { createdAt: { $gt: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
-    expect(jsmql('[$match($.createdAt < new Date("2026-01-01"))]')).toEqual([
+    expect(jsmql('[$match($.createdAt < Date("2026-01-01"))]')).toEqual([
       { $match: { createdAt: { $lt: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
-    expect(jsmql('[$match($.createdAt <= new Date("2026-01-01"))]')).toEqual([
+    expect(jsmql('[$match($.createdAt <= Date("2026-01-01"))]')).toEqual([
       { $match: { createdAt: { $lte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
-    expect(jsmql('[$match($.startedAt === new Date("2026-01-01"))]')).toEqual([
+    expect(jsmql('[$match($.startedAt === Date("2026-01-01"))]')).toEqual([
       { $match: { startedAt: new Date("2026-01-01T00:00:00.000Z") } },
     ]);
-    expect(jsmql('[$match($.startedAt !== new Date("2026-01-01"))]')).toEqual([
+    expect(jsmql('[$match($.startedAt !== Date("2026-01-01"))]')).toEqual([
       { $match: { startedAt: { $ne: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("flips the operator when `new Date` is on the left", () => {
-    expect(jsmql('[$match(new Date("2026-01-01") <= $.createdAt)]')).toEqual([
+    expect(jsmql('[$match(Date("2026-01-01") <= $.createdAt)]')).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("folds the date-from-parts form (all-numeric args) as UTC", () => {
-    // Multi-arg `new Date(y, m, d)` is interpreted as UTC — same as the
+    // Multi-arg `Date(y, m, d)` is interpreted as UTC — same as the
     // `$dateFromParts` codegen lowering — so the folded value is TZ-independent
     // (the expected uses Date.UTC, NOT the machine-local `new Date(2026,0,1)`).
-    expect(jsmql("[$match($.createdAt >= new Date(2026, 1, 1))]")).toEqual([
+    expect(jsmql("[$match($.createdAt >= Date(2026, 1, 1))]")).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
     ]);
   });
 
-  it("folds `new Date(Date.UTC(...))` for UTC-anchored dates", () => {
-    expect(jsmql("[$match($.createdAt >= new Date(Date.UTC(2026, 1, 1)))]")).toEqual([
+  it("folds `Date(Date.UTC(...))` for UTC-anchored dates", () => {
+    expect(jsmql("[$match($.createdAt >= Date(Date.UTC(2026, 1, 1)))]")).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
     ]);
   });
 
-  it("falls back to $expr for `new Date()` (zero-arg — must evaluate at query time)", () => {
-    // `new Date()` lowers to the server-side `"$$NOW"`; a compile-time fold
+  it("falls back to $expr for `Date()` (zero-arg — must evaluate at query time)", () => {
+    // `Date()` lowers to the server-side `"$$NOW"`; a compile-time fold
     // would freeze the timestamp. Must stay in $expr.
-    expect(jsmql("[$match($.expiresAt < new Date())]")).toEqual([
-      { $match: { $expr: { $lt: ["$expiresAt", "$$NOW"] } } },
-    ]);
+    expect(jsmql("[$match($.expiresAt < Date())]")).toEqual([{ $match: { $expr: { $lt: ["$expiresAt", "$$NOW"] } } }]);
   });
 
-  it("falls back to $expr when an argument is a field ref", () => {
-    expect(jsmql("[$match($.createdAt >= new Date($.cutoffStr))]")).toEqual([
+  it("falls back to $expr when the date converts a field", () => {
+    expect(jsmql("[$match($.createdAt >= $.cutoffStr.toDate())]")).toEqual([
       {
         $match: {
           $expr: {
-            $gte: [
-              "$createdAt",
-              { $toDate: { $cond: [{ $isNumber: "$cutoffStr" }, { $toLong: "$cutoffStr" }, "$cutoffStr"] } },
-            ],
+            $gte: ["$createdAt", { $toDate: { $ifNull: ["$cutoffStr", new Date("1970-01-01T00:00:00.000Z")] } }],
           },
         },
       },
     ]);
+    // a value of the document is refused in the constructor, and the refusal names '.toDate()'
+    expect(() => jsmql("[$match($.createdAt >= Date($.cutoffStr))]")).toThrow(/'\$\.x\.toDate\(\)'/);
   });
 
   it("rejects a constant string that cannot be parsed as a date (HR3)", () => {
     // The constant is unparseable and the server would reject the equivalent
     // `{ $toDate }`, so the comparison drops to the $expr residual and codegen
     // refuses it at compile time rather than emit a bogus filter.
-    expect(() => jsmql('[$match($.createdAt >= new Date("not-a-date"))]')).toThrow(
-      'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
+    expect(() => jsmql('[$match($.createdAt >= Date("not-a-date"))]')).toThrow(
+      'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
   });
 
   it("merges two date ranges on one field under && into one operator document", () => {
-    expect(jsmql('[$match($.createdAt >= new Date("2026-01-01") && $.createdAt < new Date("2026-02-01"))]')).toEqual([
+    expect(jsmql('[$match($.createdAt >= Date("2026-01-01") && $.createdAt < Date("2026-02-01"))]')).toEqual([
       {
         $match: {
           createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $lt: new Date("2026-02-01T00:00:00.000Z") },
@@ -375,11 +370,7 @@ describe("$match translation — .match(regex) → BSON regex", () => {
     // A computed regex (or string arg) cannot go in the query-doc slot, so the
     // existing $regexMatch translation handles it.
     expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
-      {
-        $match: {
-          $expr: { $cond: [{ $lte: ["$name", null] }, null, { $regexMatch: { input: "$name", regex: "^a" } }] },
-        },
-      },
+      { $match: { $expr: { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: "^a" } } } },
     ]);
   });
 });
@@ -414,7 +405,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
               $map: {
                 input: { $ifNull: ["$items", []] },
                 as: "it",
-                in: { $eq: [{ $cond: [{ $lte: ["$$it.tag", null] }, null, { $toLower: "$$it.tag" }] }, "vip"] },
+                in: { $eq: [{ $toLower: { $ifNull: ["$$it.tag", ""] } }, "vip"] },
               },
             },
           },
@@ -560,7 +551,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
 
   it("reads `.length()` on a bare field as a string length: `$strLenCP` under a null guard", () => {
     expect(jsmql("[$match($.name.length() === 3)]")).toEqual([
-      { $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $strLenCP: "$name" }] }, 3] } } },
+      { $match: { $expr: { $eq: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 3] } } },
     ]);
   });
 

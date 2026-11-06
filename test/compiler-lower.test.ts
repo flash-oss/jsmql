@@ -22,8 +22,8 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(String(expr("0x507f1f77bcf86cd799439011"))).toBe("507f1f77bcf86cd799439011");
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
     // a row that states `returns: "string"` needs no $toString; an unknown one does
-    expect(expr("`a${String($.n)}`")).toEqual({ $concat: ["a", { $toString: "$n" }] });
-    expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
+    expect(expr("`a${$.s.trim()}`")).toEqual({ $concat: ["a", { $trim: { input: { $ifNull: ["$s", ""] } } }] });
+    expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: { $ifNull: ["$n", 0] } } }] });
   });
 
   it("refuses the literals that have no value", () => {
@@ -90,7 +90,9 @@ describe("compiler/emit/lower — operators", () => {
     // A bare field has an unknown kind, so the server decides (HR7).
     expect(expr("$.d - 1")).toEqual({ $subtract: ["$d", 1] });
     // A comparison of dates is not arithmetic.
-    expect(expr(`${day} > $.e`)).toEqual({ $gt: [{ $dateTrunc: { date: "$d", unit: "day" } }, "$e"] });
+    expect(expr(`${day} > $.e`)).toEqual({
+      $gt: [{ $dateTrunc: { date: { $ifNull: ["$d", new Date(0)] }, unit: "day" } }, "$e"],
+    });
   });
 
   it("lowers the unary operators", () => {
@@ -160,7 +162,7 @@ describe("compiler/emit/lower — access", () => {
     expect(expr("[$.a, 2].size()")).toBe(2);
     // an unproven receiver takes the method's one family, and the server judges the value:
     // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
-    expect(expr("$.x.length()")).toEqual({ $cond: [{ $lte: ["$x", null] }, null, { $strLenCP: "$x" }] });
+    expect(expr("$.x.length()")).toEqual({ $strLenCP: { $ifNull: ["$x", ""] } });
     expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
     // a proven array refuses `.length()`, and the refusal names `.size()`
     expect(() => expr("[$.a, 2].length()")).toThrow(
@@ -228,13 +230,15 @@ describe("compiler/emit/lower — calls", () => {
     expect(() => expr("$let({ x: 1 }, (y) => y + 1)")).toThrow(/must name its variables/);
   });
 
-  it("lowers the globals by their argument class", () => {
-    expect(expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(expr("new Date($.ms)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$ms" }, { $toLong: "$ms" }, "$ms"] } });
-    expect(expr("ObjectId($.id)")).toEqual({ $toObjectId: "$id" });
-    // never folded: `$toDouble("3")` is a double; the server judges a string it cannot parse
-    expect(expr('Number("3")')).toEqual({ $toDouble: "3" });
-    expect(expr('Number("abc")')).toEqual({ $toDouble: "abc" });
+  it("lowers a constructor by its argument class, and refuses a value of the document", () => {
+    expect(expr("Date()")).toBe("$$NOW");
+    expect(expr("ObjectId()")).toEqual({ $createObjectId: {} });
+    // A value of the document converts with the value's own method, and the refusal names it.
+    expect(() => expr("Date($.ms)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
+    expect(() => expr("ObjectId($.id)")).toThrow(/Write '<value>\.toObjectId\(\)'/);
+    // A type name as a conversion function is not part of JSMQL, for a constant too.
+    expect(() => expr("Number($.s)")).toThrow(/^'Number\(x\)' is not part of JSMQL.*'\$\.x\?\.toDouble\(\)'/);
+    expect(() => expr('Number("3")')).toThrow(/^'Number\(x\)' is not part of JSMQL/);
   });
 
   it("inlines a declared function and refuses recursion", () => {
@@ -258,18 +262,23 @@ describe("compiler/emit/lower — calls", () => {
     expect(() => pipeline("$.n = $.a.$size($.b);")).toThrow(sizeOnValue);
     // A `$` name that no row holds is a MongoDB name too.
     expect(() => expr("$.a.$foo()")).toThrow(/^'\.\$foo\(\)' takes no receiver\./);
-    expect(() => expr('$.a.Number("7")')).toThrow(
-      "'.Number()' takes no receiver. 'Number' is a global function: write 'Number(…)' with the value inside the parentheses.",
+    expect(() => expr("$.a.Long(7)")).toThrow(
+      "'.Long()' takes no receiver. 'Long' is a global function: write 'Long(…)' with the value inside the parentheses.",
     );
+    // A global that no position takes answers with its own refusal, which names the way out.
+    expect(() => expr('$.a.Number("7")')).toThrow(/^'Number\(x\)' is not part of JSMQL/);
     // A stage on a value names its value twin.
     expect(() => expr("$.items.$sort({ a: 1 })")).toThrow(/For the value form, use '\$sortArray\(…\)'/);
     // The call spellings stay as they are.
     expect(expr("$size($.a)")).toEqual({ $size: "$a" });
-    expect(expr('Number("7")')).toEqual({ $toDouble: "7" });
+    expect(expr("Long(7)")).toEqual(Long.fromNumber(7));
   });
 
   it("refuses a name from a closed set with a suggestion", () => {
     expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
+    // After a dot, a suggestion names a method, never a global: `Number` is not a method.
+    expect(() => expr("$.s.toDoubel()")).toThrow(/Did you mean '.toDouble\(\)'/);
+    expect(() => expr("$.s.Numbr()")).toThrow(/^Unknown method '.Numbr\(\)' at position 3.$/);
     expect(() => expr("Math.randon()")).toThrow(
       /Unknown method 'Math.randon\(\)' at position 4. Did you mean 'Math.random'/,
     );

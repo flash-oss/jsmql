@@ -699,7 +699,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   it("source switch translates Date literal in the predicate", () => {
-    const out = jsmql(`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01"));`) as object[];
+    const out = jsmql(`$$ = $$$.transactions.filter(t => t.createdAt >= Date("2026-01-01"));`) as object[];
     // Date folds to a JS `Date` instance, so deep-equal needs the same shape.
     expect(out).toEqual([
       { $match: { $expr: false } },

@@ -70,7 +70,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
       "'.match()' argument 1 takes a regular expression or a string, but got a number.",
     );
     expect(jsmql.expr('$.s.matchAll("a.")')).toEqual({
-      $cond: [{ $lte: ["$s", null] }, null, { $regexFindAll: { input: "$s", regex: "a." } }],
+      $regexFindAll: { input: { $ifNull: ["$s", ""] }, regex: "a." },
     });
   });
 
@@ -140,7 +140,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("$.a.sortBy(true)")).toThrow(
       "'.sortBy()' argument 1 takes a sort specification, but got a boolean.",
     );
-    expect(() => jsmql.expr('$.a.toSorted(new Date("2020-01-01"))')).toThrow(
+    expect(() => jsmql.expr('$.a.toSorted(Date("2020-01-01"))')).toThrow(
       "'.toSorted()' argument 1 takes a sort specification, but got a date.",
     );
     expect(() => jsmql.expr("$.a.orderBy(null)")).toThrow(
@@ -217,11 +217,19 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("a conversion and the condition of assert() take every kind but null", () => {
-    expect(() => jsmql.expr("Number(null)")).toThrow("'Number()' argument 1 takes a value, but got null.");
-    expect(() => jsmql.expr("String(null)")).toThrow("'String()' argument 1 takes a value, but got null.");
-    expect(() => jsmql.expr("Boolean(null)")).toThrow("'Boolean()' argument 1 takes a value, but got null.");
+    // A conversion is the value's own method, and a null receiver has no value to convert:
+    // written, after `?.`, passed in, or proven by a write. Each one is a compile error.
+    expect(() => jsmql.expr("null.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
+    expect(() => jsmql.expr("null.toString()")).toThrow(/always null or missing here, so '\.toString\(\)'/);
+    expect(() => jsmql.expr("null?.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
+    expect(() => jsmql.expr`${null}.toBool()`).toThrow(/always null or missing here, so '\.toBool\(\)'/);
+    expect(() => jsmql.filter("null.toLong() > 1")).toThrow(/always null or missing here, so '\.toLong\(\)'/);
+    expect(() => jsmql("$.o = { b: null }; $.r = $.o.b.toDate();")).toThrow(
+      /'\$\.o\.b' is always null or missing here, so '\.toDate\(\)'/,
+    );
+    expect(jsmql.validate("null.toDouble()").valid).toBe(false);
     expect(() => jsmql("assert(null);")).toThrow("'assert()' argument 1 takes a value, but got null.");
-    expect(jsmql.expr("String($.n)")).toEqual({ $toString: "$n" });
+    expect(jsmql.expr("$.n?.toString()")).toEqual({ $toString: "$n" });
   });
 
   it("a null that the call passes in, or that the proof shows, is refused too", () => {
@@ -234,7 +242,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("x === null stays the test of a missing value", () => {
-    expect(jsmql.expr("$.s.trim() === null")).toEqual({ $eq: [{ $trim: { input: "$s" } }, null] });
+    expect(jsmql.expr("$.s?.trim() === null")).toEqual({ $eq: [{ $trim: { input: "$s" } }, null] });
   });
 
   it("a number slot refuses a proven boolean", () => {
@@ -334,7 +342,7 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(jsmql.filter("null in [1, $.x]")).toEqual({ $expr: { $in: [null, [1, "$x"]] } });
     expect(jsmql.pipeline("$.a = [1, null]; $match($.a.has(null));")).toEqual([
       { $set: { a: [1, null] } },
-      { $match: { a: null } },
+      { $match: { a: { $elemMatch: { $eq: null } } } },
     ]);
     expect(() => jsmql.filter("null in [1, 2]")).toThrow(
       "'in' argument 1 takes an element of the array, but got null, and the array holds numbers.",
@@ -723,7 +731,7 @@ describe("kinds — a cell's own refusal of the shape of an argument comes first
 
 describe("kinds — a precision is an integer", () => {
   it("a number that the program proves passes, and a string is refused", () => {
-    expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
+    expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: [{ $ifNull: ["$n", 0] }, 2] });
     expect(() => jsmql.expr("$.n.round($.s.trim())")).toThrow(
       /'\.round\(\)' argument 1 takes an integer, but got a string\./,
     );
@@ -740,22 +748,26 @@ describe("kinds — a precision is an integer", () => {
 });
 
 describe("kinds — the BSON constructors take what their $to operator reads", () => {
-  it("a value of unknown kind converts, and the server decides", () => {
-    expect(jsmql.expr("ObjectId($.s)")).toEqual({ $toObjectId: "$s" });
-    expect(jsmql.expr("new Date($.t)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$t" }, { $toLong: "$t" }, "$t"] } });
-    expect(jsmql.expr("ISODate($.t)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$t" }, { $toLong: "$t" }, "$t"] } });
-    expect(jsmql.expr("UUID($.s)")).toEqual({ $toUUID: "$s" });
-    expect(jsmql.expr("Long($.n)")).toEqual({ $toLong: "$n" });
-    expect(jsmql.expr("Int32($.s)")).toEqual({ $toInt: "$s" });
-    expect(jsmql.expr("NumberDecimal($.s)")).toEqual({ $toDecimal: "$s" });
+  it("a value of the document is refused, and the refusal names the value's own method", () => {
+    for (const [src, method] of [
+      ["ObjectId($.s)", "toObjectId"],
+      ["Date($.t)", "toDate"],
+      ["ISODate($.t)", "toDate"],
+      ["UUID($.s)", "toUUID"],
+      ["Long($.n)", "toLong"],
+      ["Int32($.s)", "toInt"],
+      ["NumberDecimal($.s)", "toDecimal"],
+    ]) {
+      expect(() => jsmql.expr(src), src).toThrow(`'$.x.${method}()'`);
+    }
   });
 
   it("the calendar parts of a date are integers", () => {
-    expect(jsmql.expr("new Date($.y, $.m, $.d)")).toEqual({
+    expect(jsmql.expr("Date($.y, $.m, $.d)")).toEqual({
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" },
     });
-    expect(() => jsmql.expr("new Date($.s.trim(), 1, 1)")).toThrow(
-      /'new Date\(\)' argument 1 takes an integer, but got a string\./,
+    expect(() => jsmql.expr("Date($.s.trim(), 1, 1)")).toThrow(
+      /'Date\(\)' argument 1 takes an integer, but got a string\./,
     );
   });
 
@@ -763,90 +775,76 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   // JavaScript cuts the fraction off, and JSMQL does not cut a value silently.
   it.each([0, 1, 2, 3, 4, 5, 6])("a written fraction in calendar part %i is refused", (i) => {
     const parts = [2020, 1, 15, 4, 5, 6, 7].map((n, j) => (j === i ? "1.5" : String(n)));
-    const source = `new Date(${parts.join(", ")})`;
+    const source = `Date(${parts.join(", ")})`;
     const e = refusal(() => jsmql.expr(source));
     expect(e.message).toMatch(
-      new RegExp(
-        `^'new Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`,
-      ),
+      new RegExp(`^'Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`),
     );
     expect(e.pos).toBe(source.indexOf("1.5"));
   });
 
   it("a proven fraction in a calendar part is refused, with each spelling of the call", () => {
     const round = /argument 2 takes an integer, but got a fraction\. Write an integer, or round/;
-    expect(() => jsmql.expr("new Date(2020, 3 / 2)")).toThrow(round);
-    expect(() => jsmql.expr("const m = 1.5; new Date(2020, m)")).toThrow(round);
-    expect(() => jsmql.expr`new Date(2020, ${1.5})`).toThrow(round);
-    expect(() => jsmql.expr.compile(({ m }: { m: number }) => new Date(2020, m))({ m: 1.5 })).toThrow(round);
+    expect(() => jsmql.expr("Date(2020, 3 / 2)")).toThrow(round);
+    expect(() => jsmql.expr("const m = 1.5; Date(2020, m)")).toThrow(round);
+    expect(() => jsmql.expr`Date(2020, ${1.5})`).toThrow(round);
+    expect(() => jsmql.expr.compile(({ m }: { m: number }) => Date(2020, m))({ m: 1.5 })).toThrow(round);
     expect(() => jsmql.expr("Date(2020, 1.5)")).toThrow(/^'Date\(\)' argument 2 takes an integer, but got a fraction/);
-    expect(() => jsmql.expr("new Date(2020, null)")).toThrow("'new Date()' argument 2 takes an integer, but got null.");
+    expect(() => jsmql.expr("Date(2020, null)")).toThrow("'Date()' argument 2 takes an integer, but got null.");
   });
 
   it("whole calendar parts compile", () => {
-    expect(jsmql.expr("new Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
   });
 
   // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
   // and JSMQL does not cut a value silently.
   it.each([
-    ["written", () => jsmql.expr("new Date(2020.5)"), 9],
-    ["folded", () => jsmql.expr("new Date(3 / 2)"), 11],
-    ["bound", () => jsmql.expr("const n = 2020.5; new Date(n)"), 27],
-    ["interpolated", () => jsmql.expr`new Date(${2020.5})`, 9],
-    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => new Date(n))({ n: 2020.5 }), 20],
+    ["written", () => jsmql.expr("Date(2020.5)"), 5],
+    ["folded", () => jsmql.expr("Date(3 / 2)"), 7],
+    ["bound", () => jsmql.expr("const n = 2020.5; Date(n)"), 23],
+    ["interpolated", () => jsmql.expr`Date(${2020.5})`, 5],
+    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => Date(n))({ n: 2020.5 }), 16],
   ])("a %s fraction as the millisecond count is refused", (_, run, pos) => {
     const e = refusal(run);
     expect(e.message).toMatch(
-      /^'new Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
+      /^'Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
     );
     expect(e.pos).toBe(pos);
   });
 
-  it("a whole millisecond count, a string and a value of unknown kind convert", () => {
-    expect(jsmql.expr("new Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
-    expect(jsmql.expr("new Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
-    expect(jsmql.expr(`new Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
-    expect(jsmql.expr("new Date($.n)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } });
+  it("a whole millisecond count and a string are date constants, and a value of the document is refused", () => {
+    expect(jsmql.expr("Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
+    expect(jsmql.expr("Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
+    expect(jsmql.expr(`Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
+    expect(() => jsmql.expr("Date($.n)")).toThrow(/Write '<value>\.toDate\(\)'/);
     expect(() => jsmql.expr("Date(2020.5)")).toThrow(/^'Date\(\)' argument 1 takes an integer, but got a fraction/);
   });
 
-  it("an ObjectId and a UUID convert a string, or a value of their own type", () => {
-    expect(() => jsmql.expr("ObjectId($.s.length())")).toThrow(
-      /'ObjectId\(\)' argument 1 takes a string or an ObjectId, but got a number\./,
-    );
-    expect(() => jsmql.expr("UUID($.s.length())")).toThrow(
-      /'UUID\(\)' argument 1 takes a string or binary data, but got a number\./,
-    );
+  it("an ObjectId and a UUID constant is a string", () => {
+    expect(() => jsmql.expr("ObjectId(5)")).toThrow(/'ObjectId\(\)' argument 1 takes a string, but got a number\./);
+    expect(() => jsmql.expr("UUID(5)")).toThrow(/'UUID\(\)' argument 1 takes a string, but got a number\./);
   });
 
-  it("a date converts a string, a number or a date", () => {
-    expect(() => jsmql.expr("new Date($.a === 1)")).toThrow(
-      /'new Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
+  it("a date constant is a string, a number or a date", () => {
+    expect(() => jsmql.expr("Date(true)")).toThrow(
+      /'Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
     );
-    expect(() => jsmql.expr("new Date(null)")).toThrow(
-      "'new Date()' argument 1 takes a string, a number or a date, but got null.",
+    expect(() => jsmql.expr("Date(null)")).toThrow(
+      "'Date()' argument 1 takes a string, a number or a date, but got null.",
     );
     expect(() => jsmql.expr("Date(null)")).toThrow(
       "'Date()' argument 1 takes a string, a number or a date, but got null.",
     );
     // A string that no date parser reads keeps the refusal that names the two date constants.
-    expect(() => jsmql.expr('new Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
+    expect(() => jsmql.expr('Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 
-  it("a numeric type converts a string, a number or a boolean", () => {
-    const ops = {
-      Decimal128: "$toDecimal",
-      Long: "$toLong",
-      Int32: "$toInt",
-      Double: "$toDouble",
-      NumberDecimal: "$toDecimal",
-      NumberLong: "$toLong",
-      NumberInt: "$toInt",
-    };
-    for (const [name, op] of Object.entries(ops)) {
-      expect(jsmql.expr(`${name}($.a === 1)`)).toEqual({ [op]: { $eq: ["$a", 1] } });
-      expect(jsmql.expr(`${name}(true)`)).not.toBeNull();
+  it("a numeric constant is a string or a number", () => {
+    for (const name of ["Decimal128", "Long", "Int32", "Double", "NumberDecimal", "NumberLong", "NumberInt"]) {
+      expect(() => jsmql.expr(`${name}(true)`)).toThrow(
+        new RegExp(`'${name}\\(\\)' argument 1 takes a string or a number, but got a boolean\\.`),
+      );
     }
   });
 });

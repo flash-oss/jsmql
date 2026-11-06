@@ -134,7 +134,7 @@ describe("cli: formatting", () => {
   });
 
   it("prints a live BSON value as the JavaScript that makes it", () => {
-    expect(run(["-c", '$.d >= new Date("2026-01-01")']).stdout).toBe(
+    expect(run(["-c", '$.d >= Date("2026-01-01")']).stdout).toBe(
       '{ d: { $gte: new Date("2026-01-01T00:00:00.000Z") } }\n',
     );
     // `new` is not decoration: the driver's export is a class and the bare call throws.

@@ -41,7 +41,6 @@ import {
   iterateeKeys,
   joinWords,
   joinedWith,
-  jsTruth,
   lastOf,
   literalIndexValue,
   negate,
@@ -58,6 +57,7 @@ import {
   sliceArray,
   strLenOf,
   stringKeyExpr,
+  substrOperand,
   takeDropWhile,
   type Minted,
   uniqByReduce,
@@ -108,13 +108,13 @@ import type {
 } from "./vocabulary.ts";
 import {
   because,
-  bsonTagOf,
   escapeForRegex,
   GROUP_SLOT,
   isDate,
   isPlainObject,
   SIZE_SLOT,
   objectBody,
+  queryAmong,
   queryOwnValue,
   inCode,
   single,
@@ -212,14 +212,15 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
-   * The value the cell reads a null or missing receiver as under a dot, so its answer
-   * is there whatever the receiver is. lodash's `_.range` reads a missing bound as 0,
-   * and `_.toString` reads null as "". The cell reads it only where the receiver can be
-   * absent, and HR5 adds no empty array or object of its own. MEASURED:
-   * `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
-   * test/compiler-methods.test.ts measures each row.
+   * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
+   * states it only where it differs from the safe value of the row's family. The
+   * logarithm of 0 stops the command, so `.log()` reads 1, as lodash's `_.divide()`
+   * reads a missing divisor as 1. A method that works on every kind reads the safe
+   * value of the kind that it answers: `.toString()` reads `""`, `.toBool()` reads
+   * false. MEASURED: `{ $ln: 0 }` stops the command, and `$.nope.log()` is 0, as
+   * `(1).log()` is. test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0 | "";
+  nullReceiverAs?: 0 | 1 | "" | false | Date;
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -685,8 +686,6 @@ type ListedCells<W extends readonly Position[]> = {
 type GlobalSpec<W extends readonly Position[]> = {
   doc: string;
   token: TokenName;
-  /** `new` before it. `ObjectId` takes both spellings; `Map` demands it, as JavaScript does. */
-  newKeyword: "required" | "optional" | "forbidden";
   /** When it is also a namespace: the family a name bound to it resolves against. */
   provides?: Family;
   returns: TypeExpr;
@@ -741,86 +740,85 @@ const mongo = <
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
 
 /**
- * The conversion of a constant that is ALREADY a live value of the type of the row. It is
- * null for a string or a JavaScript number, because the `constant` cell builds those. HR7
- * lets a conversion take a value of its own type. The cell converts that value as it
- * converts a runtime value, and it builds nothing. MEASURED on mongod 9.0: `$toObjectId`, `$toLong`, `$toDouble`,
- * `$toDecimal`, `$toInt`, `$toUUID`, `$toDate`, `$toString` and `$toBool` each give a
- * value of their own type back, with the same type and an equal value.
+ * A conversion method: MongoDB's own `$to…` operator over the receiver. It works on every
+ * kind of value, and the server judges the conversion. Under a dot (HR5), a missing
+ * receiver reads as the safe value of the kind that the method answers, which the call
+ * states. A kind with no safe value, an ObjectId or a UUID, gives null, so the dot and
+ * `?.` emit one document. See docs/LANGUAGE.md § Type conversion methods.
  */
-const ownValue = (v: unknown, convert: string): Record<string, unknown> | null =>
-  bsonTagOf(v) !== undefined || isDate(v) ? { [convert]: v } : null;
+const conversion = (e: { method: string; operator: string; returns: TypeExpr; safe?: 0 | false | Date }) =>
+  name({
+    doc: `'.${e.method}()' — emits ${e.operator}. See docs/LANGUAGE.md.`,
+    call: true,
+    on: "any",
+    returns: e.returns,
+    neverNull: true,
+    // MEASURED: each `$to…` operator gives null for null
+    passesNull: true,
+    nullReceiverAs: e.safe,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      // an array literal goes one level deeper, so the server reads it as one argument
+      emit: ({ recv }) => ({ [e.operator]: singleArrayArg(recv) }),
+    },
+    stream: unsupported(`'.${e.method}()' has no stream form: it produces a value, not a stream of documents.`),
+    statement: unsupported(
+      `'.${e.method}()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.${e.method}();'`,
+    ),
+    group: unsupported(`'.${e.method}()' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+    window: unsupported(
+      `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+    ),
+  });
 
 /**
  * One BSON value constructor, and its mongosh spelling where it has one.
  *
  * `spelling` is the name the row answers to, so every message names what the user
- * actually typed. `convert` is the `$to…` operator the dynamic form lowers to.
+ * actually typed. `method` is the conversion method that a value of the document takes
+ * instead, and the refusal of that value names it.
  * `refuseConstant` is the message for a constant the type cannot hold. The `constant` cell
  * builds the value (`construct` of the cell input), and throws this message when the type
  * cannot hold the constant. The message names the type that fits.
  */
 const dateRow = (spelling: string) =>
   global_({
-    doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
+    doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
     token: "Ident",
-    // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
-    // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
-    // same choice every BSON constructor makes, so one rule covers all nine.
-    newKeyword: "optional",
+    // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
+    // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
     provides: "Date",
     returns: "date",
     neverNull: true,
     where: ["value"],
-    filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+    filter: because(`a date is a value, not a test. Compare it: '$.t > ${spelling}("2024-01-01")'.`),
     updateDoc: unsupported(
-      `'new ${spelling}(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`,
+      `'${spelling}(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = ${spelling}()' is '$currentDate'. Inside a value, write a date constant ('${spelling}("2026-01-01")'), pass a Date from your code (an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: ${spelling}() };")'), which 'updateOne' accepts as well.`,
     ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A date that the source spells with literal parts never reaches this row, because the
-        // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
-        // converts (see `ownValue`). The slot states its kinds, so a constant of another kind,
-        // for example `null`, gets the refusal of a wrong kind. The cell refuses a string that
-        // no date parser reads. A number is a count of milliseconds, and the count is an integer.
-        // MEASURED: `$toDate` cuts a fraction toward zero (2020.5 → 2020 ms, -2020.5 → -2020 ms).
-        // JavaScript cuts it the same way, and JSMQL does not cut a value silently, so the
-        // compiler refuses a fraction, as the calendar parts do.
+        // constant engine reads it first (src/compiler/passes/date-literal.ts). The slot states its
+        // kinds, so a constant of another kind, for example `null`, gets the refusal of a wrong kind.
+        // The cell refuses a date and a string that no date parser reads: a type name is no
+        // conversion (see `convertsWith`). A number is a count of milliseconds,
+        // and the count is an integer. MEASURED: `$toDate` cuts a fraction toward zero
+        // (2020.5 → 2020 ms, -2020.5 → -2020 ms). JavaScript cuts it the same way. JSMQL does not
+        // cut a value silently. So the compiler refuses a fraction, as it refuses one in a calendar part.
         constant: {
           args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] }, integer: [0] },
-          emit: ({ args, value, construct }) =>
-            ownValue(value(args[0]), "$toDate") ??
+          emit: ({ args, construct }) =>
             construct(
               spelling,
-              `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+              `${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write ${spelling}("2026-01-01") or ${spelling}(0).`,
               args[0],
             ),
         },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
-          // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
-          // a Decimal128, a string, a date and an ObjectId. A driver sends a whole JavaScript number
-          // below 2^31 as an int, so a number goes through `$toLong` first. `$toLong` cuts a fraction the
-          // same way, so the instant is the one that `$toDate` of the plain number gives. The emitter
-          // tests `$isNumber` for a value of unknown kind, because `$toLong` refuses a string and a date.
-          emit: ({ args, value, type, bind }) => {
-            const x = value(args[0]);
-            const kinds = type(args[0]).kinds;
-            if (kinds !== "any" && !kinds.has("number")) return { $toDate: x };
-            if (kinds !== "any" && kinds.size === 1) {
-              const long = typeof x === "object" && x !== null && Object.keys(x).join() === "$toLong";
-              return { $toDate: long ? x : { $toLong: x } };
-            }
-            // a path is cheap to read three times, and the emitter binds any other operand once
-            const cheap = typeof x === "string" && x.startsWith("$");
-            const v = cheap ? null : bind("n");
-            const ref = v === null ? x : v.ref;
-            const doc = { $toDate: { $cond: [{ $isNumber: ref }, { $toLong: ref }, ref] } };
-            return v === null ? doc : { $let: { vars: { [v.as]: x }, in: doc } };
-          },
-        },
-        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
+        dynamic: convertsWith(spelling, "toDate", MILLIS_TO_DATE),
+        // MEASURED: Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
         // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
         // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
         // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
@@ -830,7 +828,7 @@ const dateRow = (spelling: string) =>
           emit: ({ args, value }) => dateFromParts(args.map(value), null),
         },
         otherwise: unsupported(
-          `'new ${spelling}(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`,
+          `'${spelling}(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`,
         ),
       },
     },
@@ -846,42 +844,31 @@ const bsonValue = (e: {
   spelling: string;
   doc: string;
   returns: TypeExpr;
-  convert: string;
+  method: string;
   isA: string;
   compare: string;
   refuseConstant: string;
-  /**
-   * The kinds the `$to…` operator reads. MEASURED: a string or a number converts. Absent, both.
-   * The list holds the kind of `returns`, because a conversion takes a value of its own type.
-   */
-  takes?: readonly ArgType[];
+  /** The kinds the `$to…` operator reads. MEASURED: a string or a number converts. Absent, both. */
+  takes?: ArgType;
 }) =>
   global_({
     doc: e.doc,
     token: "Ident",
-    newKeyword: "optional",
     returns: e.returns,
     neverNull: true,
     where: ["value"],
     filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
     updateDoc: unsupported(
-      `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form ('jsmql.pipeline(...)'), which 'updateOne' accepts as well.`,
+      `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form with the value's own method ('jsmql.pipeline("$.<field> = <value>.${e.method}();")'), which 'updateOne' accepts as well.`,
     ),
     expr: {
       byArgs: {
         constant: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-          // A boolean constant converts on the server, as a runtime boolean does.
-          emit: ({ args, value, construct }: ExprIn) =>
-            typeof value(args[0]) === "boolean"
-              ? { [e.convert]: value(args[0]) }
-              : (ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])),
+          emit: ({ args, construct }: ExprIn) => construct(e.spelling, e.refuseConstant, args[0]),
         },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-          emit: ({ args, value }: ExprIn) => ({ [e.convert]: value(args[0]) }),
-        },
-        otherwise: unsupported(`'${e.spelling}(…)' takes one value to convert, or one constant.`),
+        dynamic: convertsWith(e.spelling, e.method),
+        otherwise: unsupported(`'${e.spelling}(…)' takes one constant.`),
       },
     },
     stream: unsupported(`'${e.spelling}' produces a value, not a stream of documents.`),
@@ -903,7 +890,6 @@ const bsonSentinel = (spelling: string, doc: string, compare: string) =>
   global_({
     doc,
     token: "Ident",
-    newKeyword: "optional",
     returns: spelling === "MinKey" ? "minKey" : "maxKey",
     neverNull: true,
     where: ["value"],
@@ -1228,20 +1214,24 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
 
 /**
  * `.assign()` as one `$mergeObjects`. A spread argument is a LIST of sources, and a plain
- * argument is ONE source. The desugar packs spread arguments into one array literal
- * (`packed`), so the cell sees which form the developer wrote.
+ * argument is ONE source object, as in JavaScript. The desugar pass packs spread arguments
+ * into one array literal (`packed`), so the cell sees which form the developer wrote.
  *
- * An empty object receiver adds nothing to the merge, so it is dropped:
- * `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, the one-operand form that
- * merges an array. MEASURED: `{ $mergeObjects: null }` is `{}`, so that list takes no
- * guard. A list after a real receiver takes the HR5 guard of the array literal.
- * `$concatArrays` answers null for a missing operand, and without the guard the merge
+ * An empty object receiver adds nothing, and the cell leaves it out where the sources stay
+ * objects. `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, the one-operand form
+ * that merges an array, and `({}).assign($.a, $.b)` is `{ $mergeObjects: ["$a", "$b"] }`.
+ *
+ * One plain source keeps the `{}`: the one-operand form would merge an array source, and
+ * the developer reads that source as one object. MEASURED: `{ $mergeObjects: [{}, "$o"] }`
+ * answers `o`, and `{}` for a missing `o`. `{ $mergeObjects: null }` is `{}`, so a list
+ * alone takes no guard. A list after a real receiver takes the HR5 guard of the array
+ * literal. Without it, `$concatArrays` answers null for a missing operand, and the merge
  * loses the receiver. MEASURED: `{ $mergeObjects: { $concatArrays: [["$o"], "$nope"] } }` is `{}`.
  */
 function merged(recv: unknown, args: readonly Expr[], value: (e: Expr) => unknown): unknown {
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
-  if (list === null) return { $mergeObjects: empty ? args.map(value) : [recv, ...args.map(value)] };
+  if (list === null) return { $mergeObjects: empty && args.length > 1 ? args.map(value) : [recv, ...args.map(value)] };
   if (empty && list.elements.length === 1 && list.elements[0].type === "SpreadElement") {
     return { $mergeObjects: value(list) };
   }
@@ -1269,20 +1259,28 @@ const pairsRead = (obj: unknown, project: (ref: string) => unknown): unknown => 
 });
 
 /**
- * A STRING method on a receiver that is null or missing answers null (HR5).
- *
- * JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to
- * raise inside an expression, and null is the nearest thing it holds. Nothing else is
- * acceptable: `$strLenCP` ABORTS the command on null, and `$toUpper`, `$substrCP`,
- * `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 — that hides
- * the missing field. MEASURED on every row that calls this.
+ * Does the regex match the empty string on the server? A dot reads a missing string as
+ * "" (HR5), so the answer decides whether `.match()` matches a missing field. JavaScript
+ * runs the pattern on "". PCRE's anchors `\A`, `\z`, `\Z` and `\G` match on "".
+ * JavaScript reads each one as a letter. So each one outside a character class reads as
+ * an empty group first. The scan keeps all the other escapes and all the classes as written.
+ */
+const matchesEmpty = (pattern: string, flags: string): boolean =>
+  new RegExp(
+    pattern.replace(/\\[AzZG]|\\.|\[(?:\\.|[^\]\\])*\]/g, (m) => (/^\\[AzZG]$/.test(m) ? "(?:)" : m)),
+    flags,
+  ).test("");
+
+/**
+ * The body of a method over a receiver that may still be null or missing: null there,
+ * the body elsewhere. Under a dot, HR5 reads such a receiver as its safe value first
+ * (`dispatchOn` in src/compiler/emit/lower.ts), so the receiver is `present` and the
+ * test drops out. The test stays where no safe value applies, for example inside a
+ * dispatch branch that admits null. `$strLenCP` ABORTS the command on null, so a
+ * cell must not run its body on a receiver that may be null.
  *
  * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
- * path is cheap to read twice, and this function binds anything else once. A receiver
- * that is `present` skips the test — a literal, a `$lookup`'s array, a path that an
- * earlier `?.` test proved, or an array or object receiver the compiler read as `[]`
- * or `{}` (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
- * array cell that calls this never emits the test under a dot.
+ * path is cheap to read twice, and this function binds anything else once.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
   if (present) return body(recv);
@@ -1305,6 +1303,49 @@ const spelledKeys = (e: Expr): string[] | null =>
   e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral")
     ? e.elements.map((el) => (el as Extract<Expr, { type: "StringLiteral" }>).value)
     : null;
+
+/**
+ * HR5's safe value for a cell that serves a number and a date. It is 0, as lodash reads
+ * `_.inRange(null, -1, 1)`, or the epoch when a bound is a date. `dispatchOn` wraps the
+ * receiver of a one-family row on its own, and a receiver of a proven family too.
+ * `.clamp()` and `.inRange()` take a number or a date. So for any other receiver the
+ * cell states the wrap, and the kind of its bounds picks the value.
+ */
+const safeOfBounds = (kind: ExprIn["kind"], bounds: readonly Expr[]): 0 | Date =>
+  bounds.some((b) => kind(b) === "date") ? new Date(0) : 0;
+
+/**
+ * The receiver of such a cell, read as `safe` when it may be missing. `sameAsNull` says
+ * that `safe` gives the answer that null gives there, so the wrap adds nothing.
+ */
+const safeBound = (recv: unknown, present: boolean, safe: 0 | Date, sameAsNull: boolean): unknown =>
+  present || sameAsNull ? recv : { $ifNull: [recv, safe] };
+
+/** The query operators that join other queries. */
+const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
+
+/**
+ * A query over the fields of a document: each key names a field, or joins such queries
+ * with `$and`, `$or` or `$nor`. An `$elemMatch` body over a document can hold it.
+ */
+const overFields = (q: unknown): boolean =>
+  isPlainObject(q) &&
+  Object.entries(q).every(
+    ([k, v]) => !k.startsWith("$") || (LOGICAL.has(k) && Array.isArray(v) && v.every(overFields)),
+  );
+
+/**
+ * Is the safe value in the range? Two constant bounds of one kind give the answer at
+ * compile time. A number sorts before every date, so 0 is never in a range of two dates,
+ * and the epoch is never in a range of two numbers. For any other pair, the safe value
+ * can be in the range.
+ */
+const mayHold = (safe: 0 | Date, lo: unknown, hi: unknown): boolean => {
+  const bounds = orderedBounds(lo, hi);
+  if (bounds === null) return true;
+  if (isDate(safe) !== isDate(bounds[0])) return false;
+  return (bounds[0] as number) <= (safe as unknown as number) && (safe as unknown as number) < (bounds[1] as number);
+};
 
 /**
  * Two constant bounds in low-to-high order, or null when the pair does not
@@ -1448,6 +1489,61 @@ const fromIsNotJsmql = unsupported(
   "'Array.from(…)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
 );
 
+/**
+ * The hint that a refusal adds when it names a conversion that stops the command on "".
+ * A dot reads a missing string as "" (HR5), so the `?.` must stop the chain at the field,
+ * before the string method runs. MEASURED: `$toDouble`, `$toInt`, `$toLong`, `$toDecimal`,
+ * `$toDate`, `$toObjectId` and `$toUUID` stop the command on "". `$toString` and `$toBool` take it.
+ */
+const afterStringMethod = (method: string): string =>
+  ` If a string method gives the value, write the '?.' right after the field: '$.x?.trim().${method}()'. A dot reads a missing string as "", and the server cannot convert "".`;
+
+/**
+ * A type name as a conversion function. The value's own method says the same thing, and one
+ * capability gets one spelling. See docs/LANGUAGE.md § Type conversion methods.
+ */
+const stringIsNotJsmql = unsupported(
+  "'String(x)' is not part of JSMQL — the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toString()': '$.x?.toString()'. In a callback, write 'x => x.toString()'.",
+);
+const numberIsNotJsmql = unsupported(
+  "'Number(x)' is not part of JSMQL — the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toDouble()': '$.x?.toDouble()'. In a callback, write 'x => x.toDouble()'." +
+    afterStringMethod("toDouble"),
+);
+const booleanIsNotJsmql = unsupported(
+  "'Boolean(x)' is not part of JSMQL — it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'.",
+);
+/** lodash's `_.toNumber`, spelled as a method. JavaScript has no `.toNumber()`. */
+const toNumberIsNotJsmql = unsupported(
+  "'.toNumber()' is not part of JSMQL — '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." +
+    afterStringMethod("toDouble"),
+);
+const parseIntIsNotJsmql = unsupported(
+  "'parseInt()' is not part of JSMQL — '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number." +
+    afterStringMethod("toDouble"),
+);
+const parseFloatIsNotJsmql = unsupported(
+  "'parseFloat()' is not part of JSMQL — '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'." +
+    afterStringMethod("toDouble"),
+);
+/**
+ * A BSON type name over a value of the document: the value's own conversion method says
+ * the same thing. `also` is one more sentence for the row's own case.
+ */
+const convertsWith = (spelling: string, method: string, also = ""): Refusal =>
+  unsupported(
+    `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` +
+      afterStringMethod(method) +
+      also,
+  );
+
+/**
+ * The date refusal names the two steps for a number of milliseconds. MEASURED: `$toDate`
+ * refuses an int, and a driver sends a whole JavaScript number below 2^31 as an int.
+ * `$toLong` reads every number, and it cuts a fraction toward zero, as `new Date(x)` does.
+ */
+const MILLIS_TO_DATE =
+  " For a number of milliseconds, write '$.x.toLong().toDate()': the server cannot convert an int to a date.";
+
 /** `new Set(…)` in every position but an accumulator's. MongoDB has no set type, and an array method does each set operation. */
 const setIsNotJsmql = unsupported(
   "'new Set(…)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'.",
@@ -1471,6 +1567,21 @@ const regExpIsNotJsmql = unsupported(
 const NO_IS_FINITE = unsupported(
   "Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the \"double\" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: \"double\", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.",
 );
+
+/**
+ * `Math.pow(base, exponent)` and `.pow(exponent)`: the operator `**` says the same
+ * thing, and one capability gets one spelling. The refusal stands in every position.
+ */
+const NO_POW = unsupported(
+  "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
+);
+
+/**
+ * `.includes()` tests a substring. A needle that is not a string means membership in
+ * an array, so the row states this sentence twice: as the sibling of an array receiver,
+ * and as the hint of a wrong-kind needle.
+ */
+const MEMBERSHIP_IN_AN_ARRAY = "For membership in an array, write '.has(x)'.";
 
 export const NAMES = {
   $abs: mongo({
@@ -4405,7 +4516,7 @@ export const NAMES = {
           // `r` is there in the body of the null test, so its length takes no guard
           const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
           const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, count] };
+          return { $substrCP: [substrOperand(r), start, count] };
         }),
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
@@ -4431,7 +4542,7 @@ export const NAMES = {
         return nullOr(recv, present, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
           const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+          return { $substrCP: [substrOperand(r), start, clampNonNegative(foldedSubtract(end, start))] };
         });
       },
     },
@@ -4460,9 +4571,9 @@ export const NAMES = {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
         return nullOr(recv, present, bind, (r) => {
-          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          if (lit !== null) return { $substrCP: [substrOperand(r), lit, 1] };
           const index = value(args[0]);
-          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [substrOperand(r), index, 1] });
         });
       },
     },
@@ -4495,7 +4606,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$.<field>.length().range().map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -4520,11 +4631,13 @@ export const NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
+        const test = { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) };
+        // HR5: a dot reads a missing string as "". "" starts with the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4553,14 +4666,16 @@ export const NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         // `\z` is the end of the subject. PCRE's `$` also matches before a final
         // newline, so it selects "report.pdf\n" where JavaScript's endsWith does not.
         // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
+        const test = { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) };
+        // HR5: a dot reads a missing string as "". "" ends with the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4659,19 +4774,20 @@ export const NAMES = {
     // is the one that survives where they differ, and both differences are positions
     // jsmql emits into: a SIBLING operator on the same field
     // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object. The two places the bare form is required
-    // instead — an element of `$in` or `$all` (the server refuses an operator document
-    // there) — no regex reaches: a regex literal is only an argument to `.match` and its
-    // siblings, never an element of a written list.
+    // and `$elemMatch`, which needs an object. An element of `$in` takes the bare form
+    // instead, because the server refuses an operator document there. `queryOrMissing`
+    // in src/registry/vocabulary.ts writes that form.
     filter: {
       args: { sig: "regexp", exact: 1, slotType: { 0: "regex" } },
-      emit: ({ recv, args, pathOf, literal }) => {
+      emit: ({ recv, args, pathOf, literal, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
         // `literal` builds the regex with MongoDB's options, so a JavaScript `g` does not
         // reach the wire as dotAll, and a dotAll `s` does not go missing (src/bson.ts).
-        return queryOwnValue(path, { $regex: literal(re) });
+        const test = { $regex: literal(re) };
+        // HR5: a dot reads a missing string as "", so a regex that matches "" matches it
+        return matchesEmpty(re.pattern, re.flags) ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4866,7 +4982,7 @@ export const NAMES = {
     doc: "'.includes()' — see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    sibling: { array: "For membership in an array, write '.has(x)'." },
+    sibling: { array: MEMBERSHIP_IN_AN_ARRAY },
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
@@ -4874,12 +4990,14 @@ export const NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf }) => {
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" }, slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` } },
+      emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+        const test = { $regex: new RegExp(escapeForRegex(needle.value)) };
+        // HR5: a dot reads a missing string as "". "" includes the empty needle.
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
@@ -4887,6 +5005,7 @@ export const NAMES = {
         sig: "searchString",
         exact: 1,
         slotType: { 0: "string" },
+        slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
         },
@@ -4924,6 +5043,10 @@ export const NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
+          // HR5: a dot reads a missing array as [], which holds no null. `{ f: null }` also
+          // matches a missing or null field, so a null needle tests the elements alone.
+          // MEASURED: `{ f: { $elemMatch: { $eq: null } } }` selects `[null]`. It does not select `null` or {}.
+          if (c.value === null) return queryOwnValue(path, { $elemMatch: { $eq: null } });
           return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
@@ -4942,7 +5065,7 @@ export const NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target, { $in: values });
+        return queryAmong(target, values);
       },
     },
     expr: {
@@ -5775,15 +5898,15 @@ export const NAMES = {
         // element — so it takes no leaf exclusion, and a PREFIX array is still
         // absent, where JavaScript's `.some` throws and selects nothing.
         // MEASURED: a body that tests the element ITSELF is one operator document
-        // (`{ $elemMatch: { $gt: 1, $lt: 5 } }`); `$and`, `$or`, `$nor` and `$expr`
-        // over operator-only clauses are refused there, and so is a mix of a field
-        // and an operator. Those bodies take the expression road.
+        // (`{ $elemMatch: { $gt: 1, $lt: 5 } }`), and the server refuses `$and`, `$or`
+        // and `$nor` over such tests. A body over the element's FIELDS may hold them
+        // (`{ $elemMatch: { $or: [{ q: 1 }, { r: 2 }] } }`). The server refuses `$expr`
+        // in any body, and a mix of a field and a test of the element. Those bodies
+        // take the expression road.
         if (q === null) return null;
         const keys = Object.keys(q);
-        const operators = keys.filter((k) => k.startsWith("$"));
-        if (operators.length > 0 && operators.length < keys.length) return null;
-        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
-        return queryOwnValue(path, { $elemMatch: q });
+        const itself = keys.length > 0 && keys.every((k) => k.startsWith("$") && !LOGICAL.has(k) && k !== "$expr");
+        return itself || overFields(q) ? queryOwnValue(path, { $elemMatch: q }) : null;
       },
     },
     expr: {
@@ -5920,24 +6043,25 @@ export const NAMES = {
   toString: name({
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
+    // MEASURED: `$toString` gives null for null
     passesNull: true,
-    nullReceiverAs: "",
     on: "any",
     returns: "unknown",
     neverNull: true,
+    // lodash's `_.toString(null)` is "": the method answers a string on any kind of receiver
+    nullReceiverAs: "",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
       // A regex literal has no value of its own (see `regexBody`). The cell writes the
       // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
-      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
-      // the receiver there, and `$toString` gives null for null by itself.
-      emit: ({ recv, present }) => {
+      // An array literal goes one level deeper, so the server reads it as one argument.
+      emit: ({ recv }) => {
         const re = recv as { type?: string; pattern?: string; flags?: string };
         if (re.type === "RegexLiteral")
           return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
-        return { $toString: present ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
+        return { $toString: singleArrayArg(recv) };
       },
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
@@ -5949,6 +6073,31 @@ export const NAMES = {
       "'.toString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
     ),
   }),
+
+  // the conversions: one method per MongoDB `$to…` operator, named as the operator is
+  toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
+  toNumber: name({
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
+    call: true,
+    on: "any",
+    returns: "number",
+    where: [],
+    filter: toNumberIsNotJsmql,
+    expr: toNumberIsNotJsmql,
+    stream: toNumberIsNotJsmql,
+    statement: toNumberIsNotJsmql,
+    group: toNumberIsNotJsmql,
+    window: toNumberIsNotJsmql,
+  }),
+  toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
+  toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
+  toDecimal: conversion({ method: "toDecimal", operator: "$toDecimal", returns: "number", safe: 0 }),
+  // MongoDB's `$toBool`, not JavaScript's truthiness: `$toBool("")` is true
+  toBool: conversion({ method: "toBool", operator: "$toBool", returns: "bool", safe: false }),
+  toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: new Date(0) }),
+  toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
+  toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
 
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
@@ -7387,7 +7536,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: [$.a, $.b].max() → {"$max":["$a","$b"]}; $.rows.max() takes none.
+      // MEASURED: [$.a, $.b].max() → {"$max":["$a","$b"]}; { $max: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -7415,7 +7564,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: [$.a, $.b].min() → {"$min":["$a","$b"]}; $.rows.min() takes none.
+      // MEASURED: [$.a, $.b].min() → {"$min":["$a","$b"]}; { $min: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -7964,9 +8113,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      // the truth that `.filter(x => x)` reads, with the tests the element's proof leaves
+      emit: ({ recv, bind, elementTruth }) => {
         const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
+        return { $filter: { input: recv, as: item.as, cond: elementTruth(item.ref) } };
       },
     },
     stream: {
@@ -9556,7 +9706,13 @@ export const NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2, slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] }),
+      emit: ({ recv, args, value, present, kind }) => {
+        const lower = value(args[0]);
+        const safe = safeOfBounds(kind, args);
+        // `$max` ignores null, so the safe value gives null's answer when the lower bound has its kind and is not less
+        const same = isDate(safe) ? isDate(lower) && lower >= safe : typeof lower === "number" && lower >= 0;
+        return { $min: [{ $max: [safeBound(recv, present, safe, same), lower] }, value(args[1])] };
+      },
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -9578,7 +9734,7 @@ export const NAMES = {
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
       args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, pathOf, constant }) => {
+      emit: ({ recv, args, pathOf, constant, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         if (path === null) return null;
         const given = args.map(constant);
@@ -9586,15 +9742,22 @@ export const NAMES = {
         const values = given.map((c) => c!.value);
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
-        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+        const test = { $gte: bounds[0], $lt: bounds[1] };
+        // HR5: a dot reads a missing number as 0, and a missing date as the epoch. So a
+        // range that contains the safe value also matches a missing field.
+        const safe = isDate(bounds[0]) ? new Date(0) : 0;
+        return mayHold(safe, bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present, kind }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        return { $and: [{ $gte: [recv, { $min: [lo, hi] }] }, { $lt: [recv, { $max: [lo, hi] }] }] };
+        const safe = safeOfBounds(kind, args);
+        // null and the safe value are both outside a range that does not contain the safe value
+        const r = safeBound(recv, present, safe, !mayHold(safe, lo, hi));
+        return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       },
     },
     stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
@@ -9611,7 +9774,6 @@ export const NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
@@ -9629,7 +9791,6 @@ export const NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
@@ -9655,6 +9816,7 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
+        // MEASURED: { $round: "$n" } is valid, and 2.5 gives 2, as { $round: ["$n", 0] } does.
         number: {
           args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
@@ -10508,7 +10670,6 @@ export const NAMES = {
   assert: global_({
     doc: "'assert(condition[, message]);' — a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
@@ -10547,8 +10708,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        // The method form answers a NEW object, as '.pick()' and '.omit()' do —
-        // the receiver is the first source, and the call writes nothing in place.
+        // The receiver is the first source. See docs/specs/emit-pass.md § The method cells.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true, rest: "object" },
           emit: ({ recv, args, value }) => merged(recv, args, value),
@@ -10669,9 +10829,10 @@ export const NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
+    // the plain operand, and an array literal one level deeper, as `$size` takes it
     expr: {
       args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({ $isArray: [value(args[0])] }),
+      emit: ({ args, value }) => ({ $isArray: singleArrayArg(value(args[0])) }),
     },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10741,7 +10902,7 @@ export const NAMES = {
   }),
 
   Object: root({
-    doc: 'The JavaScript Object namespace. A receiver only — jsmql.expr("Object") is "Expected \'.\' but got end of input".',
+    doc: "The JavaScript Object namespace. Each member is refused, and its refusal names the method that says the same thing.",
     token: "Ident",
     provides: "namespace",
     where: [],
@@ -10753,98 +10914,63 @@ export const NAMES = {
     window: unsupported("'Object' is a namespace, not a window function."),
   }),
 
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   String: global_({
-    doc: "Converts a value to a string. Emits $toString.",
+    doc: "Parsed, then refused: '<value>.toString()' is JSMQL's conversion to a string.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "string",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-      emit: ({ args, value }) => ({ $toString: value(args[0]) }),
-    },
-    stream: unsupported("'String()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(…);'",
-    ),
-    group: unsupported("'String()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'String()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+    where: [],
+    filter: stringIsNotJsmql,
+    expr: stringIsNotJsmql,
+    stream: stringIsNotJsmql,
+    statement: stringIsNotJsmql,
+    group: stringIsNotJsmql,
+    window: stringIsNotJsmql,
   }),
 
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   Boolean: global_({
-    doc: "Converts a value to a boolean, using JavaScript truthiness. Emits the four-clause JavaScript truthiness $and.",
+    doc: "Parsed, then refused: '!!<value>' is the truthiness of JavaScript, and '.compact()' drops the falsy elements.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1, slotType: { 0: "value" } }, emit: ({ args, boolean }) => boolean(args[0]) },
-    stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(…);'",
-    ),
-    group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+    where: [],
+    filter: booleanIsNotJsmql,
+    expr: booleanIsNotJsmql,
+    stream: booleanIsNotJsmql,
+    statement: booleanIsNotJsmql,
+    group: booleanIsNotJsmql,
+    window: booleanIsNotJsmql,
   }),
 
-  // The parser accepts the name so it gets an answer, and every position refuses it: one
-  // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
+  // The parser accepts the name so it gets an answer, and every position refuses it:
+  // '.toDouble()' is the numeric conversion, and one capability gets one spelling.
   parseInt: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
-    expr: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
-    stream: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
-    statement: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
-    group: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
-    window: unsupported(
-      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.",
-    ),
+    filter: parseIntIsNotJsmql,
+    expr: parseIntIsNotJsmql,
+    stream: parseIntIsNotJsmql,
+    statement: parseIntIsNotJsmql,
+    group: parseIntIsNotJsmql,
+    window: parseIntIsNotJsmql,
   }),
 
   parseFloat: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
-    expr: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
-    stream: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
-    statement: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
-    group: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
-    window: unsupported(
-      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
-    ),
+    filter: parseFloatIsNotJsmql,
+    expr: parseFloatIsNotJsmql,
+    stream: parseFloatIsNotJsmql,
+    statement: parseFloatIsNotJsmql,
+    group: parseFloatIsNotJsmql,
+    window: parseFloatIsNotJsmql,
   }),
 
-  // ── the Math namespace's members ──
+  // ── the number methods that JavaScript spells as `Math` statics ──
   abs: name({
     doc: "'.abs()' — see docs/LANGUAGE.md.",
     call: true,
@@ -10927,6 +11053,8 @@ export const NAMES = {
     doc: "'.log()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10963,6 +11091,8 @@ export const NAMES = {
     doc: "'.log2()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10989,6 +11119,8 @@ export const NAMES = {
     doc: "'.log10()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -11047,13 +11179,12 @@ export const NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
-        number: { args: { sig: "", none: true }, emit: ({ recv, present }) => ({ $cmp: [orZero(recv, present), 0] }) },
+        // under a dot, a missing or null number reads as 0, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cmp: [recv, 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'.",
@@ -11358,6 +11489,8 @@ export const NAMES = {
     doc: "'.acosh()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -11407,24 +11540,19 @@ export const NAMES = {
   }),
 
   pow: name({
-    doc: "'Math.pow(base, exponent)' is not part of JSMQL — '**' says the same thing.",
+    doc: "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL — '**' says the same thing.",
     call: true,
     on: "Math",
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        // The parser accepts the name so it gets an answer, and this cell refuses it.
-        Math: unsupported(
-          "'Math.pow(base, exponent)' is not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
-        ),
-      },
-    },
-    stream: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    statement: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    group: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    window: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+    // The name parses so that it gets an answer, as 'Math.pow(…)' and as '.pow(…)'.
+    // One refusal in every position names the operator.
+    where: [],
+    filter: NO_POW,
+    expr: NO_POW,
+    stream: NO_POW,
+    statement: NO_POW,
+    group: NO_POW,
+    window: NO_POW,
   }),
 
   atan2: name({
@@ -11493,7 +11621,6 @@ export const NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11544,7 +11671,7 @@ export const NAMES = {
   }),
 
   Math: root({
-    doc: 'The JavaScript Math namespace. A receiver only — `jsmql.expr("Math")` errors.',
+    doc: "The JavaScript Math namespace: 'Math.random()', 'Math.PI' and 'Math.E'. Each other member is refused, and its refusal names the number method.",
     token: "Ident",
     provides: "namespace",
     // MEASURED: the compiler refuses a bare `Math`.
@@ -11634,11 +11761,10 @@ export const NAMES = {
   }),
 
   ObjectId: global_({
-    doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
+    doc: "An ObjectId. Empty mints one, and a 24-hex constant is a literal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "objectId",
-    // a mint, a literal, or `$toObjectId` over a value that is there: never null
+    // a mint or a literal: never null
     neverNull: true,
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
@@ -11651,20 +11777,16 @@ export const NAMES = {
         // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
         // constant engine reads it and a query compares it as written.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
-          emit: ({ args, value, construct }) =>
-            ownValue(value(args[0]), "$toObjectId") ??
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, construct }) =>
             construct(
               "ObjectId",
               "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
               args[0],
             ),
         },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
-          emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }),
-        },
-        otherwise: unsupported("'ObjectId(…)' takes no argument (a new id) or one value to convert."),
+        dynamic: convertsWith("ObjectId", "toObjectId"),
+        otherwise: unsupported("'ObjectId(…)' takes no argument (a new id), or one 24-hex constant."),
       },
     },
     stream: unsupported("'ObjectId' produces a value, not a stream of documents."),
@@ -11681,16 +11803,16 @@ export const NAMES = {
   // One factory, because the nine differ in three cells and agree on every other.
   // Each has the SAME three-way meaning `ObjectId` has. No argument mints a value where
   // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
-  // builds, and the cell refuses a value that the type CANNOT hold. Anything else
-  // converts on the server through its `$to…` operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
-  // `new X(…)`. See docs/specs/bson-types.md.
+  // builds, and the cell refuses a value that the type CANNOT hold. A value of the
+  // document is refused, because its own conversion method says the same thing
+  // (`.toLong()`). JSMQL writes `X(…)`, with no `new` (HR8); jsmql.stringify writes the
+  // driver's `new X(…)`. See docs/specs/bson-types.md.
 
   Decimal128: bsonValue({
     spelling: "Decimal128",
-    takes: ["string", "number", "bool"],
-    doc: "A Decimal128 — exact decimal arithmetic. A constant is a literal; anything else converts.",
+    doc: "A Decimal128 — exact decimal arithmetic. A constant is a literal.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > Decimal128("9.99")',
     refuseConstant:
@@ -11698,10 +11820,9 @@ export const NAMES = {
   }),
   Long: bsonValue({
     spelling: "Long",
-    takes: ["string", "number", "bool"],
-    doc: "A 64-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 64-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === Long("9007199254740993")',
     refuseConstant:
@@ -11709,10 +11830,9 @@ export const NAMES = {
   }),
   Int32: bsonValue({
     spelling: "Int32",
-    takes: ["string", "number", "bool"],
-    doc: "A 32-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 32-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === Int32(3)",
     refuseConstant:
@@ -11720,22 +11840,21 @@ export const NAMES = {
   }),
   Double: bsonValue({
     spelling: "Double",
-    takes: ["string", "number", "bool"],
-    doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
+    doc: "A double. A constant is a literal. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
     returns: "number",
-    convert: "$toDouble",
+    method: "toDouble",
     isA: "a double",
     compare: "$.ratio === Double(1)",
     refuseConstant: "'Double(<constant>)' — this constant is not a finite number. Write 'Double(1.5)'.",
   }),
   UUID: bsonValue({
     spelling: "UUID",
-    doc: "A UUID. A constant is a literal; anything else converts.",
+    doc: "A UUID. A constant is a literal.",
     returns: "binData",
-    convert: "$toUUID",
+    method: "toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
-    takes: ["string", "binData"],
+    takes: "string",
     refuseConstant:
       "'UUID(<constant>)' — this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID(\"6ac24965-7917-4323-8d44-920ad1d69b94\")').",
   }),
@@ -11744,10 +11863,9 @@ export const NAMES = {
 
   NumberDecimal: bsonValue({
     spelling: "NumberDecimal",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Decimal128`.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > NumberDecimal("9.99")',
     refuseConstant:
@@ -11755,10 +11873,9 @@ export const NAMES = {
   }),
   NumberLong: bsonValue({
     spelling: "NumberLong",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Long`.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === NumberLong("9007199254740993")',
     refuseConstant:
@@ -11766,51 +11883,33 @@ export const NAMES = {
   }),
   NumberInt: bsonValue({
     spelling: "NumberInt",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Int32`.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === NumberInt(3)",
     refuseConstant:
       "'NumberInt(<constant>)' — this constant is not a whole number in the 32-bit range (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)' to keep a fraction.",
   }),
 
+  // The namespace of 'Number.isInteger(x)'. Every position refuses a call of the name itself.
   Number: global_({
-    doc: "Converts a value to a number.",
+    doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
-    expr: {
-      byArgs: {
-        // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
-        // `3` would be an int. The constant converts like anything else, and a string the
-        // server cannot parse is the server's own error.
-        constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-          emit: ({ args, value }) => ({ $toDouble: value(args[0]) }),
-        },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-          emit: ({ args, value }) => ({ $toDouble: value(args[0]) }),
-        },
-        otherwise: unsupported("'Number(x)' takes exactly one value."),
-      },
-    },
-    stream: unsupported("'Number' produces a value, not a stream of documents."),
-    statement: unsupported("'Number' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Number' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Number' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+    where: [],
+    filter: numberIsNotJsmql,
+    expr: numberIsNotJsmql,
+    stream: numberIsNotJsmql,
+    statement: numberIsNotJsmql,
+    group: numberIsNotJsmql,
+    window: numberIsNotJsmql,
   }),
 
   Array: global_({
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Array",
     returns: "array",
     where: [],
@@ -11825,7 +11924,6 @@ export const NAMES = {
   Set: global_({
     doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "unknown",
     where: [],
     filter: setIsNotJsmql,
@@ -11847,7 +11945,6 @@ export const NAMES = {
   Map: global_({
     doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "object",
     where: [],
     filter: mapIsNotJsmql,
@@ -11861,7 +11958,6 @@ export const NAMES = {
   RegExp: global_({
     doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "unknown",
     where: [],
     filter: regExpIsNotJsmql,
@@ -11907,7 +12003,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
-      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
+      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
     ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),

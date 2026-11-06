@@ -150,19 +150,33 @@ export function negativeLiteralValue(node: Expr): number | null {
   return lit !== null && lit < 0 ? -lit : null;
 }
 
+/**
+ * The string operand of `$substrCP`. That operator reads a null string as `""`, so the
+ * dot rule's `{ $ifNull: [s, ""] }` (HR5) is not necessary there, and this removes it. A `$strLenCP`
+ * beside it keeps the wrap, because `$strLenCP` stops the command on null.
+ * MEASURED: `{ $substrCP: [null, 1, 2] }` is "".
+ */
+export const substrOperand = (s: unknown): unknown => {
+  const operands =
+    typeof s === "object" && s !== null && !Array.isArray(s) ? (s as { $ifNull?: unknown }).$ifNull : undefined;
+  return Array.isArray(operands) && operands.length === 2 && operands[1] === "" && Object.keys(s as object).length === 1
+    ? operands[0]
+    : s;
+};
+
 /** Everything from `from` on. */
 export const strTail = (s: unknown, from: number, present = false): unknown => ({
-  $substrCP: [s, from, strLenOf(s, present)],
+  $substrCP: [substrOperand(s), from, strLenOf(s, present)],
 });
 
 /** lodash `capitalize`: first character up, the rest down. */
 export const capitalizeExpr = (s: unknown, present = false): unknown => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present) }],
+  $concat: [{ $toUpper: { $substrCP: [substrOperand(s), 0, 1] } }, { $toLower: strTail(s, 1, present) }],
 });
 
 /** lodash `upperFirst` / `lowerFirst`: it changes the first character and keeps the rest. */
 export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower", present = false): unknown => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present)],
+  $concat: [{ [op]: { $substrCP: [substrOperand(s), 0, 1] } }, strTail(s, 1, present)],
 });
 
 /** lodash's word boundary: a capitalised word, an acronym, a lone capital, a number. */
@@ -306,11 +320,6 @@ export const slotAggregate = (
   recv: unknown,
   perDocument: (a: unknown) => unknown,
 ): Record<string, unknown> => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
-
-/** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
-export const jsTruth = (value: unknown): unknown => ({
-  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }],
-});
 
 /** `0 - n`. It folds for a constant. */
 export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });

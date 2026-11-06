@@ -105,7 +105,7 @@ A callback parameter takes the receiver's element proof through the row's
 argument's proof at that call. A parameter carries its own presence: an element
 the receiver proves present (`o.keys()`, `.split()`, a literal) is
 present, because `$map` over a null receiver never runs the body; an element of
-an unproven array may be null. So `counts.keys().map(ObjectId)` is a
+an unproven array may be null. So `counts.keys().map(id => id.toObjectId())` is a
 present array of present ObjectIds, and `[1, 2, 3].map(i => $.m[i])` reads the
 key with no `$ifNull`.
 
@@ -211,22 +211,24 @@ value for any operand (`$eq`, `$type`). So only its receiver counts:
 operator's literal object operand is a body (`$map({ input, … })`, `$hour({ date })`),
 and it proves nothing, because no row states which key is the input.
 
-An array or object method under a dot is present whatever its receiver: HR5 reads a
-missing receiver as `[]` or `{}` (`dispatchOn` in
-[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()` guards
-`a` once. A row that states `readsNullAsEmpty` takes no wrap at all, because its
-operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A row
-that states `nullReceiverAs` reads a missing receiver as that value in its own cell,
-so it is present under a dot too: `$.n.range().size()` adds no `$ifNull`. Such a row
-takes no `[]` or `{}` wrap from HR5, also on a receiver of the array family:
-`$.s.split(",").toString()` reads a missing receiver as `""`, not as `[]`. A `?.` on
+A method under a dot is present whatever its receiver, when its kind has a safe
+value. Under a dot, a missing receiver reads as `[]`, `{}`, `""`, `0`, or the value the
+row states in `nullReceiverAs` (`dispatchOn` in [lower.ts](../../src/compiler/emit/lower.ts)
+wraps it). So `$.a.uniq().size()` guards `a` once, and `$.n.range().size()` adds no
+`$ifNull`. The value that a row states comes first, also on a receiver of the array
+family: `.toString()` reads a missing array as `""`, not as `[]`. A row that states
+`readsNullAsEmpty` takes no wrap at all, because its operator gives the same answer for
+null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
 
 A row that states `passesNull` answers null for a null receiver through its own
 operator. A `?.` stops a chain with a `$cond` null test (`stoppedChain` in
 [lower.ts](../../src/compiler/emit/lower.ts)). That test adds nothing when each call
-after the `?.` states the fact and the `?.` tests a field path. So the compiler emits the
-calls alone, with the path proved present.
+after the `?.` states the fact and the `?.` tests a field path or a name: a callback
+parameter or a `let` name. So the compiler emits the calls alone, with the path or the name
+proved present (`Env.proving` and `Env.provingName` in [env.ts](../../src/compiler/emit/env.ts)).
+When the test stays, its second branch reads the same proof, so a call there takes no dot
+wrap: `x => x?.size()` is `{ $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] }`.
 
 Then the compiler adds no dot wrap: `$.o?.keys()` is
 `{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a
@@ -234,9 +236,9 @@ call keeps the test, because the call after the read runs under a dot. `$.o?.a.k
 `[]` for `o: {}`.
 
 A row can state `passesNull` and `nullReceiverAs` together, because the two facts apply
-to different accessors. Under a dot, `.toString()` reads a missing receiver as `""`.
-After a `?.`, the proof shows that the receiver is present, and `$toString` gives null
-for null by itself. So `$.n?.toString()` is `{ $toString: "$n" }`.
+to different accessors. `$.n.log()` reads a missing `n` as 1, and `$.n?.log()` is
+`{ $ln: "$n" }`. In the same way, `$.n.toString()` reads a missing `n` as `""`, and
+`$.n?.toString()` is `{ $toString: "$n" }`.
 
 A production states `passesNull` too, when its operator answers a missing operand as it
 answers `null`: the arithmetic operators and `??`. A `?.` read as its operand then runs as
@@ -415,8 +417,6 @@ A row states the rule, never the compiler:
   `.concat(null)`. `"value"` takes every kind but `null`, for example the operand
   of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
   neither.
-- A conversion takes a value of its own type, so the slot of a conversion row
-  lists the kind of the row's `returns`. See [bson-types.md](bson-types.md).
 - `"element"` is the kind of one element of the element source: the receiver of
   a method, the last operand of a production. An element that can be null adds
   the kind `null` to the proof of the elements. So `[1, null].has(null)` passes,

@@ -109,8 +109,8 @@ So a comparison that must read exactly ONE value has its own spelling:
 jsmql("$.age > 18 && $.status === 'active'");
 // → {age:{$gt:18},status:"active"}
 
-// `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
-jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
+// `Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
+jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`);
 // → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
@@ -130,7 +130,7 @@ jsmql("$foo($.a)");
 
 JSMQL uses the same translation rules that [`$match` uses inside a Pipeline](#match-indexes-by-default). See [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
 
-**`new Date(...)` and indexes.** Take three cases: `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, and `new Date(Date.UTC(2026, 1, 1))`. When each argument of `new Date(...)` is a compile-time literal like these, JSMQL folds the constructor at compile time. It emits a real JS `Date` instance on the right side of the query document. This is the shape that an index on `createdAt` needs. `new Date()` (no argument: the server-side `$$NOW`) and `new Date($.someField)` go into `$expr`, because the server cannot evaluate them before query time.
+**`Date(...)` and indexes.** Take three cases: `Date("2026-01-01")`, `Date(2026, 1, 1)`, and `Date(Date.UTC(2026, 1, 1))`. When each argument of `Date(...)` is a compile-time literal like these, JSMQL folds the constructor at compile time. It emits a real JS `Date` instance on the right side of the query document. This is the shape that an index on `createdAt` needs. `Date()` (no argument: the server-side `$$NOW`) and `$.someField.toDate()` go into `$expr`, because the server cannot evaluate them before query time.
 
 `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter. MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, and that subdocument matches nothing. The fold prevents this problem.
 
@@ -207,7 +207,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to the JSON of a 
 - Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
 - Number methods and the `Math` constants: `$.n.floor()`, `[$.a, $.b].min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
-- Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
+- Date operations: `Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
 - Escape hatch (direct operator form): `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
 - Comments: `// line` and `/* block */` — same behaviour as JavaScript
@@ -242,17 +242,17 @@ An underscore must sit between two digits. `1_`, `_1`, and `1__0` are errors.
 **BigInt literals.** An integer literal with an `n` suffix is a MongoDB 64-bit integer. JSMQL builds the value itself, and the server does not parse a value for each document:
 
 ```js
-123n           // Long.fromString("123")
--123n          // Long.fromString("-123")
-1_000_000n     // Long.fromString("1000000")   (separators allowed)
+123n           // new Long("123")
+-123n          // new Long("-123")
+1_000_000n     // new Long("1000000")   (separators allowed)
 $.timestamp - 1000n
-               // { $subtract: ["$timestamp", Long.fromString("1000")] }
+               // { $subtract: ["$timestamp", new Long("1000")] }
 ```
 
 The value is a real `Long`, so a comparison stays a query that an index serves. The value matches an **element** of an array field, as any other query value does:
 
 ```js
-$.n === 9007199254740993n   // { n: Long.fromString("9007199254740993") }
+$.n === 9007199254740993n   // { n: new Long("9007199254740993") }
 ```
 
 The `n` suffix works on an integer only. `1.5n` and `1e2n` are syntax errors, as in JS. JSMQL refuses a BigInt outside the 64-bit range at compile time, and names `Decimal128` as the type that holds it.
@@ -344,11 +344,20 @@ A template literal is a string between backticks, with `${expr}` interpolation, 
 JSMQL wraps an interpolated expression in `$toString`, so that the result follows the JS
 coercion rules. So `` `count: ${$.n}` `` works when `$.n` is a number and when it is a string. An expression
 that statically gives a string gets no wrap, so the output stays compact. Examples are a
-string literal, `.toLowerCase()`, `String(x)` and a nested template literal:
+string literal, `.toLowerCase()`, `.trim()` and a nested template literal:
 
 ```js
 `name=${$.name.toLowerCase()}`
-// → { $concat: ["name=", { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }] }
+// → { $concat: ["name=", { $toLower: { $ifNull: ["$name", ""] } }] }
+```
+
+A template with one expression and no text is the value of that expression as a string. `$concat` of one string is that string, so the compiler emits the part alone:
+
+```js
+`${$.n}`
+// → { $toString: "$n" }
+`${$.s.trim()}`
+// → { $trim: { input: { $ifNull: ["$s", ""] } } }
 ```
 
 A template with no expression resolves to a plain string. The escape sequences are `\\`, `` \` ``, `\$`, `\n`, `\t` and `\r`. Templates can nest: `` `outer ${`inner ${$.x}`}` `` works.
@@ -489,7 +498,7 @@ $.a = 1, $.b = 2,     // ✗ nothing follows the last ','
 $.a = 1, $.b = 2      // → [{ $set: { a: 1, b: 2 } }]
 ```
 
-A trailing comma never changes the result: the output is identical to the output of the form with no comma. It is **not** a way to add an extra argument. `Number($.x, $.y)` is an error, because `Number` takes one argument. `Number($.x,)` is fine.
+A trailing comma never changes the result: the output is identical to the output of the form with no comma. It is **not** a way to add an extra argument. `Long(5, 6)` is an error, because `Long` takes one argument. `Long(5,)` is fine.
 
 ---
 
@@ -594,7 +603,7 @@ the numeric *value*, not the source text. JSMQL does the same. This is the write
 the read `doc[0]`:
 
 ```js
-({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "1.5": 2, "16": 3 }   — exactly what JS builds
+({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "16": 3, "1.5": 2 }   — exactly what JS builds
 ```
 
 A 24-hex `0x…` literal is an ObjectId in JSMQL, and an ObjectId is not a field name. So
@@ -619,11 +628,11 @@ directly. A key is provably a string when it is a string literal, a string-retur
 expression like `.toLowerCase()`, or a `const k = "…"` binding. **A lambda parameter over an
 array whose elements are all strings** is also provably a string.
 A string key that can be missing reads as `""`, because `$getField` refuses a null name. A
-string method answers null for a missing string, so `.toLowerCase()` takes this guard:
+string method reads a missing string as `""`, so `.toLowerCase()` gives such a key:
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: [{ $lte: ["$key", null] }, null, { $toLower: "$key" }] }, ""] }, input: { $ifNull: ["$scores", {}] } } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$scores", {}] } } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
@@ -665,13 +674,13 @@ $[$.fieldName]                      // → { $getField: { field: { $toString: { 
 
 JSMQL accepts `?.` wherever it accepts `.`, and `?.` does what it does in JavaScript.
 
-**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it; a dot after it follows the dot rule of [HR5](LANG_RULES.md): an array or object method runs on an empty array or object when its receiver is missing.
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it. A dot after it follows the dot rule of [HR5](LANG_RULES.md): a method runs on the safe value of its kind (`[]`, `{}`, `""`, …) when its receiver is missing.
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
 // → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: { $trim: { input: "$s" } } }] }
-$.s.trim().length()  // no ?. — but `.length()` is a string method, and its receiver may be null, so it too answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] } } }
+$.s.trim().length()  // no ?. — a missing `s` reads as "", so the length is 0
+// → { $strLenCP: { $trim: { input: { $ifNull: ["$s", ""] } } } }
 $.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rule
 // → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: { $ifNull: ["$a.b", []] } }] }
 $.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
@@ -682,13 +691,22 @@ $.a?.max()           // `$max` gives null for null, so the chain needs no test
 
 Some operators give `null` for a `null` operand. When each call after the `?.` uses such an operator, the MQL holds no test, because the calls give the same answer.
 
+A `?.` on a callback parameter or a `let` name follows the same rules as a `?.` on a field:
+
+```js
+$.a.map(x => x?.trim())   // `$trim` gives null for null, so no test
+// → { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $trim: { input: "$$x" } } } }
+$.a.map(x => x?.size())   // the test stays; behind it, `x` is there
+// → { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] } } }
+```
+
 **A `?.` with no call after it answers null.** There is nothing to stop. The chain reads as it does with a dot. Where the value is missing, it answers `null`: JavaScript's `undefined`, which a written document holds as `null`. A bracket read is a read too, so `$.o?.[$.k]` answers as `$.o?.p` does. A consumer that takes an empty value supplies its own, as the table below shows.
 
 | Consumer category | Wrapped with | Example |
 |---|---|---|
 | Bare read | `null` for a missing value | `$.user?.name` → `{ $ifNull: ["$user.name", null] }` |
 | Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: "$user.name" } }] }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: { $ifNull: ["$user.name", ""] } } }] }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
 | `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $size: { $ifNull: ["$user.tags", []] } }] }` |
@@ -796,7 +814,7 @@ $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 //                 pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]
 
 // A date bound is an expression, so it is `$expr` in that $match
-$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > new Date().minus(1, "year"));
+$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > Date().minus(1, "year"));
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
 //                 pipeline: [{ $match: { $expr: { $gt: ["$createdAt",
 //                   { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }],
@@ -1508,7 +1526,7 @@ JSMQL knows the type of a receiver when the receiver comes from one of these:
 
 - a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number)
 - an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number)
-- `new Date(…)`
+- `Date(…)`
 - a literal or a template string
 - a written field (see [Type-aware dispatch](#type-aware-dispatch))
 
@@ -1600,10 +1618,10 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')                         // 
 
 ```js
 $.d.startOf("day") - 1                   // ✗ the operand is a date; move a date with .plus() or .minus()
-$.d.startOf("day").plus(1, "day")        // → { $dateAdd: { startDate: { $dateTrunc: { date: "$d", unit: "day" } }, unit: "day", amount: 1 } }
-$.end.diff($.start, "day")               // → { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+$.d.startOf("day").plus(1, "day")        // → { $dateAdd: { startDate: { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }, unit: "day", amount: 1 } }
+$.end.diff($.start, "day")               // → { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }
 $.d - 1                                  // → { $subtract: ["$d", 1] }   the kind of a bare field is unknown, so the server decides
-$subtract($.end.startOf("day"), $.start) // → { $subtract: [{ $dateTrunc: { date: "$end", unit: "day" } }, "$start"] }   as written
+$subtract($.end.startOf("day"), $.start) // → { $subtract: [{ $dateTrunc: { date: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }, "$start"] }   as written
 ```
 
 **This is a surprise for a JavaScript developer.** JavaScript subtracts two dates and gives the milliseconds between them. In JSMQL, `.diff(other, "millisecond")` gives this number. The escape hatch `$add(…)` or `$subtract(…)` gives the server's own date arithmetic.
@@ -1675,6 +1693,13 @@ const allowed = ["a", "b"];
 $.status in allowed                  // { status: { $in: ["a", "b"] } }
 ```
 
+A membership test compares as `===` does, so a missing field is not `null`. In a filter, a list that holds `null` adds `$exists`, because the query `$in` reads `null` as "null or missing". `.has()` on a list follows the same rule:
+
+```js
+$.s in [null, "a"]                   // { $in: ["$s", [null, "a"]] }; in a filter { s: { $in: [null, "a"], $exists: true } }
+[null, "a"].has($.s)                 // the same MQL
+```
+
 Any other right side is a compile error, and the message names the spelling that works. JavaScript's `in` tests a key, and JSMQL gives that test its own spelling, so the two tests never mix:
 
 | You want | Write | Not |
@@ -1707,7 +1732,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), an object predicate method (e.g. `.pickBy`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, a `["field", value]` pair, or a bare `Boolean`. The values below are falsy:
+`&&`, `||`, `!`, `?:`, `!!x`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), an object predicate method (e.g. `.pickBy`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, or a `["field", value]` pair. The values below are falsy:
 
 | Value | Falsy? |
 |---|---|
@@ -1721,7 +1746,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 MongoDB's raw `$toBool` and a bare `$cond` use a different rule: for example, `""` is truthy in MQL. To get the raw semantics of MongoDB, call the operator directly: `$toBool($.x)`, `$op($and, …)`. You can do this, for example, to match an aggregation that exists. Those escape hatches keep their own meaning. A `$op(…)` call that stands alone as a predicate also keeps MongoDB's rule, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. JSMQL refuses such a call as an operand of `&&`, `||` or `!` ([HR6](LANG_RULES.md)).
 
-One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
+One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(x => x)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 
 ```js
 $.active                            // Filter: { $expr: <JS-truthy check on "$active"> }
@@ -1776,31 +1801,31 @@ $.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
 Call methods on any expression that produces a string:
 
 ```js
-$.name.trim()                      // { $trim: { input: "$name" } }
-$.name.trimStart()                 // { $ltrim: { input: "$name" } }
-$.name.trimEnd()                   // { $rtrim: { input: "$name" } }
-$.name.toLowerCase()               // { $toLower: "$name" }
-$.name.toUpperCase()               // { $toUpper: "$name" }
-$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
+$.name.trim()                      // { $trim: { input: { $ifNull: ["$name", ""] } } }
+$.name.trimStart()                 // { $ltrim: { input: { $ifNull: ["$name", ""] } } }
+$.name.trimEnd()                   // { $rtrim: { input: { $ifNull: ["$name", ""] } } }
+$.name.toLowerCase()               // { $toLower: { $ifNull: ["$name", ""] } }
+$.name.toUpperCase()               // { $toUpper: { $ifNull: ["$name", ""] } }
+$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: { $ifNull: ["$name", ""] } }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
-$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: "$name" }, 1] }] }] }
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 1] }] }] }
 $.name.substr(-3)                  // the last three characters — a negative start counts from the end
-$.csv.split(",")                   // { $split: ["$csv", ","] }
+$.csv.split(",")                   // { $split: [{ $ifNull: ["$csv", ""] }, ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `($.csv.length() ?? 0).range().map(i => $.csv.charAt(i))`.
-$.email.indexOfSubstring("@")      // { $indexOfCP: ["$email", "@"] }   — the index of the first "@", or -1
-$.path.indexOfSubstring("/", 1)    // { $indexOfCP: ["$path", "/", 1] }   — the search starts at index 1
-$.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
-$.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
-$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: "$email" }, "@"] }, 0] }
-$.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: ["$email", "admin@"] }, 0] }
+                                   // write `$.csv.length().range().map(i => $.csv.charAt(i))`.
+$.email.indexOfSubstring("@")      // { $indexOfCP: [{ $ifNull: ["$email", ""] }, "@"] }   — the index of the first "@", or -1
+$.path.indexOfSubstring("/", 1)    // { $indexOfCP: [{ $ifNull: ["$path", ""] }, "/", 1] }   — the search starts at index 1
+$.text.replace("old", "new")       // { $replaceOne: { input: { $ifNull: ["$text", ""] }, find: "old", replacement: "new" } }
+$.text.replaceAll(" ", "_")        // { $replaceAll: { input: { $ifNull: ["$text", ""] }, find: " ", replacement: "_" } }
+$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0] }
+$.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: [{ $ifNull: ["$email", ""] }, "admin@"] }, 0] }
 $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
 $.first.trim() + " " + $.last      // { $concat: [{ $trim: ... }, " ", "$last"] }   — `+` joins strings; `.concat()` is an array method
-$.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
-$.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word" } }  — see flag note
+$.email.match(/^[a-z]/)            // { $regexMatch: { input: { $ifNull: ["$email", ""] }, regex: "^[a-z]" } }
+$.text.matchAll(/word/g)           // { $regexFindAll: { input: { $ifNull: ["$text", ""] }, regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
 $.code.padStart(5, "0")            // padded via $reduce + $range + $concat (no length guard — an already-long string concats an empty filler)
 $.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
@@ -1843,6 +1868,7 @@ number where it reads a string.
 $.s.substring(1.5)                 // ✗ start takes an integer
 $.s.padStart(3, 0)                 // ✗ the pad string takes a string: write "0"
 $.s.includes($.s.length())         // ✗ the search string takes a string, and .length() gives a number
+$.items.includes(3)                // ✗ the search string takes a string; for membership in an array write .has(3)
 ```
 
 **`.indexOfSubstring(searchString[, position])`** has the API of JavaScript's
@@ -1855,14 +1881,14 @@ negative `position` reads as 0, as in JavaScript. `$indexOfCP` refuses a negativ
 run-time `position` takes `{ $max: [0, …] }`. A missing or `null` value also reads as 0. A fractional
 run-time value makes the server stop the query.
 
-On a missing or `null` receiver the method gives `null`, with a dot or with `?.`. One case
-differs from JavaScript: an empty `searchString` at a `position` at or past the end gives -1.
+Under a dot, a missing or `null` receiver reads as `""`, so the method gives -1. After a `?.`,
+it gives `null`. One case differs from JavaScript: an empty `searchString` at a `position` at or past the end gives -1.
 JavaScript gives the length of the string.
 
 ```js
-$.s.indexOfSubstring("b", -3)      // { $indexOfCP: ["$s", "b"] }      — a negative start reads as 0
+$.s.indexOfSubstring("b", -3)      // { $indexOfCP: [{ $ifNull: ["$s", ""] }, "b"] }   — a negative start reads as 0
 $.s.indexOfSubstring("b", 1.7)     // ✗ position takes an integer
-$.s.indexOfSubstring("b", $.from)  // { $indexOfCP: ["$s", "b", { $max: [0, "$from"] }] }
+$.s.indexOfSubstring("b", $.from)  // { $indexOfCP: [{ $ifNull: ["$s", ""] }, "b", { $max: [0, "$from"] }] }
 "abc".indexOfSubstring("", 3)      // -1   — JavaScript gives 3
 ```
 
@@ -1884,12 +1910,12 @@ so JSMQL refuses `.split("")` and the spread of a string. Write the characters w
 `.charAt()` instead:
 
 ```js
-($.s.length() ?? 0).range().map(i => $.s.charAt(i))
+$.s.length().range().map(i => $.s.charAt(i))
 // { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
 ```
 
-`.length()` answers `null` for a missing or a null field. The `?? 0` gives the end value `0` to the range,
-so a missing or a null field gives `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
+Under a dot, `.length()` answers `0` for a missing or a null field, so the range is empty, and the
+answer is `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
 gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s` and `x`. The JavaScript-only flags have no MongoDB equivalent: `g` (global), `u` and `v` (unicode), `y` (sticky), `d` (indices). So JSMQL removes them from the emitted `options`, and keeps only `i`, `m` and `s`. The removal of `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch` or `$regexFind`.
@@ -1922,16 +1948,16 @@ The word-boundary `separator` option of `truncate` has no MQL equivalent, becaus
 
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
-$.name.trim().length()              // { $strLenCP: ... } under a null test — the character count
+$.name.trim().length()              // { $strLenCP: ... }       — the character count
 $.csv.split(",").size()             // { $size: ... }           — the element count
 $.field.length                      // "$field.length"          — a FIELD named `length`; JSMQL computes no property
-$.field["length"]                   // { $getField: { field: "length", input: "$field" } } — the same field, bracket access
+$.field["length"]                   // { $getField: { field: "length", input: { $ifNull: ["$field", {}] } } } — the same field, bracket access
 
 // Chaining
-$.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }
+$.name.trim().toLowerCase()         // { $toLower: { $trim: { input: { $ifNull: ["$name", ""] } } } }
 
 // On sub-expressions
-($.firstName + " " + $.lastName).trim()  // { $trim: { input: { $concat: [...] } } }
+($.firstName + " " + $.lastName).trim()  // { $trim: { input: { $ifNull: [{ $concat: [...] }, ""] } } }
 ```
 
 ---
@@ -1943,23 +1969,23 @@ Call methods on any expression that produces an array.
 ### Simple Methods
 
 ```js
-$.items.at(0)              // { $arrayElemAt: ["$items", 0] }        — the element at 0
-$.items.at(-1)             // { $arrayElemAt: ["$items", -1] }       — the last element; the only way to index from the end
-[1, 2, 3].slice(0, 2)      // { $slice: [[1, 2, 3], 2] }          (indices, end-exclusive — like JS)
-[1, 2, 3, 4].slice(1, 3)   // { $slice: [[1, 2, 3, 4], 1, 2] }    (index 1 up to 3 → 2 elements)
-$.items.slice(1, 3)        // { $slice: ["$items", 1, 2] } under a null test — a string takes `.substring(1, 3)`
-$.items.toReversed()       // { $reverseArray: "$items" }            (ES2023, immutable)
-$.scores.toSorted()        // { $sortArray: { input: "$scores", sortBy: 1 } } (ascending)
+$.items.at(0)              // { $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] }   — the element at 0
+$.items.at(-1)             // { $arrayElemAt: [{ $ifNull: ["$items", []] }, -1] }  — the last element; the only way to index from the end
+[1, 2, 3].slice(0, 2)      // [1, 2]   (indices, end-exclusive — like JS)
+[1, 2, 3, 4].slice(1, 3)   // [2, 3]   (index 1 up to 3 → 2 elements)
+$.items.slice(1, 3)        // { $slice: [{ $ifNull: ["$items", []] }, 1, 2] } — a string takes `.substring(1, 3)`
+$.items.toReversed()       // { $reverseArray: { $ifNull: ["$items", []] } }   (ES2023, immutable)
+$.scores.toSorted()        // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 } } (ascending)
 $.scores.toSorted(s => s.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: 1 } } }
 $.scores.toSorted(s => -s.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: -1 } } } (descending)
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: -1 } } } (descending)
 $.scores.toSorted((a, b) => a.value - b.value)
-                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }  — a comparator
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: { value: 1 } } }  — a comparator
 $.scores.toSorted((a, b) => a - b)
-                           // { $sortArray: { input: "$scores", sortBy: 1 } }   — the ELEMENTS are the key
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 } }   — the ELEMENTS are the key
 $.scores.toSorted((a, b) => b - a)
-                           // { $sortArray: { input: "$scores", sortBy: -1 } }  (descending)
+                           // { $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: -1 } }  (descending)
 $.items.with(0, 99)        // immutable index-set — replace element at index, returns new array (ES2023)
 $.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
 $.items.toSpliced(1, 0, "x", "y")
@@ -2027,12 +2053,12 @@ $.s = $.name.trim(); $.b = $.s.has("re");      // ✗ .has() is for an array; fo
 
 ```js
 $.a.indexOf("x")               // { $indexOfArray: [{ $ifNull: ["$a", []] }, "x"] }
-$.s.indexOfSubstring("x")      // { $indexOfCP: ["$s", "x"] }
+$.s.indexOfSubstring("x")      // { $indexOfCP: [{ $ifNull: ["$s", ""] }, "x"] }
 $.s.trim().indexOf("x")        // ✗ .indexOf() is for an array; for a substring write .indexOfSubstring("x")
 $.s.trim().lastIndexOf("x")    // ✗ a string has no search from the end; for the first match write .indexOfSubstring("x")
 ```
 
-**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();`, the compiler knows that `arr` is an array, or null when `tags` is missing. So `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");`, the compiler knows that `bool` is a boolean. So `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write: a whole field, a dotted path such as `$.address.full = …`, and a `let` with each of its later values.
+**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();`, the compiler knows that `arr` is an array that is there, because `.uniq()` under a dot gives `[]` for a missing `tags`. So `$.arr.has("red")` is `{ $in: ["red", "$arr"] }`, with no guard. After `$.bool = $.arr.has("red");`, the compiler knows that `bool` is a boolean. So `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write: a whole field, a dotted path such as `$.address.full = …`, and a `let` with each of its later values.
 
 The proof also follows the result of a method. `$.tags.map(t => t.trim())` is an array of strings. `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean. `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that can be missing. The proof follows every stage too:
 
@@ -2062,11 +2088,13 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what it answers on an empty array or object.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
+**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, a number method on `0`, and a date method on the epoch. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
+
+In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A query clause follows the same reading: `$.s.match(/^$/)` becomes `{ s: { $in: [/^$/, null] } }`, so it also matches a document with no `s`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
 ```js
-$.s.trim().length()               // a STRING method: `s` may be missing → tested first, and answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] } } }
+$.s.trim().length()               // a STRING method: a missing `s` is "", so the length is 0
+// → { $strLenCP: { $trim: { input: { $ifNull: ["$s", ""] } } } }
 
 $.a.map(x => x + 1).size()        // an ARRAY method: a missing `a` is [], so the count is 0, and `.size()` adds no guard of its own
 // → { $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } } }
@@ -2128,7 +2156,7 @@ $.a.sum()                         // `{ $sum: null }` is 0, as `{ $sum: [] }` is
 ```
 
 
-**A query document takes the indexable reading.** An index is read through a query document, so in a filter or a `$match` a boolean method emits the query clause its row states. `$.tags.has("vip")` becomes `{ tags: "vip" }`: "equals, or is an array that contains", which is what `.has` asks of an array. `$.name.includes("vip")` becomes `{ name: { $regex: /vip/ } }`, the substring test. `jsmql.expr` gives the expression forms, `$in` and `$indexOfCP`.
+**A query document takes the indexable reading.** The server can use an index for a query document, so in a filter or a `$match` a boolean method emits the query clause its row states. `$.tags.has("vip")` becomes `{ tags: "vip" }`: "equals, or is an array that contains", which is what `.has` asks of an array. `$.tags.has(null)` becomes `{ tags: { $elemMatch: { $eq: null } } }`, because `{ tags: null }` also matches a document with no `tags`, and a dot reads that field as `[]`. `$.name.includes("vip")` becomes `{ name: { $regex: /vip/ } }`, the substring test. `jsmql.expr` gives the expression forms, `$in` and `$indexOfCP`.
 
 **A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" everywhere that you read the binding. This is also true inside a `$lookup` predicate, where JSMQL passes the binding in as a correlation variable:
 
@@ -2308,7 +2336,7 @@ $.profile.assign({ verified: true });   // ✗ .assign() writes nothing; write $
 Both accept a field name, an array of field names, a `{ field: 1 | -1 | "asc" | "desc" }` spec, or a key-function lambda. `.toSorted()` returns a new array. `.sort()` mutates at statement position. The same shapes work everywhere:
 
 ```js
-$.events.toSorted("distance")             // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
+$.events.toSorted("distance")             // { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } } }
 $.events.toSorted({ distance: -1 })       // descending
 $.events.toSorted({ a: "asc", b: "desc" })// multi-key
 $.events.toSorted(["a", "b"])             // both ascending
@@ -2380,7 +2408,7 @@ $.items.partition(x => x.ok)                // [ [matches…], [non-matches…] 
 $.items.reject({ active: false })           // items NOT matching
 $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
 $.xs.flatten()                              // one level (with an $isArray guard)
-$.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(Boolean)
+$.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(x => x)
 $.a.union($.b) / .intersection($.b) / .xor($.b)          // $setUnion / $setIntersection / composed — unique values, order undefined
 $.a.difference($.b)                                      // $setDifference — unique values, as a JavaScript Set gives them
 $.a.without(2, 4)                           // exclude the given values (variadic)
@@ -2400,7 +2428,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A method that runs a predicate takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element that the predicate rejects, with JS truthiness, as `.filter` does (see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array, and reverses the result back. `sample` and `sampleSize` use `$rand`, so each run gives a **different result**. They are non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement**, and returns the whole shuffled array when `n` is more than the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2431,39 +2459,39 @@ $.xs.size()                                  // the element count — a string h
 
 ### Bare built-in callbacks
 
-You can pass a built-in that converts one value bare as the callback, just like in plain JavaScript: `Boolean`, `Number`, `String`, `ObjectId`, `Date`, and the single-argument `Math` methods:
+A static that tests one value works bare as the callback, as in plain JavaScript: `Number.isInteger` and `Array.isArray`. Each is sugar for the one-parameter arrow it reads as (`x => Number.isInteger(x)`), and it lowers to exactly what that arrow lowers to:
 
 ```js
-$.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
-// → $filter whose `cond` checks each element for JS truthiness
-// (see "Truthy and falsy" above)
-
-$.scores.map(Number)            // coerce strings to numbers
-// → { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $toDouble: "$$x" } } }
-
-$.counts.keys().map(ObjectId)         // object keys are strings — cast them back
-// → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
-
-$.scores.map(x => x.floor())    // round each element down
-
-$.stamps.map(Date)              // convert each element to a date
-// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: { $cond: [{ $isNumber: "$$x" }, { $toLong: "$$x" }, "$$x"] } } } }
-
-[$.first, $.middle, $.last].filter(Boolean).join(" ")
-// composed display name, skipping missing parts
+$.values.filter(Number.isInteger)   // the whole numbers
+$.rows.some(Array.isArray)          // does any element hold an array?
 ```
 
-Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and it lowers to exactly what that arrow lowers to. Every method that takes a callback accepts them, both the array methods and the lodash iteratee/predicate methods alike — `.uniqBy(Number)`, `.keyBy(ObjectId)`, `.reject(Boolean)`. So one vocabulary covers whichever method you reach for.
+A type name is not a callback, because a type name as a conversion function is not part of JSMQL. Write the arrow with the value's own method. Each refused form gets an error that names the arrow:
 
-The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document. The stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)). Outside a callback position, the bare form errors at compile time. Write `Boolean(x)` / `ObjectId(x)` to convert a single value.
+```js
+$.scores.map(Number)                     // ✗ a type name is not a callback
+$.scores.map(x => x.toDouble())          // → { $map: { …, in: { $toDouble: { $ifNull: ["$$x", 0] } } } }
+$.counts.keys().map(id => id.toObjectId())   // object keys are strings — cast them back
+$.items.filter(Boolean)                  // ✗ Boolean is not part of JSMQL
+$.items.compact()                        // drop JS-falsy values (null, "", 0, false, missing)
+[$.first, $.middle, $.last].compact().join(" ")   // composed display name, skipping missing parts
+```
 
-**`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date(x)` converts `x`. So `$.stamps.map(Date)` converts each element, where JavaScript gives the same string for every element.
+The bare form is for **arrays of values**. A pipeline stream carries documents, so the stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)).
 
-**`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Number(<value>).trunc()` for the whole number `parseInt` would give.
+**JSMQL has no `new` keyword, and `Date(…)` is a date, not a string.** You write each constructor as a call: `Date(…)`, `ObjectId(…)`, `Decimal128(…)`. The compiler refuses `new X(…)`, and the error names `X(…)` (see [HR8](LANG_RULES.md)). JavaScript's own `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date()` is the current date, and `Date("2026-01-01")` is a date constant. A value of the document converts with `.toDate()`.
+
+```js
+Date("2026-01-01")         // → a date constant
+Date()                     // → "$$NOW"
+new Date("2026-01-01")     // ✗ no new in JSMQL: write Date("2026-01-01")
+```
+
+**`parseInt` and `parseFloat` are not JSMQL names.** `.toDouble()` is the numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `<value>.toDouble()`, or `<value>.toDouble().trunc()` for the whole number `parseInt` would give. JavaScript has no `.toNumber()` method, but lodash has `_.toNumber`. JSMQL refuses `$.n.toNumber()` too, and the error names `.toDouble()`.
 
 **`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
-`new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new Number(5)`) names the call without `new`.
+`new` on a name that JSMQL does not know names the nearest constructor: for `new Dat()`, the suggestion is `Date(…)`. `new` on a function (`new f(1)`) names the call without `new`. `new` on `Set`, `Map` or `RegExp` gets the error of that name, because the error names the JSMQL form.
 
 ### Set operations on arrays
 
@@ -2510,7 +2538,7 @@ Three facts differ from a JavaScript `Set`:
 
 `.xor()` and `.symmetricDifference()` give the same values. `.symmetricDifference()` binds each list once in a `$let`, and `.xor()` reads each list twice. The raw operators stay available through the escape hatch (see [Set Operations](#set-operations)). They add no `$ifNull`, so `$setDifference($.a, $.b)` gives null when a field is missing.
 
-For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
+For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(x => x)` / `arr.some(x => x)`.
 
 ### `<array>.groupBy()`: group the elements
 
@@ -2707,7 +2735,7 @@ A practical example is a formatter that you declare once, and use for the sender
 ```js
 const addressToString = (a) => {
   return [a.building && a.building + ",", a.streetNo, a.street, a.suburb, a.state, a.country, a.postcode]
-    .filter(Boolean)
+    .compact()
     .join(" ");
 };
 $ = {
@@ -2749,53 +2777,53 @@ Notes:
 A number method reads the number before the dot:
 
 ```js
-$.delta.abs()                      // { $abs: "$delta" }
-$.avg.ceil()                       // { $ceil: "$avg" }
-$.avg.floor()                      // { $floor: "$avg" }
-$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: ["$avg", 10] } }, 10] }
-$.avg.round()                      // { $round: "$avg" }
-$.avg.round(2)                     // { $round: ["$avg", 2] }   (2 decimal places)
-$.avg.trunc()                      // { $trunc: "$avg" }
-$.avg.trunc(2)                     // { $trunc: ["$avg", 2] }
+$.delta.abs()                      // { $abs: { $ifNull: ["$delta", 0] } }
+$.avg.ceil()                       // { $ceil: { $ifNull: ["$avg", 0] } }
+$.avg.floor()                      // { $floor: { $ifNull: ["$avg", 0] } }
+$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: [{ $ifNull: ["$avg", 0] }, 10] } }, 10] }
+$.avg.round()                      // { $round: { $ifNull: ["$avg", 0] } }
+$.avg.round(2)                     // { $round: [{ $ifNull: ["$avg", 0] }, 2] }   (2 decimal places)
+$.avg.trunc()                      // { $trunc: { $ifNull: ["$avg", 0] } }
+$.avg.trunc(2)                     // { $trunc: [{ $ifNull: ["$avg", 0] }, 2] }
 $.base ** 2                        // { $pow: ["$base", 2] }
-$.variance.sqrt()                  // { $sqrt: "$variance" }
-$.x.cbrt()                         // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }] }
+$.variance.sqrt()                  // { $sqrt: { $ifNull: ["$variance", 0] } }
+$.x.cbrt()                         // { $multiply: [{ $cmp: [{ $ifNull: ["$x", 0] }, 0] }, { $pow: [{ $abs: { $ifNull: ["$x", 0] } }, 0.3333333333333333] }] }
                                    // the sign is factored out: (-8).cbrt() is -2, as in JavaScript,
                                    // and $pow of a negative base to a fractional exponent is not that
-$.rate.exp()                       // { $exp: "$rate" }
-$.value.log()                      // { $ln: "$value" }   (natural log)
-$.value.log($.base)                // { $log: ["$value", "$base"] }
-$.value.log(10)                    // { $log10: "$value" }
-$.value.log2()                     // { $log: ["$value", 2] }
-$.value.log10()                    // { $log10: "$value" }
+$.rate.exp()                       // { $exp: { $ifNull: ["$rate", 0] } }
+$.value.log()                      // { $ln: { $ifNull: ["$value", 1] } }   (natural log)
+$.value.log($.base)                // { $log: [{ $ifNull: ["$value", 1] }, "$base"] }
+$.value.log(10)                    // { $log10: { $ifNull: ["$value", 1] } }
+$.value.log2()                     // { $log: [{ $ifNull: ["$value", 1] }, 2] }
+$.value.log10()                    // { $log10: { $ifNull: ["$value", 1] } }
 $.delta.sign()                     // { $cmp: [{ $ifNull: ["$delta", 0] }, 0] }   (-1 / 0 / 1)
-$.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } }
+$.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: [{ $ifNull: ["$a", 0] }, 2] }, { $pow: ["$b", 2] }] } }
 
 [$.a, $.b, $.c].min()              // { $min: ["$a", "$b", "$c"] }
 $.scores.max()                     // { $max: "$scores" }
 [$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-A number method on a missing or `null` number gives `null`, under a dot and under `?.`. See [HR5](LANG_RULES.md). Some methods have a safe value, and a dot gives it instead: `.sign()` gives `0`, because a missing number reads as `0`. `.clamp()`, `.inRange()` and `.range()` give a safe value too; see [lodash number methods](#lodash-number-methods).
+Under a dot, a number method reads a missing or `null` number as `0`, the safe value of a number. See [HR5](LANG_RULES.md). So `$.n.round(2)` gives `0` for a document with no `n`. A method whose operator refuses `0` reads `1` instead, as lodash's `_.divide()` reads a missing divisor. The logarithm of `0` stops the command, so `$.n.log()` gives `0`, the logarithm of `1`. Under `?.`, a number method gives `null`: `$.n?.round(2)` is `{ $round: ["$n", 2] }`.
 
 ### Trigonometry
 
 All angles are in radians, in JS and in MongoDB.
 
 ```js
-$.angle.sin()                      // { $sin: "$angle" }
-$.angle.cos()                      // { $cos: "$angle" }
-$.angle.tan()                      // { $tan: "$angle" }
-$.x.asin()                         // { $asin: "$x" }
-$.x.acos()                         // { $acos: "$x" }
-$.x.atan()                         // { $atan: "$x" }
-$.y.atan2($.x)                     // { $atan2: ["$y", "$x"] }
-$.x.sinh()                         // { $sinh: "$x" }
-$.x.cosh()                         // { $cosh: "$x" }
-$.x.tanh()                         // { $tanh: "$x" }
-$.x.asinh()                        // { $asinh: "$x" }
-$.x.acosh()                        // { $acosh: "$x" }
-$.x.atanh()                        // { $atanh: "$x" }
+$.angle.sin()                      // { $sin: { $ifNull: ["$angle", 0] } }
+$.angle.cos()                      // { $cos: { $ifNull: ["$angle", 0] } }
+$.angle.tan()                      // { $tan: { $ifNull: ["$angle", 0] } }
+$.x.asin()                         // { $asin: { $ifNull: ["$x", 0] } }
+$.x.acos()                         // { $acos: { $ifNull: ["$x", 0] } }
+$.x.atan()                         // { $atan: { $ifNull: ["$x", 0] } }
+$.y.atan2($.x)                     // { $atan2: [{ $ifNull: ["$y", 0] }, "$x"] }
+$.x.sinh()                         // { $sinh: { $ifNull: ["$x", 0] } }
+$.x.cosh()                         // { $cosh: { $ifNull: ["$x", 0] } }
+$.x.tanh()                         // { $tanh: { $ifNull: ["$x", 0] } }
+$.x.asinh()                        // { $asinh: { $ifNull: ["$x", 0] } }
+$.x.acosh()                        // { $acosh: { $ifNull: ["$x", 1] } }
+$.x.atanh()                        // { $atanh: { $ifNull: ["$x", 0] } }
 ```
 
 MongoDB has no JS equivalent for the conversion between degrees and radians. Use the escape hatch:
@@ -2819,6 +2847,7 @@ Each other `Math` member says the same thing as a number method or an operator, 
 ```js
 Math.abs($.delta)                  // ✗ not a JSMQL name; write $.delta.abs()
 Math.pow($.base, 2)                // ✗ not a JSMQL name; write $.base ** 2
+$.base.pow(2)                      // ✗ not a JSMQL name; write $.base ** 2
 Math.max($.a, $.b)                 // ✗ not a JSMQL name; write [$.a, $.b].max()
 $.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x => x.floor())
 ```
@@ -2827,23 +2856,22 @@ $.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x
 
 ## Type Casting
 
-### JavaScript-Style Casting
+### Conversion methods, not type names
+
+A type name is not a conversion function in JSMQL. JSMQL refuses `Number(x)`, `String(x)` and `Boolean(x)`, with `new` or without it, and as a bare callback too (`.map(Number)`). Each error names the value's own method, because one capability gets one spelling:
 
 ```js
-Number($.stringField)              // { $toDouble: "$stringField" }
-String($.numField)                 // { $toString: "$numField" }
-Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
-Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
+$.stringField?.toDouble()          // { $toDouble: "$stringField" }   — not Number($.stringField)
+$.numField?.toString()             // { $toString: "$numField" }   — not String($.numField)
+!!$.value                          // the JS-truthy check, see "Truthy and falsy" — not Boolean($.value)
+$.stringField.toDouble().trunc()   // { $trunc: { $toDouble: { $ifNull: ["$stringField", 0] } } } — the whole number
+$.scores.map(x => x.toDouble())    // not .map(Number)
+$.items.compact()                  // not .filter(Boolean)
 ```
 
-A conversion takes a value of its own type, and the server gives the value back unchanged:
+JSMQL refuses a BSON type name over a value of the document in the same way, and the error names the method: `Long($.x)` names `$.x.toLong()`, and `Date($.x)` names `$.x.toDate()`. A constant stays a literal: `Long(5)`, `Decimal128("9.99")`, `Date("2026-01-01")`. See [Type conversion methods](#type-conversion-methods).
 
-```js
-$.x = 0x507f1f77bcf86cd799439011; $.r = ObjectId($.x);
-// → [{ $set: { x: new ObjectId("507f1f77bcf86cd799439011") } }, { $set: { r: { $toObjectId: "$x" } } }]
-```
-
-The compiler has one number type for the four BSON number types. So `Long(x)`, `Int32(x)`, `Double(x)` and `Decimal128(x)` each take any number.
+`!!x` follows JavaScript's truthy and falsy rules. `!!""` is `false`, `!!0` is `false`, and `!![]` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 
 ### `.toString()`
 
@@ -2866,8 +2894,6 @@ $.tags.join()                // the text JavaScript gives for an array: "a,b"
 - Under a dot, a missing or `null` value gives `""`, as lodash's `_.toString()` does. After a `?.`, it gives `null`. JavaScript throws for the dot, and gives `undefined` for the `?.`. The compiler adds the `$ifNull` only when the value can be missing or `null`. See [HR5](LANG_RULES.md).
 
 `.toString()` takes no argument, so the compiler refuses a radix such as `(255).toString(16)`.
-
-`Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 
 ### `typeof` Operator
 
@@ -2901,13 +2927,15 @@ These are value-mode methods on a number field. They run for each document, and 
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
-$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
-$.n.round()            // { $round: "$n" }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
-$.n.round(2)           // { $round: ["$n", 2] }
-$.n.ceil()             // { $ceil: "$n" }
-$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] }
+$.t.inRange(Date("2024-01-01"), Date("2025-01-01"))           // a date reads the same range test
+$.n.round()            // { $round: { $ifNull: ["$n", 0] } }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
+$.n.round(2)           // { $round: [{ $ifNull: ["$n", 0] }, 2] }
+$.n.ceil()             // { $ceil: { $ifNull: ["$n", 0] } }
+$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 100] } }, 100] }
 $.n.floor(1)           // as ceil, with $floor
 ```
+
+A missing `n` reads as `0` under a dot, so `$.n.inRange(10)` is true for a document with no `n`. A Filter also matches that document: `{ $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] }`. To match only a number that is there, write `$.n?.inRange(10)`.
 
 #### `.random()`
 
@@ -2929,16 +2957,17 @@ Two constant bounds decide the form at compile time. For a bound from a document
 `.range()` is lodash's `_.range`, and the receiver is lodash's first argument. With no argument, the receiver is lodash's `end`, and the range starts at 0. With one or two arguments, the receiver is lodash's `start`, and the arguments are `end` and `step`. The array holds the integers from `start` up to `end`, and it never holds `end`. `.rangeRight()` gives the same array in reverse order.
 
 ```js
-(0).range(4)             // { $range: [0, 4] }                 → [0, 1, 2, 3]
-(5).range(1)             // { $range: [5, 1, -1] }             → [5, 4, 3, 2]
-(0).range(20, 5)         // { $range: [0, 20, 5] }             → [0, 5, 10, 15]
+(0).range(4)             // [0, 1, 2, 3]   — a constant folds at compile time
+(5).range(1)             // [5, 4, 3, 2]
+(0).range(20, 5)         // [0, 5, 10, 15]
+(5).range($.e)           // { $range: [5, { $ifNull: ["$e", 0] }, { $cond: [{ $lt: [5, { $ifNull: ["$e", 0] }] }, 1, -1] }] }
 $.n.range()              // { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
                          //   n: 4 → [0, 1, 2, 3]   n: -3 → [0, -1, -2]   no n → []
 $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$to", 0] }, 2] }
-(1).rangeRight(5)        // { $reverseArray: { $range: [1, 5] } }   → [4, 3, 2, 1]
+(1).rangeRight(5)        // [4, 3, 2, 1]
 ```
 
-- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds the step `-1` for two constant bounds, and a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
+- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
 - **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
 - **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `.ceil()` and `.floor()`. The server refuses a fraction that it reads at run time.
 - **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `n.range().map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
@@ -2946,6 +2975,40 @@ $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$
 The `$range(…)` escape hatch stays raw MQL: `$range(5)` is `{ $range: 5 }`.
 
 > `round` uses MongoDB's `$round`, which rounds half-to-even. This **differs from lodash**, where `_.round(2.5) === 3`. JSMQL emits the native operator on purpose, instead of an emulation.
+
+### Type conversion methods
+
+Each conversion is a method with the name of MongoDB's own `$to…` operator. It works on every kind of value, and the server judges the conversion:
+
+```js
+$.price.toDouble()                 // { $toDouble: { $ifNull: ["$price", 0] } }
+$.qty.toInt()                      // { $toInt: { $ifNull: ["$qty", 0] } }
+$.big.toLong()                     // { $toLong: { $ifNull: ["$big", 0] } }
+$.amount.toDecimal()               // { $toDecimal: { $ifNull: ["$amount", 0] } }
+$.flag.toBool()                    // { $toBool: { $ifNull: ["$flag", false] } }
+$.ts.toDate()                      // { $toDate: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }
+$.idString.toObjectId()            // { $toObjectId: "$idString" }
+$.uuidString.toUUID()              // { $toUUID: "$uuidString" }
+$.price?.toDouble()                // { $toDouble: "$price" }   — null for a missing price
+```
+
+Under a dot, a missing or `null` value reads as the safe value of the kind that the method gives: `0`, `false` or the epoch. See [HR5](LANG_RULES.md). An ObjectId and a UUID have no safe value, so `.toObjectId()` and `.toUUID()` give `null`, and the dot and `?.` emit one document. Write `?.` to get `null` for a missing value.
+
+**`.toBool()` is MongoDB's `$toBool`, not JavaScript's truthiness.** `$toBool` reads every string as `true`, the empty string too. JavaScript's `Boolean("")` is `false`. For JavaScript's truthiness, write `!!$.x`.
+
+**A conversion of `""` stops the command.** `.toBool()` and `.toString()` take `""`. Each other conversion method stops the whole command on `""`, because its MongoDB operator cannot convert it. JavaScript's `Number("")` is `0`. Under a dot, a string method reads a missing string as `""`. So a conversion after a string method stops the command when one document has no such field. Write the `?.` right after the field, before the string method:
+
+```js
+$.price.trim().toDouble()          // { $toDouble: { $trim: { input: { $ifNull: ["$price", ""] } } } }   — a document with no price stops the command
+$.price?.trim().toDouble()         // { $toDouble: { $trim: { input: "$price" } } }   — null for a missing price
+```
+
+**An int field needs `.toLong()` before `.toDate()`.** `.toDate()` is MongoDB's `$toDate`. It reads a long, a double, a Decimal128, a string, a date and an ObjectId, but it stops the command on an int. A driver stores a whole JavaScript number below 2^31 as an int. JavaScript's `new Date(ms)` takes any number. For a number of milliseconds, write `.toLong().toDate()`. `$toLong` cuts a fraction toward zero, as `new Date(ms)` does:
+
+```js
+$.ms.toDate()                      // { $toDate: { $ifNull: ["$ms", new Date("1970-01-01T00:00:00.000Z")] } }   — an int field stops the command
+$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }
+```
 
 ### MongoDB Type Conversion Utilities
 
@@ -2968,13 +3031,12 @@ $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "i
 
 ### ObjectId literals
 
-You can write a constant `_id` in three ways. They all give the same live BSON ObjectId:
+You can write a constant `_id` in two ways. Both give the same live BSON ObjectId:
 
 ```js
 $._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
 $._id === ObjectId("507f1f77bcf86cd799439011")
-$._id === new ObjectId("507f1f77bcf86cd799439011")
-// all → { _id: new ObjectId("507f1f77bcf86cd799439011") }
+// both → { _id: new ObjectId("507f1f77bcf86cd799439011") }
 
 [0x507f1f77bcf86cd799439011, 0x698a76556c10b90d8bd0497e].has($._id)
 // { _id: { $in: [new ObjectId("507f…"), new ObjectId("698a…")] } }
@@ -2989,7 +3051,7 @@ JSMQL emits a real BSON `ObjectId` value. This is the only value that the MongoD
 Two more forms handle the non-constant cases:
 
 ```js
-$.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idString" } (server-side convert)
+$.userId = $.idString.toObjectId() // a value of the document → { $toObjectId: "$idString" } (server-side convert)
 $.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
 ```
 
@@ -3004,18 +3066,18 @@ The value is an `ObjectId` from **your own `bson`** package. JSMQL declares `bso
 
 ### The other BSON types
 
-Eight more BSON types have the same three-way spelling. A constant is a live BSON value. A runtime value converts on the server. `X(…)` and `new X(…)` are equivalent, and `jsmql.stringify` writes the `new X(…)` form.
+Eight more BSON types have the same three-way meaning. A constant is a live BSON value. A runtime value converts on the server. You write `X(…)` with no `new` (HR8). `jsmql.stringify` writes the `new X(…)` form, because that is the JavaScript of the driver.
 
 ```js
 $.price === Decimal128("9.99")     // → { price: new Decimal128("9.99") }
-$.n === Long("9007199254740993")   // → { n: Long.fromString("9007199254740993") }
+$.n === Long("9007199254740993")   // → { n: new Long("9007199254740993") }
 $.count === Int32(3)               // → { count: new Int32(3) }
 $.ratio === Double(1)              // → { ratio: new Double(1) }
 $.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")
 $.grade === MinKey()               // → { grade: new MinKey() }
 $.grade < MaxKey()                 // → { grade: { $lt: new MaxKey() } }
 
-$.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }]
+$.a = $.s.toDecimal();             // → [{ $set: { a: { $toDecimal: { $ifNull: ["$s", 0] } } } }]   — not Decimal128($.s)
 ```
 
 If you know mongosh, its names also work here and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
@@ -3060,90 +3122,90 @@ Measurements show two more surprises. `Long + Double` promotes to a double and l
 
 ### Date Constructor and `Date.now()`
 
+JSMQL has no `new` keyword (see [HR8](LANG_RULES.md)), so a date is `Date(…)`. JavaScript's own `Date(…)` returns a string. JSMQL gives the call the date meaning instead.
+
 ```js
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
-new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
-new Date(2024, 1, 15)              // Date(2024-02-15T00:00:00Z)   (UTC; month 1 = February — months count from 0, as in JS)
-new Date(2024, 11, 31, 23, 59, 58, 999)
+Date("2024-01-01")                 // Date(2024-01-01T00:00:00Z)
+Date(2024, 1, 15)                  // Date(2024-02-15T00:00:00Z)   (UTC; month 1 = February — months count from 0, as in JS)
+Date(2024, 11, 31, 23, 59, 58, 999)
                                    // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form; December is 11
-new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
+Date(Date.UTC(2024, 1, 15))        // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
-new Date()                         // "$$NOW"  (current date/time)
-Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
-new Date($.value)                  // { $toDate: { $cond: [{ $isNumber: "$value" }, { $toLong: "$value" }, "$value"] } }
-Date($.value)                      // the same as `new Date($.value)`
-new Date($.ms * 1)                 // { $toDate: { $toLong: { $multiply: ["$ms", 1] } } }  — a proven number
-new Date($.text.trim())            // { $toDate: { $trim: { input: "$text" } } }  — a proven string
-new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
+Date()                             // "$$NOW"  (current date/time)
+Date()                             // "$$NOW"  — JavaScript's own `Date()` gives a string
+$.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not Date($.dateString)
+$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }  — a number of milliseconds, not Date($.ms)
+Date($.y, $.m, $.d)                // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
 Date.UTC(2024, 1, 15)              // 1707955200000  (folded — 15 February)
 Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, timezone: "UTC" } } }
 ```
 
-**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
+**Constant folding.** When every argument to `Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`Date()`, `$.field.toDate()`) keep the aggregation form. If the constant arguments do not form a valid date (`Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
-**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a run-time fraction toward zero, as JavaScript does, so the instant is the same. The compiler refuses a count that it proves is a fraction, as it refuses a fractional calendar part.
+**A millisecond count converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId, but it refuses an int. A driver sends every whole number below 2^31 as an int. For a count of milliseconds, write `$.ms.toLong().toDate()`. `$toLong` cuts a run-time fraction toward zero, as JavaScript does, so the instant is the same. The compiler refuses a constant count that is a fraction, as it refuses a fractional calendar part.
 
-The compiler writes the shorter form when the operand proves its kind. A proven string or date needs no `$toLong`. A proven number needs no `$isNumber` test.
+**Months count from 0, as in JavaScript. `Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
 
-**Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
-
-A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
+A part out of range goes into the next unit, exactly as in JavaScript: `Date(2024, 12, 1)` is 1 January 2025. A fractional part is different. JavaScript cuts the fraction off, and `$dateFromParts` refuses it, so JSMQL refuses a part that it proves is a fraction. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
 
 ```js
-new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
-new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
-new Date(2024, 1.5)                // ✗ each calendar part is an integer; round it with .floor() or .ceil()
-new Date(1.5)                      // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
-$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   — January is 0
+Date(2024, 0, 15)                  // Date(2024-01-15T00:00:00Z)  — January is 0
+Date(2024, 12, 1)                  // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
+Date(2024, 1.5)                    // ✗ each calendar part is an integer; round it with .floor() or .ceil()
+Date(1.5)                          // ✗ a millisecond count is an integer; round it with .floor() or .ceil()
+$.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
 
-**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the *local time* of the runtime. JSMQL reads it as **UTC**: the default of MQL's `$dateFromParts`, or `Date.UTC` for the constant fold. The reason is that "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
+**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the *local time* of the runtime. JSMQL reads it as **UTC**: the default of MQL's `$dateFromParts`, or `Date.UTC` for the constant fold. The reason is that "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
 
 ### Date Getter Methods
 
 Call these methods on any expression that gives a date:
 
 ```js
-$.createdAt.getFullYear()          // { $year: "$createdAt" }
-$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0, as in JS)
-$.createdAt.getDate()              // { $dayOfMonth: "$createdAt" }
-$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday … 6 = Saturday, as in JS)
-$.createdAt.getHours()             // { $hour: "$createdAt" }
-$.createdAt.getMinutes()           // { $minute: "$createdAt" }
-$.createdAt.getSeconds()           // { $second: "$createdAt" }
-$.createdAt.getMilliseconds()      // { $millisecond: "$createdAt" }
-$.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoch)
-$.createdAt.toISOString()          // { $dateToString: { date: "$createdAt" } }   (that format IS $dateToString's default)
+$.createdAt.getFullYear()          // { $year: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (January = 0, as in JS)
+$.createdAt.getDate()              // { $dayOfMonth: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (0 = Sunday … 6 = Saturday, as in JS)
+$.createdAt.getHours()             // { $hour: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMinutes()           // { $minute: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getSeconds()           // { $second: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMilliseconds()      // { $millisecond: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getTime()              // { $toLong: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }   (ms since epoch)
+$.createdAt.toISOString()          // { $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } } }   (that format IS $dateToString's default)
 ```
+
+Under a dot, a date method reads a missing or `null` date as the epoch, `Date(0)`, the safe value of a date. See [HR5](LANG_RULES.md). So `$.createdAt.getFullYear()` gives `1970` for a document with no `createdAt`. Under `?.`, a date method gives `null`: `$.createdAt?.getFullYear()` is `{ $year: "$createdAt" }`. So a `??` after a date method needs the `?.`: `$.publishedAt?.format("%Y-%m-%d") ?? "unknown"` falls back for a missing `publishedAt`. The dot spelling formats the epoch instead.
 
 Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone. This matches JavaScript's split between `getHours()` (local) and `getUTCHours()` (UTC):
 
 ```js
-$.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
-$.createdAt.getUTCMonth()          // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0)
-$.createdAt.getUTCDate()           // { $dayOfMonth: "$createdAt" }
-$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday, as in JS)
-$.createdAt.getUTCHours()          // { $hour: "$createdAt" }
-$.createdAt.getUTCMinutes()        // { $minute: "$createdAt" }
-$.createdAt.getUTCSeconds()        // { $second: "$createdAt" }
-$.createdAt.getUTCMilliseconds()   // { $millisecond: "$createdAt" }
+$.createdAt.getUTCFullYear()       // { $year: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMonth()          // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (January = 0)
+$.createdAt.getUTCDate()           // { $dayOfMonth: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (0 = Sunday, as in JS)
+$.createdAt.getUTCHours()          // { $hour: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMinutes()        // { $minute: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCSeconds()        // { $second: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMilliseconds()   // { $millisecond: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
 ```
 
 **Parts with no JavaScript getter.** MongoDB counts weeks, ISO weeks and days of the year, but JavaScript's `Date` does not. So these methods carry Moment's method names and MQL's own numbering:
 
 ```js
-$.t.week()                         // { $week: "$t" }             → 32   (weeks start Sunday, 0–53)
-$.t.isoWeek()                      // { $isoWeek: "$t" }          → 33   (ISO 8601, 1–53)
-$.t.isoWeekYear()                  // { $isoWeekYear: "$t" }      → 2026 (the year the ISO week belongs to)
-$.t.isoWeekday()                   // { $isoDayOfWeek: "$t" }     → 3    (1 = Monday … 7 = Sunday)
-$.t.dayOfYear()                    // { $dayOfYear: "$t" }        → 224
-$.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
+$.t.week()                         // { $week: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }             → 32   (weeks start Sunday, 0–53)
+$.t.isoWeek()                      // { $isoWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }          → 33   (ISO 8601, 1–53)
+$.t.isoWeekYear()                  // { $isoWeekYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }      → 2026 (the year the ISO week belongs to)
+$.t.isoWeekday()                   // { $isoDayOfWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }     → 3    (1 = Monday … 7 = Sunday)
+$.t.dayOfYear()                    // { $dayOfYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }        → 224
+$.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } } }   → 3
 
-$.t.week("America/New_York")       // { $week: { date: "$t", timezone: "America/New_York" } }
+$.t.week("America/New_York")       // { $week: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "America/New_York" } }
 ```
 
 Each method takes the optional `timezone` argument, which switches the operator to its `{ date, timezone }` form. `.quarter()` is the one derived value, because MongoDB has no `$quarter` operator. The `$toInt` keeps the result an integer, like every other getter (`$ceil` of a division gives a double). To group *by* quarter, prefer `.startOf("quarter")`, which is one operator and sorts as a date.
@@ -3151,10 +3213,10 @@ Each method takes the optional `timezone` argument, which switches the operator 
 **Date arithmetic.** Add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`. Both take an optional third `timezone` argument:
 
 ```js
-$.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } }
-$.expiresAt.minus(1, "month")      // { $dateSubtract: { startDate: "$expiresAt", unit: "month", amount: 1 } }
+$.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: { $ifNull: ["$subscribedAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 30 } }
+$.expiresAt.minus(1, "month")      // { $dateSubtract: { startDate: { $ifNull: ["$expiresAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month", amount: 1 } }
 $.t.plus(2, "hour", "America/New_York")
-// { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
+// { $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
 On a constant date, the call folds to the instant that the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (see [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (for `.plus(30, "days")`, the suggestion is `"day"`).
@@ -3167,9 +3229,9 @@ The method name follows Temporal and Luxon (`.plus`, `.minus`). The `(amount, un
 
 ```js
 $.end.diff($.start, "day")
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+// { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }
 
-new Date().diff($._id, "day")      // how old is this document?
+Date().diff($._id, "day")          // how old is this document?
 // { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
@@ -3177,16 +3239,18 @@ new Date().diff($._id, "day")      // how old is this document?
 
 **Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (it crosses one midnight), and 00:30 to 23:30 the same day is **0 days**.
 
-Moment's subtraction of elapsed time reports the opposite result in both cases. For the elapsed milliseconds, use the unit `"millisecond"`: `$.end.diff($.start, "millisecond")` → `{ $dateDiff: { startDate: "$start", endDate: "$end", unit: "millisecond" } }`. Each millisecond is a boundary, so this count is the elapsed time.
+Moment's subtraction of elapsed time reports the opposite result in both cases. For the elapsed milliseconds, use the unit `"millisecond"`: `$.end.diff($.start, "millisecond")` → `{ $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "millisecond" } }`. Each millisecond is a boundary, so this count is the elapsed time.
 
 **Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` needs:
 
 ```js
 $.createdAt.startOf("month")
-// { $dateTrunc: { date: "$createdAt", unit: "month" } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }
 
 $group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
-// { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, revenue: { $sum: "$total" } } }
+// { $group: { _id: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }, revenue: { $sum: "$total" } } }
+// a document with no `createdAt` counts in the bucket of the epoch.
+// `$.createdAt?.startOf("month")` puts that document in the bucket null.
 ```
 
 The result is a date, so it sorts, compares and chains like one: `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here, but no getter returns a quarter number.
@@ -3195,20 +3259,20 @@ Two options refine it. `binSize` groups more than one unit into one bucket, and 
 
 ```js
 $.createdAt.startOf("minute", { binSize: 15 })    // 15-minute buckets
-// { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "minute", binSize: 15 } }
 
 $.createdAt.startOf("week", { startOfWeek: "monday" })
-// { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "week", startOfWeek: "monday" } }
 ```
 
 **Format a date as a string.** `.format(spec)` takes MongoDB's own format specifiers:
 
 ```js
 $.createdAt.format("%Y-%m-%d")
-// { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }        → "2026-08-12"
+// { $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" } }        → "2026-08-12"
 
 $.createdAt.startOf("month").format("%Y-%m")
-// { $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } }, format: "%Y-%m" } }
+// { $dateToString: { date: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }, format: "%Y-%m" } }
 //                                                                     → "2026-08"
 
 $.createdAt.format("%H:%M", "America/New_York")
@@ -3232,7 +3296,8 @@ The `onNull` field of `$dateToString` is not an option here. The result of the m
 
 ```js
 $.createdAt.endOf("month")
-// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } },
+// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+//                                                                       unit: "month" } },
 //                                            unit: "month", amount: 1 } },
 //                    unit: "millisecond", amount: 1 } }
 //                                        → 2026-08-31T23:59:59.999Z for any August date
@@ -3256,7 +3321,7 @@ $.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
 
 ```js
 $.t.set({ year: 2030 })
-// { $let: { vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+// { $let: { vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } } } },
 //           in: { $dateFromParts: { year: 2030, month: "$$jsmqlParts.month", day: "$$jsmqlParts.day",
 //                                   hour: "$$jsmqlParts.hour", minute: "$$jsmqlParts.minute",
 //                                   second: "$$jsmqlParts.second", millisecond: "$$jsmqlParts.millisecond" } } } }
@@ -3277,11 +3342,11 @@ Write the parts out as an object literal, because MongoDB reads them by name. Th
 
 ```js
 $.a.isSame($.b, "day")
-// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
+// { $eq: [{ $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
 //         { $dateTrunc: { date: "$b", unit: "day" } }] }
 
 $.a.isBefore($.b, "month")           // strictly an earlier calendar month
-// { $lt: [{ $dateTrunc: { date: "$a", unit: "month" } },
+// { $lt: [{ $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
 //         { $dateTrunc: { date: "$b", unit: "month" } }] }
 ```
 
@@ -3293,7 +3358,7 @@ Every date method takes the same optional last argument. It is a **timezone stri
 
 ```js
 $.end.diff($.start, "week", "UTC")
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "UTC" } }
+// { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "week", timezone: "UTC" } }
 
 $.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
 // { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",
@@ -3308,9 +3373,9 @@ Write the options form out as an object literal. MongoDB reads these fields by n
 
 The week numbers need no adjustment. `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), and `isoWeekday()` is `$isoDayOfWeek` (1 for Monday). The `startOfWeek` option and the `%U`, `%V`, `%u` and `%w` format specifiers are MongoDB's own.
 
-**Note:** the constructors use the same base, so a getter round trip needs no adjustment. `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first day of the month of the receiver. See [the constructor note](#date-constructor-and-datenow).
+**Note:** the constructors use the same base, so a getter round trip needs no adjustment. `Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first day of the month of the receiver. See [the constructor note](#date-constructor-and-datenow).
 
-**Note:** these methods require a date receiver, so JSMQL rejects a literal that is not a date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong`, so it also accepts a numeric string or a number.
+**Note:** these methods require a date receiver, so JSMQL rejects a literal that is not a date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong`, so it also accepts a numeric string or a number.
 
 ### Date Operator Calls
 
@@ -3374,7 +3439,7 @@ the same rule:
 $size($.items)                     // { $size: "$items" }
 $.items.$size()                    // ✗ an operator called as a method; write $size($.items)
 $.items.$sort({ a: 1 })            // ✗ a stage runs on a stream, not on a value; use $sortArray(…)
-$.s.Number()                       // ✗ a global function called as a method; write Number($.s)
+$.s.Long()                         // ✗ a global function called as a method; write Long(…)
 ```
 
 **JSMQL cannot take raw MQL as an operand.** An `$op(…)` call and an object with a `$` key are raw
@@ -3473,6 +3538,7 @@ $.pairs.fromEntries()              // { $arrayToObject: { $map: { input: { $ifNu
 $.a.assign($.b)                    // { $mergeObjects: ["$a", "$b"] }
 $.a.assign($.b, $.c)               // { $mergeObjects: ["$a", "$b", "$c"] }
 ({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   — merge an array of objects
+({}).assign($.o)                   // { $mergeObjects: [{}, "$o"] }   (a copy of one object)
 $.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }
 
 Array.isArray($.items)             // { $isArray: "$items" }
@@ -3766,9 +3832,9 @@ jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
 jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
 jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
 jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
-jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
-// `new Date()` is the server's clock only as the whole write. JSMQL refuses
-// `$.a = { t: new Date() }`: write `$.a.t = new Date()`, or use the pipeline form.
+jsmql.update("$.updatedAt = Date()")     // → { $currentDate: { updatedAt: true } }
+// `Date()` is the server's clock only as the whole write. JSMQL refuses
+// `$.a = { t: Date() }`: write `$.a.t = Date()`, or use the pipeline form.
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
@@ -3786,7 +3852,7 @@ An update filter can be a pipeline element next to an ordinary stage. The same c
 jsmql(`[
   $match($.active),
   $.score += 1,
-  $.lastSeenAt = new Date(),
+  $.lastSeenAt = Date(),
   $sort({ score: -1 })
 ]`)
 // → [
@@ -3950,7 +4016,7 @@ jsmql(`$$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
 
 // Switch source to another collection: drop the current stream, union in filtered foreign docs.
 // The driver call (`db.<original>.aggregate(...)`) keeps its original collection.
-jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new Date("2026-01-01"));`)
+jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= Date("2026-01-01"));`)
 // → [
 //     { $match: { $expr: false } },
 //     { $unionWith: { coll: "transactions",
@@ -4669,7 +4735,7 @@ A `,` continues the declaration, exactly as it does in JavaScript, and a later d
 
 ```js
 jsmql`
-  const start = new Date("2026-08-01"), end = start.plus(1, "month");
+  const start = Date("2026-08-01"), end = start.plus(1, "month");
   $.t.inRange(start, end);
 `;
 // → { t: { $gte: new Date("2026-08-01T00:00:00.000Z"),
@@ -4794,7 +4860,7 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `new Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
+The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
 
 ```js
 jsmql("const a = (3).range().map(() => 7); $.x = a;");
@@ -4822,12 +4888,12 @@ jsmql.expr("$add(1, 2)");
 A folded value is what the **server** would compute, not what JavaScript computes, where the two differ. A month added to 31 January lands on the last day of February, as `$dateAdd` does. `.startOf("week")` gives the Sunday, as `$dateTrunc` does. `.diff(other, "day")` counts the midnights crossed, as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
 
 ```js
-jsmql(`const start = new Date("2026-09-01");
+jsmql(`const start = Date("2026-09-01");
        const end = start.plus(1, "month");
        $.createdAt >= start && $.createdAt < end`);
 // → { createdAt: { $gte: new Date("2026-09-01T00:00:00.000Z"), $lt: new Date("2026-10-01T00:00:00.000Z") } }
 
-jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day: monthStart.format("%Y-%m-%d") })');
+jsmql('const monthStart = Date("2026-09-15").startOf("month"); $match({ day: monthStart.format("%Y-%m-%d") })');
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
@@ -4974,7 +5040,7 @@ A direct `$op(...)` call (for example `$dateDiff`, `$sampleRate`, `$stdDevPop`) 
 
 ```js
 jsmql(({ $, $ifNull, $dateDiff }) =>
-  $ifNull($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }), -1),
+  $ifNull($dateDiff({ startDate: $.lastLoginAt, endDate: Date(), unit: "day" }), -1),
 );
 ```
 
@@ -5061,7 +5127,7 @@ JSMQL accepts a single top-level stage call (`$match(...)`), a single stage-obje
 ```js
 db.users.updateOne(
   { _id: 123 },
-  jsmql.update("$.visits += 1, $.status = 'active', $.updatedAt = new Date(), delete $.tmp"),
+  jsmql.update("$.visits += 1, $.status = 'active', $.updatedAt = Date(), delete $.tmp"),
 );
 // → db.users.updateOne(
 //     { _id: 123 },
@@ -5071,7 +5137,7 @@ db.users.updateOne(
 jsmql.update("$.name = $.name.toUpperCase()");   // ✗ the value comes from the document, and an update document takes only constants; use the pipeline form
 ```
 
-Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= new Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
+Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
 
 The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, not as the field. So JSMQL refuses a value computed from the document, and names the pipeline form instead (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`). `updateOne` accepts that form too, and MongoDB evaluates it server-side.
 
@@ -5130,7 +5196,7 @@ echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --ar
 `jsmql.stringify(document)` writes a compiled document as **the JavaScript that rebuilds it**. This is the text the CLI prints and the playground shows. Paste it into mongosh or a driver script, and it means what your source meant.
 
 ```js
-const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")');
+const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > Date("2026-01-01")');
 
 jsmql.stringify(filter);
 // {
@@ -5142,7 +5208,7 @@ jsmql.stringify(filter);
 
 `JSON.stringify` cannot write that document. A Date and an ObjectId each carry a `toJSON`, so both collapse to a plain string, and the server then compares them as strings. A live `RegExp` becomes `{}`, which matches every document. Every other BSON value becomes its internal byte fields. The document still runs, and it matches nothing.
 
-JSMQL writes every BSON class as `new X(…)`, the form the Node driver needs. The same text runs in mongosh, which exposes the driver's classes as globals. A driver script needs them in scope:
+`jsmql.stringify` writes every BSON class as `new X(…)`, the form the Node driver needs. The same text runs in mongosh, which exposes the driver's classes as globals. A driver script needs them in scope:
 
 ```js
 const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
@@ -5602,7 +5668,7 @@ jsmql.expr("$.createdAt.getFullYear()")
 // → { $year: "$createdAt" }
 
 // Days since creation
-jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
+jsmql.expr("$dateDiff($.createdAt, Date(), 'day')")
 // → { $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" } }
 
 // Format date
@@ -5614,7 +5680,7 @@ jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')
 
 ```js
 // Convert string to number
-jsmql.expr("Number($.stringPrice) * 1.1")
+jsmql.expr("$.stringPrice?.toDouble() * 1.1")
 // → { $multiply: [{ $toDouble: "$stringPrice" }, 1.1] }
 
 // Type check
@@ -5915,7 +5981,7 @@ null        = "null"
 A: Use `.size()` for an array and `.length()` for a string. `$.items.size()` is `{ $size: { $ifNull: ["$items", []] } }`, and a missing array counts as empty. The `$size()` escape hatch is also there: `$size($.items)`.
 
 **Q: Is `$.field.includes(x)` a `$in` or a string-substring match?**
-A: A substring match, always: `.includes(x)` is a string method. Membership in an array is `.has(x)`, which emits `$in` in an expression and `{ field: x }` in a query document (see [Type-aware dispatch](#type-aware-dispatch)). On a field the compiler has proven to be an array, `.includes` is a compile-time error that names `.has(x)`. The operator forms are also there: `$in(x, $.items)`, the needle first, as MongoDB spells it.
+A: A substring match, always: `.includes(x)` is a string method. Membership in an array is `.has(x)`, which emits `$in` in an expression and `{ field: x }` in a query document (see [Type-aware dispatch](#type-aware-dispatch)). On a field the compiler has proven to be an array, `.includes` is a compile-time error that names `.has(x)`. A needle of another kind than a string, for example `$.items.includes(3)`, is a compile-time error that names `.has(x)` too. The operator forms are also there: `$in(x, $.items)`, the needle first, as MongoDB spells it.
 
 **Q: Does `?.` actually short-circuit?**
 A: For a bare READ it is sugar. MongoDB already returns null or missing when a path crosses a missing field, so `$.a?.b?.c` and `$.a.b.c` are the same MQL. Once the chain feeds a consumer that is not null-safe, the `?.` adds a real `$ifNull` neutral value. The table under [Optional Chaining](#optional-chaining) lists which consumer takes which neutral value.

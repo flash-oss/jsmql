@@ -11,8 +11,8 @@
 // guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Decimal128, Long, MongoClient, ObjectId, type Collection } from "mongodb";
-import { expr } from "../src/compiler/index.ts";
+import { Decimal128, Long, MongoClient, type Collection } from "mongodb";
+import { expr, filter } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { jsmql } from "../src/index.ts";
@@ -85,128 +85,98 @@ const nullOr = (recv: unknown, body: unknown): unknown => ({ $cond: [{ $lte: [re
 
 describe("compiler/emit — string methods", () => {
   it("lowers each string method to its operator", () => {
-    expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: "$s" } });
-    expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: "$s" } });
-    expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: "$s" } });
-    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({
-      $cond: [{ $lte: ["$s", null] }, null, { $toLower: "$s" }],
-    });
-    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({
-      $cond: [{ $lte: ["$s", null] }, null, { $toUpper: "$s" }],
-    });
-    expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: ["$csv", ","] });
-    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $substrCP: ["$csv", 0, 1] }],
-    });
+    expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: { $ifNull: ["$s", ""] } } });
+    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({ $toLower: { $ifNull: ["$s", ""] } });
+    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({ $toUpper: { $ifNull: ["$s", ""] } });
+    expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: [{ $ifNull: ["$csv", ""] }, ","] });
+    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({ $substrCP: ["$csv", 0, 1] });
     expect(compiled("$.csv.charAt(-1)", (d) => d.csv.charAt(-1))).toBe("");
     expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $eq: [{ $indexOfCP: ["$csv", "a"] }, 0] }],
+      $eq: [{ $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a"] }, 0],
     });
     expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual({
-      $cond: [
-        { $lte: ["$csv", null] },
-        null,
-        {
-          $let: {
-            vars: { jsmqlStr: "$csv" },
-            in: {
-              $eq: [
-                { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] },
-                "c",
-              ],
-            },
-          },
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$csv", ""] } },
+        in: {
+          $eq: [{ $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] }, "c"],
         },
-      ],
+      },
     });
     expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual({
-      $cond: [
-        { $lte: ["$csv", null] },
-        null,
-        { $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1] },
+      $ifNull: [
+        { $getField: { field: "idx", input: { $regexFind: { input: { $ifNull: ["$csv", ""] }, regex: "b" } } } },
+        -1,
       ],
     });
     expect(compiled('$.csv.padStart(7, "-")', (d) => d.csv.padStart(7, "-"))).toEqual({
-      $cond: [
-        { $lte: ["$csv", null] },
-        null,
-        {
-          $let: {
-            vars: { jsmqlPad: "$csv" },
-            in: {
-              $concat: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "-"] },
-                  },
-                },
-                "$$jsmqlPad",
-              ],
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $concat: [
+            {
+              $reduce: {
+                input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
+                initialValue: "",
+                in: { $concat: ["$$value", "-"] },
+              },
             },
-          },
+            "$$jsmqlPad",
+          ],
         },
-      ],
+      },
     });
     expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toEqual({
-      $cond: [
-        { $lte: ["$csv", null] },
-        null,
-        {
-          $let: {
-            vars: { jsmqlPad: "$csv" },
-            in: {
-              $concat: [
-                "$$jsmqlPad",
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $concat: [
+            "$$jsmqlPad",
+            {
+              $substrCP: [
                 {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "xy"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                  ],
+                  $reduce: {
+                    input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
+                    initialValue: "",
+                    in: { $concat: ["$$value", "xy"] },
+                  },
                 },
+                0,
+                { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
               ],
             },
-          },
+          ],
         },
-      ],
+      },
     });
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
-      $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", "$csv"] } },
+      $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", { $ifNull: ["$csv", ""] }] } },
     });
-    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $substrCP: ["$csv", 2, 2] }],
-    });
-    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $substrCP: ["$csv", 1, 2] }],
-    });
+    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({ $substrCP: ["$csv", 2, 2] });
+    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({ $substrCP: ["$csv", 1, 2] });
     // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A negative position
     // reads as 0, as in JavaScript, because `$indexOfCP` refuses a negative start.
-    expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({ $indexOfCP: ["$csv", "b"] });
+    expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"],
+    });
     expect(compiled('$.csv.indexOfSubstring(",", 2)', (d) => d.csv.indexOf(",", 2))).toEqual({
-      $indexOfCP: ["$csv", ",", 2],
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, ",", 2],
     });
     expect(compiled('$.csv.indexOfSubstring("a", -2)', (d) => d.csv.indexOf("a", -2))).toEqual({
-      $indexOfCP: ["$csv", "a"],
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a"],
     });
     expect(compiled('$.csv.indexOfSubstring("a", $.neg)', (d) => d.csv.indexOf("a", d.neg))).toEqual({
-      $indexOfCP: ["$csv", "a", { $max: [0, "$neg"] }],
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a", { $max: [0, "$neg"] }],
     });
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
-      $replaceOne: { input: "$csv", find: ",", replacement: ";" },
+      $replaceOne: { input: { $ifNull: ["$csv", ""] }, find: ",", replacement: ";" },
     });
     expect(compiled('$.csv.replaceAll(",", ";")', (d) => d.csv.replaceAll(",", ";"))).toEqual({
-      $replaceAll: { input: "$csv", find: ",", replacement: ";" },
+      $replaceAll: { input: { $ifNull: ["$csv", ""] }, find: ",", replacement: ";" },
     });
     expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $regexMatch: { input: "$csv", regex: "B", options: "i" } }],
+      $regexMatch: { input: { $ifNull: ["$csv", ""] }, regex: "B", options: "i" },
     });
     expect(compiled("$.csv.truncate({ length: 3 })", () => "...")).toEqual({
       $let: {
@@ -235,7 +205,9 @@ describe("compiler/emit — string methods", () => {
     });
     expect(compiled("$.w.words()", () => ["foo", "Bar", "baz", "qux"])).toEqual({
       $map: {
-        input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+        input: {
+          $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+        },
         as: "jsmqlWord",
         in: "$$jsmqlWord.match",
       },
@@ -245,7 +217,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -261,7 +235,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -276,7 +252,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$dashed", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -291,7 +272,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$under", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -306,7 +292,9 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -321,7 +309,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$dashed", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -336,7 +329,12 @@ describe("compiler/emit — string methods", () => {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: {
+                  input: { $ifNull: ["$under", ""] },
+                  regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -348,13 +346,15 @@ describe("compiler/emit — string methods", () => {
     });
     // a missing field: the dot form answers "" as lodash does, and `?.` answers null
     expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
-    expect(compiled("$.nope?.upperCase()", () => null)).toEqual(nullOr("$nope", expr("$.nope.upperCase()")));
+    expect(compiled("$.nope?.upperCase()", () => null)).toHaveProperty("$cond");
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
       $toLower: {
         $reduce: {
           input: {
             $map: {
-              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              input: {
+                $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+              },
               as: "jsmqlWord",
               in: "$$jsmqlWord.match",
             },
@@ -370,7 +370,9 @@ describe("compiler/emit — string methods", () => {
           $map: {
             input: {
               $map: {
-                input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                input: {
+                  $regexFindAll: { input: { $ifNull: ["$w", ""] }, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" },
+                },
                 as: "jsmqlWord",
                 in: "$$jsmqlWord.match",
               },
@@ -397,7 +399,12 @@ describe("compiler/emit — string methods", () => {
                 $map: {
                   input: {
                     $map: {
-                      input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                      input: {
+                        $regexFindAll: {
+                          input: { $ifNull: ["$w", ""] },
+                          regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+",
+                        },
+                      },
                       as: "jsmqlWord",
                       in: "$$jsmqlWord.match",
                     },
@@ -432,7 +439,7 @@ describe("compiler/emit — string methods", () => {
               $replaceAll: {
                 input: {
                   $replaceAll: {
-                    input: { $replaceAll: { input: "$h", find: "&", replacement: "&amp;" } },
+                    input: { $replaceAll: { input: { $ifNull: ["$h", ""] }, find: "&", replacement: "&amp;" } },
                     find: "<",
                     replacement: "&lt;",
                   },
@@ -466,53 +473,100 @@ describe("compiler/emit — string methods", () => {
 describe("compiler/emit — date methods", () => {
   it("counts months and weekdays from 0, as JavaScript does", () => {
     // measured: `$month` of March is 3, `$dayOfWeek` of a Sunday is 1
-    expect(compiled("$.d.getUTCFullYear()", (d) => d.d.getUTCFullYear())).toEqual({ $year: "$d" });
-    expect(compiled("$.d.getUTCMonth()", (d) => d.d.getUTCMonth())).toEqual({ $subtract: [{ $month: "$d" }, 1] });
-    expect(compiled("$.d.getUTCDate()", (d) => d.d.getUTCDate())).toEqual({ $dayOfMonth: "$d" });
-    expect(compiled("$.d.getUTCDay()", (d) => d.d.getUTCDay())).toEqual({ $subtract: [{ $dayOfWeek: "$d" }, 1] });
-    expect(compiled("$.d.getUTCHours()", (d) => d.d.getUTCHours())).toEqual({ $hour: "$d" });
-    expect(compiled("$.d.getUTCMinutes()", (d) => d.d.getUTCMinutes())).toEqual({ $minute: "$d" });
-    expect(compiled("$.d.getUTCSeconds()", (d) => d.d.getUTCSeconds())).toEqual({ $second: "$d" });
-    expect(compiled("$.d.getUTCMilliseconds()", (d) => d.d.getUTCMilliseconds())).toEqual({ $millisecond: "$d" });
+    expect(compiled("$.d.getUTCFullYear()", (d) => d.d.getUTCFullYear())).toEqual({
+      $year: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMonth()", (d) => d.d.getUTCMonth())).toEqual({
+      $subtract: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
+    expect(compiled("$.d.getUTCDate()", (d) => d.d.getUTCDate())).toEqual({
+      $dayOfMonth: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCDay()", (d) => d.d.getUTCDay())).toEqual({
+      $subtract: [{ $dayOfWeek: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
+    expect(compiled("$.d.getUTCHours()", (d) => d.d.getUTCHours())).toEqual({
+      $hour: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMinutes()", (d) => d.d.getUTCMinutes())).toEqual({
+      $minute: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCSeconds()", (d) => d.d.getUTCSeconds())).toEqual({
+      $second: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMilliseconds()", (d) => d.d.getUTCMilliseconds())).toEqual({
+      $millisecond: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
     // the local-time accessors are the same operators: the server knows no client timezone, so they read UTC
     expect(compiled("$.d.getMonth()", (d) => d.d.getUTCMonth(), "local time is UTC on the server")).toEqual({
-      $subtract: [{ $month: "$d" }, 1],
+      $subtract: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
     });
-    expect(compiled("$.d.getTime()", (d) => d.d.getTime())).toEqual({ $toLong: "$d" });
-    expect(compiled("$.d.toISOString()", (d) => d.d.toISOString())).toEqual({ $dateToString: { date: "$d" } });
+    expect(compiled("$.d.getTime()", (d) => d.d.getTime())).toEqual({
+      $toLong: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.toISOString()", (d) => d.d.toISOString())).toEqual({
+      $dateToString: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } },
+    });
   });
 
   it("lowers the date arithmetic with its options", () => {
     expect(compiled('$.d.plus(1, "day")', (d) => new Date(d.d.getTime() + 86400000))).toEqual({
-      $dateAdd: { startDate: "$d", unit: "day", amount: 1 },
+      $dateAdd: { startDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
     });
     expect(compiled('$.d.minus(30, "minute", "UTC")', (d) => new Date(d.d.getTime() - 1800000))).toEqual({
-      $dateSubtract: { startDate: "$d", unit: "minute", amount: 30, timezone: "UTC" },
+      $dateSubtract: {
+        startDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "minute",
+        amount: 30,
+        timezone: "UTC",
+      },
     });
     expect(compiled('$.d.isSame($.e, "month")', () => true)).toEqual({
-      $eq: [{ $dateTrunc: { date: "$d", unit: "month" } }, { $dateTrunc: { date: "$e", unit: "month" } }],
+      $eq: [
+        { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+        { $dateTrunc: { date: "$e", unit: "month" } },
+      ],
     });
     expect(compiled('$.d.isAfter($.e, "day", { timezone: "UTC", startOfWeek: "mon" })', () => true)).toEqual({
       $gt: [
-        { $dateTrunc: { date: "$d", unit: "day", timezone: "UTC", startOfWeek: "mon" } },
+        {
+          $dateTrunc: {
+            date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+            unit: "day",
+            timezone: "UTC",
+            startOfWeek: "mon",
+          },
+        },
         { $dateTrunc: { date: "$e", unit: "day", timezone: "UTC", startOfWeek: "mon" } },
       ],
     });
-    expect(compiled("$.d.quarter()", () => 1)).toEqual({ $toInt: { $ceil: { $divide: [{ $month: "$d" }, 3] } } });
-    expect(compiled('$.d.isoWeek("UTC")', () => 11)).toEqual({ $isoWeek: { date: "$d", timezone: "UTC" } });
-    expect(compiled('$.d.format("%Y-%m-%d")', () => "2026-03-15")).toEqual({
-      $dateToString: { date: "$d", format: "%Y-%m-%d" },
+    expect(compiled("$.d.quarter()", () => 1)).toEqual({
+      $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } },
     });
-    expect(compiled('$.d.startOf("month")', (d) => d.e)).toEqual({ $dateTrunc: { date: "$d", unit: "month" } });
+    expect(compiled('$.d.isoWeek("UTC")', () => 11)).toEqual({
+      $isoWeek: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "UTC" },
+    });
+    expect(compiled('$.d.format("%Y-%m-%d")', () => "2026-03-15")).toEqual({
+      $dateToString: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" },
+    });
+    expect(compiled('$.d.startOf("month")', (d) => d.e)).toEqual({
+      $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+    });
     expect(compiled('$.d.endOf("day")', () => new Date("2026-03-15T23:59:59.999Z"))).toEqual({
       $dateSubtract: {
-        startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$d", unit: "day" } }, unit: "day", amount: 1 } },
+        startDate: {
+          $dateAdd: {
+            startDate: { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
+            unit: "day",
+            amount: 1,
+          },
+        },
         unit: "millisecond",
         amount: 1,
       },
     });
     expect(compiled('$.d.diff($.e, "day")', () => 14)).toEqual({
-      $dateDiff: { startDate: "$e", endDate: "$d", unit: "day" },
+      $dateDiff: { startDate: "$e", endDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" },
     });
     expect(
       compiled(
@@ -521,7 +575,7 @@ describe("compiler/emit — date methods", () => {
       ),
     ).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$d" } } },
+        vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } } } },
         in: {
           $dateFromParts: {
             year: "$$jsmqlParts.year",
@@ -603,10 +657,7 @@ describe("compiler/emit — object methods", () => {
           in: {
             k: {
               $toString: {
-                $let: {
-                  vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
-                  in: { $cond: [{ $lte: ["$$k", null] }, null, { $toUpper: "$$k" }] },
-                },
+                $let: { vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" }, in: { $toUpper: { $ifNull: ["$$k", ""] } } },
               },
             },
             v: "$$jsmqlKv.v",
@@ -633,7 +684,7 @@ describe("compiler/emit — object methods", () => {
               {
                 $let: {
                   vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
-                  in: { $cond: [{ $lte: ["$$k", null] }, null, { $eq: [{ $indexOfCP: ["$$k", "_"] }, 0] }] },
+                  in: { $eq: [{ $indexOfCP: [{ $ifNull: ["$$k", ""] }, "_"] }, 0] },
                 },
               },
             ],
@@ -1484,7 +1535,7 @@ describe("compiler/emit — array methods", () => {
     // server judges any other value. A string takes `.indexOfSubstring`.
     expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
-      $indexOfArray: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, "b"],
+      $indexOfArray: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, "b"],
     });
     expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toEqual({
       $let: {
@@ -1509,16 +1560,12 @@ describe("compiler/emit — array methods", () => {
     // Membership is `.has` on an array; the substring test is `.includes` on a string.
     expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual({ $in: [2, { $ifNull: ["$a", []] }] });
     expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual({
-      $cond: [{ $lte: ["$csv", null] }, null, { $gte: [{ $indexOfCP: ["$csv", "b"] }, 0] }],
+      $gte: [{ $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"] }, 0],
     });
     expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, -1] });
     expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 1, 2] });
     expect(compiled("$.csv.substring(2)", (d) => d.csv.substring(2))).toEqual({
-      $cond: [
-        { $lte: ["$csv", null] },
-        null,
-        { $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: "$csv" }, 2] }] }] },
-      ],
+      $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, 2] }] }],
     });
     // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
     // array it stands for, as JavaScript's `Array.prototype.concat` reads it. An argument
@@ -1542,7 +1589,7 @@ describe("compiler/emit — array methods", () => {
       $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }, ["!"], ["?"]],
     });
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
-      $concatArrays: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, ["!"], ["?"]],
+      $concatArrays: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, ["!"], ["?"]],
     });
     // Strings join with `+`.
     expect(compiled('$.csv + "!" + "?"', (d) => d.csv + "!" + "?")).toEqual({ $concat: ["$csv", "!", "?"] });
@@ -1869,6 +1916,13 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.startsWith(1)")).toThrow("'.startsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.endsWith(1)")).toThrow("'.endsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.includes(1)")).toThrow("'.includes()' argument 1 takes a string, but got a number.");
+    // A needle that is not a string means membership in an array: the refusal names '.has()', on both roads.
+    expect(() => expr("$.arr.includes(3)")).toThrow(
+      "'.includes()' argument 1 takes a string, but got a number. For membership in an array, write '.has(x)'.",
+    );
+    expect(() => filter("$.arr.includes(true)")).toThrow(
+      "'.includes()' argument 1 takes a string, but got a boolean. For membership in an array, write '.has(x)'.",
+    );
     expect(() => expr('$.s.replace(1, "x")')).toThrow("'.replace()' argument 1 takes a string, but got a number.");
     expect(() => expr('$.s.replaceAll(",", 1)')).toThrow(
       "'.replaceAll()' argument 2 takes a string, but got a number.",
@@ -2019,7 +2073,9 @@ describe("compiler/emit — number ranges", () => {
 
   it("refuses a zero step and a fractional bound, and names the alternative", () => {
     expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*n\.range\(\)\.map/);
-    expect(() => expr("(0.5).range(3)")).toThrow(/receiver takes an integer, but got a fraction.*\.ceil\(\)/);
+    expect(() => expr("(0.5).range(3)")).toThrow(
+      /receiver takes an integer, but got a fraction.*'<number>\.ceil\(\)' or '<number>\.floor\(\)'/,
+    );
     expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 takes an integer/);
     expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 takes an integer/);
     expect(() => expr("$.n.range(1, 2, 3)")).toThrow(/\.range\(\[end\[, step\]\]\)/);
@@ -2031,39 +2087,112 @@ describe("compiler/emit — number ranges", () => {
 });
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
-  it("lowers each number method that a Math member names to its operator", () => {
-    expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
-    expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: "$n" });
+  it("drops the falsy elements with `.compact()`, through the proof of the element", () => {
+    expect(compiled('$.csv.split(",").compact()', (d) => d.csv.split(",").filter((x) => x))).toEqual({
+      $filter: {
+        input: { $split: [{ $ifNull: ["$csv", ""] }, ","] },
+        as: "jsmqlItem",
+        cond: { $ne: ["$$jsmqlItem", ""] },
+      },
+    });
+  });
+
+  it("gives true or false for `!!` over a number, as JavaScript does", () => {
+    expect(compiled("!!$.a.size()", (d) => !!d.a.length)).toEqual({
+      $cond: [{ $size: { $ifNull: ["$a", []] } }, true, false],
+    });
+    expect(compiled("!!$.csv.length()", (d) => !!d.csv.length)).toEqual({
+      $cond: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, true, false],
+    });
+    expect(compiled("!!$.nope.size()", () => false)).toEqual({
+      $cond: [{ $size: { $ifNull: ["$nope", []] } }, true, false],
+    });
+  });
+
+  it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
+    const epoch = new Date("1970-01-01T00:00:00.000Z");
+    expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
+    // `$toInt` of a double drops the fraction
+    expect(compiled("$.n.toInt()", (d) => Math.trunc(d.n))).toEqual({ $toInt: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.neg.toLong()", (d) => d.neg)).toEqual({ $toLong: { $ifNull: ["$neg", 0] } });
+    expect(expr("$.n.toDecimal()")).toEqual({ $toDecimal: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.toBool()", () => true)).toEqual({ $toBool: { $ifNull: ["$n", false] } });
+    expect(compiled("$.mo.c.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$mo.c", false] } });
+    // MongoDB's `$toBool` reads every string as true, where JavaScript's `Boolean("")` is false
+    expect(compiled("$.mo.a.toBool()", () => true, "$toBool of a string")).toEqual({
+      $toBool: { $ifNull: ["$mo.a", false] },
+    });
+    expect(compiled("$.d.toDate()", (d) => d.d)).toEqual({ $toDate: { $ifNull: ["$d", epoch] } });
+    // HR5: a missing value reads as the safe value of the kind that the method answers
+    expect(compiled("$.nope.toDouble()", () => 0)).toEqual({ $toDouble: { $ifNull: ["$nope", 0] } });
+    expect(compiled("$.nope.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$nope", false] } });
+    expect(compiled("$.nope.toDate()", () => epoch)).toEqual({ $toDate: { $ifNull: ["$nope", epoch] } });
+    // after a `?.` the operator gives null, and no `$cond` tests the receiver
+    expect(compiled("$.nope?.toDouble()", () => null)).toEqual({ $toDouble: "$nope" });
+    // an ObjectId and a UUID have no safe value, so the dot and `?.` emit one document
+    expect(compiled("$.nope.toObjectId()", () => null)).toEqual({ $toObjectId: "$nope" });
+    expect(expr("$.nope?.toObjectId()")).toEqual({ $toObjectId: "$nope" });
+    expect(expr("$.id.toUUID()")).toEqual({ $toUUID: "$id" });
+    // DELIBERATELY invalid: the server refuses to convert an array. The literal goes one
+    // level deeper, so the server reads it as one argument and gives that conversion error.
+    expect(expr("[1, 2].toDouble()")).toEqual({ $toDouble: [[1, 2]] });
+  });
+
+  it("lowers each number method to its operator, the receiver first", () => {
+    expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: { $ifNull: ["$neg", 0] } });
+    expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: { $ifNull: ["$n", 0] } });
     expect(compiled("$.neg.cbrt()", () => Math.cbrt(DOC.neg))).toEqual({
-      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, 0.3333333333333333] }],
+      $multiply: [
+        { $cmp: [{ $ifNull: ["$neg", 0] }, 0] },
+        { $pow: [{ $abs: { $ifNull: ["$neg", 0] } }, 0.3333333333333333] },
+      ],
     });
     expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({ $cmp: [{ $ifNull: ["$neg", 0] }, 0] });
     // HR5: a missing number reads as 0, the safe value, so its sign is 0
     expect(compiled("$.nope.sign()", () => 0)).toEqual({ $cmp: [{ $ifNull: ["$nope", 0] }, 0] });
-    expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
-    expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({ $trunc: ["$n", 2] });
-    expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: "$n" });
-    expect(compiled("$.n.ceil()", () => Math.ceil(DOC.n))).toEqual({ $ceil: "$n" });
-    expect(compiled("$.n.floor()", () => Math.floor(DOC.n))).toEqual({ $floor: "$n" });
-    expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
-    expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
-    expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
-    // `.log(base)` takes a base, and the constant 10 has an operator of its own
-    expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
-    expect(expr("$.n.log($.b)")).toEqual({ $log: ["$n", "$b"] });
+    expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({
+      $trunc: [{ $ifNull: ["$n", 0] }, 2],
+    });
+    expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.ceil()", () => Math.ceil(DOC.n))).toEqual({ $ceil: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.floor()", () => Math.floor(DOC.n))).toEqual({ $floor: { $ifNull: ["$n", 0] } });
     expect(compiled("$.n.floor(1)", () => Math.floor(DOC.n * 10) / 10)).toEqual({
-      $divide: [{ $floor: { $multiply: ["$n", 10] } }, 10],
+      $divide: [{ $floor: { $multiply: [{ $ifNull: ["$n", 0] }, 10] } }, 10],
     });
-    expect(compiled("$.neg.exp()", () => Math.exp(DOC.neg))).toEqual({ $exp: "$neg" });
-    expect(compiled("$.neg ** 3", () => Math.pow(DOC.neg, 3))).toEqual({ $pow: ["$neg", 3] });
+    expect(compiled("$.n.ceil(-1)", () => Math.ceil(DOC.n * 0.1) / 0.1)).toEqual({
+      $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 0.1] } }, 0.1],
+    });
+    expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.n.log(3)", () => Math.log(DOC.n) / Math.log(3))).toEqual({ $log: [{ $ifNull: ["$n", 1] }, 3] });
+    expect(expr("$.n.log($.b)")).toEqual({ $log: [{ $ifNull: ["$n", 1] }, "$b"] });
+    expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: [{ $ifNull: ["$n", 1] }, 2] });
+    expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.neg.exp()", () => Math.exp(DOC.neg))).toEqual({ $exp: { $ifNull: ["$neg", 0] } });
+    expect(compiled("$.neg ** 3", () => DOC.neg ** 3)).toEqual({ $pow: ["$neg", 3] });
     expect(compiled("$.neg.hypot(4)", () => Math.hypot(DOC.neg, 4))).toEqual({
-      $sqrt: { $add: [{ $pow: ["$neg", 2] }, { $pow: [4, 2] }] },
+      $sqrt: { $add: [{ $pow: [{ $ifNull: ["$neg", 0] }, 2] }, { $pow: [4, 2] }] },
     });
-    expect(compiled("$.neg.atan2(4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: ["$neg", 4] });
-    expect(compiled("$.n.sin()", () => Math.sin(DOC.n))).toEqual({ $sin: "$n" });
-    expect(compiled("($.n / 10).acos()", () => Math.acos(DOC.n / 10))).toEqual({ $acos: { $divide: ["$n", 10] } });
-    expect(compiled("$.n.tanh()", () => Math.tanh(DOC.n))).toEqual({ $tanh: "$n" });
-    expect(compiled("$.n.asinh()", () => Math.asinh(DOC.n))).toEqual({ $asinh: "$n" });
+    expect(compiled("$.neg.atan2(4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: [{ $ifNull: ["$neg", 0] }, 4] });
+    expect(compiled("$.n.sin()", () => Math.sin(DOC.n))).toEqual({ $sin: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.cos()", () => Math.cos(DOC.n))).toEqual({ $cos: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.tan()", () => Math.tan(DOC.n))).toEqual({ $tan: { $ifNull: ["$n", 0] } });
+    expect(compiled("($.n / 10).asin()", () => Math.asin(DOC.n / 10))).toEqual({
+      $asin: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
+    expect(compiled("($.n / 10).acos()", () => Math.acos(DOC.n / 10))).toEqual({
+      $acos: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
+    expect(compiled("$.n.atan()", () => Math.atan(DOC.n))).toEqual({ $atan: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.sinh()", () => Math.sinh(DOC.n))).toEqual({ $sinh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.cosh()", () => Math.cosh(DOC.n))).toEqual({ $cosh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.tanh()", () => Math.tanh(DOC.n))).toEqual({ $tanh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.asinh()", () => Math.asinh(DOC.n))).toEqual({ $asinh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.acosh()", () => Math.acosh(DOC.n))).toEqual({ $acosh: { $ifNull: ["$n", 1] } });
+    expect(compiled("($.n / 10).atanh()", () => Math.atanh(DOC.n / 10))).toEqual({
+      $atanh: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
     expect(compiled("[$.neg, $.n].min()", () => Math.min(DOC.neg, DOC.n))).toEqual({ $min: ["$neg", "$n"] });
     expect(compiled("$.a.max()", () => Math.max(...DOC.a))).toEqual({ $max: "$a" });
     expect(compiled("[...$.a, 9].max()", () => Math.max(...DOC.a, 9))).toEqual({
@@ -2072,12 +2201,32 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(expr("Math.random()")).toEqual({ $rand: {} });
   });
 
-  it("lowers the global constructors and the Number, Array and Object statics", () => {
-    expect(compiled("String($.n)", () => String(DOC.n))).toEqual({ $toString: "$n" });
-    expect(compiled("Boolean($.neg)", () => Boolean(DOC.neg))).toEqual({
-      $and: [{ $gt: ["$neg", null] }, { $ne: ["$neg", false] }, { $ne: ["$neg", ""] }, { $ne: ["$neg", 0] }],
-    });
-    expect(compiled("Number($.n)", () => Number(DOC.n))).toEqual({ $toDouble: "$n" });
+  it("refuses each Math static that a number method says, and names the method", () => {
+    for (const [src, dot] of [
+      ["Math.abs($.n)", "'<number>.abs()'"],
+      ["Math.round($.n)", "'<number>.round()'"],
+      ["Math.atan2($.y, $.x)", "'<y>.atan2(<x>)'"],
+      ["Math.max($.a, $.b)", "'[a, b].max()'"],
+      ["Math.pow($.x, 2)", "'base ** exponent'"],
+      // The method spelling of a static that JSMQL refuses takes the same refusal.
+      ["$.n.pow(2)", "'$.n ** 2'"],
+      ["$.a.map(x => x.pow(2))", "'$.n ** 2'"],
+    ]) {
+      expect(() => expr(src), src).toThrow(dot);
+    }
+  });
+
+  it("refuses a type name as a conversion function, and lowers the Number, Array and Object statics", () => {
+    // The value's own method converts it, and each refusal names the method.
+    expect(() => expr("String($.n)")).toThrow(/'\$\.x\?\.toString\(\)'/);
+    expect(() => expr("Boolean($.neg)")).toThrow(/'!!\$\.x'/);
+    expect(() => expr("Number($.n)")).toThrow(/'\$\.x\?\.toDouble\(\)'/);
+    // lodash's `_.toNumber` as a method: JavaScript has no `.toNumber()`, and the refusal names the conversion.
+    expect(() => expr("$.n.toNumber()")).toThrow(/'\.toNumber\(\)' is not part of JSMQL.*'\$\.x\.toDouble\(\)'/);
+    expect(() => expr("$.a.map(x => x.toNumber())")).toThrow(/'\$\.x\.toDouble\(\)'/);
+    // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
+    expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
+    expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);
     expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
@@ -2095,26 +2244,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("Number.isNaN($.n)", () => Number.isNaN(DOC.n))).toEqual({
       $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
     });
-    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: ["$a"] });
-    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: ["$n"] });
-    expect(compiled("$.o.assign({ z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
-      $mergeObjects: ["$o", { z: 1 }],
-    });
-    // A spread argument is a list of sources, a plain argument is one source, and an
-    // empty receiver adds nothing to the merge.
-    expect(compiled("({}).assign(...$.docs)", () => Object.assign({}, ...DOC.docs))).toEqual({
-      $mergeObjects: "$docs",
-    });
-    expect(compiled("({}).assign($.o)", () => Object.assign({}, DOC.o))).toEqual({ $mergeObjects: ["$o"] });
-    expect(compiled("({}).assign($.o, { z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
-      $mergeObjects: ["$o", { z: 1 }],
-    });
-    expect(compiled("$.o.assign(...$.docs)", () => Object.assign({}, DOC.o, ...DOC.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
-    });
-    // One plain argument is one source. The server refuses an array there, so this
-    // shape stays out of the server run.
-    expect(expr("$.o.assign($.docs)")).toEqual({ $mergeObjects: ["$o", "$docs"] });
+    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
+    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
     expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
         $map: {
@@ -2163,16 +2294,49 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
   });
 
-  it("applies a bare callable global to each element", () => {
-    expect(compiled("$.a.map(String)", () => DOC.a.map(String))).toEqual({
-      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toString: "$$x" } },
+  it("merges with .assign(): the receiver first, an empty receiver left out, a spread as the list of sources", () => {
+    // `({}).assign(...list)` is the one spelling that merges an array of objects. The
+    // empty target means nothing is written into `docs[0]`. With no spread, one
+    // argument is one source object, so the `{}` stays and keeps it an object operand.
+    const merged = (...xs: object[]) => Object.assign({}, ...xs);
+    expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
+    expect(compiled("({}).assign($.o)", (d) => merged(d.o))).toEqual({ $mergeObjects: [{}, "$o"] });
+    expect(compiled("({}).assign($.o, ...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
     });
-    expect(compiled("$.mixed.filter(Boolean)", () => DOC.mixed.filter(Boolean))).toEqual({
+    expect(compiled("({}).assign($.o, $.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
+    expect(compiled("$.o.assign($.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
+    expect(compiled("$.o.assign({ z: 1 })", (d) => merged(d.o, { z: 1 }))).toEqual({ $mergeObjects: ["$o", { z: 1 }] });
+    expect(compiled("$.o.assign(...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
+    });
+    expect(compiled("$.o.assign($.mo, ...$.docs)", (d) => merged(d.o, d.mo, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], ["$mo"], { $ifNull: ["$docs", []] }] },
+    });
+  });
+
+  it("applies a bare callable static to each element, and refuses a type name as a callback", () => {
+    // A type name as a conversion function is not part of JSMQL, in a callback too.
+    expect(() => expr("$.a.map(String)")).toThrow(/In a callback, write 'x => x\.toString\(\)'/);
+    expect(() => expr("$.a.map(Number)")).toThrow(/In a callback, write 'x => x\.toDouble\(\)'/);
+    expect(() => expr("$.a.map(Long)")).toThrow(/In a callback, write 'x => x\.toLong\(\)'/);
+    expect(() => expr("$.mixed.filter(Boolean)")).toThrow(/For '\.filter\(Boolean\)', write '\.compact\(\)'/);
+    expect(compiled("$.mixed.compact()", () => DOC.mixed.filter(Boolean))).toEqual({
       $filter: {
         input: { $ifNull: ["$mixed", []] },
-        as: "x",
-        cond: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
+        as: "jsmqlItem",
+        cond: {
+          $and: [
+            { $gt: ["$$jsmqlItem", null] },
+            { $ne: ["$$jsmqlItem", false] },
+            { $ne: ["$$jsmqlItem", ""] },
+            { $ne: ["$$jsmqlItem", 0] },
+          ],
+        },
       },
+    });
+    expect(compiled("[$.neg, $.n].map(x => x.abs())", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
+      $map: { input: ["$neg", "$n"], as: "x", in: { $abs: { $ifNull: ["$$x", 0] } } },
     });
     expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toEqual({
       $anyElementTrue: {
@@ -2193,12 +2357,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // A BSON constructor applies point-free too, but not HERE: this suite asks the
-    // server to agree with JavaScript, and a BSON conversion has no JavaScript
-    // counterpart to agree with — `$toDecimal` answers a Decimal128 where JavaScript
-    // answers a number. test/codegen.test.ts asserts those shapes without running.
-    // `Set` demands `new`, so no bare spelling of it applies to an element.
-    expect(() => expr("$.a.map(Set)")).toThrow(/takes an arrow/);
+    // MongoDB has no set type, so the row of `Set` refuses the call on each element.
+    expect(() => expr("$.a.map(Set)")).toThrow(/is not part of JSMQL, because MongoDB has no set type/);
   });
 
   it("lowers a regex literal's own methods", () => {
@@ -2453,7 +2613,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
     expect(compiled('$.csv.split(",").concat(...$.a)', () => DOC.csv.split(",").concat(...DOC.a))).toEqual({
       $concatArrays: [
-        { $ifNull: [{ $split: ["$csv", ","] }, []] },
+        { $split: [{ $ifNull: ["$csv", ""] }, ","] },
         {
           $reduce: {
             input: { $ifNull: ["$a", []] },
@@ -2471,10 +2631,17 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       $switch: { branches: [{ case: { $gt: ["$n", 1] }, then: "big" }], default: "small" },
     });
     // a constant constructor folds; its month counts from 0, as JavaScript's does
-    expect(expr("new Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
-    expect(expr("new Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
+    expect(expr("Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
+    expect(expr("Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
     expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
-      $toLong: { $dateFromParts: { year: { $year: "$d" }, month: 1, day: 1, timezone: "UTC" } },
+      $toLong: {
+        $dateFromParts: {
+          year: { $year: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } },
+          month: 1,
+          day: 1,
+          timezone: "UTC",
+        },
+      },
     });
   });
 });
@@ -2569,10 +2736,14 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.keys()", []],
   ["$.o.values()", []],
   ["$.o.entries()", []],
+  ["$.o.assign({ z: 1 })", { z: 1 }],
+  ["({}).assign($.o)", {}],
   // a `?.` with a call after it stops the chain, so the chain answers null
   ["$.o?.keys()", null],
   ["$.o?.values()", null],
   ["$.o?.entries()", null],
+  ["$.o?.toPairs()", null],
+  ["$.o?.assign({ z: 1 })", null],
   ["$.o?.keys().size()", null],
   ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
@@ -2649,6 +2820,37 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
           { _id: 2, __v: [] },
         ],
       ]);
+    }
+  });
+
+  it("a `?.` on a callback parameter reads as a `?.` on a field path", async () => {
+    // `.trim()` answers null for null on its own, so the `?.` adds no test. `.size()` does
+    // not, so the test stays, and its second branch reads the proven parameter with no `$ifNull`.
+    const cases: readonly (readonly [string, unknown, unknown])[] = [
+      [
+        "$.v.map(x => x?.trim())",
+        { $map: { input: { $ifNull: ["$v", []] }, as: "x", in: { $trim: { input: "$$x" } } } },
+        [null, "a"],
+      ],
+      [
+        "$.w.map(x => x?.size())",
+        {
+          $map: {
+            input: { $ifNull: ["$w", []] },
+            as: "x",
+            in: { $cond: [{ $lte: ["$$x", null] }, null, { $size: "$$x" }] },
+          },
+        },
+        [null, 2],
+      ],
+    ];
+    const scratch = client!.db("jsmql_compiler_methods").collection("optional_param");
+    await scratch.deleteMany({});
+    await scratch.insertOne({ _id: 1, v: [null, " a "], w: [null, [1, 2]] });
+    for (const [src, mql, answer] of cases) {
+      expect(expr(src), src).toEqual(mql);
+      const [doc] = await scratch.aggregate([{ $addFields: { __v: expr(src) } }]).toArray();
+      expect([src, doc.__v]).toEqual([src, answer]);
     }
   });
 });
@@ -2749,6 +2951,87 @@ describe.skipIf(!up)("compiler/emit — the spelling a refusal names runs on eve
   });
 });
 
+describe.skipIf(!up)("compiler/emit — the `?.` that a conversion refusal names runs on a missing string", () => {
+  let converted: Collection;
+  beforeAll(async () => {
+    converted = client!.db("jsmql_compiler_methods").collection("converted");
+    await converted.deleteMany({});
+    await converted.insertMany([{ _id: 1 }, { _id: 2, s: null }]);
+  });
+
+  it('gives null for a missing or a null field, where a dot stops the command on ""', async () => {
+    const run = (src: string) =>
+      converted.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
+    for (const refused of [
+      "Number($.s.trim())",
+      "parseInt($.s)",
+      "parseFloat($.s)",
+      "Long($.s)",
+      "Int32($.s)",
+      "Double($.s)",
+      "Decimal128($.s)",
+      "UUID($.s)",
+      "Date($.s)",
+      "ObjectId($.s)",
+    ]) {
+      let message = "";
+      try {
+        expr(refused);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      const hint = /right after the field: '([^']+)'/.exec(message)?.[1];
+      expect(hint, `${refused} names no '?.': ${message}`).toBeDefined();
+      const src = hint!.split("$.x").join("$.s");
+      // DELIBERATELY refused by the server: the dot reads the missing `s` as "", and the conversion stops on it.
+      await expect(run(src.replace("?.", ".")), src).rejects.toThrow();
+      expect([src, (await run(src)).map((d) => d.__v)]).toEqual([src, [null, null]]);
+    }
+  });
+});
+
+/**
+ * A number of milliseconds converts with `.toLong().toDate()`. MEASURED: `$toDate` refuses an
+ * int, and a driver sends a whole JavaScript number below 2^31 as an int. `$toLong` reads every
+ * number and cuts a fraction toward zero. Each case gives the field and the instant that
+ * JavaScript's own `new Date(x)` gives.
+ */
+const MILLIS: readonly (readonly [string, unknown, Date])[] = [
+  ["an int", 1700000000, new Date(1700000000)],
+  ["a negative int", -5, new Date(-5)],
+  ["a long", Long.fromNumber(1700000000000), new Date(1700000000000)],
+  ["a double with a fraction", 1700000000000.7, new Date(1700000000000)],
+  ["a negative fraction", -1.7, new Date(-1)],
+  ["a Decimal128", Decimal128.fromString("5.9"), new Date(5)],
+];
+
+describe.skipIf(!up)("compiler/emit — a number of milliseconds converts with .toLong().toDate()", () => {
+  let millis: Collection;
+  beforeAll(async () => {
+    millis = client!.db("jsmql_compiler_methods").collection("millis");
+    await millis.deleteMany({});
+    await millis.insertMany(MILLIS.map(([, v], i) => ({ _id: i, v })));
+  });
+  const run = (src: string) => millis.aggregate([{ $sort: { _id: 1 } }, { $project: { x: expr(src) } }]).toArray();
+
+  it("gives JavaScript's instant for each kind of number", async () => {
+    const got = await run("$.v.toLong().toDate()");
+    expect(got.map((r) => canonical(r.x))).toEqual(MILLIS.map(([, , want]) => canonical(want)));
+  });
+
+  it("is the spelling that the refusal of Date(x) names, because .toDate() alone stops on an int", async () => {
+    let message = "";
+    try {
+      expr("Date($.v)");
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(/a number of milliseconds, write '([^']+)'/.exec(message)?.[1], message).toBe("$.x.toLong().toDate()");
+    // DELIBERATELY refused by the server: `$toDate` cannot convert an int.
+    await expect(run("$.v.toDate()")).rejects.toThrow();
+  });
+});
+
 describe("compiler/emit — the server answers each method as JavaScript would", () => {
   it("ran each one, or none", async () => {
     // The cases above register their sources whether a server runs or not.
@@ -2815,6 +3098,14 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   lastIndexOf: ["$.a.lastIndexOf(9)"],
   length: ["$.csv.length()"],
   toString: ["$.n.toString()"],
+  toDouble: ['"3.5".toDouble()'],
+  toInt: ["$.n.toInt()"],
+  toLong: ["$.n.toLong()"],
+  toDecimal: ["$.n.toDecimal()"],
+  toBool: ["$.n.toBool()"],
+  toDate: ["$.d.toDate()"],
+  toObjectId: ['"507f1f77bcf86cd799439011".toObjectId()'],
+  toUUID: ['"6ac24965-7917-4323-8d44-920ad1d69b94".toUUID()'],
   capitalize: ["$.w.capitalize()"],
   upperFirst: ["$.w.upperFirst()"],
   lowerFirst: ["$.w.lowerFirst()"],
@@ -2980,20 +3271,18 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   now: ["Date.now()"],
   UTC: ["Date.UTC(2020, 1, 1)"],
   // the globals
-  String: ["String($.n)"],
-  Boolean: ["Boolean($.n)", "Boolean($.nope)"],
-  Number: ["Number($.n)"],
   ObjectId: ["ObjectId()"],
-  Date: ["Date($.d)"],
-  ISODate: ["ISODate($.d)"],
-  Decimal128: ["Decimal128($.n)"],
-  Long: ["Long($.neg)"],
-  Int32: ["Int32($.neg)"],
-  Double: ["Double($.n)"],
-  UUID: ['UUID($.csv.replace("a,b,c", "6ac24965-7917-4323-8d44-920ad1d69b94"))'],
-  NumberDecimal: ["NumberDecimal($.n)"],
-  NumberLong: ["NumberLong($.neg)"],
-  NumberInt: ["NumberInt($.neg)"],
+  // a constructor takes a constant: the fold builds it, and the server receives it
+  Date: ['Date("2024-01-01")'],
+  ISODate: ['ISODate("2024-01-01")'],
+  Decimal128: ['Decimal128("1.5")'],
+  Long: ["Long(5)"],
+  Int32: ["Int32(3)"],
+  Double: ["Double(1)"],
+  UUID: ['UUID("6ac24965-7917-4323-8d44-920ad1d69b94")'],
+  NumberDecimal: ['NumberDecimal("1.5")'],
+  NumberLong: ["NumberLong(5)"],
+  NumberInt: ["NumberInt(3)"],
   MinKey: ["MinKey()"],
   MaxKey: ["MaxKey()"],
 };
@@ -3012,11 +3301,17 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
 
 /** Each row that states `nullReceiverAs`: the call on a missing receiver, and the same call on the stated value. */
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
-  range: ["$.nope.range($.neg)", "(0).range($.neg)"],
-  rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
-  sign: ["$.nope.sign()", "(0).sign()"],
-  toString: ["$.nope.toString()", '"".toString()'],
-  random: ["$.nope.random(0)", "(0).random(0)"],
+  log: ["$.nope.log()", "(1).log()"],
+  log2: ["$.nope.log2()", "(1).log2()"],
+  log10: ["$.nope.log10()", "(1).log10()"],
+  acosh: ["$.nope.acosh()", "(1).acosh()"],
+  toString: ["$.nope.toString()", '""'],
+  toDouble: ["$.nope.toDouble()", "(0).toDouble()"],
+  toInt: ["$.nope.toInt()", "(0).toInt()"],
+  toLong: ["$.nope.toLong()", "(0).toLong()"],
+  toDecimal: ["$.nope.toDecimal()", "(0).toDecimal()"],
+  toBool: ["$.nope.toBool()", "(false).toBool()"],
+  toDate: ["$.nope.toDate()", "Date(0).toDate()"],
 };
 
 /**
@@ -3151,6 +3446,14 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   atanh: ["$.nope?.atanh()", "$.mo.d?.atanh()"],
   atan2: ["$.nope?.atan2($.n)", "$.mo.d?.atan2($.n)"],
   hypot: ["$.nope?.hypot(1)", "$.mo.d?.hypot(1)"],
+  toDouble: ["$.nope?.toDouble()", "$.mo.d?.toDouble()"],
+  toInt: ["$.nope?.toInt()", "$.mo.d?.toInt()"],
+  toLong: ["$.nope?.toLong()", "$.mo.d?.toLong()"],
+  toDecimal: ["$.nope?.toDecimal()", "$.mo.d?.toDecimal()"],
+  toBool: ["$.nope?.toBool()", "$.mo.d?.toBool()"],
+  toDate: ["$.nope?.toDate()", "$.mo.d?.toDate()"],
+  toObjectId: ["$.nope?.toObjectId()", "$.mo.d?.toObjectId()"],
+  toUUID: ["$.nope?.toUUID()", "$.mo.d?.toUUID()"],
 };
 
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
@@ -3158,7 +3461,7 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     kind?: string;
     neverNull?: true | "always";
     readsNullAsEmpty?: true;
-    nullReceiverAs?: 0 | "";
+    nullReceiverAs?: 0 | 1 | "" | false | Date;
     passesNull?: true;
   };
   const rows = Object.entries(NAMES) as [string, Row][];
@@ -3329,90 +3632,6 @@ describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the 
       if (whole && (!v.includes(lo) || !v.includes(hi))) wrong.push(`${src}: an end never appears`);
     }
     expect(wrong).toEqual([]);
-  });
-});
-
-/**
- * `new Date(x)` runs for every kind of value that the row accepts.
- *
- * MEASURED: `$toDate` refuses an int, and reads a long, a double, a Decimal128, a string, a date and an
- * ObjectId. The driver sends a whole JavaScript number below 2^31 as an int, so a number goes through
- * `$toLong` first. Each case gives the value of the field and the instant that JavaScript's own
- * `new Date(x)` gives, or null where HR5 says so: JavaScript reads `null` as 0.
- */
-const DATE_VALUES: readonly (readonly [string, unknown, Date | null])[] = [
-  ["an int", 0, new Date(0)],
-  ["a large int", 1700000000, new Date(1700000000)],
-  ["a negative int", -5, new Date(-5)],
-  ["a long", Long.fromNumber(1700000000000), new Date(1700000000000)],
-  ["a double with a fraction", 1700000000000.7, new Date(1700000000000)],
-  ["a negative fraction", -1.7, new Date(-1)],
-  ["a Decimal128", Decimal128.fromString("5.9"), new Date(5)],
-  ["an ISO string", "2026-01-01T00:00:00Z", new Date("2026-01-01T00:00:00Z")],
-  ["a date", new Date(5000), new Date(5000)],
-  ["an ObjectId", new ObjectId("507f1f77bcf86cd799439011"), new Date("2012-10-17T21:13:27.000Z")],
-  ["null", null, null],
-];
-
-describe("compiler/emit — new Date(x) converts a number through a long", () => {
-  it("states the conversion by what the operand proves", () => {
-    // for an operand of unknown kind, the compiler tests for a number, because $toLong refuses a string and a date
-    expect(expr("new Date($.v)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$v" }, { $toLong: "$v" }, "$v"] } });
-    // a proven number converts through a long, and a proven string or date needs no conversion
-    expect(expr("new Date($.v * 1)")).toEqual({ $toDate: { $toLong: { $multiply: ["$v", 1] } } });
-    expect(expr("new Date($.d.getTime())")).toEqual({ $toDate: { $toLong: "$d" } });
-    expect(expr("new Date($.s.trim())")).toEqual({ $toDate: { $trim: { input: "$s" } } });
-    expect(expr("new Date($.d)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$d" }, { $toLong: "$d" }, "$d"] } });
-    // the compiler binds an operand that is no path once
-    expect(expr("new Date($.v ?? 0)")).toEqual({
-      $let: {
-        vars: { jsmqlN: { $ifNull: ["$v", 0] } },
-        in: { $toDate: { $cond: [{ $isNumber: "$$jsmqlN" }, { $toLong: "$$jsmqlN" }, "$$jsmqlN"] } },
-      },
-    });
-  });
-
-  describe.skipIf(!up)("on the server", () => {
-    let dates: Collection;
-    beforeAll(async () => {
-      dates = client!.db("jsmql_compiler_methods").collection("dates");
-      await dates.deleteMany({});
-      await dates.insertMany(DATE_VALUES.map(([, v], i) => ({ _id: i, v })));
-      await dates.insertOne({ _id: 100 });
-    });
-
-    const run = async (src: string): Promise<unknown[]> => {
-      const rows = await dates.aggregate([{ $sort: { _id: 1 } }, { $project: { x: expr(src) } }]).toArray();
-      return rows.map((r) => (r.x === undefined ? undefined : r.x));
-    };
-
-    it("gives JavaScript's instant for each kind of value, and null for null", async () => {
-      const got = await run("new Date($.v)");
-      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
-        DATE_VALUES.map(([, , want]) => canonical(want)),
-      );
-      // a missing field is null, as a null field is
-      expect(got[DATE_VALUES.length]).toBeNull();
-    });
-
-    it("gives the same instant for an operand that a proof reads as a number", async () => {
-      const numbers = DATE_VALUES.filter(([, v]) => typeof v === "number" || v instanceof Long);
-      const rows = await dates
-        .aggregate([
-          { $match: { _id: { $in: numbers.map(([name]) => DATE_VALUES.findIndex(([n]) => n === name)) } } },
-          { $sort: { _id: 1 } },
-          { $project: { x: expr("new Date($.v * 1)") } },
-        ])
-        .toArray();
-      expect(rows.map((r) => canonical(r.x))).toEqual(numbers.map(([, , want]) => canonical(want)));
-    });
-
-    it("runs an operand that is no path", async () => {
-      const got = await run("new Date($.v ?? 0)");
-      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
-        DATE_VALUES.map(([, , want]) => canonical(want ?? new Date(0))),
-      );
-    });
   });
 });
 

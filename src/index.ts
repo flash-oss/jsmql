@@ -15,6 +15,7 @@ import { fold } from "./compiler/passes/fold.ts";
 import { desugar } from "./compiler/passes/desugar.ts";
 import { inject, replaceIdents, spellValue } from "./compiler/passes/inject.ts";
 import { rawMqlBoundary } from "./compiler/passes/raw-mql.ts";
+import { refuseNew } from "./compiler/passes/no-new.ts";
 import { constantOf } from "./compiler/passes/evaluate.ts";
 import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./compiler/passes/position.ts";
 import { isBareAssign, isStageList, shapeOf } from "./compiler/passes/shape.ts";
@@ -315,7 +316,7 @@ function received(program: Program): { what: string; hint: string } {
  * The defect inside a program that is a FILTER, found by lowering it as one.
  *
  * A program is judged for its shape only once it is correct. A value such as
- * `new Date("nope")` is wrong under every entry. Telling the developer only to
+ * `Date("nope")` is wrong under every entry. Telling the developer only to
  * call a different entry would just send the developer to meet the same error
  * on the next run. This function returns null when the only thing wrong is the
  * shape.
@@ -380,7 +381,8 @@ function expressionOf(program: Program): Expr {
 
 function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): JsmqlOutput {
   const resolved = mode === "auto" ? (shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter") : mode;
-  // HR6 reads the source as written: a passed value is a name here, not raw MQL.
+  // HR8 and HR6 read the source as written: a passed value is a name here, not raw MQL.
+  refuseNew(parsed);
   // Its marks go on `parsed`, so the injection runs after it.
   rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
   const injected = inject(parsed, values);

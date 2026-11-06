@@ -70,13 +70,34 @@ such a call is present when no `?.` sits on its spine, so a chain pays the one
 `$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
 callback parameter binds the wrapped input, and is present with it.
 
-**A string method on a receiver that may be missing answers null.** `nullOr`
-in `src/registry/names.ts` is the one shape: `{ $cond: [{ $lte: [r, null] },
-null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
-A cell calls it where its operator would otherwise ABORT on null (`$strLenCP`)
-or would answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch`
-→ false, `$indexOfCP` → -1) — each case measured per row. The body runs on a
-proven receiver, so it carries no `$ifNull` of its own. The compiler skips the
+**A number method reads a missing number as `0`.** `emptyValueOf` answers `0` for
+the number family. So under a dot, `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, 0] }`, as it does with `[]`, `{}` and `""`. `$.n.round(2)` is
+`{ $round: [{ $ifNull: ["$n", 0] }, 2] }`. A row whose operator refuses 0 states its own
+safe value. The logarithm of 0 stops the command, so `.log()` states
+`nullReceiverAs: 1`, and `$.n.log()` is 0. A row with two families, for example
+`.clamp()` on a number or a date, wraps the receiver in its own cell (`safeBound` in
+`src/registry/names.ts`). A row whose operator answers null for a null operand states
+`passesNull`, so `$.n?.round(2)` is `{ $round: ["$n", 2] }`, with no `$cond`.
+
+**A date method reads a missing date as the epoch.** `emptyValueOf` answers
+`new Date(0)` for the date family, so under a dot `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, new Date(0)] }`. `$.t.getFullYear()` is 1970 for a missing `t`.
+`.clamp()` and `.inRange()` serve a number and a date, and a receiver of no proven
+family gives the cell no kind. So the kind of the bounds picks the safe value
+(`safeOfBounds`): the epoch when a bound is a date, and 0 for any other bound. A bound
+read at run time gives 0.
+
+**A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
+the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`
+under a dot, as it does with `[]` and `{}`. `$.s.length()` is
+`{ $strLenCP: { $ifNull: ["$s", ""] } }`. Where the operator already reads null as
+`""`, the cell takes the bare receiver. `$substrCP` of null is `""` (measured), so
+`substrOperand` in `src/registry/mql.ts` drops the wrap there. `nullOr` in
+`src/registry/names.ts` keeps one shape for a receiver that may still be null:
+`{ $cond: [{ $lte: [r, null] }, null, <body over r>] }`. A `$let` binds the receiver
+unless it is a path. The body runs on a proven receiver, so it carries no
+`$ifNull` of its own. The compiler skips the
 test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
@@ -85,6 +106,16 @@ row over present operands, a written field whose value was present, a path a
 Each row states its `neverNull` fact: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
+
+**A `?.` before a call that passes null needs no `$cond`.** A row states
+`passesNull` when its bare cell, on a receiver it reads as there, answers null for a
+null or missing receiver (`{ $objectToArray: null }` is null). When the chain is ONE
+such call directly on the path that the `?.` tests, `lowerValue` emits the bare call
+under the proof of that path: `$.o?.keys()` is
+`{ $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }`. A read or a second
+call between the `?.` and the top keeps the `$cond`, because either one can turn the
+missing value into another value first. test/compiler-methods.test.ts measures every
+row that states the fact.
 
 **A `?.` with a CALL after it STOPS the chain.** `stoppedChain`
 (`emit/lower.ts`) walks the receiver spine of a `MemberAccess` /
@@ -272,6 +303,7 @@ $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
 $.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+$.items.some(i => i.q > 2 || i.r === 1) // → {"items":{"$elemMatch":{"$or":[{"q":{"$gt":2}},{"r":1}]}}}
 $.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"}}}   the element itself is the path "", one operator document
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}           a `$op(…)` call keeps MongoDB's truthiness
@@ -359,6 +391,31 @@ writes by hand, and the server's own rules apply to it.
 `v` would be read as something else, an operator document or a regular
 expression.
 
+HR5 also applies to a query. A dot reads a missing or null receiver as the safe
+value of its kind. A clause such as `{ s: { $regex: /^$/ } }` never matches a
+missing field. So a cell whose test is true for the safe value calls `orMissing`
+for its clause. The clause matches
+when the test is true, or when the field is missing or null (`queryOrMissing` in
+`src/registry/vocabulary.ts`).
+
+A regex test and the null test share one `$in`. An `$elemMatch` body over a value
+can contain this `$in` too. Any other test takes an `$or`. After a `?.` the call
+gives null, so the clause has no null test. A `?.` earlier in the path gives null
+only where its own link is missing, so the cell takes the `$expr` road there.
+
+The reverse case also exists. `{ tags: null }` matches a missing or null field,
+and `[]` holds no null. So the `.has()` cell tests the elements alone for a null
+needle. An `$all` list of null needles alone also matches a missing field, so such
+a chain keeps the clause of each leaf (`extractHasChain` in `emit/filter.ts`).
+
+| source | shape |
+|---|---|
+| `$.s.match(/^$/)` | `{"s":{"$in":[/^$/,null]}}` |
+| `$.s?.match(/^$/)` | `{"s":{"$regex":/^$/}}` |
+| `$.tags.some(t => t.includes(""))` | `{"tags":{"$elemMatch":{"$in":[/(?:)/,null]}}}` |
+| `$.s.match(/a/)` | `{"s":{"$regex":/a/}}` |
+| `$.tags.has(null)` | `{"tags":{"$elemMatch":{"$eq":null}}}` |
+
 MongoDB then satisfies a field comparison when any ELEMENT of an array value
 satisfies it, and it traverses an array in the middle of a path. JavaScript
 does neither. Two suites measure the gap and name every source it separates:
@@ -399,7 +456,7 @@ root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
 `$elemMatch` boundary records which parameter is its element), `constant` (a
 value the query language compares as written — never an array, a regex or a
-bigint), `query`, `nativeQuery` and `elementQuery`.
+bigint), `query`, `nativeQuery`, `elementQuery` and `orMissing`.
 
 `.inRange()` accepts its two bounds either way round, and the value form
 orders them at run time with `$min`/`$max`. A query clause has no such
@@ -407,6 +464,11 @@ operator, so its cell orders the pair at COMPILE time — which it can only do
 when both bounds are constants of one kind, two numbers or two dates. Any
 other pair answers null and takes the `$expr` road, so the compiler emits no
 clause from a comparison it could not actually make.
+
+`.some()` writes its body as the `$elemMatch` of the field. A body over the fields of
+an element can contain `$and`, `$or` and `$nor`. MEASURED: the server refuses them over
+tests of the element itself (`{ $elemMatch: { $or: [{ $gt: 1 }] } }`), and it refuses
+`$expr` in any body. So those bodies take the `$expr` road.
 
 The predicate alias tables (`typeof` spellings, the numeric group) are
 registry data in `vocabulary.ts`, and both the query and the expression cells
@@ -685,7 +747,8 @@ $.n = $$$.orders.filter(o => o.userId === $._id).size();
 `take`, `aggregate`, a stage link, a `.map` whose body is a provable document
 (the row states `streamBody: "document"`). The first link that is not such a
 link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
-a value `.map` — read the materialised array as a VALUE. A row that states
+a value `.map` — read the materialised array as a VALUE. A method after a field read or an index read
+(`.find(p).name.trim()`) is part of that value too, never a link of the body. A row that states
 `elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
 link only while the body's element is an unwound field; on a stream of whole
 documents it ends the body the same way. `.find` is the one special head
@@ -862,12 +925,22 @@ $.a.reduceRight((acc, x) => acc.concat([x]), [])
 A rule that reads its arguments as ONE list states `spread: true` on its
 `args`, and the desugar pass packs a spread call's arguments into one array
 literal for it (see [desugar-pass.md](desugar-pass.md)): `({}).assign(...$.docs)`
-reaches its cell as one operand, `{ $mergeObjects: "$docs" }` — the server reads
-a single array operand there (measured). The `.assign()`
-cell tells a packed list from one plain argument: a spread is a list of sources,
-and a plain argument is one source. The fold reads a
+reaches its cell as `{ $mergeObjects: <one list> }`
+— the server reads a single array operand there (measured). The fold reads a
 packed list as the call's own arguments, one per element, as JavaScript passes
 them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
+
+**`.assign()` puts the receiver first.** With no spread, each argument is one source:
+`$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
+sources, after the receiver, and it takes the HR5 guard of the array literal:
+`$.a.assign(...$.docs)` is `{ $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }`.
+Without the guard, `$concatArrays` answers null for a missing `docs`, and the merge loses
+the receiver. An empty-object receiver adds nothing, so the cell leaves it out where the
+sources stay objects: `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and
+`({}).assign($.a, $.b)` is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread
+keeps the `{}`: `({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the
+one-operand form would merge an array source. The server merges an array in the
+one-operand form, and refuses an array among two or more operands (measured).
 
 **`.concat()` reads each argument on its own.** JavaScript adds the elements
 of an array argument, and adds any other argument as one element. So the
@@ -904,13 +977,13 @@ takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
 [types.md](types.md) § Presence.
 
 The globals follow JavaScript where the two number differently or the server
-holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count
+holds a different equality. `Date(y, m, d, …)` and `Date.UTC(…)` count
 the month from 0, like `getMonth()`, so the month moves up by one on the way
 to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
 measured), and `Number.isInteger` excludes NaN and the infinities the same
 way. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
-`Number` is the one numeric conversion: the compiler parses `parseInt` and
+`.toDouble()` is the numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
 index as its radix, and `$toInt` refuses a fractional string.
 
@@ -926,9 +999,21 @@ Two constant bounds fold it: the cell writes `-1` only when `start` is more than
 a constant or a field path binds once in a `$let`, because the step reads each
 bound a second time. A bound that is not a constant reads as `{ $ifNull: [x, 0] }`,
 because lodash reads a missing bound as 0 and `$range` stops the command on null.
-The row states `nullReceiverAs: 0` for this reason, so the presence proof counts
+HR5 reads a missing receiver as 0 for the same reason. So the presence proof counts
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.
+
+A conversion method, for example `.toDouble()` or `.toBool()`, is MongoDB's `$to…`
+operator over the receiver. `conversion` in `src/registry/names.ts` builds each row. A
+conversion works on every kind (`on: "any"`), so its row states the safe value of the
+kind that it gives (`nullReceiverAs`). Each row also states `passesNull`, because each
+`$to…` operator gives null for null. `.toObjectId()` and `.toUUID()` state no safe value,
+so the dot and `?.` emit one document. Each conversion except `.toBool()` and `.toString()`
+stops the command on `""`, which a string method under a dot gives for a missing string.
+So each refusal that names one of them also names the `?.` right after the field
+(`afterStringMethod` in `src/registry/names.ts`). `.toDate()` is the bare `$toDate`, which
+stops the command on an int, so the refusal of `Date(x)` also names `.toLong().toDate()`
+for a number of milliseconds (`MILLIS_TO_DATE`). See docs/LANGUAGE.md § Type conversion methods.
 
 ```
 (5).range(1)          → {"$range":[5,1,-1]}
@@ -976,7 +1061,7 @@ root), and names the pipeline form as the way to compute.
 | `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
 | `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
 | `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path on both sides) |
-| `$.t = new Date()` | `$currentDate: { t: true }` |
+| `$.t = Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
 | `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |
 | `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |
@@ -1010,8 +1095,8 @@ rejection that comes from a row quotes the row.
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For
 example, the `.split("")` hint is
-`($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))`.
-The `?? 0` matters: `.length()` answers null for a missing string, and a range needs a number. `test/compiler-methods.test.ts` reads each such
+`$.<field>.length().range().map(i => $.<field>.charAt(i))`.
+`.length()` reads a missing string as `""` and answers 0, so the range has a number. `test/compiler-methods.test.ts` reads each such
 hint out of its message, fills in the placeholder, and runs it on the server.
 
 ## What proves the value target

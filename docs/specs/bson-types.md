@@ -147,19 +147,26 @@ that the caller passes at run time is the caller's own value, and stays as it is
 
 | spelling | mongosh name | no argument | a constant | a runtime value |
 |---|---|---|---|---|
-| `ObjectId` | — | `$createObjectId` | live value | `$toObjectId` |
-| `Date` | `ISODate` | `$$NOW` | live value | `$toDate` |
-| `Decimal128` | `NumberDecimal` | refused | live value | `$toDecimal` |
-| `Long` | `NumberLong` | refused | live value | `$toLong` |
-| `Int32` | `NumberInt` | refused | live value | `$toInt` |
-| `Double` | — | refused | live value | `$toDouble` |
-| `UUID` | — | refused | live value | `$toUUID` |
+| `ObjectId` | — | `$createObjectId` | live value | refused: `.toObjectId()` |
+| `Date` | `ISODate` | `$$NOW` | live value | refused: `.toDate()` |
+| `Decimal128` | `NumberDecimal` | refused | live value | refused: `.toDecimal()` |
+| `Long` | `NumberLong` | refused | live value | refused: `.toLong()` |
+| `Int32` | `NumberInt` | refused | live value | refused: `.toInt()` |
+| `Double` | — | refused | live value | refused: `.toDouble()` |
+| `UUID` | — | refused | live value | refused: `.toUUID()` |
 | `MinKey` | — | live value | refused | refused |
 | `MaxKey` | — | live value | refused | refused |
 
-`X(…)` and `new X(…)` are both accepted (`newKeyword: "optional"` on every row), and
-`jsmql.stringify` writes `new X(…)` for either. JavaScript's own bare `Date()` returns
-a STRING; JSMQL keeps the syntax and drops that meaning, so one rule covers all nine.
+JSMQL refuses a runtime value, because the value's own conversion method says the same
+thing, and one capability gets one spelling. The refusal names the method:
+`Long($.x)` names `$.x.toLong()`. A constant is a different class of arguments, and the
+`constant` cell of the row builds it.
+
+The source writes `X(…)`. JSMQL has no `new` keyword (HR8): `src/compiler/passes/no-new.ts`
+refuses `new X(…)` on the tree as parsed, and the error names `X(…)`. `jsmql.stringify`
+writes `new X(…)`, because that is the JavaScript of the driver. JavaScript's own bare
+`Date()` returns a STRING; JSMQL keeps the syntax and drops that meaning, so one rule
+covers all nine.
 
 The rows come from two factories in `src/registry/names.ts` — `bsonValue` and
 `bsonSentinel` — so a tenth type needs only one call, and `constructorGlobals()` in
@@ -172,14 +179,10 @@ The `constant` cell of a row builds the value (`bsonConstant` in `src/bson.ts`, 
 value goes into the MQL as itself, and the constant engine reads it. A constant that the type
 cannot hold is a refusal that names the type that fits.
 
-The cell does not build a constant again when the constant is already a live value of the
-type of the row (`ownValue` in `src/registry/names.ts`). The constant goes to the `$to…` operator of the row, as a
-runtime value does. MEASURED on mongod 9.0: each `$to…` operator gives a value of its own
-type back with the same type and an equal value.
-
-A numeric row (`Decimal128`, `Long`, `Int32`, `Double` and their mongosh spellings) also
-takes a boolean, because its `$to…` operator reads one: `true` gives 1, `false` gives 0.
-A boolean constant also goes to the `$to…` operator, as a runtime boolean does.
+A type name is no conversion. The cell refuses a constant that is already a live value of
+the type of its row, for example `Long(Long("5"))`. It also refuses a boolean, for example
+`Long(true)`.
+The value's own method converts a value: see [docs/LANGUAGE.md](../LANGUAGE.md) § Type Casting.
 
 `bson` does not refuse what it cannot hold. The team measured this against 7.2.0:
 

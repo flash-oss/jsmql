@@ -584,8 +584,8 @@ describe("let bindings — RHS expression coverage", () => {
     ]);
   });
 
-  it("`new Date()` RHS", () => {
-    expect(jsmql("let now = new Date(); $project({ now })")).toEqual([
+  it("`Date()` RHS", () => {
+    expect(jsmql("let now = Date(); $project({ now })")).toEqual([
       { $set: { "__jsmql.var.now": "$$NOW" } },
       { $project: { now: "$__jsmql.var.now" } },
       { $unset: "__jsmql" },
@@ -615,11 +615,7 @@ describe("let bindings — member / method / index access", () => {
   it("method call on a let resolves the receiver to its field path", () => {
     expect(jsmql("let name = $.name; $project({ upper: name.toUpperCase() })")).toEqual([
       { $set: { "__jsmql.var.name": "$name" } },
-      {
-        $project: {
-          upper: { $cond: [{ $lte: ["$__jsmql.var.name", null] }, null, { $toUpper: "$__jsmql.var.name" }] },
-        },
-      },
+      { $project: { upper: { $toUpper: { $ifNull: ["$__jsmql.var.name", ""] } } } },
       { $unset: "__jsmql" },
     ]);
   });

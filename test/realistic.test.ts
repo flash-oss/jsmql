@@ -34,7 +34,7 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 //      then value-mode .map/.flatten/.uniq).
 //   3) products co-purchased by everyone who bought those in the last year — the
 //      equality in the `&&` is the indexed localField/foreignField pair, the date
-//      bound (`new Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
+//      bound (`Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
 //      beside it; .flatMap("productIds") inside the join hands each id to the
 //      callbacks after it — minus what the user already owns, tallied into a
 //      { productId: count } map with .countBy()
@@ -67,7 +67,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))
+  .filter(o => o.productIds === myProductIds && o.createdAt > Date().minus(1, "year"))
   .toSorted({ createdAt: -1 })
   .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
   .flatMap("productIds")
@@ -77,7 +77,7 @@ const candidateProductIdCounts = $$$.orders
   .sortBy(([id, count]) => -count)
   .take(10) // top 10
   .fromEntries();
-const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(id => id.toObjectId());
 
 const candidateProducts = $$$.products
   .filter({ _id: candidateProductIds })
@@ -199,8 +199,8 @@ $$ = candidateProductIds
             "__jsmql.var.candidateProductIds": {
               $map: {
                 input: { $map: { input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" }, in: "$$this.k" } },
-                as: "x",
-                in: { $toObjectId: "$$x" },
+                as: "id",
+                in: { $toObjectId: "$$id" },
               },
             },
           },
@@ -374,7 +374,7 @@ describe("top-orders report by department", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql`
-$match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
+$match($.status === "shipped" && $.placedAt >= Date("2026-01-01"));
 $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
 $unwind($.buyer);
 $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
@@ -552,7 +552,7 @@ describe("orders summary through $facet (`$ = { k: <$$ chain> }`)", { features: 
       jsmql(`$$.filter({ status: "shipped" });
 $ = {
   topByScore: $$.toSorted({ score: -1 }).take(10),
-  recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
+  recent:     $$.filter(o => o.createdAt >= Date("2026-01-01")),
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
@@ -576,9 +576,7 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
     // in matching foreign docs). The result is the same as if the aggregation
     // had been run on `transactions` from the start, but the call site keeps
     // its original collection.
-    expect(
-      jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`,
-    ).toEqual([
+    expect(jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { $expr: false } },
       {
         $unionWith: {
@@ -603,7 +601,7 @@ describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines
     // `$$.filter({ field: value })` — it says the same thing without the `$.`
     // and `===` — while a predicate with a range or null test stays on
     // `$match(<expr>)`, which reads better than a lambda for that.
-    expect(jsmql`$$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
+    expect(jsmql`$$.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") }, client: 156 } },
     ]);
   });
@@ -716,7 +714,7 @@ $.plan = $.plan.toUpperCase();
     ).toEqual([
       { $match: { status: "active" } },
       { $project: { name: 1, email: 1, plan: 1, lastLoginAt: 1, _id: 0 } },
-      { $set: { plan: { $cond: [{ $lte: ["$plan", null] }, null, { $toUpper: "$plan" }] } } },
+      { $set: { plan: { $toUpper: { $ifNull: ["$plan", ""] } } } },
     ]);
   });
 });
@@ -820,8 +818,20 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
       {
         $replaceWith: {
           userId: "$_id",
-          graceEndsAt: { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } },
-          remindAt: { $dateSubtract: { startDate: "$expiresAt", unit: "day", amount: 3 } },
+          graceEndsAt: {
+            $dateAdd: {
+              startDate: { $ifNull: ["$subscribedAt", new Date("1970-01-01T00:00:00.000Z")] },
+              unit: "day",
+              amount: 30,
+            },
+          },
+          remindAt: {
+            $dateSubtract: {
+              startDate: { $ifNull: ["$expiresAt", new Date("1970-01-01T00:00:00.000Z")] },
+              unit: "day",
+              amount: 3,
+            },
+          },
         },
       },
     ]);
@@ -845,7 +855,13 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
                 $range: [0, { $ifNull: ["$weeks", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$weeks", 0] }] }, 1, -1] }],
               },
               as: "w",
-              in: { $dateAdd: { startDate: "$start", unit: "week", amount: "$$w" } },
+              in: {
+                $dateAdd: {
+                  startDate: { $ifNull: ["$start", new Date("1970-01-01T00:00:00.000Z")] },
+                  unit: "week",
+                  amount: "$$w",
+                },
+              },
             },
           },
         },
@@ -900,7 +916,13 @@ $limit(12);
       {
         $group: {
           _id: {
-            month: { $dateTrunc: { date: "$createdAt", unit: "month", timezone: "America/New_York" } },
+            month: {
+              $dateTrunc: {
+                date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "month",
+                timezone: "America/New_York",
+              },
+            },
             store: "$storeId",
           },
           revenue: { $sum: "$total" },
@@ -950,7 +972,7 @@ describe("fan out per-party risk bands (block-body arrow → nested `$let`)", { 
     // and emit one document per qualifying leg. A block-body arrow
     // `party => { const … ; return … }` lowers to a right-folded nest of `$let`
     // (one binding per `const`, in source order — so `score` can read `leg`).
-    // The `? … : null` + `.filter(Boolean)` drops legs with no risk score, and
+    // The `? … : null` + `.compact()` drops legs with no risk score, and
     // `$ = <array>` fans the survivors out into one document each.
     expect(
       jsmql`
@@ -958,7 +980,7 @@ $$ = ["sender", "recipient"].map(party => {
   const leg = $.legs?.[party];
   const score = leg?.riskScore;
   return score ? { party, score, band: score > 50 ? "high" : "low" } : null;
-}).filter(Boolean);
+}).compact();
       `,
     ).toEqual([
       {
@@ -1003,8 +1025,8 @@ $$ = ["sender", "recipient"].map(party => {
                   },
                 },
               },
-              as: "x",
-              cond: { $gt: ["$$x", null] },
+              as: "jsmqlItem",
+              cond: { $gt: ["$$jsmqlItem", null] },
             },
           },
         },
@@ -1044,7 +1066,7 @@ describe("uppercase a user's name through updateOne", { features: ["Update filte
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
       expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
-        { $set: { name: { $cond: [{ $lte: ["$name", null] }, null, { $toUpper: "$name" }] } } },
+        { $set: { name: { $toUpper: { $ifNull: ["$name", ""] } } } },
       ]);
     },
   );
@@ -1081,7 +1103,7 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
     "compiles to the expected MQL",
     { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
-      expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
+      expect(jsmql(`$.loginCount += 1, $.lastSeenAt = Date()`)).toEqual([
         { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: "$$NOW" } },
       ]);
     },
@@ -1177,7 +1199,7 @@ $project({ total: basePrice });
 describe("active premium subscribers", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.subscribers.find(jsmql(...))" }, () => {
     expect(
-      jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > new Date("2026-05-01")`),
+      jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > Date("2026-05-01")`),
     ).toEqual({
       "subscription.tier": "premium",
       status: "active",
@@ -1191,7 +1213,7 @@ describe("recent shipped orders for a customer", { features: ["Filters"] }, () =
     expect(
       jsmql`
 $.customerId === "cust_42" &&
-$.placedAt >= new Date("2026-01-01") && $.placedAt < new Date("2026-02-01") &&
+$.placedAt >= Date("2026-01-01") && $.placedAt < Date("2026-02-01") &&
 $.status === "shipped"
       `,
     ).toEqual({
@@ -1210,7 +1232,7 @@ describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
 
 describe("archivable docs (not pinned, untouched since)", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < new Date("2025-01-01")`)).toEqual({
+    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < Date("2025-01-01")`)).toEqual({
       pinned: { $ne: true },
       lastModifiedAt: { $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
@@ -1233,11 +1255,11 @@ describe("users with a non-null email", { features: ["Filters"] }, () => {
 });
 
 describe("payments since a cutoff (Date folded into query doc)", { features: ["Filters"] }, () => {
-  // `new Date(<literal>)` is folded to a real JS Date at compile time, so the
+  // `Date(<literal>)` is folded to a real JS Date at compile time, so the
   // `createdAt` index is still usable — the comparison stays at the top level
   // instead of being trapped inside an `$expr`.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)).toEqual({
+    expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`)).toEqual({
       method: "postalDelivery",
       createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") },
     });
@@ -1262,7 +1284,7 @@ describe("lookup by `_id` and tenant", { features: ["Filters"] }, () => {
 describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
   // Query by `_id` with a constant ObjectId. The leanest form is the `0x` hex
   // literal — type `0x` and paste the 24-char id, no quotes or `ObjectId(...)`
-  // wrapper. `ObjectId("…")` / `new ObjectId("…")` are equivalent. jsmql mints a
+  // wrapper. `ObjectId("…")` gives the same value. JSMQL mints a
   // live BSON ObjectId (not a string, not an Extended-JSON envelope), so the
   // match uses the `_id` index directly.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
@@ -1313,17 +1335,7 @@ $.customer.region.trim().toLowerCase() === "us"
       $expr: {
         $and: [
           { $lt: [{ $size: { $ifNull: ["$cart.items", []] } }, 20] },
-          {
-            $eq: [
-              {
-                $let: {
-                  vars: { jsmqlRecv: { $trim: { input: "$customer.region" } } },
-                  in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] },
-                },
-              },
-              "us",
-            ],
-          },
+          { $eq: [{ $toLower: { $trim: { input: { $ifNull: ["$customer.region", ""] } } } }, "us"] },
         ],
       },
     });
@@ -1394,41 +1406,9 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
           },
           {
             $cond: [
-              {
-                $let: {
-                  vars: { jsmqlRecv: { $cond: [{ $lte: ["$role", null] }, null, { $toLower: "$role" }] } },
-                  in: {
-                    $cond: [
-                      { $lte: ["$$jsmqlRecv", null] },
-                      null,
-                      { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    ],
-                  },
-                },
-              },
-              {
-                $gt: [
-                  {
-                    $let: {
-                      vars: { jsmqlRecv: { $trim: { input: "$name" } } },
-                      in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
-                    },
-                  },
-                  0,
-                ],
-              },
-              {
-                $let: {
-                  vars: { jsmqlRecv: { $cond: [{ $lte: ["$role", null] }, null, { $toLower: "$role" }] } },
-                  in: {
-                    $cond: [
-                      { $lte: ["$$jsmqlRecv", null] },
-                      null,
-                      { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    ],
-                  },
-                },
-              },
+              { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$role", ""] } }, "admin"] }, 0] },
+              { $gt: [{ $strLenCP: { $trim: { input: { $ifNull: ["$name", ""] } } } }, 0] },
+              { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$role", ""] } }, "admin"] }, 0] },
             ],
           },
           "$active",
@@ -1455,15 +1435,20 @@ describe("tiered loyalty discount price", { features: ["Ternaries"] }, () => {
       ).toEqual({
         $round: [
           {
-            $multiply: [
-              "$price",
+            $ifNull: [
               {
-                $cond: [
-                  { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
-                  0.85,
-                  { $cond: [{ $gte: ["$loyalty.years", 2] }, 0.92, 1] },
+                $multiply: [
+                  "$price",
+                  {
+                    $cond: [
+                      { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
+                      0.85,
+                      { $cond: [{ $gte: ["$loyalty.years", 2] }, 0.92, 1] },
+                    ],
+                  },
                 ],
               },
+              0,
             ],
           },
           2,
@@ -1534,17 +1519,22 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
         distance: {
           $sqrt: {
             $add: [
-              { $pow: [{ $subtract: ["$point.x", "$origin.x"] }, 2] },
+              { $pow: [{ $ifNull: [{ $subtract: ["$point.x", "$origin.x"] }, 0] }, 2] },
               { $pow: [{ $subtract: ["$point.y", "$origin.y"] }, 2] },
             ],
           },
         },
-        octave: { $log: [{ $divide: ["$frequency", 440] }, 2] },
-        decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
+        octave: { $log: [{ $ifNull: [{ $divide: ["$frequency", 440] }, 1] }, 2] },
+        decibels: { $multiply: [{ $log10: { $ifNull: ["$amplitude", 1] } }, 20] },
         fovRad: { $divide: [{ $multiply: ["$fovDeg", 3.141592653589793] }, 180] },
         growthFactor: { $pow: [2.718281828459045, "$rate"] },
         trend: { $cmp: [{ $ifNull: ["$delta", 0] }, 0] },
-        cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, 0.3333333333333333] }] },
+        cubeSide: {
+          $multiply: [
+            { $cmp: [{ $ifNull: ["$volume", 0] }, 0] },
+            { $pow: [{ $abs: { $ifNull: ["$volume", 0] } }, 0.3333333333333333] },
+          ],
+        },
       });
     },
   );
@@ -1593,7 +1583,7 @@ describe("age decade bucket through .floor()", { features: ["Arithmetic and Math
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`($.age / 10).floor() * 10`)).toEqual({
-        $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
+        $multiply: [{ $floor: { $ifNull: [{ $divide: ["$age", 10] }, 0] } }, 10],
       });
     },
   );
@@ -1605,7 +1595,15 @@ describe("invoice line total with compound tax", { features: ["Arithmetic and Ma
     { kind: "expression", usage: "db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`($.quantity * ($.unitPrice + $.unitPrice * $.taxRate)).round(2)`)).toEqual({
-        $round: [{ $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] }, 2],
+        $round: [
+          {
+            $ifNull: [
+              { $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] },
+              0,
+            ],
+          },
+          2,
+        ],
       });
     },
   );
@@ -1616,13 +1614,13 @@ describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["St
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.articles.aggregate([{ $addFields: { slug: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`String($.articleId) + "-" + $.title.toLowerCase().trim().replaceAll(" ", "-")`)).toEqual({
+      expect(jsmql.expr(`\`\${$.articleId}-\${$.title.toLowerCase().trim().replaceAll(" ", "-")}\``)).toEqual({
         $concat: [
           { $toString: "$articleId" },
           "-",
           {
             $replaceAll: {
-              input: { $trim: { input: { $cond: [{ $lte: ["$title", null] }, null, { $toLower: "$title" }] } } },
+              input: { $trim: { input: { $toLower: { $ifNull: ["$title", ""] } } } },
               find: " ",
               replacement: "-",
             },
@@ -1639,10 +1637,7 @@ describe("email domain through .split().at().toLowerCase()", { features: ["Strin
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
-        $let: {
-          vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } },
-          in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] },
-        },
+        $toLower: { $ifNull: [{ $arrayElemAt: [{ $split: [{ $ifNull: ["$email", ""] }, "@"] }, 1] }, ""] },
       });
     },
   );
@@ -1653,7 +1648,7 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").size()`)).toEqual({ $size: { $ifNull: [{ $split: ["$tags", ","] }, []] } });
+      expect(jsmql.expr(`$.tags.split(",").size()`)).toEqual({ $size: { $split: [{ $ifNull: ["$tags", ""] }, ","] } });
     },
   );
 });
@@ -1672,19 +1667,7 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
           "Hi ",
           { $toString: { $ifNull: ["$customer.firstName", "there"] } },
           " — your ",
-          {
-            $cond: [
-              {
-                $cond: [
-                  { $lte: ["$invoice.id", null] },
-                  null,
-                  { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] },
-                ],
-              },
-              "VIP ",
-              "",
-            ],
-          },
+          { $cond: [{ $eq: [{ $indexOfCP: [{ $ifNull: ["$invoice.id", ""] }, "INV-VIP-"] }, 0] }, "VIP ", ""] },
           "invoice ",
           { $toString: "$invoice.id" },
           " is ready",
@@ -1703,16 +1686,9 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpperCase()}] \${$.event.message}\``),
       ).toEqual({
         $concat: [
-          { $dateToString: { date: "$event.ts" } },
+          { $dateToString: { date: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } } },
           " [",
-          {
-            $let: {
-              vars: {
-                jsmqlRecv: { $cond: [{ $lte: ["$event.level", null] }, null, { $substrCP: ["$event.level", 0, 1] }] },
-              },
-              in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toUpper: "$$jsmqlRecv" }] },
-            },
-          },
+          { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
           "] ",
           { $toString: "$event.message" },
         ],
@@ -1744,7 +1720,7 @@ $.sessions
               },
             },
             as: "e",
-            in: { $toLong: "$$e.ts" },
+            in: { $toLong: { $ifNull: ["$$e.ts", new Date("1970-01-01T00:00:00.000Z")] } },
           },
         },
       });
@@ -1764,21 +1740,26 @@ describe("cart subtotal through .sumBy", { features: ["Array methods"] }, () => 
   );
 });
 
-describe("full display name through .filter(Boolean).join", { features: ["Array methods"] }, () => {
+describe("full display name through .compact().join", { features: ["Array methods"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")`)).toEqual({
+      expect(jsmql.expr(`[$.firstName, $.middleName, $.lastName].compact().join(" ")`)).toEqual({
         $ifNull: [
           {
             $reduce: {
               input: {
                 $filter: {
                   input: ["$firstName", "$middleName", "$lastName"],
-                  as: "x",
+                  as: "jsmqlItem",
                   cond: {
-                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
+                    $and: [
+                      { $gt: ["$$jsmqlItem", null] },
+                      { $ne: ["$$jsmqlItem", false] },
+                      { $ne: ["$$jsmqlItem", ""] },
+                      { $ne: ["$$jsmqlItem", 0] },
+                    ],
                   },
                 },
               },
@@ -1807,7 +1788,7 @@ describe("full address with conditional inclusion + filter + join", { features: 
       expect(
         jsmql.expr`
 [$.building && $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
-  .filter(Boolean)
+  .compact()
   .join(" ")
       `,
       ).toEqual({
@@ -1838,9 +1819,14 @@ describe("full address with conditional inclusion + filter + join", { features: 
                     "$country",
                     "$postcode",
                   ],
-                  as: "x",
+                  as: "jsmqlItem",
                   cond: {
-                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
+                    $and: [
+                      { $gt: ["$$jsmqlItem", null] },
+                      { $ne: ["$$jsmqlItem", false] },
+                      { $ne: ["$$jsmqlItem", ""] },
+                      { $ne: ["$$jsmqlItem", 0] },
+                    ],
                   },
                 },
               },
@@ -1964,41 +1950,28 @@ $.file.size <= 25_000_000
       "file.size": { $lte: 25000000 },
       $expr: {
         $and: [
+          { $in: [{ $toLower: { $ifNull: ["$file.ext", ""] } }, [".jpg", ".png", ".pdf", ".docx"]] },
           {
-            $in: [
-              { $cond: [{ $lte: ["$file.ext", null] }, null, { $toLower: "$file.ext" }] },
-              [".jpg", ".png", ".pdf", ".docx"],
-            ],
-          },
-          {
-            $cond: [
-              { $lte: ["$file.name", null] },
-              null,
-              {
-                $let: {
-                  vars: { jsmqlStr: "$file.name" },
-                  in: {
-                    $eq: [
+            $let: {
+              vars: { jsmqlStr: { $ifNull: ["$file.name", ""] } },
+              in: {
+                $eq: [
+                  {
+                    $substrCP: [
+                      "$$jsmqlStr",
                       {
-                        $substrCP: [
-                          "$$jsmqlStr",
-                          {
-                            $max: [
-                              0,
-                              {
-                                $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }],
-                              },
-                            ],
-                          },
-                          { $strLenCP: { $ifNull: ["$file.ext", ""] } },
+                        $max: [
+                          0,
+                          { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }] },
                         ],
                       },
-                      "$file.ext",
+                      { $strLenCP: { $ifNull: ["$file.ext", ""] } },
                     ],
                   },
-                },
+                  "$file.ext",
+                ],
               },
-            ],
+            },
           },
         ],
       },
@@ -2060,10 +2033,11 @@ describe("formatted date label with ?? chain", { features: ["Nullish coalescing"
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.articles.aggregate([{ $addFields: { dateLabel: jsmql.expr(...) } }])" },
     () => {
+      // `?.` gives null for a missing date, so `??` falls back. A dot would format the epoch.
       expect(
         jsmql.expr`
-$.publishedAt.format("%Y-%m-%d") ??
-$.createdAt.format("%Y-%m-%d") ??
+$.publishedAt?.format("%Y-%m-%d") ??
+$.createdAt?.format("%Y-%m-%d") ??
 "unknown"
       `,
       ).toEqual({
@@ -2096,7 +2070,7 @@ describe("arr.max() - arr.min() with Array.isArray guard", { features: ["Array s
     { kind: "expression", usage: "db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Array.isArray($.scores) ? $.scores.max() - $.scores.min() : 0`)).toEqual({
-        $cond: [{ $isArray: ["$scores"] }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
+        $cond: [{ $isArray: "$scores" }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
       });
     },
   );
@@ -2159,8 +2133,12 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : String($.value)`)).toEqual({
-        $cond: [{ $eq: [{ $type: "$value" }, "string"] }, { $trim: { input: "$value" } }, { $toString: "$value" }],
+      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : $.value?.toString()`)).toEqual({
+        $cond: [
+          { $eq: [{ $type: "$value" }, "string"] },
+          { $trim: { input: { $ifNull: ["$value", ""] } } },
+          { $toString: "$value" },
+        ],
       });
     },
   );
@@ -2171,7 +2149,7 @@ describe("days since last login (.abs() + .diff + ?? + new Date)", { features: [
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`(new Date().diff($.lastLoginAt, "day") ?? -1).abs()`)).toEqual({
+      expect(jsmql.expr(`(Date().diff($.lastLoginAt, "day") ?? -1).abs()`)).toEqual({
         $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },
@@ -2183,7 +2161,7 @@ describe("days since document was created", { features: ["Date and time"] }, () 
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })`)).toEqual({
+      expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: Date(), unit: "day" })`)).toEqual({
         $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" },
       });
     },
@@ -2196,7 +2174,22 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`((Date.now() - $.event.ts.getTime()) / 86_400_000).floor()`)).toEqual({
-        $floor: { $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] },
+        $floor: {
+          $ifNull: [
+            {
+              $divide: [
+                {
+                  $subtract: [
+                    { $toLong: "$$NOW" },
+                    { $toLong: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } },
+                  ],
+                },
+                86400000,
+              ],
+            },
+            0,
+          ],
+        },
       });
     },
   );
@@ -2210,7 +2203,10 @@ describe("event fell within UTC business hours (.getUTCHours)", { features: ["Da
       // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
       // (not the server's local zone) keeps the window stable across deployments.
       expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
-        $and: [{ $gte: [{ $hour: "$event.ts" }, 9] }, { $lt: [{ $hour: "$event.ts" }, 17] }],
+        $and: [
+          { $gte: [{ $hour: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } }, 9] },
+          { $lt: [{ $hour: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } }, 17] },
+        ],
       });
     },
   );
@@ -2256,7 +2252,7 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
           in: {
             finalPrice: { $subtract: ["$price", "$$discount"] },
             savings: "$$discount",
-            savingsPercent: { $round: { $multiply: [{ $divide: ["$$discount", "$price"] }, 100] } },
+            savingsPercent: { $round: { $ifNull: [{ $multiply: [{ $divide: ["$$discount", "$price"] }, 100] }, 0] } },
           },
         },
       });
@@ -2284,19 +2280,19 @@ $ = {
           subtotal: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty"] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
           tax: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
           total: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
         },
@@ -2327,13 +2323,13 @@ $ = {
             subtotal: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty"] } },
-                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+                in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
               },
             },
             tax: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+                in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
               },
             },
           },
@@ -2533,7 +2529,7 @@ describe("archive inactive users to a warehouse through $out (multi-stage)", { f
     () => {
       expect(
         jsmql`
-$match($.active === false && $.lastSeen < new Date("2025-01-01"));
+$match($.active === false && $.lastSeen < Date("2025-01-01"));
 $$$$.dw.archive_users = $$;
       `,
       ).toEqual([
@@ -2888,7 +2884,7 @@ describe("daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)"
       // named-keys shape the user wrote.
       expect(
         jsmql`
-$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
+$match($.placedAt >= Date("2026-05-01") && $.placedAt < Date("2026-06-01"));
 $$ = [{
   orders:    $$.reduce((acc, o) => acc + 1, 0),
   revenue:   $$.reduce((acc, o) => acc + o.total, 0),
@@ -2939,7 +2935,7 @@ describe(
         // accumulator on the `$group`.
         expect(
           jsmql`
-$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
+$match($.placedAt >= Date("2026-05-01") && $.placedAt < Date("2026-06-01"));
 $$ = [$$.reduce(
   (acc, o) => ({
     ...acc,
@@ -3329,7 +3325,7 @@ describe("Per-user order report with counts at three nesting levels", { features
     // orders $lookup.let as `jsmql_s0_size`). Verified end-to-end on a live mongod.
     expect(
       jsmql(`
-$match($.createdAt >= new Date(2026, 1, 1));
+$match($.createdAt >= Date(2026, 1, 1));
 $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
     totalShipments: $$$.shipments.filter({ orderId: o._id }).size(),
@@ -3605,12 +3601,12 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
       // Named constants read like config, but each folds at compile time and
       // inlines — no `$set`, no `__jsmql` scratch. The array `.map(...).snakeCase`
       // etc. run once during compilation, the arithmetic collapses to a number,
-      // and `new Date("…")` becomes a real BSON date, so the whole thing lowers to
+      // and `Date("…")` becomes a real BSON date, so the whole thing lowers to
       // the index-friendly query document you would write by hand.
       expect(
         jsmql(`
           const CLOSED = ["cancelled", "rejected", "refunded"].map(s => s.toUpperCase());
-          const CUTOFF = new Date("2024-01-01");
+          const CUTOFF = Date("2024-01-01");
           const MAX_RETRIES = 2 ** 4;
           $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES
         `),

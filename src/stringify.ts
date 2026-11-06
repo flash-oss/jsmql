@@ -139,11 +139,12 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
       const s = text();
       return s === null ? null : `new Decimal128(${str(s)})`;
     }
-    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
-    // reader can check, and the two-word constructor is not.
+    // The value goes in as a string. A number is the low 32 bits of `new Long(low, high)`,
+    // so a value past 2^31 would wrap. MEASURED: bson 6, bson 7 and mongosh 2.13 read the
+    // string as the whole value.
     case "Long": {
       const s = text();
-      return s === null ? null : `Long.fromString(${str(s)})`;
+      return s === null ? null : `new Long(${str(s)})`;
     }
     case "Int32":
       return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;

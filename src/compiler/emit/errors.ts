@@ -13,7 +13,7 @@ import type { Where } from "../passes/position.ts";
 import { stringify } from "../../stringify.ts";
 import { isPlainObject, isRegExp } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
-import { refusalSentence } from "./consult.ts";
+import { consult, refusalSentence } from "./consult.ts";
 import { hint, takesOf, wrongKind } from "./check.ts";
 import type { Selected } from "./select.ts";
 import { kindOfValue, type KindFault, type Proven } from "../kinds.ts";
@@ -26,6 +26,7 @@ import {
   isFieldProperty,
   isKnownName,
   isStageName,
+  positionsOf,
   siblingOf,
   spreadAlternativeOf,
   streamReceiverNames,
@@ -159,7 +160,7 @@ export function refusalFor(
                   : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
                     ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
                     : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
-                      ? ` A string is not a list. For one element per character, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                      ? ` A string is not a list. For one element per character, write '<string>.length().range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
                       : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
                         ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
                         : sel.got === "bool"
@@ -236,12 +237,9 @@ export const lambdaAsValue = (pos: number): CodegenError =>
     pos,
   );
 
-/** A callable name read without a call — `Number + 1`, `Math.random + 5`. */
+/** A callable name read without a call — `ObjectId + 1`, `Math.random + 5`. */
 export const callableAsValue = (spelled: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'${spelled}' used as a value is only valid as a callback to a higher-order array method — for example, $.items.map(${spelled}). To apply it to one value, write ${spelled}(value).`,
-    pos,
-  );
+  new CodegenError(`'${spelled}' is a function, not a value. Write a call: '${spelled}(…)'.`, pos);
 
 /**
  * A declared function read as a VALUE. MQL expressions carry no function
@@ -422,16 +420,19 @@ export function alwaysAbsent(read: string, holder: string | null, pos: number): 
   );
 }
 
-/** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
-export const newOnFunction = (name: string, pos: number): CodegenError =>
-  new CodegenError(`'${name}' is not a constructor in JSMQL. Call it without 'new': '${name}(…)'.`, pos);
-
-/** `new Foo(1)`: no row names the class. `name` is null when the callee is not a name at all. */
-export const unknownClass = (name: string | null, known: readonly string[], pos: number): CodegenError =>
+/** HR8: JSMQL has no `new` keyword. `name` is the callee, or null when the callee is not a name. */
+export const noNewKeyword = (name: string | null, pos: number): CodegenError =>
   new CodegenError(
     name === null
-      ? "'new' takes the name of a class, as in 'new Date(…)'."
-      : `Unknown class '${name}' in 'new ${name}(…)'.${didYouMean(name, known, (s) => `new ${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.`,
+      ? "JSMQL has no 'new' keyword. Call a constructor such as 'Date(…)', or a declared function, without 'new'."
+      : `JSMQL has no 'new' keyword. Write '${name}(…)'.`,
+    pos,
+  );
+
+/** `new Foo(1)`: JSMQL has no `new` keyword, and no row or binding names `Foo`. */
+export const unknownClass = (name: string, known: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    `JSMQL has no 'new' keyword, and it knows no class '${name}'.${didYouMean(name, known, (s) => `${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one, and call it.`,
     pos,
   );
 
@@ -479,7 +480,7 @@ export const needsPipeline = (name: string, pos: number): CodegenError =>
   );
 
 export const spreadInOperatorBody = (pos: number): CodegenError =>
-  new CodegenError("MQL has no spread in an object. Write a.assign(b) instead.", pos);
+  new CodegenError("MQL has no spread in an object. Write '<a>.assign(<b>)' instead.", pos);
 
 export const computedKeyInOperatorBody = (pos: number): CodegenError =>
   new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
@@ -885,7 +886,7 @@ export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
 
 export const spreadOfString = (pos: number): CodegenError =>
   new CodegenError(
-    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '<string>.length().range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
     pos,
   );
 
@@ -901,6 +902,12 @@ export function noReceiver(name: string, pos: number): CodegenError {
       `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
       pos,
     );
+  }
+  // A global that no position takes answers with its own refusal, which names the way out:
+  // `$.a.String()` names '$.x?.toString()', and never the refused 'String(…)'.
+  if (!name.startsWith("$") && positionsOf(name)?.length === 0) {
+    const verdict = consult(name, "value");
+    if (verdict.kind === "refused") return new CodegenError(refusalSentence(verdict, `'.${name}()'`, "a value"), pos);
   }
   return new CodegenError(
     name.startsWith("$")

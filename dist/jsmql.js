@@ -14,6 +14,15 @@ function queryOwnValue(path, test) {
   if (path === "") return test;
   return { [path]: shorthand(test) };
 }
+function queryAmong(path, values) {
+  return path !== "" && values.includes(null) ? queryOwnValue(path, { $in: values, $exists: true }) : queryOwnValue(path, { $in: values });
+}
+function queryOrMissing(path, test) {
+  const keys = Object.keys(test);
+  if (keys.length === 1 && keys[0] === "$regex") return queryOwnValue(path, { $in: [test.$regex, null] });
+  if (path === "") return null;
+  return { $or: [queryOwnValue(path, test), { [path]: null }] };
+}
 var BSON_KIND = {
   ObjectId: "objectId",
   Decimal128: "number",
@@ -168,14 +177,18 @@ function normaliseSliceIndex(node, lowered, recv, present2 = false) {
   if (lit2 !== null) return lit2 >= 0 ? lit2 : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit2));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present2)] }), lowered);
 }
+var substrOperand = (s) => {
+  const operands = typeof s === "object" && s !== null && !Array.isArray(s) ? s.$ifNull : void 0;
+  return Array.isArray(operands) && operands.length === 2 && operands[1] === "" && Object.keys(s).length === 1 ? operands[0] : s;
+};
 var strTail = (s, from, present2 = false) => ({
-  $substrCP: [s, from, strLenOf(s, present2)]
+  $substrCP: [substrOperand(s), from, strLenOf(s, present2)]
 });
 var capitalizeExpr = (s, present2 = false) => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
+  $concat: [{ $toUpper: { $substrCP: [substrOperand(s), 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
 });
 var firstCharExpr = (s, op, present2 = false) => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present2)]
+  $concat: [{ [op]: { $substrCP: [substrOperand(s), 0, 1] } }, strTail(s, 1, present2)]
 });
 var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 var HTML_ESCAPE_PAIRS = [
@@ -244,9 +257,6 @@ var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
 var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
-var jsTruth = (value) => ({
-  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }]
-});
 var negate = (n2) => typeof n2 === "number" ? -n2 : { $subtract: [0, n2] };
 var stringKeyExpr = (value) => ({ $ifNull: [{ $toString: value }, "null"] });
 var distinctKeysExpr = (arr, it) => ({
@@ -409,64 +419,65 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
-var ownValue = (v, convert) => bsonTagOf(v) !== void 0 || isDate(v) ? { [convert]: v } : null;
+var conversion = (e) => name({
+  doc: `'.${e.method}()' \u2014 emits ${e.operator}. See docs/LANGUAGE.md.`,
+  call: true,
+  on: "any",
+  returns: e.returns,
+  neverNull: true,
+  // MEASURED: each `$to…` operator gives null for null
+  passesNull: true,
+  nullReceiverAs: e.safe,
+  where: ["value"],
+  filter: viaFallback,
+  expr: {
+    args: { sig: "", none: true },
+    // an array literal goes one level deeper, so the server reads it as one argument
+    emit: ({ recv }) => ({ [e.operator]: singleArrayArg(recv) })
+  },
+  stream: unsupported(`'.${e.method}()' has no stream form: it produces a value, not a stream of documents.`),
+  statement: unsupported(
+    `'.${e.method}()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.${e.method}();'`
+  ),
+  group: unsupported(`'.${e.method}()' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
 var dateRow = (spelling) => global_({
-  doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
+  doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
-  // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
-  // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
-  // same choice every BSON constructor makes, so one rule covers all nine.
-  newKeyword: "optional",
+  // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
+  // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
   provides: "Date",
   returns: "date",
   neverNull: true,
   where: ["value"],
-  filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+  filter: because(`a date is a value, not a test. Compare it: '$.t > ${spelling}("2024-01-01")'.`),
   updateDoc: unsupported(
-    `'new ${spelling}(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`
+    `'${spelling}(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = ${spelling}()' is '$currentDate'. Inside a value, write a date constant ('${spelling}("2026-01-01")'), pass a Date from your code (an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: ${spelling}() };")'), which 'updateOne' accepts as well.`
   ),
   expr: {
     byArgs: {
       none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
       // A date that the source spells with literal parts never reaches this row, because the
-      // constant engine reads it first (src/compiler/passes/date-literal.ts). A live date
-      // converts (see `ownValue`). The slot states its kinds, so a constant of another kind,
-      // for example `null`, gets the refusal of a wrong kind. The cell refuses a string that
-      // no date parser reads. A number is a count of milliseconds, and the count is an integer.
-      // MEASURED: `$toDate` cuts a fraction toward zero (2020.5 → 2020 ms, -2020.5 → -2020 ms).
-      // JavaScript cuts it the same way, and JSMQL does not cut a value silently, so the
-      // compiler refuses a fraction, as the calendar parts do.
+      // constant engine reads it first (src/compiler/passes/date-literal.ts). The slot states its
+      // kinds, so a constant of another kind, for example `null`, gets the refusal of a wrong kind.
+      // The cell refuses a date and a string that no date parser reads: a type name is no
+      // conversion (see `convertsWith`). A number is a count of milliseconds,
+      // and the count is an integer. MEASURED: `$toDate` cuts a fraction toward zero
+      // (2020.5 → 2020 ms, -2020.5 → -2020 ms). JavaScript cuts it the same way. JSMQL does not
+      // cut a value silently. So the compiler refuses a fraction, as it refuses one in a calendar part.
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] }, integer: [0] },
-        emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toDate") ?? construct(
+        emit: ({ args, construct }) => construct(
           spelling,
-          `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+          `${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write ${spelling}("2026-01-01") or ${spelling}(0).`,
           args[0]
         )
       },
-      dynamic: {
-        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
-        // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
-        // a Decimal128, a string, a date and an ObjectId. A driver sends a whole JavaScript number
-        // below 2^31 as an int, so a number goes through `$toLong` first. `$toLong` cuts a fraction the
-        // same way, so the instant is the one that `$toDate` of the plain number gives. The emitter
-        // tests `$isNumber` for a value of unknown kind, because `$toLong` refuses a string and a date.
-        emit: ({ args, value, type: type2, bind }) => {
-          const x = value(args[0]);
-          const kinds = type2(args[0]).kinds;
-          if (kinds !== "any" && !kinds.has("number")) return { $toDate: x };
-          if (kinds !== "any" && kinds.size === 1) {
-            const long = typeof x === "object" && x !== null && Object.keys(x).join() === "$toLong";
-            return { $toDate: long ? x : { $toLong: x } };
-          }
-          const cheap = typeof x === "string" && x.startsWith("$");
-          const v = cheap ? null : bind("n");
-          const ref = v === null ? x : v.ref;
-          const doc = { $toDate: { $cond: [{ $isNumber: ref }, { $toLong: ref }, ref] } };
-          return v === null ? doc : { $let: { vars: { [v.as]: x }, in: doc } };
-        }
-      },
-      // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
+      dynamic: convertsWith(spelling, "toDate", MILLIS_TO_DATE),
+      // MEASURED: Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
       // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
       // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
@@ -476,7 +487,7 @@ var dateRow = (spelling) => global_({
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
       },
       otherwise: unsupported(
-        `'new ${spelling}(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`
+        `'${spelling}(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`
       )
     }
   },
@@ -490,26 +501,21 @@ var dateRow = (spelling) => global_({
 var bsonValue = (e) => global_({
   doc: e.doc,
   token: "Ident",
-  newKeyword: "optional",
   returns: e.returns,
   neverNull: true,
   where: ["value"],
   filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
   updateDoc: unsupported(
-    `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form ('jsmql.pipeline(...)'), which 'updateOne' accepts as well.`
+    `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form with the value's own method ('jsmql.pipeline("$.<field> = <value>.${e.method}();")'), which 'updateOne' accepts as well.`
   ),
   expr: {
     byArgs: {
       constant: {
         args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-        // A boolean constant converts on the server, as a runtime boolean does.
-        emit: ({ args, value, construct }) => typeof value(args[0]) === "boolean" ? { [e.convert]: value(args[0]) } : ownValue(value(args[0]), e.convert) ?? construct(e.spelling, e.refuseConstant, args[0])
+        emit: ({ args, construct }) => construct(e.spelling, e.refuseConstant, args[0])
       },
-      dynamic: {
-        args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
-        emit: ({ args, value }) => ({ [e.convert]: value(args[0]) })
-      },
-      otherwise: unsupported(`'${e.spelling}(\u2026)' takes one value to convert, or one constant.`)
+      dynamic: convertsWith(e.spelling, e.method),
+      otherwise: unsupported(`'${e.spelling}(\u2026)' takes one constant.`)
     }
   },
   stream: unsupported(`'${e.spelling}' produces a value, not a stream of documents.`),
@@ -522,7 +528,6 @@ var bsonValue = (e) => global_({
 var bsonSentinel = (spelling, doc, compare) => global_({
   doc,
   token: "Ident",
-  newKeyword: "optional",
   returns: spelling === "MinKey" ? "minKey" : "maxKey",
   neverNull: true,
   where: ["value"],
@@ -687,7 +692,7 @@ var pairsOfObject = (recv, present2) => ({
 function merged(recv, args, value) {
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
-  if (list === null) return { $mergeObjects: empty ? args.map(value) : [recv, ...args.map(value)] };
+  if (list === null) return { $mergeObjects: empty && args.length > 1 ? args.map(value) : [recv, ...args.map(value)] };
   if (empty && list.elements.length === 1 && list.elements[0].type === "SpreadElement") {
     return { $mergeObjects: value(list) };
   }
@@ -700,6 +705,10 @@ function merged(recv, args, value) {
 var pairsRead = (obj, project) => ({
   $map: { input: { $objectToArray: obj }, in: project("$$this") }
 });
+var matchesEmpty = (pattern, flags) => new RegExp(
+  pattern.replace(/\\[AzZG]|\\.|\[(?:\\.|[^\]\\])*\]/g, (m) => /^\\[AzZG]$/.test(m) ? "(?:)" : m),
+  flags
+).test("");
 var nullOr = (recv, present2, bind, body) => {
   if (present2) return body(recv);
   const cheap = typeof recv === "string" && recv.startsWith("$");
@@ -709,6 +718,18 @@ var nullOr = (recv, present2, bind, body) => {
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
+var safeOfBounds = (kind, bounds) => bounds.some((b) => kind(b) === "date") ? /* @__PURE__ */ new Date(0) : 0;
+var safeBound = (recv, present2, safe, sameAsNull) => present2 || sameAsNull ? recv : { $ifNull: [recv, safe] };
+var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
+var overFields = (q) => isPlainObject(q) && Object.entries(q).every(
+  ([k, v]) => !k.startsWith("$") || LOGICAL.has(k) && Array.isArray(v) && v.every(overFields)
+);
+var mayHold = (safe, lo, hi) => {
+  const bounds = orderedBounds(lo, hi);
+  if (bounds === null) return true;
+  if (isDate(safe) !== isDate(bounds[0])) return false;
+  return bounds[0] <= safe && safe < bounds[1];
+};
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
   if (isDate(a) && isDate(b)) return a <= b ? [a, b] : [b, a];
@@ -787,6 +808,29 @@ var isIfNullWrappedPath = (v) => {
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
+var afterStringMethod = (method) => ` If a string method gives the value, write the '?.' right after the field: '$.x?.trim().${method}()'. A dot reads a missing string as "", and the server cannot convert "".`;
+var stringIsNotJsmql = unsupported(
+  "'String(x)' is not part of JSMQL \u2014 the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toString()': '$.x?.toString()'. In a callback, write 'x => x.toString()'."
+);
+var numberIsNotJsmql = unsupported(
+  "'Number(x)' is not part of JSMQL \u2014 the value's own method says the same thing, and one capability gets one spelling. Write '<value>?.toDouble()': '$.x?.toDouble()'. In a callback, write 'x => x.toDouble()'." + afterStringMethod("toDouble")
+);
+var booleanIsNotJsmql = unsupported(
+  "'Boolean(x)' is not part of JSMQL \u2014 it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'."
+);
+var toNumberIsNotJsmql = unsupported(
+  "'.toNumber()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." + afterStringMethod("toDouble")
+);
+var parseIntIsNotJsmql = unsupported(
+  `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.` + afterStringMethod("toDouble")
+);
+var parseFloatIsNotJsmql = unsupported(
+  `'parseFloat()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write '<value>.toDouble()'.` + afterStringMethod("toDouble")
+);
+var convertsWith = (spelling, method, also = "") => unsupported(
+  `'${spelling}(x)' converts a value of the document, and the value's own method says the same thing: one capability gets one spelling. Write '<value>.${method}()': '$.x.${method}()'. In a callback, write 'x => x.${method}()'.` + afterStringMethod(method) + also
+);
+var MILLIS_TO_DATE = " For a number of milliseconds, write '$.x.toLong().toDate()': the server cannot convert an int to a date.";
 var setIsNotJsmql = unsupported(
   "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
 );
@@ -799,6 +843,10 @@ var regExpIsNotJsmql = unsupported(
 var NO_IS_FINITE = unsupported(
   `Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the "double" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: "double", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.`
 );
+var NO_POW = unsupported(
+  "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL \u2014 the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'."
+);
+var MEMBERSHIP_IN_AN_ARRAY = "For membership in an array, write '.has(x)'.";
 var NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -3496,7 +3544,7 @@ var NAMES = {
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
         const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [r, start, count] };
+        return { $substrCP: [substrOperand(r), start, count] };
       })
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
@@ -3521,7 +3569,7 @@ var NAMES = {
         return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
           const end2 = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
-          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end2, start))] };
+          return { $substrCP: [substrOperand(r), start, clampNonNegative(foldedSubtract(end2, start))] };
         });
       }
     },
@@ -3548,9 +3596,9 @@ var NAMES = {
         const lit2 = literalIndexValue(args[0]);
         if (lit2 !== null && lit2 < 0) return "";
         return nullOr(recv, present2, bind, (r) => {
-          if (lit2 !== null) return { $substrCP: [r, lit2, 1] };
+          if (lit2 !== null) return { $substrCP: [substrOperand(r), lit2, 1] };
           const index = value(args[0]);
-          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [substrOperand(r), index, 1] });
         });
       }
     },
@@ -3581,7 +3629,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$.<field>.length().range().map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -3605,11 +3653,12 @@ var NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
+        const test = { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3636,11 +3685,12 @@ var NAMES = {
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
+        const test = { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3735,17 +3785,17 @@ var NAMES = {
     // is the one that survives where they differ, and both differences are positions
     // jsmql emits into: a SIBLING operator on the same field
     // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object. The two places the bare form is required
-    // instead — an element of `$in` or `$all` (the server refuses an operator document
-    // there) — no regex reaches: a regex literal is only an argument to `.match` and its
-    // siblings, never an element of a written list.
+    // and `$elemMatch`, which needs an object. An element of `$in` takes the bare form
+    // instead, because the server refuses an operator document there. `queryOrMissing`
+    // in src/registry/vocabulary.ts writes that form.
     filter: {
       args: { sig: "regexp", exact: 1, slotType: { 0: "regex" } },
-      emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, literal: literal2, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: literal2(re) });
+        const test = { $regex: literal2(re) };
+        return matchesEmpty(re.pattern, re.flags) ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3927,7 +3977,7 @@ var NAMES = {
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    sibling: { array: "For membership in an array, write '.has(x)'." },
+    sibling: { array: MEMBERSHIP_IN_AN_ARRAY },
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
@@ -3935,12 +3985,13 @@ var NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" }, slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` } },
+      emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
-        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+        const test = { $regex: new RegExp(escapeForRegex(needle.value)) };
+        return needle.value === "" ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
@@ -3948,6 +3999,7 @@ var NAMES = {
         sig: "searchString",
         exact: 1,
         slotType: { 0: "string" },
+        slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
         }
@@ -3983,6 +4035,7 @@ var NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
+          if (c.value === null) return queryOwnValue(path, { $elemMatch: { $eq: null } });
           return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
@@ -3994,7 +4047,7 @@ var NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target2, { $in: values });
+        return queryAmong(target2, values);
       }
     },
     expr: {
@@ -4781,10 +4834,8 @@ var NAMES = {
         const q = elementQuery(args[0]);
         if (q === null) return null;
         const keys = Object.keys(q);
-        const operators = keys.filter((k) => k.startsWith("$"));
-        if (operators.length > 0 && operators.length < keys.length) return null;
-        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
-        return queryOwnValue(path, { $elemMatch: q });
+        const itself = keys.length > 0 && keys.every((k) => k.startsWith("$") && !LOGICAL.has(k) && k !== "$expr");
+        return itself || overFields(q) ? queryOwnValue(path, { $elemMatch: q }) : null;
       }
     },
     expr: {
@@ -4913,24 +4964,25 @@ var NAMES = {
   toString: name({
     doc: "'.toString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    // MEASURED: `$toString` gives null for null
     passesNull: true,
-    nullReceiverAs: "",
     on: "any",
     returns: "unknown",
     neverNull: true,
+    // lodash's `_.toString(null)` is "": the method answers a string on any kind of receiver
+    nullReceiverAs: "",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
       // A regex literal has no value of its own (see `regexBody`). The cell writes the
       // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
-      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
-      // the receiver there, and `$toString` gives null for null by itself.
-      emit: ({ recv, present: present2 }) => {
+      // An array literal goes one level deeper, so the server reads it as one argument.
+      emit: ({ recv }) => {
         const re = recv;
         if (re.type === "RegexLiteral")
           return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
-        return { $toString: present2 ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
+        return { $toString: singleArrayArg(recv) };
       }
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
@@ -4942,6 +4994,30 @@ var NAMES = {
       "'.toString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
+  // the conversions: one method per MongoDB `$to…` operator, named as the operator is
+  toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
+  toNumber: name({
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
+    call: true,
+    on: "any",
+    returns: "number",
+    where: [],
+    filter: toNumberIsNotJsmql,
+    expr: toNumberIsNotJsmql,
+    stream: toNumberIsNotJsmql,
+    statement: toNumberIsNotJsmql,
+    group: toNumberIsNotJsmql,
+    window: toNumberIsNotJsmql
+  }),
+  toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
+  toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
+  toDecimal: conversion({ method: "toDecimal", operator: "$toDecimal", returns: "number", safe: 0 }),
+  // MongoDB's `$toBool`, not JavaScript's truthiness: `$toBool("")` is true
+  toBool: conversion({ method: "toBool", operator: "$toBool", returns: "bool", safe: false }),
+  toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: /* @__PURE__ */ new Date(0) }),
+  toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
+  toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
@@ -6323,7 +6399,7 @@ var NAMES = {
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: [$.a, $.b].max() → {"$max":["$a","$b"]}; $.rows.max() takes none.
+      // MEASURED: [$.a, $.b].max() → {"$max":["$a","$b"]}; { $max: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -6350,7 +6426,7 @@ var NAMES = {
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: [$.a, $.b].min() → {"$min":["$a","$b"]}; $.rows.min() takes none.
+      // MEASURED: [$.a, $.b].min() → {"$min":["$a","$b"]}; { $min: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -6883,9 +6959,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      // the truth that `.filter(x => x)` reads, with the tests the element's proof leaves
+      emit: ({ recv, bind, elementTruth }) => {
         const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
+        return { $filter: { input: recv, as: item.as, cond: elementTruth(item.ref) } };
       }
     },
     stream: {
@@ -8412,7 +8489,12 @@ var NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2, slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] })
+      emit: ({ recv, args, value, present: present2, kind }) => {
+        const lower = value(args[0]);
+        const safe = safeOfBounds(kind, args);
+        const same = isDate(safe) ? isDate(lower) && lower >= safe : typeof lower === "number" && lower >= 0;
+        return { $min: [{ $max: [safeBound(recv, present2, safe, same), lower] }, value(args[1])] };
+      }
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8433,7 +8515,7 @@ var NAMES = {
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
       args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, pathOf: pathOf3, constant }) => {
+      emit: ({ recv, args, pathOf: pathOf3, constant, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
         const given = args.map(constant);
@@ -8441,15 +8523,19 @@ var NAMES = {
         const values = given.map((c) => c.value);
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
-        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+        const test = { $gte: bounds[0], $lt: bounds[1] };
+        const safe = isDate(bounds[0]) ? /* @__PURE__ */ new Date(0) : 0;
+        return mayHold(safe, bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present: present2, kind }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        return { $and: [{ $gte: [recv, { $min: [lo, hi] }] }, { $lt: [recv, { $max: [lo, hi] }] }] };
+        const safe = safeOfBounds(kind, args);
+        const r = safeBound(recv, present2, safe, !mayHold(safe, lo, hi));
+        return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       }
     },
     stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
@@ -8465,7 +8551,6 @@ var NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
@@ -8482,7 +8567,6 @@ var NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
@@ -8507,6 +8591,7 @@ var NAMES = {
     expr: {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
+        // MEASURED: { $round: "$n" } is valid, and 2.5 gives 2, as { $round: ["$n", 0] } does.
         number: {
           args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
@@ -9291,7 +9376,6 @@ var NAMES = {
   assert: global_({
     doc: "'assert(condition[, message]);' \u2014 a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
@@ -9324,8 +9408,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        // The method form answers a NEW object, as '.pick()' and '.omit()' do —
-        // the receiver is the first source, and the call writes nothing in place.
+        // The receiver is the first source. See docs/specs/emit-pass.md § The method cells.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true, rest: "object" },
           emit: ({ recv, args, value }) => merged(recv, args, value)
@@ -9441,9 +9524,10 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
+    // the plain operand, and an array literal one level deeper, as `$size` takes it
     expr: {
       args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({ $isArray: [value(args[0])] })
+      emit: ({ args, value }) => ({ $isArray: singleArrayArg(value(args[0])) })
     },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -9509,7 +9593,7 @@ var NAMES = {
     )
   }),
   Object: root({
-    doc: `The JavaScript Object namespace. A receiver only \u2014 jsmql.expr("Object") is "Expected '.' but got end of input".`,
+    doc: "The JavaScript Object namespace. Each member is refused, and its refusal names the method that says the same thing.",
     token: "Ident",
     provides: "namespace",
     where: [],
@@ -9520,94 +9604,59 @@ var NAMES = {
     group: unsupported("'Object' is a namespace, not an accumulator."),
     window: unsupported("'Object' is a namespace, not a window function.")
   }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   String: global_({
-    doc: "Converts a value to a string. Emits $toString.",
+    doc: "Parsed, then refused: '<value>.toString()' is JSMQL's conversion to a string.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "string",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-      emit: ({ args, value }) => ({ $toString: value(args[0]) })
-    },
-    stream: unsupported("'String()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(\u2026);'"
-    ),
-    group: unsupported("'String()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'String()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: stringIsNotJsmql,
+    expr: stringIsNotJsmql,
+    stream: stringIsNotJsmql,
+    statement: stringIsNotJsmql,
+    group: stringIsNotJsmql,
+    window: stringIsNotJsmql
   }),
+  // The parser accepts the name so it gets an answer, and every position refuses it.
   Boolean: global_({
-    doc: "Converts a value to a boolean, using JavaScript truthiness. Emits the four-clause JavaScript truthiness $and.",
+    doc: "Parsed, then refused: '!!<value>' is the truthiness of JavaScript, and '.compact()' drops the falsy elements.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1, slotType: { 0: "value" } }, emit: ({ args, boolean }) => boolean(args[0]) },
-    stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(\u2026);'"
-    ),
-    group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: booleanIsNotJsmql,
+    expr: booleanIsNotJsmql,
+    stream: booleanIsNotJsmql,
+    statement: booleanIsNotJsmql,
+    group: booleanIsNotJsmql,
+    window: booleanIsNotJsmql
   }),
-  // The parser accepts the name so it gets an answer, and every position refuses it: one
-  // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
+  // The parser accepts the name so it gets an answer, and every position refuses it:
+  // '.toDouble()' is the numeric conversion, and one capability gets one spelling.
   parseInt: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    expr: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    stream: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    statement: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    group: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    ),
-    window: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
-    )
+    filter: parseIntIsNotJsmql,
+    expr: parseIntIsNotJsmql,
+    stream: parseIntIsNotJsmql,
+    statement: parseIntIsNotJsmql,
+    group: parseIntIsNotJsmql,
+    window: parseIntIsNotJsmql
   }),
   parseFloat: global_({
-    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
+    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
-    filter: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    expr: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    stream: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    statement: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    group: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    ),
-    window: unsupported(
-      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
-    )
+    filter: parseFloatIsNotJsmql,
+    expr: parseFloatIsNotJsmql,
+    stream: parseFloatIsNotJsmql,
+    statement: parseFloatIsNotJsmql,
+    group: parseFloatIsNotJsmql,
+    window: parseFloatIsNotJsmql
   }),
-  // ── the Math namespace's members ──
+  // ── the number methods that JavaScript spells as `Math` statics ──
   abs: name({
     doc: "'.abs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
@@ -9687,6 +9736,8 @@ var NAMES = {
     doc: "'.log()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9719,6 +9770,8 @@ var NAMES = {
     doc: "'.log2()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9744,6 +9797,8 @@ var NAMES = {
     doc: "'.log10()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9799,13 +9854,12 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
-        number: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => ({ $cmp: [orZero(recv, present2), 0] }) },
+        // under a dot, a missing or null number reads as 0, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cmp: [recv, 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'."
@@ -10098,6 +10152,8 @@ var NAMES = {
     doc: "'.acosh()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10145,24 +10201,19 @@ var NAMES = {
     window: unsupported("'.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   pow: name({
-    doc: "'Math.pow(base, exponent)' is not part of JSMQL \u2014 '**' says the same thing.",
+    doc: "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL \u2014 '**' says the same thing.",
     call: true,
     on: "Math",
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        // The parser accepts the name so it gets an answer, and this cell refuses it.
-        Math: unsupported(
-          "'Math.pow(base, exponent)' is not part of JSMQL \u2014 the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'."
-        )
-      }
-    },
-    stream: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    statement: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    group: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    window: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'.")
+    // The name parses so that it gets an answer, as 'Math.pow(…)' and as '.pow(…)'.
+    // One refusal in every position names the operator.
+    where: [],
+    filter: NO_POW,
+    expr: NO_POW,
+    stream: NO_POW,
+    statement: NO_POW,
+    group: NO_POW,
+    window: NO_POW
   }),
   atan2: name({
     doc: "'.atan2()' \u2014 see docs/LANGUAGE.md.",
@@ -10228,7 +10279,6 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10276,7 +10326,7 @@ var NAMES = {
     window: unsupported("'Math.E' is a constant, not a window function.")
   }),
   Math: root({
-    doc: 'The JavaScript Math namespace. A receiver only \u2014 `jsmql.expr("Math")` errors.',
+    doc: "The JavaScript Math namespace: 'Math.random()', 'Math.PI' and 'Math.E'. Each other member is refused, and its refusal names the number method.",
     token: "Ident",
     provides: "namespace",
     // MEASURED: the compiler refuses a bare `Math`.
@@ -10361,11 +10411,10 @@ var NAMES = {
     window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   ObjectId: global_({
-    doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
+    doc: "An ObjectId. Empty mints one, and a 24-hex constant is a literal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "objectId",
-    // a mint, a literal, or `$toObjectId` over a value that is there: never null
+    // a mint or a literal: never null
     neverNull: true,
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
@@ -10378,18 +10427,15 @@ var NAMES = {
         // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
         // constant engine reads it and a query compares it as written.
         constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
-          emit: ({ args, value, construct }) => ownValue(value(args[0]), "$toObjectId") ?? construct(
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, construct }) => construct(
             "ObjectId",
             `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`,
             args[0]
           )
         },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: ["string", "objectId"] } },
-          emit: ({ args, value }) => ({ $toObjectId: value(args[0]) })
-        },
-        otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
+        dynamic: convertsWith("ObjectId", "toObjectId"),
+        otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id), or one 24-hex constant.")
       }
     },
     stream: unsupported("'ObjectId' produces a value, not a stream of documents."),
@@ -10404,125 +10450,102 @@ var NAMES = {
   // One factory, because the nine differ in three cells and agree on every other.
   // Each has the SAME three-way meaning `ObjectId` has. No argument mints a value where
   // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
-  // builds, and the cell refuses a value that the type CANNOT hold. Anything else
-  // converts on the server through its `$to…` operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
-  // `new X(…)`. See docs/specs/bson-types.md.
+  // builds, and the cell refuses a value that the type CANNOT hold. A value of the
+  // document is refused, because its own conversion method says the same thing
+  // (`.toLong()`). JSMQL writes `X(…)`, with no `new` (HR8); jsmql.stringify writes the
+  // driver's `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
-    takes: ["string", "number", "bool"],
-    doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal; anything else converts.",
+    doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > Decimal128("9.99")',
     refuseConstant: `'Decimal128(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
   }),
   Long: bsonValue({
     spelling: "Long",
-    takes: ["string", "number", "bool"],
-    doc: "A 64-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 64-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === Long("9007199254740993")',
     refuseConstant: `'Long(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
   }),
   Int32: bsonValue({
     spelling: "Int32",
-    takes: ["string", "number", "bool"],
-    doc: "A 32-bit integer. A constant is a literal; anything else converts.",
+    doc: "A 32-bit integer. A constant is a literal.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === Int32(3)",
     refuseConstant: "'Int32(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
   Double: bsonValue({
     spelling: "Double",
-    takes: ["string", "number", "bool"],
-    doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
+    doc: "A double. A constant is a literal. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
     returns: "number",
-    convert: "$toDouble",
+    method: "toDouble",
     isA: "a double",
     compare: "$.ratio === Double(1)",
     refuseConstant: "'Double(<constant>)' \u2014 this constant is not a finite number. Write 'Double(1.5)'."
   }),
   UUID: bsonValue({
     spelling: "UUID",
-    doc: "A UUID. A constant is a literal; anything else converts.",
+    doc: "A UUID. A constant is a literal.",
     returns: "binData",
-    convert: "$toUUID",
+    method: "toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
-    takes: ["string", "binData"],
+    takes: "string",
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
   }),
   MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
   MaxKey: bsonSentinel("MaxKey", "The value that compares above every other type.", "$.grade === MaxKey()"),
   NumberDecimal: bsonValue({
     spelling: "NumberDecimal",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Decimal128`.",
     returns: "number",
-    convert: "$toDecimal",
+    method: "toDecimal",
     isA: "a decimal",
     compare: '$.price > NumberDecimal("9.99")',
     refuseConstant: `'NumberDecimal(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
   }),
   NumberLong: bsonValue({
     spelling: "NumberLong",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Long`.",
     returns: "number",
-    convert: "$toLong",
+    method: "toLong",
     isA: "a long",
     compare: '$.n === NumberLong("9007199254740993")',
     refuseConstant: `'NumberLong(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
   }),
   NumberInt: bsonValue({
     spelling: "NumberInt",
-    takes: ["string", "number", "bool"],
     doc: "The mongosh spelling of `Int32`.",
     returns: "number",
-    convert: "$toInt",
+    method: "toInt",
     isA: "an int",
     compare: "$.count === NumberInt(3)",
     refuseConstant: "'NumberInt(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
+  // The namespace of 'Number.isInteger(x)'. Every position refuses a call of the name itself.
   Number: global_({
-    doc: "Converts a value to a number.",
+    doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
-    expr: {
-      byArgs: {
-        // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
-        // `3` would be an int. The constant converts like anything else, and a string the
-        // server cannot parse is the server's own error.
-        constant: {
-          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
-        },
-        dynamic: {
-          args: { sig: "value", exact: 1, slotType: { 0: "value" } },
-          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
-        },
-        otherwise: unsupported("'Number(x)' takes exactly one value.")
-      }
-    },
-    stream: unsupported("'Number' produces a value, not a stream of documents."),
-    statement: unsupported("'Number' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Number' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Number' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    where: [],
+    filter: numberIsNotJsmql,
+    expr: numberIsNotJsmql,
+    stream: numberIsNotJsmql,
+    statement: numberIsNotJsmql,
+    group: numberIsNotJsmql,
+    window: numberIsNotJsmql
   }),
   Array: global_({
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Array",
     returns: "array",
     where: [],
@@ -10536,7 +10559,6 @@ var NAMES = {
   Set: global_({
     doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "unknown",
     where: [],
     filter: setIsNotJsmql,
@@ -10557,7 +10579,6 @@ var NAMES = {
   Map: global_({
     doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "object",
     where: [],
     filter: mapIsNotJsmql,
@@ -10570,7 +10591,6 @@ var NAMES = {
   RegExp: global_({
     doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "unknown",
     where: [],
     filter: regExpIsNotJsmql,
@@ -10614,7 +10634,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
-      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
+      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
     ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
@@ -10688,7 +10708,7 @@ function membershipQuery(input) {
   if (path === null) return null;
   const c = input.constant(r);
   if (c === null || !Array.isArray(c.value)) return null;
-  return queryOwnValue(path, { $in: c.value });
+  return queryAmong(path, c.value);
 }
 function typeTest(input) {
   const [l, r] = input.args;
@@ -11441,10 +11461,10 @@ var PRODUCTIONS = {
     statement: unsupported("'Class.method()' is not a statement \u2014 see its 'where'.")
   }),
   constructorCall: production({
-    doc: "`new Date(\u2026)`, `new ObjectId(\u2026)`, `new Decimal128(\u2026)`. What each constructor means is in names.ts.",
+    doc: "`new X(\u2026)`: parsed, then refused (HR8). JSMQL has no `new` keyword; the refusal names `X(\u2026)`.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`. names.ts says which constructor it is.
+    // One node for every `new X(…)`, so the refusal can name the callee.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",
@@ -12221,15 +12241,21 @@ function passesNullOf(name2) {
 function productionPassesNullOf(key) {
   return PRODUCTIONS[key]?.passesNull === true;
 }
-function readsNullReceiverOf(name2) {
-  return row(name2)?.nullReceiverAs !== void 0;
+function nullReceiverAsOf(name2) {
+  return row(name2)?.nullReceiverAs;
 }
 function emptyValueOf(name2, family) {
+  const stated = nullReceiverAsOf(name2);
+  if (isDate(stated)) return new Date(stated.getTime());
+  if (stated !== void 0) return stated;
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
+  if (fams.every((f) => f === "string")) return "";
+  if (fams.every((f) => f === "number")) return 0;
+  if (fams.every((f) => f === "date")) return /* @__PURE__ */ new Date(0);
   return null;
 }
 function siblingOf(name2, family) {
@@ -12274,9 +12300,6 @@ function familiesOf(name2) {
 }
 function onlyOf(name2) {
   return row(name2)?.only ?? [];
-}
-function newKeywordOf(name2) {
-  return emitRow(name2)?.newKeyword;
 }
 function isGlobalName(name2) {
   const k = row(name2)?.kind;
@@ -12351,10 +12374,7 @@ function bareCallableNames() {
   );
 }
 function constructibleNames() {
-  return bareCallableNames().filter((n2) => {
-    const k = newKeywordOf(n2);
-    return k === "required" || k === "optional";
-  });
+  return bareCallableNames().filter((n2) => isGlobalName(n2) && lists(n2, "value"));
 }
 function valueMethodNames() {
   return methodRows().filter((n2) => lists(n2, "value") || row(n2).expr !== void 0);
@@ -17285,10 +17305,8 @@ var Parser = class _Parser {
    * A lone statement stands on its own, so the shape phase can read it as a
    * Filter. A lone declaration cannot, because nothing would read it. Nor can a
    * statement that the source ENDED with a `;`, because that `;` is the token
-   * that says pipeline. Collapsing it away lost the distinction:
-   *   Object.assign($.a, $.b)    a value, and a Filter
-   *   Object.assign($.a, $.b);   a write, and a Pipeline
-   * both parsed to the same tree, and nothing downstream could tell them apart.
+   * that says pipeline. A collapse would give the two sources the same tree, and
+   * nothing downstream could tell them apart.
    *
    * This is ONE rule for the top level and the entry block. So `({ $ }) => { X }`
    * means exactly what `X` means, `;` included.
@@ -20535,8 +20553,7 @@ var CONSTANT_LITERALS = /* @__PURE__ */ new Set(["NumberLiteral", "StringLiteral
 function bareCall(callee, param, pos) {
   const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
-    if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
-      return void 0;
+    if (!isGlobalName(callee.name) || !isCallable(callee.name)) return void 0;
     return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
   }
   if (callee.type === "MemberAccess" && isNode3(callee.object) && callee.object.type === "Ident") {
@@ -20628,7 +20645,7 @@ function instantOf2(args) {
 }
 var isDateName = (name2) => canonicalBsonName(name2) === "Date";
 function readDateLiteral(node, isBound) {
-  if ((node.type === "NewExpression" || node.type === "CallExpression") && node.callee.type === "Ident") {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
     const name2 = node.callee.name;
     if (!isDateName(name2) || isBound(name2)) return NO2;
     const args = literalsOf(node.args);
@@ -20925,8 +20942,7 @@ var EVALUABLE_TYPES = [
   "MemberAccess",
   "IndexAccess",
   "MethodCall",
-  "CallExpression",
-  "NewExpression"
+  "CallExpression"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
 function fold(program) {
@@ -21219,6 +21235,1792 @@ function queryDocument(node, op) {
   if (!isNode5(node) || node.type !== "ObjectLiteral" || dollarKey(node) !== null) return;
   const key = firstKey(node);
   throw refuse(key === null ? "{}" : `{ ${key}: \u2026 }`, `an operand of '${op}'`, node.pos, "a query document (raw MQL)");
+}
+
+// src/levenshtein.ts
+function levenshtein(a, b) {
+  const m = a.length;
+  const n2 = b.length;
+  if (m === 0) return n2;
+  if (n2 === 0) return m;
+  const prev = new Array(n2 + 1);
+  const curr = new Array(n2 + 1);
+  for (let j = 0; j <= n2; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n2; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n2; j++) prev[j] = curr[j];
+  }
+  return prev[n2];
+}
+function closestNameTo(name2, candidates) {
+  let best = null;
+  for (const candidate of candidates) {
+    if (candidate === name2) continue;
+    const d = levenshtein(name2, candidate);
+    if (best === null || d < best.dist) best = { name: candidate, dist: d };
+  }
+  if (best === null) return null;
+  if (best.dist <= 2 && best.dist < name2.length) return best.name;
+  return null;
+}
+function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
+  const suggestion = closestNameTo(name2, candidates);
+  return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
+}
+
+// src/stringify.ts
+var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
+var kindOf3 = (v) => Object.prototype.toString.call(v);
+var getterOf = (proto, key) => Object.getOwnPropertyDescriptor(proto, key).get;
+var TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype);
+var typedArrayName2 = getterOf(TYPED_ARRAY, Symbol.toStringTag);
+var typedArrayLength = getterOf(TYPED_ARRAY, "length");
+var regexSource2 = getterOf(RegExp.prototype, "source");
+var regexFlags = getterOf(RegExp.prototype, "flags");
+function dateTime(v) {
+  if (kindOf3(v) !== "[object Date]") return null;
+  try {
+    return Date.prototype.getTime.call(v);
+  } catch {
+    return null;
+  }
+}
+function regexLiteral(v) {
+  if (kindOf3(v) !== "[object RegExp]") return null;
+  try {
+    return `/${String(regexSource2.call(v))}/${String(regexFlags.call(v))}`;
+  } catch {
+    return null;
+  }
+}
+function byteValues(v) {
+  if (typedArrayName2.call(v) !== "Uint8Array") return null;
+  const bytes = v;
+  return Array.from({ length: Number(typedArrayLength.call(v)) }, (_, i) => bytes[i]);
+}
+function keySource(key) {
+  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+}
+var str = (s) => JSON.stringify(s);
+var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
+function bsonSource(tag, v, render) {
+  const o = v;
+  const own = (name2) => {
+    const f = o[name2];
+    const everyObject = Object.prototype[name2];
+    return typeof f === "function" && f !== everyObject ? f : null;
+  };
+  const text = () => {
+    const f = own("toString");
+    return f === null ? null : String(f.call(v));
+  };
+  switch (tag) {
+    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
+    case "ObjectID":
+    case "ObjectId": {
+      const hex = own("toHexString");
+      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
+    }
+    case "Decimal128": {
+      const s = text();
+      return s === null ? null : `new Decimal128(${str(s)})`;
+    }
+    // The value goes in as a string. A number is the low 32 bits of `new Long(low, high)`,
+    // so a value past 2^31 would wrap. MEASURED: bson 6, bson 7 and mongosh 2.13 read the
+    // string as the whole value.
+    case "Long": {
+      const s = text();
+      return s === null ? null : `new Long(${str(s)})`;
+    }
+    case "Int32":
+      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
+    // A whole-number Double must keep its type: `42` would come back as an int.
+    case "Double":
+      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
+    case "Binary": {
+      const bytes = own("toString");
+      if (bytes === null) return null;
+      const sub = Number(o.sub_type ?? 0);
+      const base64 = String(bytes.call(v, "base64"));
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null && /^[A-Za-z0-9+/]{22}==$/.test(base64))
+        return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(base64)}, ${sub})`;
+    }
+    case "Timestamp": {
+      const t = Number(o.t ?? o.high ?? 0);
+      const i = Number(o.i ?? o.low ?? 0);
+      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
+    }
+    case "MinKey":
+      return "new MinKey()";
+    case "MaxKey":
+      return "new MaxKey()";
+    case "Code":
+      if (typeof o.code !== "string") return null;
+      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
+    case "DBRef":
+      if (typeof o.collection !== "string") return null;
+      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+    case "BSONSymbol": {
+      const s = text();
+      return s === null ? null : `new BSONSymbol(${str(s)})`;
+    }
+    case "BSONRegExp":
+      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
+    default:
+      return null;
+  }
+}
+function stringify2(value, options) {
+  const indent = options?.indent ?? 2;
+  const width = options?.width ?? 80;
+  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
+  const seen = /* @__PURE__ */ new Set();
+  const leaf2 = (v) => {
+    if (v === null) return "null";
+    const time = dateTime(v);
+    if (time !== null) {
+      if (Number.isNaN(time)) throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(new Date(time).toISOString())})`;
+    }
+    const regex = regexLiteral(v);
+    if (regex !== null) return regex;
+    const bytes = byteValues(v);
+    if (bytes !== null) return `new Uint8Array([${bytes.join(", ")}])`;
+    const tag = tagOf(v);
+    if (tag !== void 0) {
+      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
+      if (spelled3 !== null) return spelled3;
+    }
+    const t = typeof v;
+    if (t === "string") return str(v);
+    if (t === "boolean") return String(v);
+    if (t === "bigint") return `${String(v)}n`;
+    if (t === "number") return num(v);
+    if (t === "undefined") {
+      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
+    }
+    return null;
+  };
+  const render = (v, depth) => {
+    const simple = leaf2(v);
+    if (simple !== null) return simple;
+    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
+    seen.add(v);
+    try {
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "[]";
+        const parts2 = v.map((x) => render(x, depth + 1));
+        const flat2 = `[${parts2.join(", ")}]`;
+        if (pad2 === "" || fits(flat2, depth)) return flat2;
+        return `[
+${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}]`;
+      }
+      const entries = Object.entries(v);
+      if (entries.length === 0) return "{}";
+      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
+      const flat = `{ ${parts.join(", ")} }`;
+      if (pad2 === "" || fits(flat, depth)) return flat;
+      return `{
+${parts.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}}`;
+    } finally {
+      seen.delete(v);
+    }
+  };
+  const at2 = (d) => pad2.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
+  return render(value, 0);
+}
+
+// src/compiler/emit/consult.ts
+var ROWS2 = Object.assign(/* @__PURE__ */ Object.create(null), NAMES, PRODUCTIONS);
+var CELL_OF = {
+  value: "expr",
+  filter: "filter",
+  stream: "stream",
+  statement: "statement",
+  group: "group",
+  window: "window",
+  updateDoc: "updateDoc"
+};
+function positionOf(where) {
+  return where.at in CELL_OF ? where.at : null;
+}
+var isObj2 = (v) => typeof v === "object" && v !== null;
+function familiesOf2(row2) {
+  const on = row2.on;
+  if (on === void 0) return void 0;
+  if (on === "any") return "any";
+  return Array.isArray(on) ? on : [on];
+}
+function readCell(name2, position, cell) {
+  if (!isObj2(cell)) return { kind: "lower", name: name2, position, cell };
+  if (typeof cell.unsupported === "string") {
+    return {
+      kind: "refused",
+      name: name2,
+      position,
+      message: cell.unsupported,
+      needsSubject: cell.subjectFromCaller === true
+    };
+  }
+  if (typeof cell.inCode === "string") {
+    return { kind: "inCode", name: name2, position, file: cell.inCode, args: cell.args };
+  }
+  if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
+  if (Array.isArray(cell.composedInto)) {
+    return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
+  }
+  return { kind: "lower", name: name2, position, cell };
+}
+function consult(name2, position, family) {
+  const row2 = ROWS2[name2];
+  if (row2 === void 0) return { kind: "unknown", name: name2 };
+  const key = CELL_OF[position];
+  if (!(key in row2)) return { kind: "noCell", name: name2, position };
+  const cell = row2[key];
+  if (isObj2(cell) && isObj2(cell.perFamily)) {
+    const branches = cell.perFamily;
+    if (family !== void 0 && family in branches) return readCell(name2, position, branches[family]);
+    return { kind: "perFamily", name: name2, position, branches };
+  }
+  return readCell(name2, position, cell);
+}
+function refusalSentence(verdict, subject, container) {
+  if (!verdict.needsSubject) return verdict.message;
+  return `${subject} isn't available on ${container} \u2014 ${verdict.message}`;
+}
+function listedIn(name2, position) {
+  return ROWS2[name2]?.where.includes(position) === true;
+}
+function familiesFor(name2) {
+  const row2 = ROWS2[name2];
+  return row2 === void 0 ? void 0 : familiesOf2(row2);
+}
+function everyName() {
+  return Object.keys(NAMES);
+}
+function everyMethodName() {
+  const namespaces = new Set(
+    Object.entries(NAMES).filter(([, r]) => r.provides !== void 0).map(([n2]) => n2)
+  );
+  return everyName().filter((n2) => {
+    if (n2.startsWith("$")) return false;
+    const on = familiesFor(n2);
+    return on === "any" || on !== void 0 && on.some((f) => !namespaces.has(f));
+  });
+}
+
+// src/compiler/emit/check.ts
+function literal(e) {
+  switch (e.type) {
+    case "NumberLiteral":
+      return { kind: "number", value: e };
+    case "UnaryExpr":
+      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
+    case "StringLiteral":
+      return isFieldPathString(e) ? null : { kind: "string", value: e };
+    case "BooleanLiteral":
+      return { kind: "bool", value: e };
+    case "NullLiteral":
+      return { kind: "null", value: e };
+    case "ArrayLiteral":
+      return { kind: "array", value: e };
+    case "ObjectLiteral":
+      return { kind: "object", value: e };
+    case "RegexLiteral":
+      return { kind: "regex", value: e };
+    case "BigIntLiteral":
+      return { kind: "bigint", value: e };
+    default:
+      return null;
+  }
+}
+var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
+var NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  null: "null",
+  array: "an array",
+  object: "a document",
+  regex: "a regular expression",
+  bigint: "a bigint"
+};
+function matches(lit2, expected) {
+  switch (expected) {
+    case "number":
+    case "number-or-date":
+      return lit2.kind === "number" || lit2.kind === "bigint";
+    case "int":
+    case "int-or-long": {
+      if (lit2.kind === "bigint") return true;
+      const n2 = numberOf(lit2.value);
+      return n2 !== null && Number.isInteger(n2);
+    }
+    case "string":
+    case "bool":
+    case "array":
+    case "object":
+      return lit2.kind === expected;
+    case "fieldName":
+    case "fieldPath":
+      return false;
+    case "regex":
+      return lit2.kind === "regex" || lit2.kind === "string";
+    case "any":
+    case "element":
+      return true;
+    case "value":
+      return lit2.kind !== "null";
+    case "orderable":
+      return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
+    case "date":
+    case "timestamp":
+    case "objectId":
+    case "binData":
+    case "callback":
+      return false;
+  }
+}
+var TAKES = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  orderable: "a number, a string, a date or an ObjectId",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp",
+  objectId: "an ObjectId",
+  binData: "binary data",
+  any: "a value",
+  value: "a value",
+  callback: "a callback",
+  regex: "a regular expression or a string",
+  element: "an element of the array"
+};
+var takesOf = (t) => {
+  if (!Array.isArray(t)) return TAKES[t];
+  const nouns = t.map((x) => TAKES[x]);
+  return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
+var ROUND = " Write an integer, or round the value with '<number>.ceil()' or '<number>.floor()'.";
+function refuseProvenNull(name2, slot, e, takes, proof) {
+  if (proof === void 0 || e.type === "NullLiteral" || !proof.isNull(e)) return;
+  proof.read(e);
+  throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, takes, "got null"), e.pos);
+}
+var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
+var hint = (expected, got = []) => {
+  if (Array.isArray(expected)) {
+    return expected.includes("number") ? hint("number", got) : "";
+  }
+  if (expected === "number" && got.includes("date")) {
+    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
+  }
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or Date(\u2026).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  return "";
+};
+function checkType(name2, slot, e, expected) {
+  if (expected === "fieldPath") {
+    if (e.type !== "StringLiteral") return;
+    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
+      throw new CodegenError(
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        e.pos
+      );
+    }
+    return;
+  }
+  if (expected === "fieldName") {
+    if (e.type !== "StringLiteral") {
+      const other = literal(e);
+      if (other === null) return;
+      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, TAKES.fieldName, `got ${NOUN[other.kind]}`), e.pos);
+    }
+    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
+    if (bad === null) return;
+    throw new CodegenError(
+      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      e.pos
+    );
+  }
+  const lit2 = literal(e);
+  if (lit2 === null || matches(lit2, expected)) return;
+  const fraction = lit2.kind === "number" && (expected === "int" || expected === "int-or-long");
+  throw new CodegenError(
+    wrongKind(
+      `'${spell2(name2)}'`,
+      slot,
+      TAKES[expected],
+      `got ${fraction ? "a fraction" : NOUN[lit2.kind]}`,
+      fraction ? ROUND : hint(expected)
+    ),
+    e.pos
+  );
+}
+function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
+  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
+  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
+  if (allowed.includes(v)) return;
+  const near = didYouMean(v, allowed, (s) => s);
+  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
+}
+function checkBodyKeys(body) {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
+  }
+}
+function checkBody(name2, rule, args, keys, pos, proof) {
+  if (args.length === 1 && args[0].type === "Injected") return;
+  let present2;
+  let valueOf;
+  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
+  if (body !== null) {
+    checkBodyKeys(body);
+    const byKey = /* @__PURE__ */ new Map();
+    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
+    present2 = [...byKey.keys()];
+    valueOf = (k) => byKey.get(k);
+  } else {
+    present2 = keys.slice(0, args.length);
+    valueOf = (k) => {
+      const i = keys.indexOf(k);
+      return i >= 0 && i < args.length ? args[i] : void 0;
+    };
+  }
+  const closed = [...rule.required, ...rule.optional];
+  if (body !== null && rule.closed) {
+    for (const k of present2) {
+      if (!closed.includes(k)) {
+        throw new CodegenError(
+          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
+          valueOf(k)?.pos ?? pos
+        );
+      }
+    }
+  }
+  for (const k of rule.required) {
+    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
+  }
+  for (const [a, b] of rule.notTogether ?? []) {
+    const inA = present2.filter((k) => a.includes(k));
+    const inB = present2.filter((k) => b.includes(k));
+    if (inA.length > 0 && inB.length > 0) {
+      throw new CodegenError(
+        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
+        pos
+      );
+    }
+  }
+  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
+  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+  }
+  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
+    const v = valueOf(k);
+    if (v !== void 0) checkType(name2, k, v, t);
+  }
+  for (const k of present2) {
+    const v = valueOf(k);
+    if (v === void 0) continue;
+    const t = rule.keyTypes?.[k];
+    const takes = t === void 0 ? "a value" : TAKES[t];
+    if (v.type === "NullLiteral") throw new CodegenError(wrongKind(`'${spell2(name2)}'`, k, takes, "got null"), v.pos);
+    refuseProvenNull(name2, k, v, takes, proof);
+  }
+  for (const k of rule.constantKeys ?? []) {
+    const v = valueOf(k);
+    if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
+      throw new CodegenError(
+        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        v.pos
+      );
+    }
+  }
+}
+var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
+var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
+function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false, proof) {
+  for (const i of args.integer ?? []) {
+    const e = i === -1 ? receiver : operands[i];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && !Number.isInteger(n2)) {
+      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, what, "an integer", "got a fraction", ROUND), e.pos);
+    }
+  }
+  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
+      throw new CodegenError(
+        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
+  }
+  for (const i of args.dateFormat ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
+  }
+  for (const [i, rule] of Object.entries(args.body ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos, proof);
+  }
+  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0) continue;
+    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  operands.forEach((e, i) => {
+    const t = args.slotType?.[i] ?? args.rest;
+    if (t === void 0 || hasObjectForm && e.type === "ObjectLiteral") return;
+    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
+    if (own === void 0) return;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${i + 1}`, e, own);
+  });
+  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
+    const e = operands[Number(i)];
+    if (e === void 0 || e.type !== "ArrayLiteral") continue;
+    for (const el of e.elements) {
+      if (el.type === "SpreadElement") continue;
+      const slot = `element ${e.elements.indexOf(el) + 1}`;
+      checkType(name2, slot, el, t);
+      refuseProvenNull(name2, slot, el, TAKES[t], proof);
+    }
+  }
+  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
+    const e = operands[Number(i)];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && (n2 < lo || n2 > hi)) {
+      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
+    }
+  }
+  for (const i of args.nonZero ?? []) {
+    const e = operands[i];
+    if (!settling && e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
+        e.pos
+      );
+    }
+  }
+  for (const i of args.constant ?? []) {
+    const e = operands[i];
+    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
+      throw new CodegenError(
+        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
+  }
+}
+var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+var MOMENT_FORMAT_TOKENS = [
+  ["YYYY", "%Y"],
+  ["MMMM", null],
+  ["dddd", null],
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null],
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null],
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null]
+];
+var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+function momentFormatHint(fmt) {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token3, i)) continue;
+      out += spec ?? token3;
+      i += token3.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
+}
+function checkDateFormat(name2, fmt, pos) {
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
+      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        pos
+      );
+    }
+    i++;
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      pos
+    );
+  }
+}
+
+// src/compiler/kinds.ts
+var UNPROVEN = { args: [], elements: "unknown" };
+function kindFits(kind, expected, elements = "unknown") {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
+  switch (expected) {
+    case "any":
+      return true;
+    case "value":
+      return kind !== "null";
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "orderable":
+      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+    case "regex":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+    case "objectId":
+    case "binData":
+      return kind === expected;
+    case "element":
+      return elements === "unknown" || elements.includes(kind);
+    case "timestamp":
+    case "callback":
+      return false;
+  }
+}
+var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
+var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
+var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
+var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
+var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
+function elementsFaultOf(name2, proofs) {
+  const need = elementsOf(name2);
+  if (need === void 0 || need === "scalar") return null;
+  const takes = (p) => p === "unknown" || p.includes(need);
+  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
+  if (!broken) return null;
+  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
+  return { rule: "elements", expected: need, held: [...new Set(held)] };
+}
+function faultOf(name2, rule, proofs) {
+  let spread = false;
+  for (let i = 0; i < proofs.args.length; i++) {
+    const via = proofs.viaElements?.[i] === true;
+    spread = spread || proofs.packed === true && via;
+    const expected = spread ? rule.rest : slotTypeOf(rule, i);
+    if (expected === void 0 || takesCallback(expected)) continue;
+    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
+    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
+    const proof = asElement ?? whole ?? proofs.args[i];
+    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
+    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
+    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : {
+      rule: "slot",
+      slot: i,
+      expected,
+      got: proof,
+      ...through,
+      ...rule.slotHint?.[i] === void 0 ? {} : { hint: rule.slotHint[i] }
+    };
+  }
+  if (rule.homogeneous === true) {
+    let shared = null;
+    const taking = [];
+    for (let i = 0; i < proofs.args.length; i++) {
+      const kinds = concreteKinds(proofs.args[i]);
+      if (kinds === null) continue;
+      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
+      if (left.length === 0) {
+        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
+        return {
+          rule: "homogeneous",
+          first: other.slot,
+          firstKinds: other.kinds,
+          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
+          slot: i,
+          got: kinds,
+          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
+        };
+      }
+      shared = left;
+      taking.push({ slot: i, kinds });
+    }
+  }
+  return elementsFaultOf(name2, proofs);
+}
+function kindOfValue(v) {
+  if (typeof v === "number" || typeof v === "bigint") return "number";
+  if (typeof v === "string") return "string";
+  if (typeof v === "boolean") return "bool";
+  if (isDate(v)) return "date";
+  if (Array.isArray(v)) return "array";
+  const tag = bsonTagOf(v);
+  if (tag !== void 0) return BSON_KIND[tag] ?? null;
+  return isPlainObject(v) ? "object" : null;
+}
+
+// src/compiler/emit/errors.ts
+var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
+var RUNS_ON = {
+  stream: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
+  collection: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
+  cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" }
+};
+var sugarOf = (name2) => name2.startsWith("$") ? name2.slice(1) : name2;
+var runsOnFor = (name2) => RUNS_ON[(diagnosticOf(name2) ?? diagnosticOf(`$${name2}`))?.scope ?? ""];
+var countList = (ns) => ns.length === 2 ? `${ns[0]} or ${ns[1]}` : `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
+var countWord = (args) => {
+  if (args.none === true) return "takes no arguments";
+  if (args.exact !== void 0) return `requires exactly ${args.exact} argument${args.exact === 1 ? "" : "s"}`;
+  if (args.allowed !== void 0) return `requires ${countList(args.allowed)} arguments`;
+  if (args.atLeast !== void 0) return `requires at least ${args.atLeast} argument${args.atLeast === 1 ? "" : "s"}`;
+  return "takes a different number of arguments";
+};
+var NO_CELL = {
+  value: (q) => `${q} has no value form here \u2014 see its 'where'.`,
+  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
+  stream: (q) => `${q} produces a value, not a stream of documents.`,
+  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
+  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
+  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`
+};
+function valueStart(bare) {
+  if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
+  return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
+}
+function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`, subjects = { args: [] }) {
+  const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
+  switch (sel.kind) {
+    case "refused":
+      return new CodegenError(
+        refusalSentence(
+          { kind: "refused", name: sel.name, position, message: sel.message, needsSubject: sel.needsSubject },
+          spelled3,
+          container
+        ),
+        pos
+      );
+    case "unknown":
+      return new CodegenError(
+        `Unknown ${container === "" ? "name" : "method"} '${spelled3}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
+        pos
+      );
+    case "wrongReceiver": {
+      const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
+      const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
+      const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
+      const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
+      const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '<string>.length().range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
+      return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
+    }
+    case "wrongCount": {
+      const most = sel.args.exact ?? (sel.args.allowed === void 0 ? void 0 : Math.max(...sel.args.allowed));
+      const thisArg = callbackParamsOf(sel.name, position) !== void 0 && most !== void 0 && sel.got === most + 1 ? " \u2014 JavaScript's trailing 'thisArg' has no meaning in MQL; drop it" : "";
+      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}${thisArg}`, pos);
+    }
+    case "rejectedCount":
+      return new CodegenError(sel.message, pos);
+    case "wrongKind":
+      return kindRefusal(sel.fault, spelled3, subjects, pos);
+    case "spreadRefused": {
+      const alt = spreadAlternativeOf(sel.name);
+      const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
+      return new CodegenError(`Spread (...) is not supported in ${spelled3}(...) \u2014 ${fix}.`, pos);
+    }
+    case "fallback":
+      return new CodegenError(`${spelled3} has no value form here \u2014 see its 'where'.`, pos);
+    case "composedOnly":
+      return new CodegenError(
+        `${spelled3} is only meaningful composed with ${sel.owners.map((o) => `'${o}'`).join(" or ")}.`,
+        pos
+      );
+    case "noCell":
+      return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
+    case "rule":
+      return new CodegenError(
+        `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled3}`,
+        pos
+      );
+  }
+}
+var undefinedAsValue = (pos) => new CodegenError(
+  `'undefined' is only meaningful in a comparison \u2014 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.field' to remove a field.`,
+  pos
+);
+var bigIntTooLarge = (digits2, pos) => new CodegenError(
+  `The BigInt ${digits2} does not fit in a 64-bit integer (-9223372036854775808 \u2026 9223372036854775807). MQL stores only this range. Write 'Decimal128("${digits2}")' instead.`,
+  pos
+);
+var regexAsValue = (pos) => new CodegenError(
+  `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
+  pos
+);
+var lambdaAsValue = (pos) => new CodegenError(
+  "A function (=>) is only valid as the callback to an array method that iterates (.map, .filter, .some, .every, .find, .reduce, \u2026), or as the second argument to $let.",
+  pos
+);
+var callableAsValue = (spelled3, pos) => new CodegenError(`'${spelled3}' is a function, not a value. Write a call: '${spelled3}(\u2026)'.`, pos);
+var functionAsValue = (name2, pos) => new CodegenError(
+  `'${name2}' is a reusable function, and a function is not a value MQL can carry. Call it \u2014 '${name2}(x)' \u2014 or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => ${name2}(x))'.`,
+  pos
+);
+var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
+var afterReplace = (by) => (name2, mutable) => mutable ? `\`${name2}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name2} = \u2026\`), or carry the value as a field of the new document.` : `\`${name2}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
+var unfilledParam = (name2, method, why) => `\`${name2}\` has no value inside \`.${method}()\` \u2014 ${why}`;
+var negativeIndex = (index, pos) => new CodegenError(
+  `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
+  pos
+);
+var looseEqualityNotNull = (op, pos) => new CodegenError(
+  `'${op}' is only allowed against null in JSMQL. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
+  pos
+);
+var inNeedsList = (pos) => new CodegenError(
+  "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.",
+  pos
+);
+var recursiveFunction = (name2, pos) => new CodegenError(
+  `Recursive function calls are not supported. A MongoDB expression cannot call itself. '${name2}' calls itself while the compiler still expands it (direct or mutual recursion). Rewrite it without recursion.`,
+  pos
+);
+var wrongCallCount = (label, params, got, pos) => new CodegenError(
+  `${label}: expected ${params.length} argument(s)${params.length ? ` for params (${params.join(", ")})` : ""}, got ${got}.`,
+  pos
+);
+var unknownFunction = (name2, known, pos) => new CodegenError(
+  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
+  pos
+);
+var SUBJECT = {
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  object: "an object",
+  date: "a date",
+  bool: "a boolean",
+  stream: "the stream",
+  objectId: "an ObjectId",
+  binData: "a binary value",
+  minKey: "MinKey",
+  maxKey: "MaxKey"
+};
+var FAMILY_OF = {
+  string: "string",
+  array: "array",
+  number: "number",
+  object: "object",
+  date: "date",
+  stream: "stream"
+};
+var EXAMPLE_METHOD = {
+  string: "trim",
+  number: "round",
+  date: "getFullYear",
+  object: "keys"
+};
+var spelledField = (name2) => /^[A-Za-z_$][\w$]*$/.test(name2) ? `.${name2}` : `[${JSON.stringify(name2)}]`;
+var methodsOf = (family) => valueMethodNames().filter((n2) => familiesOf(n2)?.includes(family) === true);
+function methodFix(name2, family) {
+  if (methodsOf(family).includes(name2)) return `Write '.${name2}()' to call the method.`;
+  const sibling = siblingOf(name2, family);
+  if (sibling !== null) return sibling;
+  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name2)})'.`;
+  return null;
+}
+function readFix(name2, kinds) {
+  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : void 0;
+  if (family === void 0) return "Read the field from an object instead.";
+  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family)).trim();
+  if (near !== "") return near;
+  const example = EXAMPLE_METHOD[family];
+  return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
+}
+function unreadableField(name2, why, read3, holder, pos) {
+  if (why.kind === "closed") {
+    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
+    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
+    const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
+    const subject2 = holder ?? "this object";
+    const [owner, holds] = why.elements === true ? [
+      `the elements of ${subject2} do not have`,
+      why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
+    ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
+    return new CodegenError(`'${read3}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
+  }
+  if (why.kinds.length === 0) return alwaysAbsent(read3, holder, pos);
+  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
+  return new CodegenError(`'${read3}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
+}
+function alwaysAbsent(read3, holder, pos) {
+  const subject = holder ?? "this value";
+  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return new CodegenError(
+    `${sentence} is always null or missing here, so '${read3}' has no value to read. Remove the read, or write a value before the read.`,
+    pos
+  );
+}
+var noNewKeyword = (name2, pos) => new CodegenError(
+  name2 === null ? "JSMQL has no 'new' keyword. Call a constructor such as 'Date(\u2026)', or a declared function, without 'new'." : `JSMQL has no 'new' keyword. Write '${name2}(\u2026)'.`,
+  pos
+);
+var unknownClass = (name2, known, pos) => new CodegenError(
+  `JSMQL has no 'new' keyword, and it knows no class '${name2}'.${didYouMean(name2, known, (s) => `${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one, and call it.`,
+  pos
+);
+var notCallable = (pos) => new CodegenError(
+  `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
+  pos
+);
+var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
+  `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
+  pos
+);
+var rootIsArray = (root2, pos) => new CodegenError(
+  wrongKind(
+    `'${root2} = \u2026'`,
+    "",
+    "a document",
+    "got an array",
+    ` Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root2}.<field> = <array>;'.`
+  ),
+  pos
+);
+var joinNeedsPipeline = (pos) => new CodegenError(
+  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+  pos
+);
+var needsPipeline = (name2, pos) => new CodegenError(
+  `'$$.${name2}()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}(); \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
+  pos
+);
+var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write '<a>.assign(<b>)' instead.", pos);
+var computedKeyInOperatorBody = (pos) => new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
+var tooManySortKeys = (who, count, limit, pos) => new CodegenError(
+  `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
+  pos
+);
+var spreadInCall = (label, pos) => new CodegenError(
+  `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
+  pos
+);
+var expressionInQueryValue = (pos) => new CodegenError(
+  `The value of a key in a query document is a VALUE or a query operator. This is a computed expression instead. The query language reads it as a value to compare against. For example, '{ a: $.b > 1 }' becomes '{ a: { $gt: ["$b", 1] } }'. The server accepts this and matches nothing. Write the predicate itself ('$.a > 1', or '$match($.a > 1)'), or put the expression in '$expr'.`,
+  pos
+);
+var aggregationOperatorInQuery = (name2, pos) => new CodegenError(
+  `'${name2}' is an aggregation operator. A query document has no such operator. The server answers "unknown operator: ${name2}". Put it in '$expr' ('$expr($eq(${name2}(\u2026), \u2026))'), or use the query operator that says the same thing.`,
+  pos
+);
+var queryOnlyInsideElement = (name2, pos) => new CodegenError(
+  `'${name2}' applies to the top-level document only. The server refuses it inside an array element test. Move it out of the '.some(\u2026)' body: '$.items.some(\u2026) && ${name2}(\u2026)'.`,
+  pos
+);
+var arrayOfArrays = (method, holder, pos) => new CodegenError(
+  `.${method}() cannot stringify an array of arrays. ${holder} holds arrays, and the server refuses to stringify an array element. Flatten first ('.flat().join()'), or map each inner array to a string ('.map(a => a.join(",")).join()').`,
+  pos
+);
+var streamHandleAfterReplace = (name2, stage, pos) => new CodegenError(
+  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
+  pos
+);
+var streamHandleAsValue = (name2, pos) => new CodegenError(
+  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.size()') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
+  pos
+);
+var bareContextRef = (ref, pos) => {
+  const what = ref === "$$" ? "'$$' is the stream \u2014 chain what to do with it: '$$.filter(\u2026);', '$$.push({ \u2026 });', '$$ = $$.take(10);'" : ref === "$$$" ? "'$$$' is the current database \u2014 name a collection after it: '$.o = $$$.<coll>.find(\u2026);' reads one, '$$$.<coll> = $$;' writes one" : "'$$$$' is the cluster \u2014 name a database and a collection after it: '$$$$.<db>.<coll> = $$;' writes one; '$$$$.currentOp();' is a source stage";
+  return new CodegenError(`${what}. Alone it is not a statement.`, pos);
+};
+var notAStatement = (pos) => new CodegenError(
+  "A pipeline statement writes something: a field ('$.total = \u2026;'), the document ('$ = { \u2026 };'), a deletion ('delete $.x;'), or a stage ('$match(\u2026);'). This expression only computes a value \u2014 assign it to a field, or wrap a predicate as '$match(\u2026)'.",
+  pos
+);
+var notAStage = (name2, stages, pos) => new CodegenError(
+  `'${name2}' is not an aggregation stage, so it cannot stand as a statement.${didYouMean(name2, stages, (s) => s)}`,
+  pos
+);
+var multiKeyStageDocument = (name2, keys, pos) => new CodegenError(
+  `A raw stage document holds exactly one stage, and this one holds ${keys} keys. Write '{ ${name2}: \u2026 }' on its own, and the next stage as its own statement.`,
+  pos
+);
+var rootMustBeDocument = (root2, noun, pos) => new CodegenError(
+  wrongKind(
+    `'${root2} = \u2026'`,
+    "",
+    "a document",
+    `got ${noun}`,
+    ` Put the value under a field ('${root2} = { value: \u2026 };'), or write to a field instead ('${root2}.value = \u2026;').`
+  ),
+  pos
+);
+var cannotDeleteRoot = (root2, pos) => new CodegenError(
+  root2 === "$$" ? "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'." : `'delete ${root2}' would delete the document itself. To replace it, write '${root2} = { \u2026 };'; to drop every field but one, write '${root2} = { keep: ${root2}.keep };'.`,
+  pos
+);
+var notAWriteTarget = (pos) => new CodegenError(
+  "A write names a field: '$.total = \u2026', '$.a.b = \u2026', or the document itself, '$ = { \u2026 }'. A computed destination ('$[expr] = \u2026') has no field name at compile time. Use '$setField({ field: <expr>, input: $, value: \u2026 })' when the name is a value.",
+  pos
+);
+var needsStageList = (pos) => new CodegenError(
+  "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
+  pos
+);
+var spreadInStageList = (pos) => new CodegenError(
+  "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+  pos
+);
+var mustBeFirstStage = (name2, pos, why) => new CodegenError(
+  why ?? `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.`,
+  pos
+);
+var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.size()";
+  const later = `$match($.<field> === ${value});`;
+  return new CodegenError(
+    carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline. A value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}'. Read that value in a LATER statement instead \u2014 '${name2}({ \u2026 }); ${later}'. Or, when the value is one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}'. A value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}'. Keep the '${name2}' test on its own, and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
+    pos
+  );
+};
+var terminalReadsScratch = (name2, pos) => new CodegenError(
+  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.size()', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.size(); ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
+  pos
+);
+var twoTerminalStages = (name2, already, pos) => new CodegenError(
+  `'${name2}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination \u2014 keep one of them.`,
+  pos
+);
+var noStages = (pos) => new CodegenError(
+  "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+  pos
+);
+var KIND_NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
+  stream: "a stream",
+  minKey: "a MinKey",
+  maxKey: "a MaxKey",
+  null: "null"
+};
+var ELEMENT_NOUN = {
+  number: "numbers",
+  string: "strings",
+  bool: "booleans",
+  array: "arrays",
+  object: "documents",
+  date: "dates",
+  objectId: "ObjectIds",
+  binData: "binary data",
+  null: "null"
+};
+var nounFor = (k, table) => table[k] ?? `a ${k}`;
+var orList = (items) => {
+  const once = [...new Set(items)];
+  return once.length < 2 ? once[0] ?? "" : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
+};
+var kindNoun = (k) => KIND_NOUN[k] ?? `a ${k}`;
+var kindsNoun = (ks, join3) => ks.map(kindNoun).join(join3);
+var pluralKind = (k) => ELEMENT_NOUN[k] ?? `${k}s`;
+function spellArray(e) {
+  const node = e;
+  if (node?.type === "SpreadElement") return spellArray(node.argument);
+  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "an array";
+}
+function gotKinds(e, kinds, viaElements) {
+  const nouns = orList(kinds.map(kindNoun));
+  return viaElements ? `an element of ${spellArray(e)} that is ${nouns}` : nouns;
+}
+function operandAt(subjects, slot) {
+  const only = subjects.args.length === 1 ? subjects.args[0] : null;
+  if (only !== null && only.type === "ArrayLiteral" && only.packed === true) {
+    return only.elements[slot];
+  }
+  return subjects.args[slot];
+}
+var slotName = (subjects, slot) => subjects.slots?.[slot] ?? `argument ${slot + 1}`;
+function shownName(spelled3) {
+  if (spelled3.startsWith("'")) return spelled3;
+  if (spelled3.startsWith("$")) return `'${spelled3}'`;
+  return `'${spelled3.replace(/\(\)$/, "")}()'`;
+}
+function kindRefusal(fault, spelled3, subjects, pos) {
+  const name2 = shownName(spelled3);
+  switch (fault.rule) {
+    case "slot": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          slotName(subjects, fault.slot),
+          takesOf(fault.expected),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
+          fault.hint ?? hint(fault.expected, fault.got)
+        ),
+        e?.pos ?? pos
+      );
+    }
+    case "element": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          slotName(subjects, fault.slot),
+          takesOf("element"),
+          `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`
+        ),
+        e?.pos ?? pos
+      );
+    }
+    case "elements":
+      return new CodegenError(
+        wrongKind(name2, "", pluralKind(fault.expected), `the array holds ${kindsNoun(fault.held, " and ")}`),
+        subjects.receiver?.pos ?? pos
+      );
+    case "homogeneous": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        wrongKind(
+          name2,
+          "",
+          "operands of one kind",
+          `got ${gotKinds(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${gotKinds(e, fault.got, fault.viaElements === true)}`
+        ),
+        e?.pos ?? pos
+      );
+    }
+  }
+}
+function nounOfKinds(t) {
+  if (t.kinds === "any") return "a value";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => nounFor(k, KIND_NOUN)).join(" or ");
+}
+function pluralNounOfKinds(t) {
+  if (t.kinds === "any") return "values";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => ELEMENT_NOUN[k] ?? `${k}s`).join(" or ");
+}
+var spreadNotAnArray = (noun, pos) => new CodegenError(
+  wrongKind(
+    "'...'",
+    "argument 1",
+    "an array",
+    `got ${noun}`,
+    " To keep the value whole, drop the '...'. To spread its elements, give it an array."
+  ),
+  pos
+);
+var spreadNotADocument = (noun, pos) => new CodegenError(
+  wrongKind(
+    "'...'",
+    "argument 1",
+    "a document",
+    `got ${noun}`,
+    " Put the value under a field ('{ value: \u2026 }'), or spread a document."
+  ),
+  pos
+);
+var spreadOfString = (pos) => new CodegenError(
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '<string>.length().range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  pos
+);
+function noReceiver(name2, pos) {
+  if (isStageName(name2)) {
+    const twin = valueTwinOf(name2);
+    return new CodegenError(
+      `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
+      pos
+    );
+  }
+  if (!name2.startsWith("$") && positionsOf(name2)?.length === 0) {
+    const verdict = consult(name2, "value");
+    if (verdict.kind === "refused") return new CodegenError(refusalSentence(verdict, `'.${name2}()'`, "a value"), pos);
+  }
+  return new CodegenError(
+    name2.startsWith("$") ? `'.${name2}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name2}(\u2026)' with every operand inside the parentheses.` : `'.${name2}()' takes no receiver. '${name2}' is a global function: write '${name2}(\u2026)' with the value inside the parentheses.`,
+    pos
+  );
+}
+var afterTerminalStage = (already, pos) => new CodegenError(
+  `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
+  pos
+);
+var forbiddenInContainer = (name2, container, pos, instead) => new CodegenError(
+  `'${name2}' cannot stand inside '${container}' \u2014 the server refuses it in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
+  pos
+);
+var bannedNested = (spelled3, stage, container, instead, pos) => new CodegenError(
+  `'${spelled3}' makes a '${stage}' stage, and the server refuses that anywhere inside a '${container}' \u2014 however deeply it is nested. ${instead}`,
+  pos
+);
+var notAMongoType = (spelling, aliases, pos) => {
+  const hint2 = TYPEOF_HINTS[spelling];
+  const suggestion = hint2 !== void 0 ? ` Did you mean '${hint2}'?` : didYouMean(spelling, aliases, (s) => s);
+  return new CodegenError(
+    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one.${suggestion} For absence, write 'x === undefined'.`,
+    pos
+  );
+};
+var writeToOwnStream = (name2, pos) => new CodegenError(
+  `'${name2}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(\u2026)' ('${name2}.concat([{ \u2026 }]);'), keep some with '.filter(\u2026)', or run a stage on it ('${name2}.$match(\u2026);').`,
+  pos
+);
+var streamElementsNotDocuments = (noun, written2, pos) => new CodegenError(
+  `'${written2}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field \u2014 '<array>.map((v) => ({ value: v }))' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
+  pos
+);
+var notAStreamChain = (pos, noun, lead = "'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents", how = "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').") => new CodegenError(`${lead}${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. ${how}`, pos);
+var notAStreamLink = (name2, candidates, pos) => {
+  const spell4 = (s) => {
+    const runsOn = runsOnFor(s);
+    return runsOn === void 0 ? `.${s}()` : `${runsOn.sigil}.${sugarOf(s)}()`;
+  };
+  return new CodegenError(
+    `'.${name2}()' is not a method of the stream '$$'.${didYouMean(name2, candidates, spell4)} A stage is a link too: '$$.$match(\u2026)'.`,
+    pos
+  );
+};
+var SPELLING2 = {
+  propertyPath: `a field name ('"status"')`,
+  propertyIndex: "an index ('0')",
+  matchesObject: `a matcher object ('{ status: "paid" }')`,
+  matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
+  bareCallable: "a callable ('Boolean')",
+  omitted: "no argument at all"
+};
+var spellings = (forms) => {
+  const all = ["an arrow ('d => \u2026')", ...forms.map((f) => SPELLING2[f])];
+  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(", ")}, or ${all[all.length - 1]}`;
+};
+var ARG_NOUN = {
+  NumberLiteral: "a number",
+  StringLiteral: "a string",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ObjectLiteral: "an object",
+  ArrayLiteral: "an array"
+};
+var notAnArrow = (name2, what, forms, got, slot) => {
+  if (got.type === "NullLiteral") return nullCallback(name2, slot, what, got.pos);
+  const index = got.value;
+  if (got.type === "NumberLiteral" && forms.includes("propertyIndex") && typeof index === "number") {
+    return notAWholeIndex(name2, slot, index, got.pos);
+  }
+  return new CodegenError(
+    `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
+    got.pos
+  );
+};
+var nullCallback = (name2, slot, takes, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
+var notAWholeIndex = (name2, slot, index, pos) => new CodegenError(
+  wrongKind(
+    `'.${name2}()'`,
+    `argument ${slot + 1}`,
+    "a whole-number index",
+    index < 0 ? "got a negative number" : "got a fraction",
+    ` In JavaScript, 'x[${index}]' reads no element of an array.`
+  ),
+  pos
+);
+var indexNotHeld = (name2, slot, found2, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, "an index that each element holds", found2), pos);
+var emptyMatcherObject = (name2, pos) => new CodegenError(
+  `'.${name2}({ \u2026 })' matches a document by its fields, and '{}' names none. Write the field to match \u2014 '.${name2}({ status: "paid" })' \u2014 or an arrow \u2014 '.${name2}(d => d.status === "paid")'.`,
+  pos
+);
+var badMatchesPropertyPair = (name2, pos) => new CodegenError(
+  `'.${name2}([field, value])' matches one field against one value. It takes exactly two elements, and the first is a field-name string: '.${name2}(["status", "paid"])'. An arrow says the same thing: '.${name2}(d => d.status === "paid")'.`,
+  pos
+);
+var blockWhereValueExpected = (name2, pos) => new CodegenError(
+  `'.${name2}()' takes an arrow that returns a value \u2014 'd => d.x', or 'd => { \u2026; return d.x; }'. A body of pipeline stages belongs to '.aggregate(o => { \u2026 })'.`,
+  pos
+);
+var valueWhereBlockExpected = (name2, pos) => new CodegenError(
+  `'.${name2}()' takes an arrow whose body is a block of stages \u2014 'o => { $match(\u2026); $limit(1); }' \u2014 or a bracketed list of them.`,
+  pos
+);
+var optionalOnStream = (pos) => new CodegenError(
+  "'$$' is the stream of documents and is never null, so '?.' has nothing to guard. Write '$$.' instead.",
+  pos
+);
+var mapMustReturnDocument = (name2, noun, pos) => new CodegenError(
+  wrongKind(
+    `'.${name2}()'`,
+    "argument 1",
+    "an arrow that returns a document",
+    `the arrow returns ${noun}`,
+    " The arrow replaces each document. Return '({ value: \u2026 })' to keep the value under a field."
+  ),
+  pos
+);
+var notAFieldOfTheDocument = (name2, pos) => new CodegenError(
+  `'.${name2}(d => \u2026)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.`,
+  pos
+);
+var shadowsOuterBinding = (kind, name2, pos) => new CodegenError(
+  `\`${kind} ${name2}\` shadows the \`${name2}\` declared outside this block, and both would live in the same document. Pick a different name, or assign the outer one (\`${name2} = \u2026\`).`,
+  pos
+);
+var noCorrelationSlot = (stage, pos) => new CodegenError(
+  `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(\u2026)'), whose '$lookup' carries the value.`,
+  pos
+);
+var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
+  `'${name2}' is bound by an enclosing callback. A read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first \u2014 '$$ = $.<array>;' \u2014 then each one is a document the join reads: '$.<field> = $$$.<coll>.find(\u2026)'. Or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
+  pos
+);
+var documentsNeedNoStage = (written2, made, pos) => new CodegenError(
+  `'${written2}' writes the documents out as the program spells them. This value needs a '${made}' stage of its own to produce it, and the documents run where nothing may stand ahead of them. Append the other collection's documents themselves: '$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one. Or give the field a value the program already holds \u2014 a constant, or a 'jsmql.compile' parameter.`,
+  pos
+);
+var notInUpdateSpec = (name2, container, allowed, pos) => new CodegenError(
+  `'${name2}' cannot stand inside '${container}'. That body is an UPDATE, not a pipeline. The server runs only ${allowed.slice(0, -1).map((a) => `'${a}'`).join(
+    ", "
+  )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}'. Its documents are what the update receives.`,
+  pos
+);
+var crossDatabaseRead = (pos) => new CodegenError(
+  "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix \u2014 '$$$.<coll>' \u2014 and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+  pos
+);
+var runtimeInQueryOperator = (op, pos) => new CodegenError(
+  `'${op}' compares against a constant in a query document, and this operand is read at run time. Write the test as an expression \u2014 '$match($.field \u2026)' \u2014 or give '${op}' a constant.`,
+  pos
+);
+var rootStreamInForeign = (pos) => new CodegenError(
+  "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter \u2014 '(o, _i, stream) => { stream.filter(\u2026); }' \u2014 or write the stage: '$match(\u2026)', '$sort(\u2026)'.",
+  pos
+);
+var streamAsValue = (pos) => new CodegenError(
+  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
+  pos
+);
+var facetMixed = (key, pos) => new CodegenError(
+  `'$ = { \u2026 }' with a '$$' chain is a '$facet', and every entry must be one: '${key}' is not a chain on '$$'. Make it one ('${key}: $$.filter(\u2026)'), or move it out of the object.`,
+  pos
+);
+var facetKey = (key, pos) => new CodegenError(
+  `'${key}' cannot name a '$facet' branch \u2014 the server takes a plain field name: not empty, no '.', no leading '$'.`,
+  pos
+);
+var unionNeedsArgument = (pos) => new CodegenError(
+  "Nothing to add to the stream: give a document ('$$.push({ \u2026 })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
+  pos
+);
+var mergeNeedsArgument = (name2, pos) => new CodegenError(
+  `Nothing to write into the collection: give the stream ('$$$.<coll>.${name2}($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ \u2026 });').`,
+  pos
+);
+var facetDuplicate = (key, pos) => new CodegenError(
+  `'${key}' names two '$facet' branches, and JavaScript would keep only the last. Give each branch its own name.`,
+  pos
+);
+var facetSpread = (pos) => new CodegenError(
+  "A '$facet' is written branch by branch; '...' cannot spread branches in. Name each one: '$ = { k: $$.filter(\u2026) }'.",
+  pos
+);
+var facetComputedKey = (pos) => new CodegenError("A '$facet' branch is named when the pipeline is written: a plain key, not a computed one.", pos);
+var noStageOnDatabase = (name2, pos) => {
+  const sugar = sugarOf(name2);
+  const runsOn = runsOnFor(name2);
+  return new CodegenError(
+    runsOn === void 0 ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the current collection, or '$$$$.${sugar}()' on the cluster.` : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`,
+    pos
+  );
+};
+var reduceWrapArity = (got, pos) => new CodegenError(
+  `'$$.reduce(reducer, init)' takes the reducer and its initial value \u2014 2 arguments, got ${got}.`,
+  pos
+);
+var reduceWrapCallback = (pos) => new CodegenError(
+  "'$$.reduce(\u2026)' takes a two-parameter arrow with an expression body: '(acc, d) => acc + d.total'.",
+  pos
+);
+var reduceWrapEntry = (pos) => new CodegenError(
+  "In '$$ = [{ \u2026 }]' every entry is a plain key with a '$$.reduce(\u2026)' \u2014 one fold per key; a spread or a computed key has no fold to name.",
+  pos
+);
+var reduceWrapShape = (acc, d, pos) => new CodegenError(
+  `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), '[${acc}, ${d}.<field>].max()' / '.min()' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ \u2026 })'.`,
+  pos
+);
+var reduceWrapObjectBody = (acc, pos) => new CodegenError(
+  `'$$ = [$$.reduce(\u2026)]' folds to one document, so the reducer returns a document: '(${acc}, d) => ({ ...${acc}, total: ${acc}.total + d.amount })'. For one value write '$$ = [{ total: $$.reduce(\u2026) }]'.`,
+  pos
+);
+var reduceWrapInit = (key, why, pos) => new CodegenError(
+  `'${key}' is uneven between the reducer and its init \u2014 ${why}. Name every accumulator in both.`,
+  pos
+);
+var reduceWrapSeed = (pos) => new CodegenError(
+  "The initial value of a stream fold is a constant \u2014 0, [], null \u2014 because MongoDB's accumulators start empty, and the seed folds in afterwards. A field cannot seed them.",
+  pos
+);
+var reduceWrapKeyedNeedsSpread = (acc, pos) => new CodegenError(
+  `A body that returns '{ [d.k]: d.v }' without '...${acc}' replaces the accumulator each step, so JavaScript keeps the LAST document only. To build one document keyed by a field write '({ ...${acc}, [d.k]: d.v })'.`,
+  pos
+);
+var reduceWrapKeyedInit = (pos) => new CodegenError("A fold keyed by a field \u2014 '({ ...acc, [d.k]: d.v })' \u2014 starts from '{}'.", pos);
+var reduceWrapMisplaced = (pos) => new CodegenError(
+  "'$$.reduce(\u2026)' folds the stream to one value, and a stream must stay documents: wrap it in one \u2014 '$$ = [{ total: $$.reduce((acc, d) => acc + d.total, 0) }]' \u2014 with nothing else in the list.",
+  pos
+);
+var notAnArrowCallback = (name2, pos) => new CodegenError(`'.${name2}((x[, i[, arr]]) => \u2026)' takes an arrow with an expression body.`, pos);
+var tooManyCallbackParams = (name2, got, pos) => new CodegenError(`'.${name2}()' callbacks take at most 3 parameters (element, index, array); got ${got}.`, pos);
+var objIterateeShape = (name2, pos) => new CodegenError(`'.${name2}((value[, key]) => \u2026)' takes a one- or two-parameter arrow with an expression body.`, pos);
+var unionSpreadSource = (pos) => new CodegenError(
+  `The stream takes another collection ('...$$$.<coll>', '...$$$.<coll>.filter(pred)') or documents the program spells out ('$$.push({ \u2026 })', '$$.push(...[{ \u2026 }, { \u2026 }])'). An array the DATA decides cannot be appended: '$documents' takes a written list, and the server refuses a field path there (measured: "an array is expected"). To make the stream FROM such an array, write '$$ = <array>;'.`,
+  pos
+);
+var unionSpreadOfOne = (pos) => new CodegenError(
+  "'.find(pred)' gives ONE document. JavaScript would not spread this. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+  pos
+);
+var unionNeedsSpread = (pos) => new CodegenError(
+  "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it \u2014 '$$.push(...$$$.<coll>.filter(pred))' \u2014 to push every match, or write '.find(pred)' for the first one.",
+  pos
+);
+var unionArg = (verb, slot, noun, pos) => new CodegenError(
+  wrongKind(
+    `'$$.${verb}()'`,
+    `argument ${slot + 1}`,
+    "a document",
+    `got ${noun}`,
+    " Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)')."
+  ),
+  pos
+);
+var outNeedsStream = (pos) => new CodegenError(
+  "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('\u2026 = $$.filter(\u2026)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
+  pos
+);
+var mergeNotADocument = (noun, pos) => new CodegenError(
+  wrongKind(
+    "'$$$.<coll>.push()'",
+    "argument 1",
+    "a document",
+    `got ${noun}`,
+    " The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: \u2026 });')."
+  ),
+  pos
+);
+var writeToCollectionOp = (op, pos) => new CodegenError(
+  `A collection takes '=' or '+=', not '${op}'. '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'). '$$$.<coll> += $$' ADDS to it: the server updates the documents whose '_id' matches (a '$merge').`,
+  pos
+);
+var mergeOneSource = (name2, count, pos) => new CodegenError(
+  `'$$$.<coll>.${name2}()' writes ONE source into the collection, and this names ${count}. Write them one statement at a time, or join them first ('$$$.<coll>.${name2}([...a, ...b]);').`,
+  pos
+);
+var outNeedsCollection = (pos) => new CodegenError(
+  "'$$$$.<db>' names a database; write the collection too: '$$$$.<db>.<coll> = $$' \u2014 or '$$$.<coll> = $$' for the current database.",
+  pos
+);
+var outTooManySegments = (pos) => new CodegenError(
+  "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
+  pos
+);
+function holes(value) {
+  const hole = (v) => Array.isArray(v) ? v.map(hole) : isPlainObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hole(x)])) : "\u2026";
+  return stringify2(hole(value)).split('"\u2026"').join("\u2026");
+}
+function runTimeValueAsMql(value, where, pos, lead = "A run-time value is a value, never MQL.") {
+  if (where.at === "value" && where.written !== void 0) {
+    const { stage, path } = where.written;
+    const key = path[path.length - 1];
+    const slot = key === void 0 ? "its body" : `'${path.join(".")}'`;
+    if (typeof value === "string") {
+      const inSource2 = key === void 0 || key === null ? `${stage}(${stringify2(value)})` : `${key}: ${stringify2(value)}`;
+      return new CodegenError(
+        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify2(value)} becomes part of the MQL. Write it in the source: '${inSource2}'.`,
+        pos
+      );
+    }
+    const inSource = key === void 0 || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
+    return new CodegenError(
+      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
+      pos
+    );
+  }
+  if (where.at === "group" || where.at === "window") {
+    const kind = where.at === "group" ? "an accumulator" : "a window function";
+    const keys = isPlainObject(value) ? Object.keys(value) : [];
+    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(\u2026)` : holes(value);
+    return new CodegenError(
+      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
+      pos
+    );
+  }
+  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
+  if (where.at === "statement" || where.at === "stream") {
+    return new CodegenError(
+      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
+      pos
+    );
+  }
+  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
+}
+var runTimeValueAsQuery = (value, pos) => new CodegenError(
+  typeof value === "string" ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values." : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
+  pos
+);
+var LITERAL_NOUNS = {
+  NumberLiteral: "a number",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ArrayLiteral: "an array",
+  ObjectLiteral: "a document",
+  BigIntLiteral: "a bigint",
+  RegexLiteral: "a regular expression",
+  ObjectIdLiteral: "an ObjectId"
+};
+var collectionNameOfWrongKind = (noun, pos) => new CodegenError(wrongKind("'$$$[\u2026]'", "key", "a string", `got ${noun}`), pos);
+var nounOfValue = (v) => {
+  if (v === null) return "null";
+  if (isRegExp(v)) return "a regular expression";
+  const k = kindOfValue(v);
+  return k === null ? "a value of another kind" : kindNoun(k);
+};
+function collectionNameFrom(index) {
+  if (index.type === "Injected") {
+    return typeof index.value === "string" ? new CodegenError(
+      `The run-time value ${stringify2(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
+      index.pos
+    ) : collectionNameOfWrongKind(nounOfValue(index.value), index.pos);
+  }
+  const noun = LITERAL_NOUNS[index.type];
+  if (noun !== void 0) return collectionNameOfWrongKind(noun, index.pos);
+  return collectionNameMustBeConstant(index.pos);
+}
+var badOutTarget = (name2, pos) => new CodegenError(
+  `'${name2}' cannot name a collection to write: the server refuses an empty name and one that starts with '$'.`,
+  pos
+);
+var collectionNameMustBeConstant = (pos) => new CodegenError(
+  `The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.`,
+  pos
+);
+var emptyCollectionName = (pos) => new CodegenError(`'$$$[""]' names no collection \u2014 the server refuses an empty namespace.`, pos);
+var collectionMissing = (pos) => new CodegenError("'$$$' is the database; name the collection to read: '$$$.<coll>.find(\u2026)'.", pos);
+var notAJoinChain = (pos) => new CodegenError(
+  "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { \u2026 })', a stream method or a stage link.",
+  pos
+);
+var diagnosticIsNotALink = (name2, pos) => {
+  const runsOn = runsOnFor(name2);
+  const sugar = sugarOf(name2);
+  return new CodegenError(
+    `'${name2}' reports on the deployment, so it is a source stage and not a chain link.${runsOn === void 0 ? "" : ` Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`}`,
+    pos
+  );
+};
+var notAStageOnRef = (name2, sigil, candidates, pos) => {
+  const where = sigil === "$$$$" ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it" : "'$$$' is the database, and no stage runs on it alone";
+  const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()').";
+  const read3 = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
+  return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read3}`, pos);
+};
+var noDestination = (pos) => new CodegenError(
+  "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.\u2026'), bind it ('let x = $$$.<coll>.\u2026'), or make it the stream ('$$ = $$$.<coll>.\u2026').",
+  pos
+);
+var rootNeedsOneDocument = (root2, pos) => new CodegenError(
+  `The document can only become ONE document, and this chain gives an array. Write '${root2} = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '${root2}.<field> = $$$.<coll>.\u2026'.`,
+  pos
+);
+var oneDocumentInStream = (pos) => new CodegenError(
+  "'.find(\u2026)' gives ONE document, and the stream is many. Write '$$ = $$$.<coll>.filter(pred).take(1)' for a stream of the first match, or '$ = $$$.<coll>.find(pred)' to make each document the one it finds.",
+  pos
+);
+var valueInStream = (name2, pos) => isKnownName(name2) ? new CodegenError(
+  `'.${name2}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.\u2026.${name2}()'.`,
+  pos
+) : refusalFor({ kind: "unknown", name: name2 }, `.${name2}`, "'$$$'", "stream", pos, streamReceiverNames());
+var outerWriteInForeign = (pos) => new CodegenError(
+  "The outer document cannot be written from inside a body over another collection \u2014 only read. Write the body's own document through its callback parameter ('o.x = \u2026', 'delete o.x', 'o = { \u2026 }'), or as a stage ('$set({ x: \u2026 })'). Write the outer field after the join.",
+  pos
+);
+var constReassigned = (name2, pos) => new CodegenError(
+  `'${name2}' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.`,
+  pos
+);
+var reducerShape = (name2, pos) => new CodegenError(
+  `'.${name2}((acc, x[, i]) => \u2026, seed)' takes a two- or three-parameter arrow with an expression body.`,
+  pos
+);
+var elementsShape = (name2, count, pos) => new CodegenError(
+  `'.${name2}()' takes an arrow with one parameter per zipped array \u2014 ${count} here \u2014 and an expression body.`,
+  pos
+);
+var mutatorNeedsField = (name2, pos) => new CodegenError(
+  `'.${name2}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name2}(\u2026);'. For a value, use its immutable form.`,
+  pos
+);
+var QueryFormError = class extends CodegenError {
+};
+var needsFieldPath = (name2, pos) => new QueryFormError(
+  `'${name2}(field, \u2026)' tests a field: its first argument is a field path ('$.a'), as in '${name2}($.a, \u2026)' or the document form '{ a: ${name2}(\u2026) }'.`,
+  pos
+);
+var needsLiteral = (name2, pos) => new QueryFormError(
+  `'${name2}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(\u2026)').`,
+  pos
+);
+var elementNeedsQuery = (name2, pos) => new CodegenError(
+  `'${name2}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
+  pos
+);
+var needsPrecedingSort = (name2, pos) => new CodegenError(
+  `'.${name2}(predicate)' keeps the ${name2 === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name2}(\u2026)': '$$.toSorted({ t: 1 }).${name2}(o => o.ok)' \u2014 any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ \u2026 })').`,
+  pos
+);
+var readInUpdateDocument = (ref, pos) => new CodegenError(
+  `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
+  pos
+);
+var updateCopyNeedsPipeline = (from, to, pos) => new CodegenError(
+  from === "" ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.` : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
+  pos
+);
+var updateConflict = (path, held, op, pos) => new CodegenError(
+  `'${path}' is written twice in one update ('${held}' and '${op}'). The server refuses this as a conflict. Write each field once.`,
+  pos
+);
+var updateHasNoDocumentForm = (what, pos) => new CodegenError(
+  `${what} has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.`,
+  pos
+);
+var updateNeedsNumber = (op, what, pos) => new CodegenError(`'${op}' in a document-form update takes ${what} as a compile-time constant.`, pos);
+var updateKeyNotOperator = (key, pos) => new CodegenError(
+  `An update document's keys are update operators ('$set', '$inc', \u2026)${key === null ? "" : `, and '${key}' is not one`}. To set a field, write '$.${key ?? "field"} = \u2026' or '{ $set: { ${key ?? "field"}: \u2026 } }'.`,
+  pos
+);
+var updateOperatorTwice = (op, pos) => new CodegenError(
+  `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
+  pos
+);
+var updateTargetNeedsField = (pos) => new CodegenError(
+  "A document-form update writes a field of the document: '$.a = \u2026', '$.a.b += 1', 'delete $.a'.",
+  pos
+);
+var notAnUpdate = (pos) => new CodegenError(
+  "An update document is made of writes \u2014 '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' \u2014 or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+  pos
+);
+var unappliedReference = (ns, name2, pos) => new CodegenError(
+  `'${ns}.${name2}' is a function, not a value. Call it ('${ns}.${name2}(\u2026)'), or hand it to a callback slot ('.map(${ns}.${name2})').`,
+  pos
+);
+var nearInMatch = (name2, pos) => new CodegenError(
+  `'${name2}' is not allowed inside an aggregation '$match' \u2014 the server refuses it there. Use the '$geoNear' stage as the first stage instead ('$geoNear({ near: \u2026, distanceField: "d", spherical: true })'), or run the proximity query with 'find()'.`,
+  pos
+);
+var arrayReduceShape = (pos) => new CodegenError(
+  "'$$.reduce((acc, d) => \u2026, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total \u2014 a sum, a count, a maximum \u2014 is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+  pos
+);
+
+// src/compiler/passes/no-new.ts
+var isNode6 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+function nodesOf(root2, out = []) {
+  if (Array.isArray(root2)) {
+    for (const v of root2) nodesOf(v, out);
+    return out;
+  }
+  if (typeof root2 !== "object" || root2 === null) return out;
+  if (!isPlainObject(root2)) return out;
+  if (isNode6(root2)) out.push(root2);
+  for (const v of Object.values(root2)) nodesOf(v, out);
+  return out;
+}
+function refuseNew(program) {
+  const nodes = nodesOf(program);
+  const bound = new Set(nodes.flatMap((n2) => introducedNames(n2)));
+  const refused = nodes.filter((n2) => n2.type === "NewExpression").sort((a, b) => a.pos - b.pos).find((n2) => {
+    const callee2 = n2.callee;
+    if (callee2.type !== "Ident") return true;
+    const name3 = callee2.name;
+    return !bound.has(name3) && (!isGlobalName(name3) || (positionsOf(name3)?.length ?? 0) > 0);
+  });
+  if (refused === void 0) return;
+  const callee = refused.callee;
+  if (callee.type !== "Ident") throw noNewKeyword(null, refused.pos);
+  const name2 = callee.name;
+  if (!isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), refused.pos);
+  throw noNewKeyword(name2, refused.pos);
 }
 
 // src/compiler/passes/shape.ts
@@ -21708,1747 +23510,6 @@ function selectProps(recv, names, keep) {
   return objectOf(props, open, open ? recv.values : void 0);
 }
 
-// src/levenshtein.ts
-function levenshtein(a, b) {
-  const m = a.length;
-  const n2 = b.length;
-  if (m === 0) return n2;
-  if (n2 === 0) return m;
-  const prev = new Array(n2 + 1);
-  const curr = new Array(n2 + 1);
-  for (let j = 0; j <= n2; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n2; j++) {
-      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= n2; j++) prev[j] = curr[j];
-  }
-  return prev[n2];
-}
-function closestNameTo(name2, candidates) {
-  let best = null;
-  for (const candidate of candidates) {
-    if (candidate === name2) continue;
-    const d = levenshtein(name2, candidate);
-    if (best === null || d < best.dist) best = { name: candidate, dist: d };
-  }
-  if (best === null) return null;
-  if (best.dist <= 2 && best.dist < name2.length) return best.name;
-  return null;
-}
-function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
-  const suggestion = closestNameTo(name2, candidates);
-  return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
-}
-
-// src/stringify.ts
-var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
-var kindOf3 = (v) => Object.prototype.toString.call(v);
-var getterOf = (proto, key) => Object.getOwnPropertyDescriptor(proto, key).get;
-var TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype);
-var typedArrayName2 = getterOf(TYPED_ARRAY, Symbol.toStringTag);
-var typedArrayLength = getterOf(TYPED_ARRAY, "length");
-var regexSource2 = getterOf(RegExp.prototype, "source");
-var regexFlags = getterOf(RegExp.prototype, "flags");
-function dateTime(v) {
-  if (kindOf3(v) !== "[object Date]") return null;
-  try {
-    return Date.prototype.getTime.call(v);
-  } catch {
-    return null;
-  }
-}
-function regexLiteral(v) {
-  if (kindOf3(v) !== "[object RegExp]") return null;
-  try {
-    return `/${String(regexSource2.call(v))}/${String(regexFlags.call(v))}`;
-  } catch {
-    return null;
-  }
-}
-function byteValues(v) {
-  if (typedArrayName2.call(v) !== "Uint8Array") return null;
-  const bytes = v;
-  return Array.from({ length: Number(typedArrayLength.call(v)) }, (_, i) => bytes[i]);
-}
-function keySource(key) {
-  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
-}
-var str = (s) => JSON.stringify(s);
-var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
-function bsonSource(tag, v, render) {
-  const o = v;
-  const own = (name2) => {
-    const f = o[name2];
-    const everyObject = Object.prototype[name2];
-    return typeof f === "function" && f !== everyObject ? f : null;
-  };
-  const text = () => {
-    const f = own("toString");
-    return f === null ? null : String(f.call(v));
-  };
-  switch (tag) {
-    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
-    case "ObjectID":
-    case "ObjectId": {
-      const hex = own("toHexString");
-      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
-    }
-    case "Decimal128": {
-      const s = text();
-      return s === null ? null : `new Decimal128(${str(s)})`;
-    }
-    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
-    // reader can check, and the two-word constructor is not.
-    case "Long": {
-      const s = text();
-      return s === null ? null : `Long.fromString(${str(s)})`;
-    }
-    case "Int32":
-      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
-    // A whole-number Double must keep its type: `42` would come back as an int.
-    case "Double":
-      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
-    case "Binary": {
-      const bytes = own("toString");
-      if (bytes === null) return null;
-      const sub = Number(o.sub_type ?? 0);
-      const base64 = String(bytes.call(v, "base64"));
-      const uuid = own("toUUID");
-      if (sub === 4 && uuid !== null && /^[A-Za-z0-9+/]{22}==$/.test(base64))
-        return `new UUID(${str(String(uuid.call(v)))})`;
-      return `Binary.createFromBase64(${str(base64)}, ${sub})`;
-    }
-    case "Timestamp": {
-      const t = Number(o.t ?? o.high ?? 0);
-      const i = Number(o.i ?? o.low ?? 0);
-      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
-    }
-    case "MinKey":
-      return "new MinKey()";
-    case "MaxKey":
-      return "new MaxKey()";
-    case "Code":
-      if (typeof o.code !== "string") return null;
-      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
-    case "DBRef":
-      if (typeof o.collection !== "string") return null;
-      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
-    case "BSONSymbol": {
-      const s = text();
-      return s === null ? null : `new BSONSymbol(${str(s)})`;
-    }
-    case "BSONRegExp":
-      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
-    default:
-      return null;
-  }
-}
-function stringify2(value, options) {
-  const indent = options?.indent ?? 2;
-  const width = options?.width ?? 80;
-  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
-  const seen = /* @__PURE__ */ new Set();
-  const leaf2 = (v) => {
-    if (v === null) return "null";
-    const time = dateTime(v);
-    if (time !== null) {
-      if (Number.isNaN(time)) throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
-      return `new Date(${str(new Date(time).toISOString())})`;
-    }
-    const regex = regexLiteral(v);
-    if (regex !== null) return regex;
-    const bytes = byteValues(v);
-    if (bytes !== null) return `new Uint8Array([${bytes.join(", ")}])`;
-    const tag = tagOf(v);
-    if (tag !== void 0) {
-      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
-      if (spelled3 !== null) return spelled3;
-    }
-    const t = typeof v;
-    if (t === "string") return str(v);
-    if (t === "boolean") return String(v);
-    if (t === "bigint") return `${String(v)}n`;
-    if (t === "number") return num(v);
-    if (t === "undefined") {
-      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
-    }
-    return null;
-  };
-  const render = (v, depth) => {
-    const simple = leaf2(v);
-    if (simple !== null) return simple;
-    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
-    seen.add(v);
-    try {
-      if (Array.isArray(v)) {
-        if (v.length === 0) return "[]";
-        const parts2 = v.map((x) => render(x, depth + 1));
-        const flat2 = `[${parts2.join(", ")}]`;
-        if (pad2 === "" || fits(flat2, depth)) return flat2;
-        return `[
-${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
-${at2(depth)}]`;
-      }
-      const entries = Object.entries(v);
-      if (entries.length === 0) return "{}";
-      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
-      const flat = `{ ${parts.join(", ")} }`;
-      if (pad2 === "" || fits(flat, depth)) return flat;
-      return `{
-${parts.map((p) => at2(depth + 1) + p).join(",\n")}
-${at2(depth)}}`;
-    } finally {
-      seen.delete(v);
-    }
-  };
-  const at2 = (d) => pad2.repeat(d);
-  const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
-  return render(value, 0);
-}
-
-// src/compiler/emit/consult.ts
-var ROWS2 = Object.assign(/* @__PURE__ */ Object.create(null), NAMES, PRODUCTIONS);
-var CELL_OF = {
-  value: "expr",
-  filter: "filter",
-  stream: "stream",
-  statement: "statement",
-  group: "group",
-  window: "window",
-  updateDoc: "updateDoc"
-};
-function positionOf(where) {
-  return where.at in CELL_OF ? where.at : null;
-}
-var isObj2 = (v) => typeof v === "object" && v !== null;
-function familiesOf2(row2) {
-  const on = row2.on;
-  if (on === void 0) return void 0;
-  if (on === "any") return "any";
-  return Array.isArray(on) ? on : [on];
-}
-function readCell(name2, position, cell) {
-  if (!isObj2(cell)) return { kind: "lower", name: name2, position, cell };
-  if (typeof cell.unsupported === "string") {
-    return {
-      kind: "refused",
-      name: name2,
-      position,
-      message: cell.unsupported,
-      needsSubject: cell.subjectFromCaller === true
-    };
-  }
-  if (typeof cell.inCode === "string") {
-    return { kind: "inCode", name: name2, position, file: cell.inCode, args: cell.args };
-  }
-  if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
-  if (Array.isArray(cell.composedInto)) {
-    return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
-  }
-  return { kind: "lower", name: name2, position, cell };
-}
-function consult(name2, position, family) {
-  const row2 = ROWS2[name2];
-  if (row2 === void 0) return { kind: "unknown", name: name2 };
-  const key = CELL_OF[position];
-  if (!(key in row2)) return { kind: "noCell", name: name2, position };
-  const cell = row2[key];
-  if (isObj2(cell) && isObj2(cell.perFamily)) {
-    const branches = cell.perFamily;
-    if (family !== void 0 && family in branches) return readCell(name2, position, branches[family]);
-    return { kind: "perFamily", name: name2, position, branches };
-  }
-  return readCell(name2, position, cell);
-}
-function refusalSentence(verdict, subject, container) {
-  if (!verdict.needsSubject) return verdict.message;
-  return `${subject} isn't available on ${container} \u2014 ${verdict.message}`;
-}
-function listedIn(name2, position) {
-  return ROWS2[name2]?.where.includes(position) === true;
-}
-function familiesFor(name2) {
-  const row2 = ROWS2[name2];
-  return row2 === void 0 ? void 0 : familiesOf2(row2);
-}
-function everyName() {
-  return Object.keys(NAMES);
-}
-
-// src/compiler/emit/check.ts
-function literal(e) {
-  switch (e.type) {
-    case "NumberLiteral":
-      return { kind: "number", value: e };
-    case "UnaryExpr":
-      return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
-    case "StringLiteral":
-      return isFieldPathString(e) ? null : { kind: "string", value: e };
-    case "BooleanLiteral":
-      return { kind: "bool", value: e };
-    case "NullLiteral":
-      return { kind: "null", value: e };
-    case "ArrayLiteral":
-      return { kind: "array", value: e };
-    case "ObjectLiteral":
-      return { kind: "object", value: e };
-    case "RegexLiteral":
-      return { kind: "regex", value: e };
-    case "BigIntLiteral":
-      return { kind: "bigint", value: e };
-    default:
-      return null;
-  }
-}
-var numberOf = (e) => e.type === "NumberLiteral" ? e.value : e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" ? -e.argument.value : null;
-var NOUN = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  null: "null",
-  array: "an array",
-  object: "a document",
-  regex: "a regular expression",
-  bigint: "a bigint"
-};
-function matches(lit2, expected) {
-  switch (expected) {
-    case "number":
-    case "number-or-date":
-      return lit2.kind === "number" || lit2.kind === "bigint";
-    case "int":
-    case "int-or-long": {
-      if (lit2.kind === "bigint") return true;
-      const n2 = numberOf(lit2.value);
-      return n2 !== null && Number.isInteger(n2);
-    }
-    case "string":
-    case "bool":
-    case "array":
-    case "object":
-      return lit2.kind === expected;
-    case "fieldName":
-    case "fieldPath":
-      return false;
-    case "regex":
-      return lit2.kind === "regex" || lit2.kind === "string";
-    case "any":
-    case "element":
-      return true;
-    case "value":
-      return lit2.kind !== "null";
-    case "orderable":
-      return lit2.kind === "number" || lit2.kind === "bigint" || lit2.kind === "string";
-    case "date":
-    case "timestamp":
-    case "objectId":
-    case "binData":
-    case "callback":
-      return false;
-  }
-}
-var TAKES = {
-  number: "a number",
-  int: "an integer",
-  "int-or-long": "an integer",
-  "number-or-date": "a number or a date",
-  orderable: "a number, a string, a date or an ObjectId",
-  string: "a string",
-  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "a field PATH to read: a string that starts with '$'",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  timestamp: "a timestamp",
-  objectId: "an ObjectId",
-  binData: "binary data",
-  any: "a value",
-  value: "a value",
-  callback: "a callback",
-  regex: "a regular expression or a string",
-  element: "an element of the array"
-};
-var takesOf = (t) => {
-  if (!Array.isArray(t)) return TAKES[t];
-  const nouns = t.map((x) => TAKES[x]);
-  return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
-};
-var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
-function refuseProvenNull(name2, slot, e, takes, proof) {
-  if (proof === void 0 || e.type === "NullLiteral" || !proof.isNull(e)) return;
-  proof.read(e);
-  throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, takes, "got null"), e.pos);
-}
-var wrongKind = (shown, slot, takes, found2, hint2 = "") => `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found2}.${hint2}`;
-var hint = (expected, got = []) => {
-  if (Array.isArray(expected)) {
-    return expected.includes("number") ? hint("number", got) : "";
-  }
-  if (expected === "number" && got.includes("date")) {
-    return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
-  }
-  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
-  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
-  return "";
-};
-function checkType(name2, slot, e, expected) {
-  if (expected === "fieldPath") {
-    if (e.type !== "StringLiteral") return;
-    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
-      throw new CodegenError(
-        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
-        e.pos
-      );
-    }
-    return;
-  }
-  if (expected === "fieldName") {
-    if (e.type !== "StringLiteral") {
-      const other = literal(e);
-      if (other === null) return;
-      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, slot, TAKES.fieldName, `got ${NOUN[other.kind]}`), e.pos);
-    }
-    const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
-    if (bad === null) return;
-    throw new CodegenError(
-      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
-      e.pos
-    );
-  }
-  const lit2 = literal(e);
-  if (lit2 === null || matches(lit2, expected)) return;
-  const fraction = lit2.kind === "number" && (expected === "int" || expected === "int-or-long");
-  throw new CodegenError(
-    wrongKind(
-      `'${spell2(name2)}'`,
-      slot,
-      TAKES[expected],
-      `got ${fraction ? "a fraction" : NOUN[lit2.kind]}`,
-      fraction ? ROUND : hint(expected)
-    ),
-    e.pos
-  );
-}
-function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
-  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
-  const v = caseInsensitive ? e.value.toLowerCase() : e.value;
-  if (allowed.includes(v)) return;
-  const near = didYouMean(v, allowed, (s) => s);
-  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
-}
-function checkBodyKeys(body) {
-  if (body.type !== "ObjectLiteral") return;
-  for (const e of body.entries) {
-    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
-    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
-  }
-}
-function checkBody(name2, rule, args, keys, pos, proof) {
-  if (args.length === 1 && args[0].type === "Injected") return;
-  let present2;
-  let valueOf;
-  const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
-  if (body !== null) {
-    checkBodyKeys(body);
-    const byKey = /* @__PURE__ */ new Map();
-    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
-    present2 = [...byKey.keys()];
-    valueOf = (k) => byKey.get(k);
-  } else {
-    present2 = keys.slice(0, args.length);
-    valueOf = (k) => {
-      const i = keys.indexOf(k);
-      return i >= 0 && i < args.length ? args[i] : void 0;
-    };
-  }
-  const closed = [...rule.required, ...rule.optional];
-  if (body !== null && rule.closed) {
-    for (const k of present2) {
-      if (!closed.includes(k)) {
-        throw new CodegenError(
-          `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
-          valueOf(k)?.pos ?? pos
-        );
-      }
-    }
-  }
-  for (const k of rule.required) {
-    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
-  }
-  for (const [a, b] of rule.notTogether ?? []) {
-    const inA = present2.filter((k) => a.includes(k));
-    const inB = present2.filter((k) => b.includes(k));
-    if (inA.length > 0 && inB.length > 0) {
-      throw new CodegenError(
-        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
-        pos
-      );
-    }
-  }
-  const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
-  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
-    const v = valueOf(k);
-    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
-  }
-  for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
-    const v = valueOf(k);
-    if (v !== void 0) checkType(name2, k, v, t);
-  }
-  for (const k of present2) {
-    const v = valueOf(k);
-    if (v === void 0) continue;
-    const t = rule.keyTypes?.[k];
-    const takes = t === void 0 ? "a value" : TAKES[t];
-    if (v.type === "NullLiteral") throw new CodegenError(wrongKind(`'${spell2(name2)}'`, k, takes, "got null"), v.pos);
-    refuseProvenNull(name2, k, v, takes, proof);
-  }
-  for (const k of rule.constantKeys ?? []) {
-    const v = valueOf(k);
-    if (v !== void 0 && v.type !== "Injected" && !constantOf(v).ok) {
-      throw new CodegenError(
-        `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        v.pos
-      );
-    }
-  }
-}
-var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
-var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
-function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settling = false, proof) {
-  for (const i of args.integer ?? []) {
-    const e = i === -1 ? receiver : operands[i];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && !Number.isInteger(n2)) {
-      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(wrongKind(`'${spell2(name2)}'`, what, "an integer", "got a fraction", ROUND), e.pos);
-    }
-  }
-  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
-      throw new CodegenError(
-        `'${name2}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /\u2026/${flag}.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "Lambda") throw new CodegenError(message, e.pos);
-  }
-  for (const i of args.dateFormat ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type === "StringLiteral") checkDateFormat(name2, e.value, e.pos);
-  }
-  for (const [i, rule] of Object.entries(args.body ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos, proof);
-  }
-  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0) continue;
-    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
-      throw new CodegenError(
-        `'${spell2(name2)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
-        e.pos
-      );
-    }
-  }
-  operands.forEach((e, i) => {
-    const t = args.slotType?.[i] ?? args.rest;
-    if (t === void 0 || hasObjectForm && e.type === "ObjectLiteral") return;
-    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
-    if (own === void 0) return;
-    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, `argument ${i + 1}`, e, own);
-  });
-  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
-    const e = operands[Number(i)];
-    if (e === void 0 || e.type !== "ArrayLiteral") continue;
-    for (const el of e.elements) {
-      if (el.type === "SpreadElement") continue;
-      const slot = `element ${e.elements.indexOf(el) + 1}`;
-      checkType(name2, slot, el, t);
-      refuseProvenNull(name2, slot, el, TAKES[t], proof);
-    }
-  }
-  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
-    const e = operands[Number(i)];
-    const n2 = e === void 0 ? null : numberOf(e);
-    if (n2 !== null && (n2 < lo || n2 > hi)) {
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
-    }
-  }
-  for (const i of args.nonZero ?? []) {
-    const e = operands[i];
-    if (!settling && e !== void 0 && numberOf(e) === 0) {
-      throw new CodegenError(
-        `'${name2}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
-        e.pos
-      );
-    }
-  }
-  for (const i of args.constant ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
-      throw new CodegenError(
-        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
-        e.pos
-      );
-    }
-  }
-  for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
-    const e = operands[Number(i)];
-    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
-  }
-}
-var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
-var MOMENT_FORMAT_TOKENS = [
-  ["YYYY", "%Y"],
-  ["MMMM", null],
-  ["dddd", null],
-  ["MMM", null],
-  ["ddd", null],
-  ["DDD", "%j"],
-  ["SSS", "%L"],
-  ["YY", null],
-  ["MM", "%m"],
-  ["DD", "%d"],
-  ["HH", "%H"],
-  ["hh", null],
-  ["ZZ", "%z"],
-  ["mm", "%M"],
-  ["ss", "%S"],
-  ["Do", null]
-];
-var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
-function momentFormatHint(fmt) {
-  let out = "";
-  let i = 0;
-  outer: while (i < fmt.length) {
-    for (const [token3, spec] of MOMENT_FORMAT_TOKENS) {
-      if (!fmt.startsWith(token3, i)) continue;
-      out += spec ?? token3;
-      i += token3.length;
-      continue outer;
-    }
-    out += fmt[i];
-    i++;
-  }
-  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
-  if (missing === null) return ` Did you mean '${out}'?`;
-  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", \u2026][$.t.getMonth()].`;
-}
-function checkDateFormat(name2, fmt, pos) {
-  for (let i = 0; i < fmt.length; i++) {
-    if (fmt[i] !== "%") continue;
-    const spec = fmt[i + 1];
-    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
-      const flip = spec === void 0 ? void 0 : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
-      const hint2 = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
-      throw new CodegenError(
-        `'${name2}' format has an invalid specifier '%${spec ?? ""}'.${hint2} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
-        pos
-      );
-    }
-    i++;
-  }
-  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
-    throw new CodegenError(
-      `'${name2}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
-      pos
-    );
-  }
-}
-
-// src/compiler/kinds.ts
-var UNPROVEN = { args: [], elements: "unknown" };
-function kindFits(kind, expected, elements = "unknown") {
-  if (kind === "unknown") return true;
-  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
-  switch (expected) {
-    case "any":
-      return true;
-    case "value":
-      return kind !== "null";
-    case "number":
-    case "int":
-    case "int-or-long":
-      return kind === "number";
-    case "number-or-date":
-      return kind === "number" || kind === "date";
-    case "orderable":
-      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
-    case "string":
-    case "fieldName":
-    case "fieldPath":
-    case "regex":
-      return kind === "string";
-    case "bool":
-    case "array":
-    case "object":
-    case "date":
-    case "objectId":
-    case "binData":
-      return kind === expected;
-    case "element":
-      return elements === "unknown" || elements.includes(kind);
-    case "timestamp":
-    case "callback":
-      return false;
-  }
-}
-var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
-var takesArray = (expected) => Array.isArray(expected) ? expected.includes("array") : expected === "array";
-var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
-var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
-var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
-var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
-function elementsFaultOf(name2, proofs) {
-  const need = elementsOf(name2);
-  if (need === void 0 || need === "scalar") return null;
-  const takes = (p) => p === "unknown" || p.includes(need);
-  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
-  if (!broken) return null;
-  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
-  return { rule: "elements", expected: need, held: [...new Set(held)] };
-}
-function faultOf(name2, rule, proofs) {
-  let spread = false;
-  for (let i = 0; i < proofs.args.length; i++) {
-    const via = proofs.viaElements?.[i] === true;
-    spread = spread || proofs.packed === true && via;
-    const expected = spread ? rule.rest : slotTypeOf(rule, i);
-    if (expected === void 0 || takesCallback(expected)) continue;
-    const asElement = expected === "element" ? proofs.asElement?.[i] : void 0;
-    const whole = asElement === void 0 && takesArray(expected) ? proofs.whole?.[i] : void 0;
-    const proof = asElement ?? whole ?? proofs.args[i];
-    if (proof === "unknown" || proofFits(proof, expected, proofs.elements)) continue;
-    const through = asElement !== void 0 || whole === void 0 && via ? { viaElements: true } : {};
-    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : {
-      rule: "slot",
-      slot: i,
-      expected,
-      got: proof,
-      ...through,
-      ...rule.slotHint?.[i] === void 0 ? {} : { hint: rule.slotHint[i] }
-    };
-  }
-  if (rule.homogeneous === true) {
-    let shared = null;
-    const taking = [];
-    for (let i = 0; i < proofs.args.length; i++) {
-      const kinds = concreteKinds(proofs.args[i]);
-      if (kinds === null) continue;
-      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
-      if (left.length === 0) {
-        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
-        return {
-          rule: "homogeneous",
-          first: other.slot,
-          firstKinds: other.kinds,
-          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
-          slot: i,
-          got: kinds,
-          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
-        };
-      }
-      shared = left;
-      taking.push({ slot: i, kinds });
-    }
-  }
-  return elementsFaultOf(name2, proofs);
-}
-function kindOfValue(v) {
-  if (typeof v === "number" || typeof v === "bigint") return "number";
-  if (typeof v === "string") return "string";
-  if (typeof v === "boolean") return "bool";
-  if (isDate(v)) return "date";
-  if (Array.isArray(v)) return "array";
-  const tag = bsonTagOf(v);
-  if (tag !== void 0) return BSON_KIND[tag] ?? null;
-  return isPlainObject(v) ? "object" : null;
-}
-
-// src/compiler/emit/errors.ts
-var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
-var RUNS_ON = {
-  stream: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
-  collection: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
-  cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" }
-};
-var sugarOf = (name2) => name2.startsWith("$") ? name2.slice(1) : name2;
-var runsOnFor = (name2) => RUNS_ON[(diagnosticOf(name2) ?? diagnosticOf(`$${name2}`))?.scope ?? ""];
-var countList = (ns) => ns.length === 2 ? `${ns[0]} or ${ns[1]}` : `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
-var countWord = (args) => {
-  if (args.none === true) return "takes no arguments";
-  if (args.exact !== void 0) return `requires exactly ${args.exact} argument${args.exact === 1 ? "" : "s"}`;
-  if (args.allowed !== void 0) return `requires ${countList(args.allowed)} arguments`;
-  if (args.atLeast !== void 0) return `requires at least ${args.atLeast} argument${args.atLeast === 1 ? "" : "s"}`;
-  return "takes a different number of arguments";
-};
-var NO_CELL = {
-  value: (q) => `${q} has no value form here \u2014 see its 'where'.`,
-  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
-  stream: (q) => `${q} produces a value, not a stream of documents.`,
-  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
-  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
-  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
-  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`
-};
-function valueStart(bare) {
-  if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
-  return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
-}
-function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`, subjects = { args: [] }) {
-  const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
-  switch (sel.kind) {
-    case "refused":
-      return new CodegenError(
-        refusalSentence(
-          { kind: "refused", name: sel.name, position, message: sel.message, needsSubject: sel.needsSubject },
-          spelled3,
-          container
-        ),
-        pos
-      );
-    case "unknown":
-      return new CodegenError(
-        `Unknown ${container === "" ? "name" : "method"} '${spelled3}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
-        pos
-      );
-    case "wrongReceiver": {
-      const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
-      const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
-      const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
-      const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
-      const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
-      const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
-      return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
-    }
-    case "wrongCount": {
-      const most = sel.args.exact ?? (sel.args.allowed === void 0 ? void 0 : Math.max(...sel.args.allowed));
-      const thisArg = callbackParamsOf(sel.name, position) !== void 0 && most !== void 0 && sel.got === most + 1 ? " \u2014 JavaScript's trailing 'thisArg' has no meaning in MQL; drop it" : "";
-      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}${thisArg}`, pos);
-    }
-    case "rejectedCount":
-      return new CodegenError(sel.message, pos);
-    case "wrongKind":
-      return kindRefusal(sel.fault, spelled3, subjects, pos);
-    case "spreadRefused": {
-      const alt = spreadAlternativeOf(sel.name);
-      const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
-      return new CodegenError(`Spread (...) is not supported in ${spelled3}(...) \u2014 ${fix}.`, pos);
-    }
-    case "fallback":
-      return new CodegenError(`${spelled3} has no value form here \u2014 see its 'where'.`, pos);
-    case "composedOnly":
-      return new CodegenError(
-        `${spelled3} is only meaningful composed with ${sel.owners.map((o) => `'${o}'`).join(" or ")}.`,
-        pos
-      );
-    case "noCell":
-      return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
-    case "rule":
-      return new CodegenError(
-        `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled3}`,
-        pos
-      );
-  }
-}
-var undefinedAsValue = (pos) => new CodegenError(
-  `'undefined' is only meaningful in a comparison \u2014 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.field' to remove a field.`,
-  pos
-);
-var bigIntTooLarge = (digits2, pos) => new CodegenError(
-  `The BigInt ${digits2} does not fit in a 64-bit integer (-9223372036854775808 \u2026 9223372036854775807). MQL stores only this range. Write 'Decimal128("${digits2}")' instead.`,
-  pos
-);
-var regexAsValue = (pos) => new CodegenError(
-  `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
-  pos
-);
-var lambdaAsValue = (pos) => new CodegenError(
-  "A function (=>) is only valid as the callback to an array method that iterates (.map, .filter, .some, .every, .find, .reduce, \u2026), or as the second argument to $let.",
-  pos
-);
-var callableAsValue = (spelled3, pos) => new CodegenError(
-  `'${spelled3}' used as a value is only valid as a callback to a higher-order array method \u2014 for example, $.items.map(${spelled3}). To apply it to one value, write ${spelled3}(value).`,
-  pos
-);
-var functionAsValue = (name2, pos) => new CodegenError(
-  `'${name2}' is a reusable function, and a function is not a value MQL can carry. Call it \u2014 '${name2}(x)' \u2014 or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => ${name2}(x))'.`,
-  pos
-);
-var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
-var afterReplace = (by) => (name2, mutable) => mutable ? `\`${name2}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name2} = \u2026\`), or carry the value as a field of the new document.` : `\`${name2}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
-var unfilledParam = (name2, method, why) => `\`${name2}\` has no value inside \`.${method}()\` \u2014 ${why}`;
-var negativeIndex = (index, pos) => new CodegenError(
-  `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
-  pos
-);
-var looseEqualityNotNull = (op, pos) => new CodegenError(
-  `'${op}' is only allowed against null in JSMQL. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
-  pos
-);
-var inNeedsList = (pos) => new CodegenError(
-  "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.",
-  pos
-);
-var recursiveFunction = (name2, pos) => new CodegenError(
-  `Recursive function calls are not supported. A MongoDB expression cannot call itself. '${name2}' calls itself while the compiler still expands it (direct or mutual recursion). Rewrite it without recursion.`,
-  pos
-);
-var wrongCallCount = (label, params, got, pos) => new CodegenError(
-  `${label}: expected ${params.length} argument(s)${params.length ? ` for params (${params.join(", ")})` : ""}, got ${got}.`,
-  pos
-);
-var unknownFunction = (name2, known, pos) => new CodegenError(
-  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
-  pos
-);
-var SUBJECT = {
-  string: "a string",
-  array: "an array",
-  number: "a number",
-  object: "an object",
-  date: "a date",
-  bool: "a boolean",
-  stream: "the stream",
-  objectId: "an ObjectId",
-  binData: "a binary value",
-  minKey: "MinKey",
-  maxKey: "MaxKey"
-};
-var FAMILY_OF = {
-  string: "string",
-  array: "array",
-  number: "number",
-  object: "object",
-  date: "date",
-  stream: "stream"
-};
-var EXAMPLE_METHOD = {
-  string: "trim",
-  number: "round",
-  date: "getFullYear",
-  object: "keys"
-};
-var spelledField = (name2) => /^[A-Za-z_$][\w$]*$/.test(name2) ? `.${name2}` : `[${JSON.stringify(name2)}]`;
-var methodsOf = (family) => valueMethodNames().filter((n2) => familiesOf(n2)?.includes(family) === true);
-function methodFix(name2, family) {
-  if (methodsOf(family).includes(name2)) return `Write '.${name2}()' to call the method.`;
-  const sibling = siblingOf(name2, family);
-  if (sibling !== null) return sibling;
-  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name2)})'.`;
-  return null;
-}
-function readFix(name2, kinds) {
-  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : void 0;
-  if (family === void 0) return "Read the field from an object instead.";
-  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family)).trim();
-  if (near !== "") return near;
-  const example = EXAMPLE_METHOD[family];
-  return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
-}
-function unreadableField(name2, why, read3, holder, pos) {
-  if (why.kind === "closed") {
-    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
-    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
-    const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
-    const subject2 = holder ?? "this object";
-    const [owner, holds] = why.elements === true ? [
-      `the elements of ${subject2} do not have`,
-      why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
-    ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
-    return new CodegenError(`'${read3}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
-  }
-  if (why.kinds.length === 0) return alwaysAbsent(read3, holder, pos);
-  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
-  return new CodegenError(`'${read3}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
-}
-function alwaysAbsent(read3, holder, pos) {
-  const subject = holder ?? "this value";
-  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
-  return new CodegenError(
-    `${sentence} is always null or missing here, so '${read3}' has no value to read. Remove the read, or write a value before the read.`,
-    pos
-  );
-}
-var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
-var unknownClass = (name2, known, pos) => new CodegenError(
-  name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
-  pos
-);
-var notCallable = (pos) => new CodegenError(
-  `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
-  pos
-);
-var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
-  `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-  pos
-);
-var rootIsArray = (root2, pos) => new CodegenError(
-  wrongKind(
-    `'${root2} = \u2026'`,
-    "",
-    "a document",
-    "got an array",
-    ` Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root2}.<field> = <array>;'.`
-  ),
-  pos
-);
-var joinNeedsPipeline = (pos) => new CodegenError(
-  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
-  pos
-);
-var needsPipeline = (name2, pos) => new CodegenError(
-  `'$$.${name2}()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}(); \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
-  pos
-);
-var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write a.assign(b) instead.", pos);
-var computedKeyInOperatorBody = (pos) => new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
-var tooManySortKeys = (who, count, limit, pos) => new CodegenError(
-  `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
-  pos
-);
-var spreadInCall = (label, pos) => new CodegenError(
-  `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
-  pos
-);
-var expressionInQueryValue = (pos) => new CodegenError(
-  `The value of a key in a query document is a VALUE or a query operator. This is a computed expression instead. The query language reads it as a value to compare against. For example, '{ a: $.b > 1 }' becomes '{ a: { $gt: ["$b", 1] } }'. The server accepts this and matches nothing. Write the predicate itself ('$.a > 1', or '$match($.a > 1)'), or put the expression in '$expr'.`,
-  pos
-);
-var aggregationOperatorInQuery = (name2, pos) => new CodegenError(
-  `'${name2}' is an aggregation operator. A query document has no such operator. The server answers "unknown operator: ${name2}". Put it in '$expr' ('$expr($eq(${name2}(\u2026), \u2026))'), or use the query operator that says the same thing.`,
-  pos
-);
-var queryOnlyInsideElement = (name2, pos) => new CodegenError(
-  `'${name2}' applies to the top-level document only. The server refuses it inside an array element test. Move it out of the '.some(\u2026)' body: '$.items.some(\u2026) && ${name2}(\u2026)'.`,
-  pos
-);
-var arrayOfArrays = (method, holder, pos) => new CodegenError(
-  `.${method}() cannot stringify an array of arrays. ${holder} holds arrays, and the server refuses to stringify an array element. Flatten first ('.flat().join()'), or map each inner array to a string ('.map(a => a.join(",")).join()').`,
-  pos
-);
-var streamHandleAfterReplace = (name2, stage, pos) => new CodegenError(
-  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
-  pos
-);
-var streamHandleAsValue = (name2, pos) => new CodegenError(
-  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.size()') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
-  pos
-);
-var bareContextRef = (ref, pos) => {
-  const what = ref === "$$" ? "'$$' is the stream \u2014 chain what to do with it: '$$.filter(\u2026);', '$$.push({ \u2026 });', '$$ = $$.take(10);'" : ref === "$$$" ? "'$$$' is the current database \u2014 name a collection after it: '$.o = $$$.<coll>.find(\u2026);' reads one, '$$$.<coll> = $$;' writes one" : "'$$$$' is the cluster \u2014 name a database and a collection after it: '$$$$.<db>.<coll> = $$;' writes one; '$$$$.currentOp();' is a source stage";
-  return new CodegenError(`${what}. Alone it is not a statement.`, pos);
-};
-var notAStatement = (pos) => new CodegenError(
-  "A pipeline statement writes something: a field ('$.total = \u2026;'), the document ('$ = { \u2026 };'), a deletion ('delete $.x;'), or a stage ('$match(\u2026);'). This expression only computes a value \u2014 assign it to a field, or wrap a predicate as '$match(\u2026)'.",
-  pos
-);
-var notAStage = (name2, stages, pos) => new CodegenError(
-  `'${name2}' is not an aggregation stage, so it cannot stand as a statement.${didYouMean(name2, stages, (s) => s)}`,
-  pos
-);
-var multiKeyStageDocument = (name2, keys, pos) => new CodegenError(
-  `A raw stage document holds exactly one stage, and this one holds ${keys} keys. Write '{ ${name2}: \u2026 }' on its own, and the next stage as its own statement.`,
-  pos
-);
-var rootMustBeDocument = (root2, noun, pos) => new CodegenError(
-  wrongKind(
-    `'${root2} = \u2026'`,
-    "",
-    "a document",
-    `got ${noun}`,
-    ` Put the value under a field ('${root2} = { value: \u2026 };'), or write to a field instead ('${root2}.value = \u2026;').`
-  ),
-  pos
-);
-var cannotDeleteRoot = (root2, pos) => new CodegenError(
-  root2 === "$$" ? "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'." : `'delete ${root2}' would delete the document itself. To replace it, write '${root2} = { \u2026 };'; to drop every field but one, write '${root2} = { keep: ${root2}.keep };'.`,
-  pos
-);
-var notAWriteTarget = (pos) => new CodegenError(
-  "A write names a field: '$.total = \u2026', '$.a.b = \u2026', or the document itself, '$ = { \u2026 }'. A computed destination ('$[expr] = \u2026') has no field name at compile time. Use '$setField({ field: <expr>, input: $, value: \u2026 })' when the name is a value.",
-  pos
-);
-var needsStageList = (pos) => new CodegenError(
-  "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
-  pos
-);
-var spreadInStageList = (pos) => new CodegenError(
-  "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
-  pos
-);
-var mustBeFirstStage = (name2, pos, why) => new CodegenError(
-  why ?? `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.`,
-  pos
-);
-var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
-  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.size()";
-  const later = `$match($.<field> === ${value});`;
-  return new CodegenError(
-    carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline. A value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}'. Read that value in a LATER statement instead \u2014 '${name2}({ \u2026 }); ${later}'. Or, when the value is one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}'. A value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}'. Keep the '${name2}' test on its own, and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
-    pos
-  );
-};
-var terminalReadsScratch = (name2, pos) => new CodegenError(
-  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.size()', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.size(); ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
-  pos
-);
-var twoTerminalStages = (name2, already, pos) => new CodegenError(
-  `'${name2}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination \u2014 keep one of them.`,
-  pos
-);
-var noStages = (pos) => new CodegenError(
-  "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
-  pos
-);
-var KIND_NOUN = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data",
-  stream: "a stream",
-  minKey: "a MinKey",
-  maxKey: "a MaxKey",
-  null: "null"
-};
-var ELEMENT_NOUN = {
-  number: "numbers",
-  string: "strings",
-  bool: "booleans",
-  array: "arrays",
-  object: "documents",
-  date: "dates",
-  objectId: "ObjectIds",
-  binData: "binary data",
-  null: "null"
-};
-var nounFor = (k, table) => table[k] ?? `a ${k}`;
-var orList = (items) => {
-  const once = [...new Set(items)];
-  return once.length < 2 ? once[0] ?? "" : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
-};
-var kindNoun = (k) => KIND_NOUN[k] ?? `a ${k}`;
-var kindsNoun = (ks, join3) => ks.map(kindNoun).join(join3);
-var pluralKind = (k) => ELEMENT_NOUN[k] ?? `${k}s`;
-function spellArray(e) {
-  const node = e;
-  if (node?.type === "SpreadElement") return spellArray(node.argument);
-  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "an array";
-}
-function gotKinds(e, kinds, viaElements) {
-  const nouns = orList(kinds.map(kindNoun));
-  return viaElements ? `an element of ${spellArray(e)} that is ${nouns}` : nouns;
-}
-function operandAt(subjects, slot) {
-  const only = subjects.args.length === 1 ? subjects.args[0] : null;
-  if (only !== null && only.type === "ArrayLiteral" && only.packed === true) {
-    return only.elements[slot];
-  }
-  return subjects.args[slot];
-}
-var slotName = (subjects, slot) => subjects.slots?.[slot] ?? `argument ${slot + 1}`;
-function shownName(spelled3) {
-  if (spelled3.startsWith("'")) return spelled3;
-  if (spelled3.startsWith("$")) return `'${spelled3}'`;
-  return `'${spelled3.replace(/\(\)$/, "")}()'`;
-}
-function kindRefusal(fault, spelled3, subjects, pos) {
-  const name2 = shownName(spelled3);
-  switch (fault.rule) {
-    case "slot": {
-      const e = operandAt(subjects, fault.slot);
-      return new CodegenError(
-        wrongKind(
-          name2,
-          slotName(subjects, fault.slot),
-          takesOf(fault.expected),
-          `got ${gotKinds(e, fault.got, fault.viaElements === true)}`,
-          fault.hint ?? hint(fault.expected, fault.got)
-        ),
-        e?.pos ?? pos
-      );
-    }
-    case "element": {
-      const e = operandAt(subjects, fault.slot);
-      return new CodegenError(
-        wrongKind(
-          name2,
-          slotName(subjects, fault.slot),
-          takesOf("element"),
-          `got ${gotKinds(e, fault.got, fault.viaElements === true)}, and the array holds ${orList(fault.held.map(pluralKind))}`
-        ),
-        e?.pos ?? pos
-      );
-    }
-    case "elements":
-      return new CodegenError(
-        wrongKind(name2, "", pluralKind(fault.expected), `the array holds ${kindsNoun(fault.held, " and ")}`),
-        subjects.receiver?.pos ?? pos
-      );
-    case "homogeneous": {
-      const e = operandAt(subjects, fault.slot);
-      return new CodegenError(
-        wrongKind(
-          name2,
-          "",
-          "operands of one kind",
-          `got ${gotKinds(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${gotKinds(e, fault.got, fault.viaElements === true)}`
-        ),
-        e?.pos ?? pos
-      );
-    }
-  }
-}
-function nounOfKinds(t) {
-  if (t.kinds === "any") return "a value";
-  if (t.kinds.size === 0) return "null";
-  return [...t.kinds].map((k) => nounFor(k, KIND_NOUN)).join(" or ");
-}
-function pluralNounOfKinds(t) {
-  if (t.kinds === "any") return "values";
-  if (t.kinds.size === 0) return "null";
-  return [...t.kinds].map((k) => ELEMENT_NOUN[k] ?? `${k}s`).join(" or ");
-}
-var spreadNotAnArray = (noun, pos) => new CodegenError(
-  wrongKind(
-    "'...'",
-    "argument 1",
-    "an array",
-    `got ${noun}`,
-    " To keep the value whole, drop the '...'. To spread its elements, give it an array."
-  ),
-  pos
-);
-var spreadNotADocument = (noun, pos) => new CodegenError(
-  wrongKind(
-    "'...'",
-    "argument 1",
-    "a document",
-    `got ${noun}`,
-    " Put the value under a field ('{ value: \u2026 }'), or spread a document."
-  ),
-  pos
-);
-var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
-  pos
-);
-function noReceiver(name2, pos) {
-  if (isStageName(name2)) {
-    const twin = valueTwinOf(name2);
-    return new CodegenError(
-      `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
-      pos
-    );
-  }
-  return new CodegenError(
-    name2.startsWith("$") ? `'.${name2}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name2}(\u2026)' with every operand inside the parentheses.` : `'.${name2}()' takes no receiver. '${name2}' is a global function: write '${name2}(\u2026)' with the value inside the parentheses.`,
-    pos
-  );
-}
-var afterTerminalStage = (already, pos) => new CodegenError(
-  `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
-  pos
-);
-var forbiddenInContainer = (name2, container, pos, instead) => new CodegenError(
-  `'${name2}' cannot stand inside '${container}' \u2014 the server refuses it in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
-  pos
-);
-var bannedNested = (spelled3, stage, container, instead, pos) => new CodegenError(
-  `'${spelled3}' makes a '${stage}' stage, and the server refuses that anywhere inside a '${container}' \u2014 however deeply it is nested. ${instead}`,
-  pos
-);
-var notAMongoType = (spelling, aliases, pos) => {
-  const hint2 = TYPEOF_HINTS[spelling];
-  const suggestion = hint2 !== void 0 ? ` Did you mean '${hint2}'?` : didYouMean(spelling, aliases, (s) => s);
-  return new CodegenError(
-    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one.${suggestion} For absence, write 'x === undefined'.`,
-    pos
-  );
-};
-var writeToOwnStream = (name2, pos) => new CodegenError(
-  `'${name2}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(\u2026)' ('${name2}.concat([{ \u2026 }]);'), keep some with '.filter(\u2026)', or run a stage on it ('${name2}.$match(\u2026);').`,
-  pos
-);
-var streamElementsNotDocuments = (noun, written2, pos) => new CodegenError(
-  `'${written2}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field \u2014 '<array>.map((v) => ({ value: v }))' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
-  pos
-);
-var notAStreamChain = (pos, noun, lead = "'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents", how = "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').") => new CodegenError(`${lead}${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. ${how}`, pos);
-var notAStreamLink = (name2, candidates, pos) => {
-  const spell4 = (s) => {
-    const runsOn = runsOnFor(s);
-    return runsOn === void 0 ? `.${s}()` : `${runsOn.sigil}.${sugarOf(s)}()`;
-  };
-  return new CodegenError(
-    `'.${name2}()' is not a method of the stream '$$'.${didYouMean(name2, candidates, spell4)} A stage is a link too: '$$.$match(\u2026)'.`,
-    pos
-  );
-};
-var SPELLING2 = {
-  propertyPath: `a field name ('"status"')`,
-  propertyIndex: "an index ('0')",
-  matchesObject: `a matcher object ('{ status: "paid" }')`,
-  matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
-  bareCallable: "a callable ('Boolean')",
-  omitted: "no argument at all"
-};
-var spellings = (forms) => {
-  const all = ["an arrow ('d => \u2026')", ...forms.map((f) => SPELLING2[f])];
-  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(", ")}, or ${all[all.length - 1]}`;
-};
-var ARG_NOUN = {
-  NumberLiteral: "a number",
-  StringLiteral: "a string",
-  BooleanLiteral: "a boolean",
-  NullLiteral: "null",
-  ObjectLiteral: "an object",
-  ArrayLiteral: "an array"
-};
-var notAnArrow = (name2, what, forms, got, slot) => {
-  if (got.type === "NullLiteral") return nullCallback(name2, slot, what, got.pos);
-  const index = got.value;
-  if (got.type === "NumberLiteral" && forms.includes("propertyIndex") && typeof index === "number") {
-    return notAWholeIndex(name2, slot, index, got.pos);
-  }
-  return new CodegenError(
-    `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
-    got.pos
-  );
-};
-var nullCallback = (name2, slot, takes, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, takes, "got null"), pos);
-var notAWholeIndex = (name2, slot, index, pos) => new CodegenError(
-  wrongKind(
-    `'.${name2}()'`,
-    `argument ${slot + 1}`,
-    "a whole-number index",
-    index < 0 ? "got a negative number" : "got a fraction",
-    ` In JavaScript, 'x[${index}]' reads no element of an array.`
-  ),
-  pos
-);
-var indexNotHeld = (name2, slot, found2, pos) => new CodegenError(wrongKind(`'.${name2}()'`, `argument ${slot + 1}`, "an index that each element holds", found2), pos);
-var emptyMatcherObject = (name2, pos) => new CodegenError(
-  `'.${name2}({ \u2026 })' matches a document by its fields, and '{}' names none. Write the field to match \u2014 '.${name2}({ status: "paid" })' \u2014 or an arrow \u2014 '.${name2}(d => d.status === "paid")'.`,
-  pos
-);
-var badMatchesPropertyPair = (name2, pos) => new CodegenError(
-  `'.${name2}([field, value])' matches one field against one value. It takes exactly two elements, and the first is a field-name string: '.${name2}(["status", "paid"])'. An arrow says the same thing: '.${name2}(d => d.status === "paid")'.`,
-  pos
-);
-var blockWhereValueExpected = (name2, pos) => new CodegenError(
-  `'.${name2}()' takes an arrow that returns a value \u2014 'd => d.x', or 'd => { \u2026; return d.x; }'. A body of pipeline stages belongs to '.aggregate(o => { \u2026 })'.`,
-  pos
-);
-var valueWhereBlockExpected = (name2, pos) => new CodegenError(
-  `'.${name2}()' takes an arrow whose body is a block of stages \u2014 'o => { $match(\u2026); $limit(1); }' \u2014 or a bracketed list of them.`,
-  pos
-);
-var optionalOnStream = (pos) => new CodegenError(
-  "'$$' is the stream of documents and is never null, so '?.' has nothing to guard. Write '$$.' instead.",
-  pos
-);
-var mapMustReturnDocument = (name2, noun, pos) => new CodegenError(
-  wrongKind(
-    `'.${name2}()'`,
-    "argument 1",
-    "an arrow that returns a document",
-    `the arrow returns ${noun}`,
-    " The arrow replaces each document. Return '({ value: \u2026 })' to keep the value under a field."
-  ),
-  pos
-);
-var notAFieldOfTheDocument = (name2, pos) => new CodegenError(
-  `'.${name2}(d => \u2026)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.`,
-  pos
-);
-var shadowsOuterBinding = (kind, name2, pos) => new CodegenError(
-  `\`${kind} ${name2}\` shadows the \`${name2}\` declared outside this block, and both would live in the same document. Pick a different name, or assign the outer one (\`${name2} = \u2026\`).`,
-  pos
-);
-var noCorrelationSlot = (stage, pos) => new CodegenError(
-  `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(\u2026)'), whose '$lookup' carries the value.`,
-  pos
-);
-var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
-  `'${name2}' is bound by an enclosing callback. A read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first \u2014 '$$ = $.<array>;' \u2014 then each one is a document the join reads: '$.<field> = $$$.<coll>.find(\u2026)'. Or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
-  pos
-);
-var documentsNeedNoStage = (written2, made, pos) => new CodegenError(
-  `'${written2}' writes the documents out as the program spells them. This value needs a '${made}' stage of its own to produce it, and the documents run where nothing may stand ahead of them. Append the other collection's documents themselves: '$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one. Or give the field a value the program already holds \u2014 a constant, or a 'jsmql.compile' parameter.`,
-  pos
-);
-var notInUpdateSpec = (name2, container, allowed, pos) => new CodegenError(
-  `'${name2}' cannot stand inside '${container}'. That body is an UPDATE, not a pipeline. The server runs only ${allowed.slice(0, -1).map((a) => `'${a}'`).join(
-    ", "
-  )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}'. Its documents are what the update receives.`,
-  pos
-);
-var crossDatabaseRead = (pos) => new CodegenError(
-  "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix \u2014 '$$$.<coll>' \u2014 and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
-  pos
-);
-var runtimeInQueryOperator = (op, pos) => new CodegenError(
-  `'${op}' compares against a constant in a query document, and this operand is read at run time. Write the test as an expression \u2014 '$match($.field \u2026)' \u2014 or give '${op}' a constant.`,
-  pos
-);
-var rootStreamInForeign = (pos) => new CodegenError(
-  "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter \u2014 '(o, _i, stream) => { stream.filter(\u2026); }' \u2014 or write the stage: '$match(\u2026)', '$sort(\u2026)'.",
-  pos
-);
-var streamAsValue = (pos) => new CodegenError(
-  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
-  pos
-);
-var facetMixed = (key, pos) => new CodegenError(
-  `'$ = { \u2026 }' with a '$$' chain is a '$facet', and every entry must be one: '${key}' is not a chain on '$$'. Make it one ('${key}: $$.filter(\u2026)'), or move it out of the object.`,
-  pos
-);
-var facetKey = (key, pos) => new CodegenError(
-  `'${key}' cannot name a '$facet' branch \u2014 the server takes a plain field name: not empty, no '.', no leading '$'.`,
-  pos
-);
-var unionNeedsArgument = (pos) => new CodegenError(
-  "Nothing to add to the stream: give a document ('$$.push({ \u2026 })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
-  pos
-);
-var mergeNeedsArgument = (name2, pos) => new CodegenError(
-  `Nothing to write into the collection: give the stream ('$$$.<coll>.${name2}($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ \u2026 });').`,
-  pos
-);
-var facetDuplicate = (key, pos) => new CodegenError(
-  `'${key}' names two '$facet' branches, and JavaScript would keep only the last. Give each branch its own name.`,
-  pos
-);
-var facetSpread = (pos) => new CodegenError(
-  "A '$facet' is written branch by branch; '...' cannot spread branches in. Name each one: '$ = { k: $$.filter(\u2026) }'.",
-  pos
-);
-var facetComputedKey = (pos) => new CodegenError("A '$facet' branch is named when the pipeline is written: a plain key, not a computed one.", pos);
-var noStageOnDatabase = (name2, pos) => {
-  const sugar = sugarOf(name2);
-  const runsOn = runsOnFor(name2);
-  return new CodegenError(
-    runsOn === void 0 ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the current collection, or '$$$$.${sugar}()' on the cluster.` : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`,
-    pos
-  );
-};
-var reduceWrapArity = (got, pos) => new CodegenError(
-  `'$$.reduce(reducer, init)' takes the reducer and its initial value \u2014 2 arguments, got ${got}.`,
-  pos
-);
-var reduceWrapCallback = (pos) => new CodegenError(
-  "'$$.reduce(\u2026)' takes a two-parameter arrow with an expression body: '(acc, d) => acc + d.total'.",
-  pos
-);
-var reduceWrapEntry = (pos) => new CodegenError(
-  "In '$$ = [{ \u2026 }]' every entry is a plain key with a '$$.reduce(\u2026)' \u2014 one fold per key; a spread or a computed key has no fold to name.",
-  pos
-);
-var reduceWrapShape = (acc, d, pos) => new CodegenError(
-  `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), '[${acc}, ${d}.<field>].max()' / '.min()' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ \u2026 })'.`,
-  pos
-);
-var reduceWrapObjectBody = (acc, pos) => new CodegenError(
-  `'$$ = [$$.reduce(\u2026)]' folds to one document, so the reducer returns a document: '(${acc}, d) => ({ ...${acc}, total: ${acc}.total + d.amount })'. For one value write '$$ = [{ total: $$.reduce(\u2026) }]'.`,
-  pos
-);
-var reduceWrapInit = (key, why, pos) => new CodegenError(
-  `'${key}' is uneven between the reducer and its init \u2014 ${why}. Name every accumulator in both.`,
-  pos
-);
-var reduceWrapSeed = (pos) => new CodegenError(
-  "The initial value of a stream fold is a constant \u2014 0, [], null \u2014 because MongoDB's accumulators start empty, and the seed folds in afterwards. A field cannot seed them.",
-  pos
-);
-var reduceWrapKeyedNeedsSpread = (acc, pos) => new CodegenError(
-  `A body that returns '{ [d.k]: d.v }' without '...${acc}' replaces the accumulator each step, so JavaScript keeps the LAST document only. To build one document keyed by a field write '({ ...${acc}, [d.k]: d.v })'.`,
-  pos
-);
-var reduceWrapKeyedInit = (pos) => new CodegenError("A fold keyed by a field \u2014 '({ ...acc, [d.k]: d.v })' \u2014 starts from '{}'.", pos);
-var reduceWrapMisplaced = (pos) => new CodegenError(
-  "'$$.reduce(\u2026)' folds the stream to one value, and a stream must stay documents: wrap it in one \u2014 '$$ = [{ total: $$.reduce((acc, d) => acc + d.total, 0) }]' \u2014 with nothing else in the list.",
-  pos
-);
-var notAnArrowCallback = (name2, pos) => new CodegenError(`'.${name2}((x[, i[, arr]]) => \u2026)' takes an arrow with an expression body.`, pos);
-var tooManyCallbackParams = (name2, got, pos) => new CodegenError(`'.${name2}()' callbacks take at most 3 parameters (element, index, array); got ${got}.`, pos);
-var objIterateeShape = (name2, pos) => new CodegenError(`'.${name2}((value[, key]) => \u2026)' takes a one- or two-parameter arrow with an expression body.`, pos);
-var unionSpreadSource = (pos) => new CodegenError(
-  `The stream takes another collection ('...$$$.<coll>', '...$$$.<coll>.filter(pred)') or documents the program spells out ('$$.push({ \u2026 })', '$$.push(...[{ \u2026 }, { \u2026 }])'). An array the DATA decides cannot be appended: '$documents' takes a written list, and the server refuses a field path there (measured: "an array is expected"). To make the stream FROM such an array, write '$$ = <array>;'.`,
-  pos
-);
-var unionSpreadOfOne = (pos) => new CodegenError(
-  "'.find(pred)' gives ONE document. JavaScript would not spread this. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
-  pos
-);
-var unionNeedsSpread = (pos) => new CodegenError(
-  "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it \u2014 '$$.push(...$$$.<coll>.filter(pred))' \u2014 to push every match, or write '.find(pred)' for the first one.",
-  pos
-);
-var unionArg = (verb, slot, noun, pos) => new CodegenError(
-  wrongKind(
-    `'$$.${verb}()'`,
-    `argument ${slot + 1}`,
-    "a document",
-    `got ${noun}`,
-    " Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)')."
-  ),
-  pos
-);
-var outNeedsStream = (pos) => new CodegenError(
-  "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('\u2026 = $$.filter(\u2026)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
-  pos
-);
-var mergeNotADocument = (noun, pos) => new CodegenError(
-  wrongKind(
-    "'$$$.<coll>.push()'",
-    "argument 1",
-    "a document",
-    `got ${noun}`,
-    " The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: \u2026 });')."
-  ),
-  pos
-);
-var writeToCollectionOp = (op, pos) => new CodegenError(
-  `A collection takes '=' or '+=', not '${op}'. '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'). '$$$.<coll> += $$' ADDS to it: the server updates the documents whose '_id' matches (a '$merge').`,
-  pos
-);
-var mergeOneSource = (name2, count, pos) => new CodegenError(
-  `'$$$.<coll>.${name2}()' writes ONE source into the collection, and this names ${count}. Write them one statement at a time, or join them first ('$$$.<coll>.${name2}([...a, ...b]);').`,
-  pos
-);
-var outNeedsCollection = (pos) => new CodegenError(
-  "'$$$$.<db>' names a database; write the collection too: '$$$$.<db>.<coll> = $$' \u2014 or '$$$.<coll> = $$' for the current database.",
-  pos
-);
-var outTooManySegments = (pos) => new CodegenError(
-  "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
-  pos
-);
-function holes(value) {
-  const hole = (v) => Array.isArray(v) ? v.map(hole) : isPlainObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hole(x)])) : "\u2026";
-  return stringify2(hole(value)).split('"\u2026"').join("\u2026");
-}
-function runTimeValueAsMql(value, where, pos, lead = "A run-time value is a value, never MQL.") {
-  if (where.at === "value" && where.written !== void 0) {
-    const { stage, path } = where.written;
-    const key = path[path.length - 1];
-    const slot = key === void 0 ? "its body" : `'${path.join(".")}'`;
-    if (typeof value === "string") {
-      const inSource2 = key === void 0 || key === null ? `${stage}(${stringify2(value)})` : `${key}: ${stringify2(value)}`;
-      return new CodegenError(
-        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify2(value)} becomes part of the MQL. Write it in the source: '${inSource2}'.`,
-        pos
-      );
-    }
-    const inSource = key === void 0 || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
-    return new CodegenError(
-      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
-      pos
-    );
-  }
-  if (where.at === "group" || where.at === "window") {
-    const kind = where.at === "group" ? "an accumulator" : "a window function";
-    const keys = isPlainObject(value) ? Object.keys(value) : [];
-    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(\u2026)` : holes(value);
-    return new CodegenError(
-      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
-      pos
-    );
-  }
-  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
-  if (where.at === "statement" || where.at === "stream") {
-    return new CodegenError(
-      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
-      pos
-    );
-  }
-  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
-}
-var runTimeValueAsQuery = (value, pos) => new CodegenError(
-  typeof value === "string" ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values." : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
-  pos
-);
-var LITERAL_NOUNS = {
-  NumberLiteral: "a number",
-  BooleanLiteral: "a boolean",
-  NullLiteral: "null",
-  ArrayLiteral: "an array",
-  ObjectLiteral: "a document",
-  BigIntLiteral: "a bigint",
-  RegexLiteral: "a regular expression",
-  ObjectIdLiteral: "an ObjectId"
-};
-var collectionNameOfWrongKind = (noun, pos) => new CodegenError(wrongKind("'$$$[\u2026]'", "key", "a string", `got ${noun}`), pos);
-var nounOfValue = (v) => {
-  if (v === null) return "null";
-  if (isRegExp(v)) return "a regular expression";
-  const k = kindOfValue(v);
-  return k === null ? "a value of another kind" : kindNoun(k);
-};
-function collectionNameFrom(index) {
-  if (index.type === "Injected") {
-    return typeof index.value === "string" ? new CodegenError(
-      `The run-time value ${stringify2(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
-      index.pos
-    ) : collectionNameOfWrongKind(nounOfValue(index.value), index.pos);
-  }
-  const noun = LITERAL_NOUNS[index.type];
-  if (noun !== void 0) return collectionNameOfWrongKind(noun, index.pos);
-  return collectionNameMustBeConstant(index.pos);
-}
-var badOutTarget = (name2, pos) => new CodegenError(
-  `'${name2}' cannot name a collection to write: the server refuses an empty name and one that starts with '$'.`,
-  pos
-);
-var collectionNameMustBeConstant = (pos) => new CodegenError(
-  `The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.`,
-  pos
-);
-var emptyCollectionName = (pos) => new CodegenError(`'$$$[""]' names no collection \u2014 the server refuses an empty namespace.`, pos);
-var collectionMissing = (pos) => new CodegenError("'$$$' is the database; name the collection to read: '$$$.<coll>.find(\u2026)'.", pos);
-var notAJoinChain = (pos) => new CodegenError(
-  "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { \u2026 })', a stream method or a stage link.",
-  pos
-);
-var diagnosticIsNotALink = (name2, pos) => {
-  const runsOn = runsOnFor(name2);
-  const sugar = sugarOf(name2);
-  return new CodegenError(
-    `'${name2}' reports on the deployment, so it is a source stage and not a chain link.${runsOn === void 0 ? "" : ` Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`}`,
-    pos
-  );
-};
-var notAStageOnRef = (name2, sigil, candidates, pos) => {
-  const where = sigil === "$$$$" ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it" : "'$$$' is the database, and no stage runs on it alone";
-  const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()').";
-  const read3 = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
-  return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read3}`, pos);
-};
-var noDestination = (pos) => new CodegenError(
-  "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.\u2026'), bind it ('let x = $$$.<coll>.\u2026'), or make it the stream ('$$ = $$$.<coll>.\u2026').",
-  pos
-);
-var rootNeedsOneDocument = (root2, pos) => new CodegenError(
-  `The document can only become ONE document, and this chain gives an array. Write '${root2} = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '${root2}.<field> = $$$.<coll>.\u2026'.`,
-  pos
-);
-var oneDocumentInStream = (pos) => new CodegenError(
-  "'.find(\u2026)' gives ONE document, and the stream is many. Write '$$ = $$$.<coll>.filter(pred).take(1)' for a stream of the first match, or '$ = $$$.<coll>.find(pred)' to make each document the one it finds.",
-  pos
-);
-var valueInStream = (name2, pos) => isKnownName(name2) ? new CodegenError(
-  `'.${name2}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.\u2026.${name2}()'.`,
-  pos
-) : refusalFor({ kind: "unknown", name: name2 }, `.${name2}`, "'$$$'", "stream", pos, streamReceiverNames());
-var outerWriteInForeign = (pos) => new CodegenError(
-  "The outer document cannot be written from inside a body over another collection \u2014 only read. Write the body's own document through its callback parameter ('o.x = \u2026', 'delete o.x', 'o = { \u2026 }'), or as a stage ('$set({ x: \u2026 })'). Write the outer field after the join.",
-  pos
-);
-var constReassigned = (name2, pos) => new CodegenError(
-  `'${name2}' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.`,
-  pos
-);
-var reducerShape = (name2, pos) => new CodegenError(
-  `'.${name2}((acc, x[, i]) => \u2026, seed)' takes a two- or three-parameter arrow with an expression body.`,
-  pos
-);
-var elementsShape = (name2, count, pos) => new CodegenError(
-  `'.${name2}()' takes an arrow with one parameter per zipped array \u2014 ${count} here \u2014 and an expression body.`,
-  pos
-);
-var mutatorNeedsField = (name2, pos) => new CodegenError(
-  `'.${name2}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name2}(\u2026);'. For a value, use its immutable form.`,
-  pos
-);
-var QueryFormError = class extends CodegenError {
-};
-var needsFieldPath = (name2, pos) => new QueryFormError(
-  `'${name2}(field, \u2026)' tests a field: its first argument is a field path ('$.a'), as in '${name2}($.a, \u2026)' or the document form '{ a: ${name2}(\u2026) }'.`,
-  pos
-);
-var needsLiteral = (name2, pos) => new QueryFormError(
-  `'${name2}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(\u2026)').`,
-  pos
-);
-var elementNeedsQuery = (name2, pos) => new CodegenError(
-  `'${name2}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
-  pos
-);
-var needsPrecedingSort = (name2, pos) => new CodegenError(
-  `'.${name2}(predicate)' keeps the ${name2 === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name2}(\u2026)': '$$.toSorted({ t: 1 }).${name2}(o => o.ok)' \u2014 any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ \u2026 })').`,
-  pos
-);
-var readInUpdateDocument = (ref, pos) => new CodegenError(
-  `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
-  pos
-);
-var updateCopyNeedsPipeline = (from, to, pos) => new CodegenError(
-  from === "" ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.` : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
-  pos
-);
-var updateConflict = (path, held, op, pos) => new CodegenError(
-  `'${path}' is written twice in one update ('${held}' and '${op}'). The server refuses this as a conflict. Write each field once.`,
-  pos
-);
-var updateHasNoDocumentForm = (what, pos) => new CodegenError(
-  `${what} has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.`,
-  pos
-);
-var updateNeedsNumber = (op, what, pos) => new CodegenError(`'${op}' in a document-form update takes ${what} as a compile-time constant.`, pos);
-var updateKeyNotOperator = (key, pos) => new CodegenError(
-  `An update document's keys are update operators ('$set', '$inc', \u2026)${key === null ? "" : `, and '${key}' is not one`}. To set a field, write '$.${key ?? "field"} = \u2026' or '{ $set: { ${key ?? "field"}: \u2026 } }'.`,
-  pos
-);
-var updateOperatorTwice = (op, pos) => new CodegenError(
-  `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
-  pos
-);
-var updateTargetNeedsField = (pos) => new CodegenError(
-  "A document-form update writes a field of the document: '$.a = \u2026', '$.a.b += 1', 'delete $.a'.",
-  pos
-);
-var notAnUpdate = (pos) => new CodegenError(
-  "An update document is made of writes \u2014 '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' \u2014 or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
-  pos
-);
-var unappliedReference = (ns, name2, pos) => new CodegenError(
-  `'${ns}.${name2}' is a function, not a value. Call it ('${ns}.${name2}(\u2026)'), or hand it to a callback slot ('.map(${ns}.${name2})').`,
-  pos
-);
-var nearInMatch = (name2, pos) => new CodegenError(
-  `'${name2}' is not allowed inside an aggregation '$match' \u2014 the server refuses it there. Use the '$geoNear' stage as the first stage instead ('$geoNear({ near: \u2026, distanceField: "d", spherical: true })'), or run the proximity query with 'find()'.`,
-  pos
-);
-var arrayReduceShape = (pos) => new CodegenError(
-  "'$$.reduce((acc, d) => \u2026, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total \u2014 a sum, a count, a maximum \u2014 is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
-  pos
-);
-
 // src/compiler/emit/env.ts
 var isForeign = (b) => pipelineOverOf(b.stage) === "foreign";
 function injectedPlacement(site) {
@@ -23611,6 +23672,15 @@ var Env = class _Env {
   proving(path) {
     return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
   }
+  /**
+   * The same Env, with the value of one JavaScript name proven to be there. The second
+   * branch of a `?.` test on a callback parameter or a `let` name runs only when the
+   * test passed, as `proving` does for a field path.
+   */
+  provingName(js) {
+    const b = this.scope.lookup(js, 0);
+    return new _Env(this.scope.declare(js, { ...b, type: present(b.type) }), this.site, this.chain, this.documents);
+  }
   /** The same Env, after a write of a value proven `type` at `path` on this level. */
   written(path, type2) {
     return this.withDocument(written(this.documents[this.level], path, type2));
@@ -23755,6 +23825,7 @@ function statedPresence(node, env) {
     case "TemplateLiteral":
     case "BooleanLiteral":
     case "ObjectIdLiteral":
+    case "RegexLiteral":
     case "ArrayLiteral":
       return true;
     case "ObjectLiteral":
@@ -23765,7 +23836,7 @@ function statedPresence(node, env) {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
-      const wrapped = !spineHasOptional(node) && (emptyValueOf(name2, family) !== null || readsNullReceiverOf(name2));
+      const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && argsThere(name2, node.args, env);
     }
@@ -24139,8 +24210,8 @@ function typeOfEmitted(value, doc) {
     };
     const result = evaluate2(returnsOf(op), site);
     const body = (a) => isPlainObject(a) && operatorKeyOf(a) === null;
-    const isPresent3 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
-    return isPresent3 ? present(result) : maybeAbsent(result);
+    const isPresent2 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
+    return isPresent2 ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
     const props = /* @__PURE__ */ new Map();
@@ -24364,8 +24435,15 @@ function documentBody(link, env) {
 }
 function lookupOf(node, env, S, over = "$lookup") {
   let head = node;
-  while ((head.type === "MemberAccess" || head.type === "IndexAccess") && head.object.type !== "DatabaseRef") {
-    head = head.object;
+  for (; ; ) {
+    while ((head.type === "MemberAccess" || head.type === "IndexAccess") && head.object.type !== "DatabaseRef") {
+      head = head.object;
+    }
+    let run = head;
+    while (run.type === "MethodCall") run = run.object;
+    const read3 = (run.type === "MemberAccess" || run.type === "IndexAccess") && run.object.type !== "DatabaseRef";
+    if (run === head || !read3 || chainBase(run).type !== "DatabaseRef") break;
+    head = run;
   }
   const { from, links, pos } = foreignChain(head);
   const capture = over === "$lookup" ? new Capture(env.level) : null;
@@ -24780,11 +24858,10 @@ var FALSE = mint(false);
 var constantOf2 = (t) => t === TRUE ? true : t === FALSE ? false : null;
 var boolTruth = (doc) => mint(doc);
 var mongoTruthy = (value) => mint(value);
-function truthOf2(value, type2, asValue2 = false) {
+function truthOf2(value, type2) {
   if (isNothing(type2)) return FALSE;
   const kinds = type2.kinds;
-  const own = kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number");
-  if (own && (!asValue2 || [...kinds].every((k) => k === "bool"))) return mint(value);
+  if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
   const tests = [];
   if (type2.absent) tests.push(isNotNullish(value));
   if (mayBe(type2, "bool")) tests.push({ $ne: [value, false] });
@@ -25096,7 +25173,7 @@ function rawQuery(node, env) {
   return out;
 }
 var NEAR = /* @__PURE__ */ new Set(["$near", "$nearSphere"]);
-var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
+var LOGICAL2 = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
 function operatorEntries(e) {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
     return [{ op: e.name, value: e.args[0], pos: e.pos }];
@@ -25147,7 +25224,7 @@ function rawDocument(node, env) {
       continue;
     }
     if (NEAR.has(key) && env.site.root !== "filter") throw nearInMatch(key, e.pos);
-    if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
+    if (LOGICAL2.has(key) && e.value.type === "ArrayLiteral") {
       out[key] = e.value.elements.map((el) => {
         if (el.type === "SpreadElement") throw spreadInOperatorBody(el.pos);
         return lowerFilter(el, env);
@@ -25290,6 +25367,7 @@ function extractHasChain(node, env) {
     path = p;
     values.push(c.value);
   }
+  if (values.every((v) => v === null)) return null;
   return path === null ? null : { path, values };
 }
 function pathOfIn(e, env) {
@@ -25625,7 +25703,7 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
     kind: (e) => kindOf4(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read3.truth(e, argEnv),
-    boolean: (e) => read3.boolean(e, argEnv),
+    elementTruth: (ref) => truthOf2(ref, elementOfRecv()),
     iteratee: (cb) => callback(cb, argEnv, read3.value, () => notArrow(cb, "a key"), recvType),
     predicate: (cb) => callback(cb, argEnv, read3.truth, () => notArrow(cb, "a predicate"), recvType),
     callback: (cb, mode) => {
@@ -25755,6 +25833,11 @@ function filterInputs(name2, recv, args, keys, env, node, read3) {
       const q = read3.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name2, cb.pos);
       return q;
+    },
+    orMissing: (path, test) => {
+      const optionalCall = node.optional === true;
+      if (optionalCall || recv === null || isPresent(recv, env.at({ at: "value" }))) return queryOwnValue(path, test);
+      return chainHasOptional(recv) ? null : queryOrMissing(path, test);
     }
   };
 }
@@ -25905,7 +25988,7 @@ function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 =
 
 // src/compiler/emit/lower.ts
 var NAMESPACES2 = namespaceNames();
-var READ = { value: lowerValue, truth: lowerTruth, boolean: lowerBoolean };
+var READ = { value: lowerValue, truth: lowerTruth };
 var positionIn = (env) => positionOf(env.site.where) ?? "value";
 var NOT_EXPR = /* @__PURE__ */ new Set([
   "SpreadElement",
@@ -25927,8 +26010,9 @@ function lowerValue(node, env) {
   const stopped = stoppedChain(node);
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
-    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
-    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    const named = base.type === "Ident" && env.scope.has(base.name);
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : named ? env.provingName(base.name) : env;
+    if ((base.type === "FieldRef" || named) && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
     const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond3(gone, null, lowerValue(withoutOptional(node), proved));
   }
@@ -26001,13 +26085,6 @@ function lowerValue(node, env) {
       return exprBlock(node, env, lowerValue);
   }
 }
-function lowerBoolean(node, env) {
-  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
-  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
-    return lowerTruth(node, env);
-  }
-  return truthOf2(lowerValue(nullPassing(node), env), typeOf(node, env), true);
-}
 function lowerTruth(node, env) {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
     const operands = chainOf2(node, node.op).map((e) => lowerTruth(e, childEnv(env, node, "left")));
@@ -26028,8 +26105,14 @@ function lowerTruth(node, env) {
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
-  const parts = [];
   const inner = childEnv(env, node, "exprs");
+  if (node.exprs.length === 1 && node.quasis.every((q) => q === "")) {
+    const e = node.exprs[0];
+    const lowered = lowerValue(e, inner);
+    const safe = chainHasOptional(e) ? ifNull2(lowered, "") : lowered;
+    return kindOf4(e, inner) === "string" && (chainHasOptional(e) || isPresent(e, inner)) ? safe : { $toString: safe };
+  }
+  const parts = [];
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
@@ -26224,7 +26307,11 @@ function identifier(node, env) {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  if (isGlobalName(node.name) || NAMESPACES2.has(node.name)) throw callableAsValue(node.name, node.pos);
+  if (isGlobalName(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+    throw callableAsValue(node.name, node.pos);
+  }
   throw new UnknownIdentifierError(node.name, node.pos);
 }
 function locate(node, env) {
@@ -26410,6 +26497,7 @@ function receiverOf(recv, env) {
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
+var METHOD_NAMES = everyMethodName();
 function methodCall(node, env) {
   return dispatchOn(node, node.name, node.object, node.args, env);
 }
@@ -26453,7 +26541,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
     );
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
-    const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
+    const empty = emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
     const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
     const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);
@@ -26478,7 +26566,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
     const on = familiesFor(n2);
     return on !== void 0 && on !== "any" && on.includes(receiver.name) && lowersOn(n2, receiver.name);
-  }) : JS_NAMES;
+  }) : METHOD_NAMES;
   if (sel.kind === "wrongKind") operandsFirst(exprArgs, argEnv);
   throw refusalFor(sel, spelled3, container, position, node.pos, near, format, {
     receiver: recvNode,
@@ -26510,14 +26598,14 @@ function callExpression(node, env) {
 }
 function newExpression(node, env) {
   const { callee } = node;
-  if (callee.type !== "Ident") throw unknownClass(null, [], node.pos);
+  if (callee.type !== "Ident") throw noNewKeyword(null, node.pos);
   const { name: name2 } = callee;
-  if (env.scope.has(name2) && env.lookup(name2, callee.pos).ref.kind === "function")
-    throw newOnFunction(name2, node.pos);
-  if (env.scope.has(name2) || !isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
-  if (newKeywordOf(name2) === "forbidden" && (positionsOf(name2)?.length ?? 0) > 0) {
-    throw newOnFunction(name2, node.pos);
+  if (env.scope.has(name2)) {
+    if (env.lookup(name2, callee.pos).ref.kind === "function") throw noNewKeyword(name2, node.pos);
+    throw unknownClass(name2, constructibleNames(), node.pos);
   }
+  if (!isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
+  if ((positionsOf(name2)?.length ?? 0) > 0) throw noNewKeyword(name2, node.pos);
   return dispatchBare(node, name2, node.args, env);
 }
 function dispatchBare(node, name2, args, env) {
@@ -26525,14 +26613,12 @@ function dispatchBare(node, name2, args, env) {
   const exprArgs = args.filter(isExpr2);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
-  const isNew = node.type === "NewExpression";
   if (sel.kind === "rule") {
-    const called = isNew ? `new ${name2}()` : `${name2}()`;
     const argEnv = childEnv(env, node, "args");
-    checkSlots(called, sel.rule.args, exprArgs, true, void 0, env.site.settling, slotProof(argEnv));
+    checkSlots(`${name2}()`, sel.rule.args, exprArgs, true, void 0, env.site.settling, slotProof(argEnv));
     return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
   }
-  const spelled3 = isNew ? `'new ${name2}()'` : name2;
+  const spelled3 = node.type === "NewExpression" ? `'new ${name2}()'` : name2;
   throw refusalFor(sel, spelled3, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda(lambda, args, env, pos, label, fnName) {
@@ -26678,9 +26764,19 @@ function chainOf2(node, op) {
   walk2(node);
   return out;
 }
+function booleanOf(truth2, type2) {
+  if (typeof truth2 === "boolean") return truth2;
+  if (typeof truth2 === "number") return truth2 !== 0;
+  if (type2.kinds !== "any" && !type2.absent && [...type2.kinds].every((k) => k === "bool")) return truth2;
+  const keys = isPlainObject(truth2) ? Object.keys(truth2) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth2;
+  return { $cond: [truth2, true, false] };
+}
 function unary2(node, env) {
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a unary '${node.op}'`);
@@ -27862,11 +27958,11 @@ function unknownCall(sel, node, env) {
       const members = everyName().filter((n2) => familiesOf(n2)?.includes(ns) === true && lowersOn(n2, ns));
       return refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
     }
-    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES2);
+    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, METHOD_NAMES2);
   }
   return refusalFor(sel, sel.name, "", "statement", node.pos, []);
 }
-var JS_NAMES2 = everyName().filter((n2) => !n2.startsWith("$"));
+var METHOD_NAMES2 = everyMethodName();
 function stageStatement(node, env, first) {
   const base = chainBase(node);
   if (node.type === "MethodCall") {
@@ -28019,7 +28115,7 @@ function lowerUpdate(program, env) {
               claimed.set(path, "$rename");
               break;
             }
-            if (v.type === "NewExpression" && v.callee.type === "Ident" && v.callee.name === "Date" && v.args.length === 0) {
+            if (isNow(v, valueEnv)) {
               put("$currentDate", path, true, op.pos);
               break;
             }
@@ -28129,6 +28225,9 @@ function minMax(v, path) {
 function number(v, op, pos) {
   if (typeof v !== "number") throw updateNeedsNumber(op, "a number", pos);
   return v;
+}
+function isNow(v, env) {
+  return v.type === "CallExpression" && v.callee.type === "Ident" && v.args.length === 0 && canonicalBsonName(v.callee.name) === "Date" && !env.scope.has(v.callee.name);
 }
 
 // src/index.ts
@@ -28380,6 +28479,7 @@ function expressionOf(program) {
 }
 function lowerMode(mode, api, parsed, values) {
   const resolved = mode === "auto" ? shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter" : mode;
+  refuseNew(parsed);
   rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
   const injected = inject(parsed, values);
   switch (resolved) {

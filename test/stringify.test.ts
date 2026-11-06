@@ -64,8 +64,8 @@ describe("stringify: the BSON classes", () => {
     rebuilds(new mongodb.Decimal128("1.50"), 'new Decimal128("1.50")');
   });
 
-  it("writes a Long through fromString, which a reader can check", () => {
-    rebuilds(mongodb.Long.fromString("9007199254740993"), 'Long.fromString("9007199254740993")');
+  it("writes a Long as new Long of its decimal string, so a value past 2^31 does not wrap", () => {
+    rebuilds(mongodb.Long.fromString("9007199254740993"), 'new Long("9007199254740993")');
   });
 
   it("writes an Int32", () => {
@@ -341,9 +341,7 @@ describe("stringify: what it refuses", () => {
 
 describe("stringify: the compiler's own documents", () => {
   it("prints a filter holding every literal kind the language folds", () => {
-    const filter = jsmql(
-      '$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")',
-    );
+    const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > Date("2026-01-01")');
     expect(stringify(filter)).toBe(
       [
         "{",

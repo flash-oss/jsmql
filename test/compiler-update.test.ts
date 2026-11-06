@@ -54,7 +54,7 @@ describe("compiler/emit/update — writes become their operators", () => {
       }),
     ).toEqual({ $inc: { n: 2, m: -3, r: 1, s: -1 }, $mul: { p: 2, q: 0.25 } });
     expect(applied("$.a = [1, 2]", (d) => (d.a = [1, 2]))).toEqual({ $set: { a: [1, 2] } });
-    expect(update('$.d = new Date("2024-01-01")')).toEqual({ $set: { d: new Date("2024-01-01") } });
+    expect(update('$.d = Date("2024-01-01")')).toEqual({ $set: { d: new Date("2024-01-01") } });
   });
 
   it("pushes, pops, bounds, dates and renames", () => {
@@ -79,7 +79,8 @@ describe("compiler/emit/update — writes become their operators", () => {
         delete d.c;
       }),
     ).toEqual({ $rename: { c: "c2" } });
-    expect(update("$.t = new Date()")).toEqual({ $currentDate: { t: true } });
+    expect(update("$.t = Date()")).toEqual({ $currentDate: { t: true } });
+    expect(update("$.t = ISODate()")).toEqual({ $currentDate: { t: true } });
   });
 
   it("takes the update operators themselves, called or as a raw document", () => {
@@ -138,9 +139,9 @@ describe("compiler/emit/update — writes become their operators", () => {
   });
 
   it("refuses a server-computed value with what to write instead", () => {
-    // `new Date()` is `$currentDate` only as the whole write; anywhere else the row says so.
-    for (const src of ["$.a = { t: new Date() }", "$.tags.push(new Date())", "$.t = new Date($.x)"])
-      expect(() => update(src)).toThrow(/'\$\.<field> = new Date\(\)' is '\$currentDate'.*pipeline form/s);
+    // `Date()` is `$currentDate` only as the whole write; anywhere else the row says so.
+    for (const src of ["$.a = { t: Date() }", "$.tags.push(Date())", "$.t = Date($.x)"])
+      expect(() => update(src)).toThrow(/'\$\.<field> = Date\(\)' is '\$currentDate'.*pipeline form/s);
     expect(() => update("$.id = ObjectId()")).toThrow(/Pass an id from your code.*pipeline form/s);
     expect(() => update("$.t = Date.now()")).toThrow(/'\$currentDate'.*for milliseconds, use the pipeline form/s);
     // A name whose row has no update-document cell gets the position's own sentence.

@@ -196,12 +196,13 @@ field `qty.$gt` equal to 5. The value road reads a `$`-named segment through
 `$getField`, with the name as a literal, because the server refuses it in a
 field path (measured).
 
-`bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
-`$.items.filter(Boolean)`, `$.items.map(ObjectId)` — and
-it means the arrow that applies the global to the element, `x => String(x)`.
+`bareCallable` is a callable handed over unapplied — `$.items.filter(Number.isInteger)` — and
+it means the arrow that applies it to the element, `x => Number.isInteger(x)`. A type
+name rewrites the same way (`.map(Long)` is `x => Long(x)`), and its row refuses the
+call, because the element is a value of the document.
 The row's `iterateeSlots` decides which slots take it. The rewrite only tells a
-callable global apart from a binding, and a name that needs `new` (`Date`) is
-not callable bare. So both stay as written, and the emitter refuses them.
+callable global apart from a binding. A binding stays as written. A global that
+lists no position (`Set`) is rewritten too, and its row refuses the call.
 
 The synthesised parameter cannot capture: it steps aside from any name the values
 spliced into the body mention. See `freshParam`.

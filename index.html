@@ -917,7 +917,7 @@
               <pre
                 class="src"
               ><code>[$.building &amp;&amp; $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
-  .filter(Boolean)
+  .compact()
   .join(" ")</code></pre>
             </div>
             <details class="fold" open>

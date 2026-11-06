@@ -514,6 +514,9 @@ function extractHasChain(node: Expr, env: Env): { path: string; values: unknown[
     path = p;
     values.push(c.value);
   }
+  // A list of null needles alone matches a missing field, as `{ tags: null }` does. Under
+  // HR5 a dot reads that field as [], so such a chain takes the clauses of its leaves (the `has` row).
+  if (values.every((v) => v === null)) return null;
   return path === null ? null : { path, values };
 }
 

@@ -20,7 +20,7 @@
 import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
-import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { bsonTagOf, isDate, isRegExp, queryAmong, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import { cond } from "./mql.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
@@ -191,7 +191,7 @@ function membershipQuery(input: FilterIn): QueryDoc | null {
   if (path === null) return null;
   const c = input.constant(r);
   if (c === null || !Array.isArray(c.value)) return null;
-  return queryOwnValue(path, { $in: c.value });
+  return queryAmong(path, c.value);
 }
 
 /** `typeof x === "s"` in either order: the path of the operand and the BSON alias, or null. */
@@ -1046,10 +1046,10 @@ export const PRODUCTIONS = {
   }),
 
   constructorCall: production({
-    doc: "`new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. What each constructor means is in names.ts.",
+    doc: "`new X(…)`: parsed, then refused (HR8). JSMQL has no `new` keyword; the refusal names `X(…)`.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`. names.ts says which constructor it is.
+    // One node for every `new X(…)`, so the refusal can name the callee.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",

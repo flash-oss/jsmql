@@ -894,6 +894,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // A method on a value receiver, as a statement: the mutators take this position.
     expect(refusal("$.tags.popp();")).toBe("Unknown method '.popp()' at position 6. Did you mean '.pop()'?");
     expect(refusal("$.tags.pushh(1);")).toBe("Unknown method '.pushh()' at position 6. Did you mean '.push()'?");
+    expect(refusal("$.tags.Numbr();")).toBe("Unknown method '.Numbr()' at position 6.");
     // A static on a namespace, and a global.
     expect(refusal("Date.noww();")).toBe("Unknown method 'Date.noww()' at position 4. Did you mean 'Date.now'?");
     // A refused static is never a suggestion: `Object.assign` parses only so that it can refuse.
@@ -901,8 +902,12 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(refusal("assertt($.a > 1);")).toBe(
       "Unknown function 'assertt(...)'. Did you mean 'assert(...)'? Declare it first with `const assertt = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$assertt(...)`; for a method, `receiver.assertt(...)`.",
     );
+    expect(refusal("$.n = Longg(5);")).toBe(
+      "Unknown function 'Longg(...)'. Did you mean 'Long(...)'? Declare it first with `const Longg = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Longg(...)`; for a method, `receiver.Longg(...)`.",
+    );
+    // A refused global is never a suggestion: `Number` parses only so that it can refuse.
     expect(refusal("$.n = Numberr($.s);")).toBe(
-      "Unknown function 'Numberr(...)'. Did you mean 'Number(...)'? Declare it first with `const Numberr = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Numberr(...)`; for a method, `receiver.Numberr(...)`.",
+      "Unknown function 'Numberr(...)'. Declare it first with `const Numberr = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Numberr(...)`; for a method, `receiver.Numberr(...)`.",
     );
     // A `$`-named stage is your own MQL, so an unknown one passes through, with no
     // suggestion. DELIBERATELY invalid: mongod refuses it, because `$matc` names no stage.
