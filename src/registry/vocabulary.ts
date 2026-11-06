@@ -419,6 +419,8 @@ export const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]" &
 export const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]" && readsSlot(regexSource, v);
 /** A Uint8Array. A Node Buffer is one. */
 export const isBytes = (v: unknown): v is Uint8Array => typedArrayName.call(v) === "Uint8Array";
+const mapSize = slotReader(Map.prototype, "size");
+export const isMap = (v: unknown): v is Map<unknown, unknown> => kindOf(v) === "[object Map]" && readsSlot(mapSize, v);
 /**
  * A plain object: one that holds nothing but its own properties. It is not an array,
  * and its prototype is null or the root `Object.prototype` of WHICHEVER realm made it

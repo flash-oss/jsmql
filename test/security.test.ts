@@ -3,6 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
+import { BSON } from "bson";
+import mongoose from "mongoose";
 
 const OWN = (v: unknown) => ({ $eq: v });
 
@@ -373,5 +375,106 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
       `The run-time value "$orders" cannot name a collection: the server refuses a name that starts with '$'.`,
     );
     expect(() => join({ c: 5 })).toThrow("'$$$[…]' key takes a string, but got a number.");
+  });
+});
+
+// The driver converts some values before it sends them: it calls `toBSON()`, and it
+// sends a Map as a document of its entries. JSMQL makes the same conversions, so the
+// compiled document and its printed text hold the value that the server gets.
+// See docs/specs/function-form-params.md § The value the driver sends.
+describe("a passed-in value is the value the driver sends", () => {
+  /** The value an update document stores for `v`. The update document keeps it as written. */
+  const sent = (v: unknown): unknown => (jsmql.update`$.x = ${v}` as { $set: { x: unknown } }).$set.x;
+  /** The bytes the driver sends for `{ x: v }`. */
+  const wire = (v: unknown): string => Buffer.from(BSON.serialize({ x: v })).toString("base64");
+
+  class Money {
+    cents = 500;
+    toBSON() {
+      return { amount: 5 };
+    }
+  }
+  class Point {
+    x = 1;
+    y = 2;
+  }
+
+  it("calls toBSON(), as the driver does", () => {
+    expect(sent(new Money())).toEqual({ amount: 5 });
+    expect(sent({ price: new Money() })).toEqual({ price: { amount: 5 } });
+    expect(sent([new Money()])).toEqual([{ amount: 5 }]);
+  });
+
+  it("reads a Map as a document of its entries", () => {
+    expect(sent(new Map([["a", 1]]))).toEqual({ a: 1 });
+    expect(sent({ m: new Map([["b", new Map([["c", 2]])]]) })).toEqual({ m: { b: { c: 2 } } });
+  });
+
+  it("reads any other object as its own enumerable fields", () => {
+    expect(sent(new Point())).toEqual({ x: 1, y: 2 });
+  });
+
+  it("gives the bytes that the driver sends for the original value", () => {
+    for (const v of [new Money(), new Map([["a", [1, new Money()]]]), new Point(), { deep: new Map([["k", "v"]]) }]) {
+      expect(wire(sent(v))).toBe(wire(v));
+    }
+  });
+
+  it("converts a mongoose document, subdocument, array and Buffer", () => {
+    const M = mongoose.model(
+      "SecurityDriverValue",
+      new mongoose.Schema({ tags: [String], sub: new mongoose.Schema({ a: Number }), buf: Buffer }),
+    );
+    const doc = new M({ tags: ["a", "b"], sub: { a: 1 }, buf: Buffer.from([1, 2]) });
+    for (const v of [doc, doc.tags, doc.sub, doc.buf]) expect(wire(sent(v))).toBe(wire(v));
+    expect(sent(doc.tags)).toEqual(["a", "b"]);
+  });
+
+  it("puts a Map key that starts with $ through HR1, as any $-key document", () => {
+    expect(jsmql`$.x === ${new Map([["$gt", 1]])}`).toEqual({ x: { $eq: { $gt: 1 } } });
+    expect(jsmql.expr`${new Map([["$gt", 1]])}`).toEqual({ $literal: { $gt: 1 } });
+  });
+
+  it("refuses a Map key that is not a string, which the driver cannot send", () => {
+    expect(() => jsmql`$.x === ${new Map([[1, "a"]])}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x === ${new Map([[1, "a"]])}`).toThrow(/key 1/);
+  });
+
+  it("refuses a built-in object that the driver sends as {} or as index keys", () => {
+    expect(() => jsmql`$.x === ${new Set(["a"])}`).toThrow(/\[\.\.\.set\]/);
+    for (const v of [new Error("e"), new ArrayBuffer(2), new Int32Array([1]), Object(5), new WeakMap()]) {
+      expect(() => jsmql`$.x === ${v}`).toThrow(JsmqlInterpolationError);
+    }
+    expect(() => jsmql`$.x === ${{ deep: [new Set()] }}`).toThrow(/at \.deep\[0\] is a Set/);
+  });
+
+  // `bson` finds a Date, a RegExp and a Map by `Symbol.toStringTag` alone.
+  it("refuses an object that only sets a tag the driver reads", () => {
+    for (const tag of ["Date", "RegExp", "Map"]) {
+      expect(() => jsmql`$.x === ${{ [Symbol.toStringTag]: tag }}`).toThrow(/Symbol\.toStringTag/);
+    }
+  });
+
+  it("refuses what toBSON() gives when that has no MQL form", () => {
+    expect(() => jsmql`$.x === ${{ toBSON: () => undefined }}`).toThrow(/slot 1 is undefined/);
+  });
+
+  it("refuses a cycle through a Map", () => {
+    const m = new Map<string, unknown>();
+    m.set("self", m);
+    expect(() => jsmql`$.x === ${m}`).toThrow(/circular structure/);
+  });
+
+  it("converts a jsmql.compile parameter the same way", () => {
+    const q = jsmql.update.compile(({ v }: { v: unknown }, { $ }) => {
+      $.x = v;
+    });
+    expect(q({ v: new Map([["a", 1]]) })).toEqual({ $set: { x: { a: 1 } } });
+    expect(() => q({ v: new Set() })).toThrow(/parameter 'v' is a Set/);
+  });
+
+  it("prints the value that the driver sends", () => {
+    expect(jsmql.stringify(jsmql`$.p === ${new Money()}`)).toBe('{ $expr: { $eq: ["$p", { amount: 5 }] } }');
+    expect(jsmql.stringify(jsmql.update`$.m = ${new Map([["a", 1]])}`)).toBe("{ $set: { m: { a: 1 } } }");
   });
 });

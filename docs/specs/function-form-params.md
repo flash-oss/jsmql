@@ -69,6 +69,30 @@ Rejecting a default entirely keeps the rule simple and the surface honest: **the
 
 A parameter is a VALUE, never syntax. `inject` in [src/compiler/passes/inject.ts](../../src/compiler/passes/inject.ts) runs before the fold. It replaces every identifier the arrow's params destructure names with the value the call supplied: as a literal node when the source could have spelled it (a number, a string, a boolean, `null`, a Date, an ObjectId, an array or object of such values), and as an `Injected` node otherwise ([src/registry/ast.ts](../../src/registry/ast.ts)). From there the value is an ordinary constant. The fold folds it, the filter road compares it natively (`$match($.age >= minAge)` with `{ minAge: 21 }` → `{ $match: { age: { $gte: 21 } } }`), a member read on an object parameter reads the value (`q.min`), and a value that reads as MQL goes through HR1's gate: see [aggregation-stages.md § `$`-string pass-through](aggregation-stages.md). The compiler recognises the value by what it is, never by the realm that made it: a Date from a `vm` context or a test runner's sandbox rides the same road as one from this realm ([bson-types.md § Recognition across realms](bson-types.md#recognition-across-realms)).
 
+### The value the driver sends
+
+The compiler must see the value that the server gets, so `jsmql.stringify` prints
+that value too. `driverValue` in [src/index.ts](../../src/index.ts) walks each
+parameter and each template slot before `inject`, and it makes the conversions
+that the driver makes when it sends a document:
+
+- A value with its own `toBSON()` becomes the value that `toBSON()` gives. The
+  driver calls it once per value, and so does the walk. A mongoose document,
+  subdocument, array and Buffer each have one.
+- A Map becomes a document of its entries. A key that is not a string is
+  refused, because the driver sends each key as a field name.
+- Any other object with no internal slot becomes a document of its own
+  enumerable fields. A plain object that the walk does not change stays the same
+  object.
+
+A Date, a RegExp, a Uint8Array and a BSON value pass as they are. The walk refuses
+every other built-in object, for example a Set, an Error, an ArrayBuffer, a boxed
+primitive or a typed array other than Uint8Array. The driver sends such an object
+as `{}` or as index keys, which is never its data. The walk also refuses an object
+that only sets `Symbol.toStringTag` to "Date", "RegExp" or "Map". `bson` finds
+these three kinds by the tag alone, so it sends such an object as that kind. The walk also refuses
+`undefined`, a function, a symbol, a number that is not finite, and a cycle.
+
 ### Shadowing
 
 A callback parameter inside the body shadows a parameter of the same name, as JavaScript's own scoping rule says: `.map(x => x * 2)` in a body with `{ x }` bound reads the callback's `x`. A `let` of a parameter's name is JavaScript's own error (a second declaration of the name), so it never reaches the compiler.
@@ -113,7 +137,7 @@ jsmql.expr.compile(({ start }, { $ }) => $.a.slice(start))({ start: null })
 | `jsmql.compile(fn)` (parse time) | Mixed `$`/non-`$` keys | `FunctionInputError` |
 | `jsmql.compile(fn)` (parse time) | > 2 params, bare-identifier slot, or wrong slot ordering | `FunctionInputError` |
 | Compiled callable (bind time) | Body references binding not in params | `UnknownIdentifierError` |
-| Compiled callable (bind time) | Param value not JSON-safe | `JsmqlInterpolationError` |
+| Compiled callable (bind time) | Param value with no MQL form (see § The value the driver sends) | `JsmqlInterpolationError` |
 | Compiled callable (bind time) | `let <name>` shadows binding (defensive) | `CodegenError` |
 
 JSMQL allows an extra key on the params object that the body never references, so a partial-coverage refactor does not need to keep the params type in sync with the body by hand.

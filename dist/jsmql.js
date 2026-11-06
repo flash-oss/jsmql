@@ -53,6 +53,8 @@ var typedArrayName = slotReader(Object.getPrototypeOf(Uint8Array.prototype), Sym
 var isDate = (v) => kindOf(v) === "[object Date]" && readsSlot(Date.prototype.getTime, v);
 var isRegExp = (v) => kindOf(v) === "[object RegExp]" && readsSlot(regexSource, v);
 var isBytes = (v) => typedArrayName.call(v) === "Uint8Array";
+var mapSize = slotReader(Map.prototype, "size");
+var isMap = (v) => kindOf(v) === "[object Map]" && readsSlot(mapSize, v);
 function isPlainObject(v) {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
@@ -13029,7 +13031,7 @@ function isAnyArrayBuffer(value) {
 function isRegExp2(regexp) {
   return regexp instanceof RegExp || Object.prototype.toString.call(regexp) === "[object RegExp]";
 }
-function isMap(value) {
+function isMap2(value) {
   return typeof value === "object" && value != null && Symbol.toStringTag in value && value[Symbol.toStringTag] === "Map";
 }
 function isDate2(date) {
@@ -13039,7 +13041,7 @@ function defaultInspect(x, _options) {
   return JSON.stringify(x, (k, v) => {
     if (typeof v === "bigint") {
       return { $numberLong: `${v}` };
-    } else if (isMap(v)) {
+    } else if (isMap2(v)) {
       return Object.fromEntries(v);
     }
     return v;
@@ -16011,7 +16013,7 @@ function getISOString(date) {
   return date.getUTCMilliseconds() !== 0 ? isoStr : isoStr.slice(0, -5) + "Z";
 }
 function serializeValue(value, options) {
-  if (value instanceof Map || isMap(value)) {
+  if (value instanceof Map || isMap2(value)) {
     const obj = /* @__PURE__ */ Object.create(null);
     for (const [k, v] of value) {
       if (typeof k !== "string") {
@@ -28281,29 +28283,15 @@ ${" ".repeat(gutter.length)}${pad2}^`;
     throw e;
   }
 }
-function isCircular(value, seen = /* @__PURE__ */ new WeakSet()) {
-  if (value === null || typeof value !== "object") return false;
-  if (!Array.isArray(value) && !isPlainObject(value)) return false;
-  if (seen.has(value)) return true;
-  seen.add(value);
-  const children = Array.isArray(value) ? value : Object.values(value);
-  const inside = children.some((v) => isCircular(v, seen));
-  seen.delete(value);
-  return inside;
-}
-function checkValue(value, slot, key) {
+var DRIVER_READS_TAG = /* @__PURE__ */ new Set(["Date", "RegExp", "Map"]);
+function driverValue(value, slot, key) {
   const where = key !== void 0 ? `parameter '${key}'` : `interpolation slot ${slot}`;
-  if (isCircular(value)) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} is a circular structure. It has no MQL representation.`,
-      slot,
-      key
-    );
-  }
   const refuse2 = (message, path) => {
     throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
   };
-  const walk2 = (v, path) => {
+  const above = /* @__PURE__ */ new Set();
+  const walk2 = (given, path) => {
+    const v = typeof given?.toBSON === "function" ? given.toBSON() : given;
     if (v === void 0) refuse2("is undefined. Pass null for a missing value, or leave the slot out.", path);
     if (typeof v === "function" || typeof v === "symbol") {
       refuse2(
@@ -28317,16 +28305,56 @@ function checkValue(value, slot, key) {
         path
       );
     }
-    if (v === null || typeof v !== "object") return;
-    if (bsonTagOf(v) !== void 0) return;
-    if (isDate(v) || isRegExp(v)) return;
-    if (Array.isArray(v)) {
-      v.forEach((x, i) => walk2(x, `${path}[${i}]`));
-      return;
+    if (v === null || typeof v !== "object") return v;
+    if (bsonTagOf(v) !== void 0 || isDate(v) || isRegExp(v) || isBytes(v)) return v;
+    if (above.has(v))
+      throw new JsmqlInterpolationError(
+        `jsmql ${where} is a circular structure. It has no MQL representation.`,
+        slot,
+        key
+      );
+    above.add(v);
+    try {
+      if (Array.isArray(v)) {
+        const out = v.map((x, i) => walk2(x, `${path}[${i}]`));
+        return out.every((x, i) => x === v[i]) ? v : out;
+      }
+      if (isMap(v)) {
+        const out = {};
+        for (const [k, x] of v) {
+          if (typeof k !== "string") {
+            refuse2(
+              `is a Map with the key ${typeof k === "symbol" ? "a symbol" : String(k)}. The driver sends each key as a field name, so each key must be a string.`,
+              path
+            );
+          }
+          out[k] = walk2(x, `${path}.${k}`);
+        }
+        return out;
+      }
+      const kind = Object.prototype.toString.call(v).slice(8, -1);
+      const article = /^[AEIOU]/.test(kind) ? "an" : "a";
+      if (DRIVER_READS_TAG.has(kind)) {
+        refuse2(
+          `sets Symbol.toStringTag to "${kind}", but it is not ${article} ${kind}. The driver reads the tag and sends the object as ${article} ${kind}. Remove the tag, or pass ${article} ${kind}.`,
+          path
+        );
+      }
+      if (kind === "Set") refuse2("is a Set. The driver sends a Set as {}. Pass an array: [...set].", path);
+      if (kind !== "Object" && !isPlainObject(v)) {
+        refuse2(
+          `is ${article} ${kind}. This object has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, Map, array, plain object, or a value with toBSON().`,
+          path
+        );
+      }
+      const entries = Object.keys(v).map((k) => [k, walk2(v[k], `${path}.${k}`)]);
+      const same = isPlainObject(v) && entries.every(([k, x]) => x === v[k]);
+      return same ? v : Object.fromEntries(entries);
+    } finally {
+      above.delete(v);
     }
-    for (const [k, x] of Object.entries(v)) walk2(x, `${path}.${k}`);
   };
-  walk2(value, "");
+  return walk2(value, "");
 }
 function templateSource(strings, values) {
   let src = "";
@@ -28334,9 +28362,8 @@ function templateSource(strings, values) {
   strings.forEach((part2, i) => {
     src += part2;
     if (i < values.length) {
-      checkValue(values[i], i + 1);
       const name2 = `__jsmql_slot${i + 1}`;
-      bound.set(name2, values[i]);
+      bound.set(name2, driverValue(values[i], i + 1));
       src += name2;
     }
   });
@@ -28562,8 +28589,7 @@ function makeCompile(mode, api) {
             b.pos
           );
         }
-        checkValue(given[b.key], 0, b.key);
-        values.set(b.name, given[b.key]);
+        values.set(b.name, driverValue(given[b.key], 0, b.key));
       }
       return lowerMode(mode, api, parsed.program, values);
     });

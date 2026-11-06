@@ -5540,7 +5540,15 @@ jsmql`$.username === ${/^alice/i}`
 
 A RegExp you pass is a value in every position, not only in a query slot. `` jsmql.expr`${re}` `` is the RegExp itself, `` jsmql`$.name = ${re};` `` writes it, and a filter keeps the instance you passed rather than a copy. Only a regex written in the source (`/^a/`) stays confined to the regex methods.
 
-Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and ObjectId (matched by its `_bsontype` field). Everything else goes through `JSON.stringify`. Pass-through also works for a **nested** instance. A Date, RegExp, or similar value buried inside an interpolated object or array still arrives as a live instance, so a realistic operator-call shape like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` works the way you would write it by hand.
+Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and every BSON value, for example an ObjectId. JSMQL reads any other value as the MongoDB driver sends it. It calls the value's own `toBSON()`, and it reads a `Map` as a document of its entries. So a mongoose document or array passes as its data. JSMQL refuses a `Set`, an `Error` and every other built-in object that the driver sends as `{}`:
+
+```js
+jsmql`$.m === ${new Map([["a", 1]])}`   // { $expr: { $eq: ["$m", { a: 1 }] } }
+jsmql`$.tags === ${doc.tags}`           // a mongoose array: { $expr: { $eq: ["$tags", ["a", "b"]] } }
+jsmql`$.s === ${new Set(["a"])}`        // ✗ the driver sends a Set as {}; pass [...set]
+```
+
+Pass-through also works for a **nested** instance. A Date, RegExp, or similar value buried inside an interpolated object or array still arrives as a live instance, so a realistic operator-call shape like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` works the way you would write it by hand.
 
 `jsmql.validate` is polymorphic in the same way, so `` jsmql.validate`$.age > ${minAge}` `` works as its non-throwing counterpart.
 

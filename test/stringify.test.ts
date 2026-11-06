@@ -220,8 +220,8 @@ describe("stringify: the text holds the value, never code from the value", () =>
     const text = stringify({ v: forged });
     expect(text).toBe('{ v: { source: "(globalThis.pwned = 1)" } }');
     expect(pasteRuns(text)).toBe(false);
-    // The compiler reads the same slot, so it compares the object as a document.
-    expect(jsmql.filter`$.x === ${forged}`).toEqual({ $expr: { $eq: ["$x", { source: "(globalThis.pwned = 1)" }] } });
+    // The driver reads the tag and sends the object as a regex, so the compiler refuses it.
+    expect(() => jsmql.filter`$.x === ${forged}`).toThrow(/Symbol.toStringTag/);
   });
 
   it("writes an object that only sets the Uint8Array tag as its fields", () => {

@@ -34,7 +34,7 @@ export { CodegenError, UnknownIdentifierError, ParseError, LexError };
 // who writes `import { ObjectId } from "@koresar/jsmql"` provably gets the copy jsmql
 // resolved. See docs/specs/bson-types.md.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "./bson.ts";
-import { bsonTagOf, isDate, isPlainObject, isRegExp } from "./bson.ts";
+import { bsonTagOf, isBytes, isDate, isMap, isPlainObject, isRegExp } from "./bson.ts";
 
 // ── the public types ─────────────────────────────────────────────────────────
 
@@ -119,41 +119,39 @@ function framed<T>(src: string, run: () => T): T {
   }
 }
 
-/** Does the value contain itself? A plain object or array only; a Date or an ObjectId is a leaf. */
-function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
-  if (value === null || typeof value !== "object") return false;
-  if (!Array.isArray(value) && !isPlainObject(value)) return false;
-  if (seen.has(value)) return true;
-  seen.add(value);
-  const children = Array.isArray(value) ? value : Object.values(value);
-  const inside = children.some((v) => isCircular(v, seen));
-  seen.delete(value);
-  return inside;
-}
-
 /**
- * A value a slot or a parameter may carry: anything the driver can send.
+ * The value that a slot or a parameter carries, as the driver sends it.
  *
- * The check RECURSES, because a value with no MQL representation has no MQL
+ * The driver converts some values before it sends them: it calls a value's own
+ * `toBSON()`, and it sends a Map as a document of its entries. The walk makes the
+ * same conversions, so the compiler and `jsmql.stringify` see the value that the
+ * server gets. A mongoose document, subdocument, array or Buffer each has a
+ * `toBSON()`. The walk refuses a built-in object that the driver sends as `{}` or
+ * as index keys — a Set, an Error, an ArrayBuffer — because that is never its data.
+ * See docs/specs/function-form-params.md § The value the driver sends.
+ *
+ * The walk RECURSES, because a value with no MQL representation has no MQL
  * representation one level down either. `undefined` is the language's existence
  * TEST and never a value (docs/LANGUAGE.md § `undefined`). A nested `undefined`
  * must never reach the compiled document. The driver sends it as `null`, but
  * `jsmql.stringify` refuses it, so the document would have no text.
  */
-function checkValue(value: unknown, slot: number, key?: string): void {
+/** The kinds that `bson` finds by `Symbol.toStringTag` alone. MEASURED in bson 7.3. */
+const DRIVER_READS_TAG: ReadonlySet<string> = new Set(["Date", "RegExp", "Map"]);
+
+function driverValue(value: unknown, slot: number, key?: string): unknown {
   const where = key !== undefined ? `parameter '${key}'` : `interpolation slot ${slot}`;
-  // The whole value first: a cycle would make the walk below run forever.
-  if (isCircular(value)) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} is a circular structure. It has no MQL representation.`,
-      slot,
-      key,
-    );
-  }
   const refuse = (message: string, path: string): never => {
     throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
   };
-  const walk = (v: unknown, path: string): void => {
+  // The objects on the path from the root, so a cycle stops the walk.
+  const above = new Set<object>();
+  const walk = (given: unknown, path: string): unknown => {
+    // The driver calls `toBSON()` once, and sends the value it gives.
+    const v =
+      typeof (given as { toBSON?: unknown } | null | undefined)?.toBSON === "function"
+        ? (given as { toBSON: () => unknown }).toBSON()
+        : given;
     if (v === undefined) refuse("is undefined. Pass null for a missing value, or leave the slot out.", path);
     if (typeof v === "function" || typeof v === "symbol") {
       refuse(
@@ -167,17 +165,60 @@ function checkValue(value: unknown, slot: number, key?: string): void {
         path,
       );
     }
-    if (v === null || typeof v !== "object") return;
+    if (v === null || typeof v !== "object") return v;
     // A BSON class carries its own value; its internals are not the developer's data.
-    if (bsonTagOf(v) !== undefined) return;
-    if (isDate(v) || isRegExp(v)) return;
-    if (Array.isArray(v)) {
-      v.forEach((x, i) => walk(x, `${path}[${i}]`));
-      return;
+    if (bsonTagOf(v) !== undefined || isDate(v) || isRegExp(v) || isBytes(v)) return v;
+    if (above.has(v))
+      throw new JsmqlInterpolationError(
+        `jsmql ${where} is a circular structure. It has no MQL representation.`,
+        slot,
+        key,
+      );
+    above.add(v);
+    try {
+      if (Array.isArray(v)) {
+        const out = v.map((x, i) => walk(x, `${path}[${i}]`));
+        return out.every((x, i) => x === v[i]) ? v : out;
+      }
+      if (isMap(v)) {
+        const out: Record<string, unknown> = {};
+        for (const [k, x] of v) {
+          if (typeof k !== "string") {
+            refuse(
+              `is a Map with the key ${typeof k === "symbol" ? "a symbol" : String(k)}. The driver sends each key as a field name, so each key must be a string.`,
+              path,
+            );
+          }
+          out[k as string] = walk(x, `${path}.${k as string}`);
+        }
+        return out;
+      }
+      const kind = Object.prototype.toString.call(v).slice(8, -1);
+      const article = /^[AEIOU]/.test(kind) ? "an" : "a";
+      // The slot readers above refuse the object, so it only sets `Symbol.toStringTag`.
+      if (DRIVER_READS_TAG.has(kind)) {
+        refuse(
+          `sets Symbol.toStringTag to "${kind}", but it is not ${article} ${kind}. The driver reads the tag and sends the object as ${article} ${kind}. Remove the tag, or pass ${article} ${kind}.`,
+          path,
+        );
+      }
+      if (kind === "Set") refuse("is a Set. The driver sends a Set as {}. Pass an array: [...set].", path);
+      // The driver also sends a plain object with any other tag as its fields.
+      if (kind !== "Object" && !isPlainObject(v)) {
+        refuse(
+          `is ${article} ${kind}. This object has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, Map, array, plain object, or a value with toBSON().`,
+          path,
+        );
+      }
+      // The driver sends the own enumerable fields of any other object.
+      const entries = Object.keys(v).map((k) => [k, walk((v as Record<string, unknown>)[k], `${path}.${k}`)] as const);
+      const same = isPlainObject(v) && entries.every(([k, x]) => x === (v as Record<string, unknown>)[k]);
+      return same ? v : Object.fromEntries(entries);
+    } finally {
+      above.delete(v);
     }
-    for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`);
   };
-  walk(value, "");
+  return walk(value, "");
 }
 
 /** The template tag's parts as one source: each slot is a name bound to its value. */
@@ -187,9 +228,8 @@ function templateSource(strings: TemplateStringsArray, values: readonly unknown[
   strings.forEach((part, i) => {
     src += part;
     if (i < values.length) {
-      checkValue(values[i], i + 1);
       const name = `__jsmql_slot${i + 1}`;
-      bound.set(name, values[i]);
+      bound.set(name, driverValue(values[i], i + 1));
       src += name;
     }
   });
@@ -481,8 +521,7 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
               b.pos,
             );
           }
-          checkValue(given[b.key], 0, b.key);
-          values.set(b.name, given[b.key]);
+          values.set(b.name, driverValue(given[b.key], 0, b.key));
         }
         return lowerMode(mode, api, parsed.program, values) as R;
       });

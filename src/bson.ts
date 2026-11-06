@@ -34,7 +34,7 @@ import {
 
 // The tag reader needs no `bson` import, so it lives in the registry's vocabulary,
 // where a ROW can read it too. This file re-exports it, so the compiler has one name.
-export { bsonTagOf, BSON_KIND, isBytes, isDate, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
+export { bsonTagOf, BSON_KIND, isBytes, isDate, isMap, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
 
 /**
  * A regex that the compiler builds from the source, as the server must read it.

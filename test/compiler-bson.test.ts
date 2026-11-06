@@ -18,6 +18,7 @@ import {
   UUID,
   type Collection,
 } from "mongodb";
+import mongoose from "mongoose";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
 
@@ -336,6 +337,34 @@ describe("compiler — a passed-in DBRef is a value in every slot", () => {
     expect(set.map((d) => (d.x as DBRef).oid.toHexString())).toEqual([HEX, HEX]);
     await refs.updateMany({ _id: 2 }, jsmql.update`$.x = ${ref}`);
     expect(((await refs.findOne({ _id: 2 }))!.x as DBRef).oid.toHexString()).toBe(HEX);
+  });
+});
+
+// The driver stores a Map as its entries and a value with `toBSON()` as what that
+// method gives. A filter with the same value passed in must find that document.
+// See docs/specs/function-form-params.md § The value the driver sends.
+describe("compiler — a passed-in value finds what the driver stored for it", () => {
+  class Money {
+    cents = 500;
+    toBSON() {
+      return { amount: 5 };
+    }
+  }
+
+  it.skipIf(!up)("finds a stored Map, a toBSON() value and a mongoose array", async () => {
+    const M = mongoose.model("CompilerBsonDriverValue", new mongoose.Schema({ tags: [String] }));
+    const tags = new M({ tags: ["a", "b"] }).tags;
+    const stored = client!.db("jsmql_compiler_bson").collection("driver_value");
+    await stored.deleteMany({});
+    await stored.insertMany([
+      { _id: 1, m: new Map([["a", 1]]), p: new Money(), tags },
+      { _id: 2, m: { a: 2 }, p: { amount: 6 }, tags: ["c"] },
+    ]);
+    const ids = async (filter: unknown) =>
+      (await stored.find(filter as Record<string, unknown>).toArray()).map((d) => d._id);
+    expect(await ids(jsmql`$.m === ${new Map([["a", 1]])}`)).toEqual([1]);
+    expect(await ids(jsmql`$.p === ${new Money()}`)).toEqual([1]);
+    expect(await ids(jsmql`$.tags === ${tags}`)).toEqual([1]);
   });
 });
 

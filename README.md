@@ -263,6 +263,13 @@ User.find({ age: { $gt: 18 } });                    // plain MQL JSON still pass
 
 **Detection rule.** The plugin treats a patched argument as JSMQL source only when it is a **string** or a **function**. A plain object or array — the regular MQL JSON forms — passes through to mongoose unchanged, so an existing call site needs no change. A template-tag input (`jsmql\`…\``) lowers to an object at your call site, so it also takes the pass-through path.
 
+**Passed-in values.** JSMQL converts a template slot or a `jsmql.compile` parameter as the driver does. It calls the value's own `toBSON()`, so a mongoose document, subdocument, array or Buffer becomes its data. A `Map` becomes a document of its entries. See [docs/LANGUAGE.md → Template-Tag Form](docs/LANGUAGE.md#template-tag-form--jsmql-).
+
+```js
+const admin = await User.findOne({ name: "Ann" });
+User.find(jsmql`$.tags === ${admin.tags}`);   // { $expr: { $eq: ["$tags", ["ops", "billing"]] } }
+```
+
 **TypeScript.** The plugin ships a `declare module "mongoose"` augmentation. It adds JSMQL-shaped overloads (`string | JsmqlFn`) to every patched `Model` static, so `User.find("$.age > 18")` and `User.aggregate(({ $ }) => …)` type-check after `import "@koresar/jsmql/mongoose"`, with no cast needed at the call site. Mongoose's own `FilterQuery<T>` / `UpdateQuery<T>` overloads still apply on the MQL-JSON pass-through path.
 
 **Patched methods** (with the slot used): `find` / `findOne` / `findOneAnd{Delete,Replace,Update}` / `countDocuments` / `deleteOne` / `deleteMany` / `replaceOne` / `exists` (filter at slot 0), `updateOne` / `updateMany` / `findOneAndUpdate` / `findByIdAndUpdate` (update at slot 1), `distinct` (filter at slot 1), `aggregate` (pipeline at slot 0). Each slot lowers through the matching strict-shape entry (`jsmql.filter` / `jsmql.update` / `jsmql.pipeline`). So a wrong-shape input — for example a bare expression at an `aggregate` slot — throws the actionable strict-mode error at the patched call site, instead of failing silently on the server. Registering twice on the same `mongoose` object is a no-op.
