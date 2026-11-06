@@ -832,6 +832,7 @@ var NO_IS_FINITE = unsupported(
 var NO_POW = unsupported(
   "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL \u2014 the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'."
 );
+var MEMBERSHIP_IN_AN_ARRAY = "For membership in an array, write '.has(x)'.";
 var NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -3962,7 +3963,7 @@ var NAMES = {
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    sibling: { array: "For membership in an array, write '.has(x)'." },
+    sibling: { array: MEMBERSHIP_IN_AN_ARRAY },
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
@@ -3970,7 +3971,7 @@ var NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" }, slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` } },
       emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3984,6 +3985,7 @@ var NAMES = {
         sig: "searchString",
         exact: 1,
         slotType: { 0: "string" },
+        slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
         }

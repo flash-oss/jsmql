@@ -1571,6 +1571,13 @@ const NO_POW = unsupported(
   "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
 );
 
+/**
+ * `.includes()` tests a substring. A needle that is not a string means membership in
+ * an array, so the row states this sentence twice: as the sibling of an array receiver,
+ * and as the hint of a wrong-kind needle.
+ */
+const MEMBERSHIP_IN_AN_ARRAY = "For membership in an array, write '.has(x)'.";
+
 export const NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -4970,7 +4977,7 @@ export const NAMES = {
     doc: "'.includes()' — see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    sibling: { array: "For membership in an array, write '.has(x)'." },
+    sibling: { array: MEMBERSHIP_IN_AN_ARRAY },
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
@@ -4978,7 +4985,7 @@ export const NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" }, slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` } },
       emit: ({ recv, args, pathOf, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4993,6 +5000,7 @@ export const NAMES = {
         sig: "searchString",
         exact: 1,
         slotType: { 0: "string" },
+        slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
         },

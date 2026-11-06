@@ -1850,6 +1850,7 @@ number where it reads a string.
 $.s.substring(1.5)                 // ✗ start takes an integer
 $.s.padStart(3, 0)                 // ✗ the pad string takes a string: write "0"
 $.s.includes($.s.length())         // ✗ the search string takes a string, and .length() gives a number
+$.items.includes(3)                // ✗ the search string takes a string; for membership in an array write .has(3)
 ```
 
 **`.indexOfSubstring(searchString[, position])`** has the API of JavaScript's
@@ -5962,7 +5963,7 @@ null        = "null"
 A: Use `.size()` for an array and `.length()` for a string. `$.items.size()` is `{ $size: { $ifNull: ["$items", []] } }`, and a missing array counts as empty. The `$size()` escape hatch is also there: `$size($.items)`.
 
 **Q: Is `$.field.includes(x)` a `$in` or a string-substring match?**
-A: A substring match, always: `.includes(x)` is a string method. Membership in an array is `.has(x)`, which emits `$in` in an expression and `{ field: x }` in a query document (see [Type-aware dispatch](#type-aware-dispatch)). On a field the compiler has proven to be an array, `.includes` is a compile-time error that names `.has(x)`. The operator forms are also there: `$in(x, $.items)`, the needle first, as MongoDB spells it.
+A: A substring match, always: `.includes(x)` is a string method. Membership in an array is `.has(x)`, which emits `$in` in an expression and `{ field: x }` in a query document (see [Type-aware dispatch](#type-aware-dispatch)). On a field the compiler has proven to be an array, `.includes` is a compile-time error that names `.has(x)`. A needle of another kind than a string, for example `$.items.includes(3)`, is a compile-time error that names `.has(x)` too. The operator forms are also there: `$in(x, $.items)`, the needle first, as MongoDB spells it.
 
 **Q: Does `?.` actually short-circuit?**
 A: For a bare READ it is sugar. MongoDB already returns null or missing when a path crosses a missing field, so `$.a?.b?.c` and `$.a.b.c` are the same MQL. Once the chain feeds a consumer that is not null-safe, the `?.` adds a real `$ifNull` neutral value. The table under [Optional Chaining](#optional-chaining) lists which consumer takes which neutral value.

@@ -12,7 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Decimal128, Long, MongoClient, type Collection } from "mongodb";
-import { expr } from "../src/compiler/index.ts";
+import { expr, filter } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { jsmql } from "../src/index.ts";
@@ -1916,6 +1916,13 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.startsWith(1)")).toThrow("'.startsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.endsWith(1)")).toThrow("'.endsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.includes(1)")).toThrow("'.includes()' argument 1 takes a string, but got a number.");
+    // A needle that is not a string means membership in an array: the refusal names '.has()', on both roads.
+    expect(() => expr("$.arr.includes(3)")).toThrow(
+      "'.includes()' argument 1 takes a string, but got a number. For membership in an array, write '.has(x)'.",
+    );
+    expect(() => filter("$.arr.includes(true)")).toThrow(
+      "'.includes()' argument 1 takes a string, but got a boolean. For membership in an array, write '.has(x)'.",
+    );
     expect(() => expr('$.s.replace(1, "x")')).toThrow("'.replace()' argument 1 takes a string, but got a number.");
     expect(() => expr('$.s.replaceAll(",", 1)')).toThrow(
       "'.replaceAll()' argument 2 takes a string, but got a number.",
