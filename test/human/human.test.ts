@@ -40,10 +40,11 @@ describe("various human written unit tests", () => {
       });
       $$.sortBy("_id");
 
-      $.pctAlerted = ((100 * $.alerted) / $.total).round(2);
-      $.pctReviewed = ((100 * $.reviewed) / $.total).round(2);
-      $.pctRejected = ((100 * $.rejected) / $.total).round(2);
-      $.pctGoogle = ((100 * $.google) / $.total).round(2);
+      const toPctOfTotal = (v) => ((100 * v) / $.total).round(2);
+      $.pctAlerted = toPctOfTotal($.alerted);
+      $.pctReviewed = toPctOfTotal($.reviewed);
+      $.pctRejected = toPctOfTotal($.rejected);
+      $.pctGoogle = toPctOfTotal($.google);
     };
 
     const mql = jsmql.compile(jsmqlFunc)({ startDate: new Date("2026-01-01") });
