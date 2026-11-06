@@ -190,7 +190,7 @@ describe("$match translation — typeof → $type", () => {
   });
   it("refuses a JavaScript type name and names the MongoDB one", () => {
     expect(() => jsmql('[$match(typeof $.fn === "function")]')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
+      "'typeof' compares against one of MongoDB's type names, and \"function\" is not one, so the comparison is never true. Did you mean 'javascript'?",
     );
   });
   it("falls through to $expr when the operand is not a static field path", () => {
@@ -482,7 +482,7 @@ describe("$match translation — typeof: 'boolean' is refused, 'bool' is the nam
     // JS's typeof returns "boolean"; MongoDB's $type uses "bool". A `typeof`
     // comparison names a BSON type, so the JS name gets the MongoDB one.
     expect(() => jsmql("[$match(typeof $.flag === 'boolean')]")).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
+      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one, so the comparison is never true. Did you mean 'bool'?",
     );
   });
 

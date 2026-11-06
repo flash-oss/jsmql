@@ -31,17 +31,16 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a === null")).toEqual({ a: { $type: "null" } });
     expect(filter("$.a !== null")).toEqual({ a: { $not: { $type: "null" } } });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
-    // `typeof` uses MongoDB's type names: "undefined" is a MongoDB type, now deprecated
-    // in BSON. Absence has its own spelling, `x === undefined`.
-    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $type: "undefined" } });
+    // Absence has its own spelling, `x === undefined`, so `typeof` refuses "undefined".
+    expect(() => filter('typeof $.a === "undefined"')).toThrow(/write 'x === undefined'/);
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
     expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool" } });
     // A name MongoDB does not know is refused with the nearest one, never lowered
     // to a test that quietly matches nothing.
-    expect(() => filter('typeof $.a === "boolean"')).toThrow(/not one\. Did you mean 'bool'\?/);
+    expect(() => filter('typeof $.a === "boolean"')).toThrow(/never true\. Did you mean 'bool'\?/);
     expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
-    expect(filter('typeof $.a !== "number"')).toEqual({ a: { $not: { $type: "number" } } });
+    expect(filter('typeof $.a !== "objectId"')).toEqual({ a: { $not: { $type: "objectId" } } });
     // The `array` spelling asks whether the value is an array, so it excludes none.
     expect(filter('typeof $.a === "array"')).toEqual({ a: { $type: "array" } });
     expect(filter('typeof $.a !== "array"')).toEqual({ a: { $not: { $type: "array" } } });

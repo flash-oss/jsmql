@@ -41,6 +41,12 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     expect(firstError("$.age == 18", "==").code).toBe("CODEGEN_ERROR");
   });
 
+  it("a typeof comparison points at the type name it refuses", () => {
+    expect(firstError('typeof $.a === "number"', '"number"').code).toBe("CODEGEN_ERROR");
+    expect(firstError('!("boolean" === typeof $.a)', '"boolean"').code).toBe("CODEGEN_ERROR");
+    expect(firstError('typeof $.a in ["int", "undefined"]', '"undefined"').code).toBe("CODEGEN_ERROR");
+  });
+
   it("a stage in the wrong place points at that stage", () => {
     expect(firstError("[ { $merge: 'a' }, $sort({ x: 1 }) ]", "$sort").code).toBe("CODEGEN_ERROR");
   });

@@ -979,12 +979,10 @@ export type FilterIn = {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * The BSON type aliases that the `$type` QUERY operator of MongoDB accepts. A
- * `typeof` comparison against any other spelling (`"function"`, `"bigint"`) has no
- * query form and keeps the expression fallback. So jsmql emits no query that the
- * server refuses. `"number"` is here because the query form takes it as the
- * umbrella for int/long/double/decimal. The aggregation `$type` expression never
- * RETURNS it, and `TYPE_GROUPS` is how the expression cell covers that.
+ * The BSON type names that a `typeof` comparison accepts: the names that the
+ * aggregation `$type` expression can RETURN. The `$type` query operator accepts
+ * each one too. A name outside this set makes a comparison that is never true, so
+ * the compiler refuses it. See `TYPEOF_HINTS` for the fix that the refusal names.
  */
 export const BSON_TYPE_ALIASES: readonly string[] = [
   "double",
@@ -992,7 +990,6 @@ export const BSON_TYPE_ALIASES: readonly string[] = [
   "object",
   "array",
   "binData",
-  "undefined",
   "objectId",
   "bool",
   "date",
@@ -1008,43 +1005,32 @@ export const BSON_TYPE_ALIASES: readonly string[] = [
   "decimal",
   "minKey",
   "maxKey",
-  "number",
 ];
 
 /**
- * An umbrella alias → the exact types that the aggregation `$type` EXPRESSION can
- * return for it. The query form takes the umbrella. The expression form compares
- * against the answer of `$type`, and that answer is "int" or "double", never
- * "number". A comparison against the umbrella makes `typeof $.a === "number"`
- * false for every document.
- */
-export const TYPE_GROUPS: Readonly<Record<string, readonly string[]>> = {
-  number: ["double", "int", "long", "decimal"],
-};
-
-/**
  * The alias that a `typeof x === "<spelling>"` test names, or null when the
- * spelling is not a MongoDB type name. The developer made the rule: a `typeof`
- * comparison speaks the vocabulary of MongoDB and nothing else. It takes `"bool"`,
- * not `"boolean"`. `"undefined"` IS a MongoDB type, the deprecated BSON one.
- * Absence has its own spelling, `x === undefined`. The compiler refuses a spelling
- * that is not a MongoDB type, and names the nearest one. It never lowers the test
- * to one that silently matches nothing.
+ * spelling is not a MongoDB type name. A `typeof` comparison speaks the vocabulary
+ * of MongoDB and nothing else: it takes `"bool"`, not `"boolean"`. The compiler
+ * refuses any other spelling, because the test would match nothing.
  */
 export function typeAliasOf(spelling: string): string | null {
   return BSON_TYPE_ALIASES.includes(spelling) ? spelling : null;
 }
 
 /**
- * The MongoDB name at which an answer of the JavaScript `typeof` points. It
- * serves the hint of the REFUSAL only, because the compiler accepts none of these.
- * "boolean" is too far from "bool" for the generic suggestion, and the developer
- * who writes it means exactly that name.
+ * The fix for a `typeof` comparison against a spelling that is not a MongoDB type
+ * name, keyed by the lower-case spelling. A `name` entry points at the MongoDB type
+ * name that the spelling means. A `write` entry points at the JSMQL form that
+ * tests the same thing, and `test` says what that form tests. The refusal reads
+ * this table first, and the closest type name second.
  */
-export const TYPEOF_HINTS: Readonly<Record<string, string>> = {
-  boolean: "bool",
-  bigint: "long",
-  function: "javascript",
+export const TYPEOF_HINTS: Readonly<Record<string, { name: string } | { test: string; write: string }>> = {
+  boolean: { name: "bool" },
+  bigint: { name: "long" },
+  function: { name: "javascript" },
+  number: { test: "a number", write: "x.isNumber()" },
+  undefined: { test: "absence", write: "x === undefined" },
+  missing: { test: "absence", write: "x === undefined" },
 };
 
 export type ExprIn = {

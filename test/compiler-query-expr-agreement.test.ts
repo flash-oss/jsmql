@@ -135,7 +135,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a === 1 || $.n * 2 > 10", why: ARRAY_ELEMENT_WISE },
   { src: "$.a !== 1", why: ARRAY_ELEMENT_WISE },
   { src: '$.tags === "red"', why: ARRAY_ELEMENT_WISE },
-  { src: 'typeof $.a === "number"', why: ARRAY_ELEMENT_WISE },
+  { src: 'typeof $.a === "int"', why: ARRAY_ELEMENT_WISE },
   { src: "$.a.isNumber()", why: ARRAY_ELEMENT_WISE },
   { src: "$.a.isObject()", why: ARRAY_ELEMENT_WISE },
   { src: "$.a === 1 && $.a === 2", why: ARRAY_ELEMENT_WISE },

@@ -952,12 +952,25 @@ export const bannedNested = (spelled: string, stage: string, container: string, 
     pos,
   );
 
-/** `typeof x === "boolean"` — a spelling that is not one of MongoDB's type names. */
+/**
+ * `typeof x === "boolean"`: a spelling that is not one of MongoDB's type names. The
+ * lookup ignores case, but the suggestion keeps the real spelling of the name.
+ */
 export const notAMongoType = (spelling: string, aliases: readonly string[], pos: number): CodegenError => {
-  const hint = TYPEOF_HINTS[spelling];
-  const suggestion = hint !== undefined ? ` Did you mean '${hint}'?` : didYouMean(spelling, aliases, (s) => s);
+  const lower = spelling.toLowerCase();
+  const hint = TYPEOF_HINTS[lower];
+  const byCase = aliases.find((a) => a.toLowerCase() === lower);
+  const realOf = new Map(aliases.map((a) => [a.toLowerCase(), a]));
+  const fix =
+    hint === undefined
+      ? byCase !== undefined
+        ? ` Did you mean '${byCase}'?`
+        : didYouMean(lower, realOf.keys(), (s) => realOf.get(s) ?? s)
+      : "name" in hint
+        ? ` Did you mean '${hint.name}'?`
+        : ` For ${hint.test}, write '${hint.write}'.`;
   return new CodegenError(
-    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one.${suggestion} For absence, write 'x === undefined'.`,
+    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one, so the comparison is never true.${fix}`,
     pos,
   );
 };

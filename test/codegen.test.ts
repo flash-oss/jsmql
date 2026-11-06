@@ -2341,52 +2341,74 @@ describe("enum slots: an operator's is an expression slot, a stage's is not", ()
 });
 
 describe("typeof: the Query and Expr targets agree", () => {
-  // The two targets read ONE alias table. Were they separate — the query side mapping
-  // JavaScript's "boolean" onto MongoDB's "bool" while the expression side compared
-  // `$type` against the raw JavaScript spelling, which `$type` never returns — the same
-  // source would select documents in Filter position and match NOTHING as an expression.
+  // The two targets read ONE alias table. A name outside it would make the expression
+  // `$type` comparison false for every document, so BOTH targets refuse it.
+  const never = (s: string) =>
+    `'typeof' compares against one of MongoDB's type names, and "${s}" is not one, so the comparison is never true.`;
+
   it("refuses JavaScript's 'boolean' in BOTH targets and names 'bool'", () => {
-    expect(() => jsmql('typeof $.a === "boolean"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
+    expect(() => jsmql('typeof $.a === "boolean"')).toThrow(`${never("boolean")} Did you mean 'bool'?`);
+    expect(() => jsmql.expr('typeof $.a === "boolean"')).toThrow(`${never("boolean")} Did you mean 'bool'?`);
+  });
+
+  it("refuses 'number', which `$type` never returns, and names '.isNumber()'", () => {
+    expect(() => jsmql('typeof $.a === "number"')).toThrow(`${never("number")} For a number, write 'x.isNumber()'.`);
+    expect(() => jsmql.expr('typeof $.a !== "number"')).toThrow(
+      `${never("number")} For a number, write 'x.isNumber()'.`,
     );
-    expect(() => jsmql.expr('typeof $.a === "boolean"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
+    expect(() => jsmql.expr('typeof $.a === "Number"')).toThrow(
+      `${never("Number")} For a number, write 'x.isNumber()'.`,
+    );
+    expect(jsmql("$.a.isNumber()")).toEqual({ a: { $type: "number" } });
+    expect(jsmql.expr("$.a.isNumber()")).toEqual({ $isNumber: "$a" });
+  });
+
+  it("refuses 'undefined' and 'missing', and names the presence test", () => {
+    expect(() => jsmql('typeof $.a === "undefined"')).toThrow(
+      `${never("undefined")} For absence, write 'x === undefined'.`,
+    );
+    expect(() => jsmql.expr('typeof $.a === "missing"')).toThrow(
+      `${never("missing")} For absence, write 'x === undefined'.`,
     );
   });
 
-  it("expands the query-only umbrella alias for the expression target", () => {
-    // `$type` accepts "number" as a QUERY alias but never RETURNS it, so the expression form
-    // has to name the concrete types instead of comparing against the umbrella.
-    expect(jsmql('typeof $.a === "number"')).toEqual({ a: { $type: "number" } });
-    expect(jsmql.expr('typeof $.a === "number"')).toEqual({
-      $in: [{ $type: "$a" }, ["double", "int", "long", "decimal"]],
-    });
+  it("ignores case when it names the type", () => {
+    expect(() => jsmql.expr('typeof $.a === "Object"')).toThrow(`${never("Object")} Did you mean 'object'?`);
+    expect(() => jsmql.expr('typeof $.a === "BOOL"')).toThrow(`${never("BOOL")} Did you mean 'bool'?`);
+    expect(() => jsmql.expr('typeof $.a === "objectid"')).toThrow(`${never("objectid")} Did you mean 'objectId'?`);
   });
 
-  it("negates in both targets", () => {
-    expect(() => jsmql('typeof $.a !== "boolean"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
+  it("names no type when none is close", () => {
+    expect(() => jsmql.expr('typeof $.a === "zzzqqq"')).toThrow(never("zzzqqq"));
+    expect(() => jsmql.expr('typeof $.a === "zzzqqq"')).not.toThrow(/Did you mean|write/);
+  });
+
+  it("checks each name of a constant list in a membership test", () => {
+    expect(() => jsmql('typeof $.a in ["number", "bool"]')).toThrow(
+      `${never("number")} For a number, write 'x.isNumber()'.`,
     );
-    expect(() => jsmql.expr('typeof $.a !== "boolean"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
-    );
-    expect(jsmql.expr('typeof $.a !== "number"')).toEqual({
-      $not: [{ $in: [{ $type: "$a" }, ["double", "int", "long", "decimal"]] }],
-    });
+    expect(jsmql.expr('typeof $.a in ["int", "bool"]')).toEqual({ $in: [{ $type: "$a" }, ["int", "bool"]] });
+  });
+
+  it("leaves a name that is not constant unchecked", () => {
+    expect(jsmql.expr("typeof $.a === $.t")).toEqual({ $eq: [{ $type: "$a" }, "$t"] });
+  });
+
+  it("accepts every BSON type name as written, a deprecated one too", () => {
+    expect(jsmql('typeof $.a === "symbol"')).toEqual({ a: { $type: "symbol" } });
+    expect(jsmql.expr('typeof $.a === "symbol"')).toEqual({ $eq: [{ $type: "$a" }, "symbol"] });
+    expect(jsmql('typeof $.a === "objectId"')).toEqual({ a: { $type: "objectId" } });
+    expect(jsmql.expr('typeof $.a !== "objectId"')).toEqual({ $ne: [{ $type: "$a" }, "objectId"] });
   });
 
   it("refuses 'function', which names no BSON type, and names 'javascript'", () => {
-    // "function" has no BSON analogue, so the gate refuses it and names the MongoDB type.
-    expect(() => jsmql.expr('typeof $.a === "function"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
-    );
+    expect(() => jsmql.expr('typeof $.a === "function"')).toThrow(`${never("function")} Did you mean 'javascript'?`);
+    expect(() => jsmql.expr('typeof $.a === "bigint"')).toThrow(`${never("bigint")} Did you mean 'long'?`);
   });
 
   it("refuses 'boolean' on a deep path too", () => {
     // The refusal reads the type name, not the operand, so a deep path gets the same message.
-    expect(() => jsmql.expr('typeof $.a.b.c === "boolean"')).toThrow(
-      "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
-    );
+    expect(() => jsmql.expr('typeof $.a.b.c === "boolean"')).toThrow(`${never("boolean")} Did you mean 'bool'?`);
   });
 });
 

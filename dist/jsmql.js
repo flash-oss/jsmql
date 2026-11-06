@@ -67,7 +67,6 @@ var BSON_TYPE_ALIASES = [
   "object",
   "array",
   "binData",
-  "undefined",
   "objectId",
   "bool",
   "date",
@@ -82,19 +81,18 @@ var BSON_TYPE_ALIASES = [
   "long",
   "decimal",
   "minKey",
-  "maxKey",
-  "number"
+  "maxKey"
 ];
-var TYPE_GROUPS = {
-  number: ["double", "int", "long", "decimal"]
-};
 function typeAliasOf(spelling) {
   return BSON_TYPE_ALIASES.includes(spelling) ? spelling : null;
 }
 var TYPEOF_HINTS = {
-  boolean: "bool",
-  bigint: "long",
-  function: "javascript"
+  boolean: { name: "bool" },
+  bigint: { name: "long" },
+  function: { name: "javascript" },
+  number: { test: "a number", write: "x.isNumber()" },
+  undefined: { test: "absence", write: "x === undefined" },
+  missing: { test: "absence", write: "x === undefined" }
 };
 var inCode = (file, args) => args === void 0 ? { inCode: file } : { inCode: file, args };
 var composedInto = (...owners) => ({
@@ -22670,10 +22668,13 @@ var bannedNested = (spelled3, stage, container, instead, pos) => new CodegenErro
   pos
 );
 var notAMongoType = (spelling, aliases, pos) => {
-  const hint2 = TYPEOF_HINTS[spelling];
-  const suggestion = hint2 !== void 0 ? ` Did you mean '${hint2}'?` : didYouMean(spelling, aliases, (s) => s);
+  const lower = spelling.toLowerCase();
+  const hint2 = TYPEOF_HINTS[lower];
+  const byCase = aliases.find((a) => a.toLowerCase() === lower);
+  const realOf = new Map(aliases.map((a) => [a.toLowerCase(), a]));
+  const fix = hint2 === void 0 ? byCase !== void 0 ? ` Did you mean '${byCase}'?` : didYouMean(lower, realOf.keys(), (s) => realOf.get(s) ?? s) : "name" in hint2 ? ` Did you mean '${hint2.name}'?` : ` For ${hint2.test}, write '${hint2.write}'.`;
   return new CodegenError(
-    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one.${suggestion} For absence, write 'x === undefined'.`,
+    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one, so the comparison is never true.${fix}`,
     pos
   );
 };
@@ -26974,19 +26975,24 @@ function productionKeyOf(node) {
 }
 function typeofComparison(node, env) {
   const { left, right } = node;
-  const pick = (a, b) => a.type === "UnaryExpr" && a.op === "typeof" && b.type === "StringLiteral" ? { operand: a.argument, alias: b.value } : null;
+  const pick = (a, b) => a.type === "UnaryExpr" && a.op === "typeof" ? { operand: a.argument, name: b } : null;
   const o = pick(left, right) ?? pick(right, left);
   if (o === null) return null;
-  const alias = typeAliasOf(o.alias);
-  if (alias === null) throw notAMongoType(o.alias, BSON_TYPE_ALIASES, right.pos);
-  const negated = node.op === "!==";
-  const actual = { $type: lowerValue(o.operand, env) };
-  const group = TYPE_GROUPS[alias];
-  if (group !== void 0) {
-    const member = { $in: [actual, group] };
-    return negated ? { $not: [member] } : member;
+  checkTypeNames(o.name);
+  if (o.name.type !== "StringLiteral") return null;
+  return { [node.op === "!==" ? "$ne" : "$eq"]: [{ $type: lowerValue(o.operand, env) }, o.name.value] };
+}
+function checkTypeNames(e) {
+  const check = (v, pos) => {
+    if (typeof v === "string" && typeAliasOf(v) === null) throw notAMongoType(v, BSON_TYPE_ALIASES, pos);
+  };
+  if (e.type === "StringLiteral") check(e.value, e.pos);
+  if (e.type === "ArrayLiteral") {
+    for (const el of e.elements) if (el.type === "StringLiteral") check(el.value, el.pos);
   }
-  return { [negated ? "$ne" : "$eq"]: [actual, alias] };
+  if (e.type === "Injected") {
+    for (const v of Array.isArray(e.value) ? e.value : [e.value]) check(v, e.pos);
+  }
 }
 function orientUndefined(left, right) {
   if (left.type === "UndefinedLiteral") return right.type === "UndefinedLiteral" ? null : right;
@@ -27018,6 +27024,7 @@ function membership(node, env) {
   const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
   if (right.type !== "ArrayLiteral" && !passedList) throw inNeedsList(node.pos);
   checkOperandKinds(node, productionKeyOf(node), [left, right], env);
+  if (left.type === "UnaryExpr" && left.op === "typeof") checkTypeNames(right);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {

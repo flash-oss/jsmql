@@ -88,8 +88,6 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a == null", why: ARRAY_RULE },
   { src: "$.a != null", why: ARRAY_RULE },
   { src: "$.a > 1", why: ARRAY_RULE },
-  { src: 'typeof $.a === "number"', why: ARRAY_RULE },
-  { src: 'typeof $.a !== "number"', why: ARRAY_RULE },
   { src: "$.a.isString()", why: NO_JS_METHOD },
   { src: "$.n.v === 1", why: ARRAY_RULE },
   { src: "$.n.v !== undefined", why: ARRAY_RULE },
@@ -107,10 +105,6 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a === 1 || $.a === 2", why: ARRAY_RULE },
   { src: "!($.a === 1)", why: ARRAY_RULE },
   { src: "!($.a === null)", why: ARRAY_RULE },
-  {
-    src: 'typeof $.a === "undefined"',
-    why: 'By ruling, `typeof` uses MongoDB\'s type names: "undefined" is a MongoDB type, now deprecated in BSON, and selects nothing here, where JavaScript\'s `typeof` says "undefined" for an absent field. Absence is spelled `$.a === undefined`.',
-  },
   {
     src: "!($.g.some(i => i.r.s === 1))",
     why: "The THROW family, at its widest. JavaScript THROWS both ways here — `.some` on a document that has no `g`, and `i.r.s` on an element that has no `r` — so it selects nothing at all. This language reads a path as a path: no element has `r.s` equal to 1, so the negation holds. The positive spelling agrees with JavaScript, because neither answer selects those documents.",

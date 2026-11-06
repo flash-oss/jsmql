@@ -247,9 +247,9 @@ function nullTest(input: FilterIn): string | null {
 }
 
 /**
- * `x === undefined` and `typeof x === "undefined"` are one test: the field is
- * absent. An array at a path PREFIX also reads as absent in JavaScript. So the
- * positive form takes it as an alternative, and the negated form excludes it.
+ * `x === undefined` is the presence test: the field is absent. An array at a path
+ * PREFIX also reads as absent in JavaScript. So the positive form takes it as an
+ * alternative, and the negated form excludes it.
  */
 const presenceQuery = (path: string, negated: boolean): QueryDoc => queryOwnValue(path, { $exists: negated });
 

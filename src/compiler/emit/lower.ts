@@ -14,7 +14,7 @@ import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { bigIntToLong, isPlainObject, ObjectId, regexValue } from "../../bson.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
-import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
+import { BSON_TYPE_ALIASES, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { constantOf, provideLowering } from "../passes/evaluate.ts";
 import {
@@ -1274,27 +1274,34 @@ function productionKeyOf(node: Extract<Expr, { type: "BinaryExpr" }>): string {
   return key;
 }
 
-/** `typeof x === "t"`, either way round, through the predicate vocabulary's alias table. */
+/** `typeof x === "t"`, either way round: `$type` compared with a checked MongoDB type name. */
 function typeofComparison(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown | null {
   const { left, right } = node;
   const pick = (a: Expr, b: Expr) =>
-    a.type === "UnaryExpr" && a.op === "typeof" && b.type === "StringLiteral"
-      ? { operand: a.argument, alias: b.value }
-      : null;
+    a.type === "UnaryExpr" && a.op === "typeof" ? { operand: a.argument, name: b } : null;
   const o = pick(left, right) ?? pick(right, left);
   if (o === null) return null;
-  const alias = typeAliasOf(o.alias);
-  // A name MongoDB does not know would lower to a test that quietly matches nothing.
-  if (alias === null) throw E.notAMongoType(o.alias, BSON_TYPE_ALIASES, right.pos);
-  const negated = node.op === "!==";
-  const actual = { $type: lowerValue(o.operand, env) };
-  // The expression `$type` answers a CONCRETE type: an umbrella alias is a membership test.
-  const group = TYPE_GROUPS[alias];
-  if (group !== undefined) {
-    const member = { $in: [actual, group] };
-    return negated ? { $not: [member] } : member;
+  checkTypeNames(o.name);
+  if (o.name.type !== "StringLiteral") return null;
+  return { [node.op === "!==" ? "$ne" : "$eq"]: [{ $type: lowerValue(o.operand, env) }, o.name.value] };
+}
+
+/**
+ * Refuse each constant string in `e` (a string, or a list of strings) that is not a
+ * MongoDB type name. A name MongoDB does not know makes a `typeof` test that quietly
+ * matches nothing. A value that is not constant stays unchecked.
+ */
+function checkTypeNames(e: Expr): void {
+  const check = (v: unknown, pos: number) => {
+    if (typeof v === "string" && typeAliasOf(v) === null) throw E.notAMongoType(v, BSON_TYPE_ALIASES, pos);
+  };
+  if (e.type === "StringLiteral") check(e.value, e.pos);
+  if (e.type === "ArrayLiteral") {
+    for (const el of e.elements) if (el.type === "StringLiteral") check(el.value, el.pos);
   }
-  return { [negated ? "$ne" : "$eq"]: [actual, alias] };
+  if (e.type === "Injected") {
+    for (const v of Array.isArray(e.value) ? e.value : [e.value]) check(v, e.pos);
+  }
 }
 
 /** `x === undefined` either way round: the operand tested for presence, or null when neither side is `undefined`. */
@@ -1345,6 +1352,7 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
   const passedList = right.type === "Injected" && !cannotBe(typeOf(right, env), "array");
   if (right.type !== "ArrayLiteral" && !passedList) throw E.inNeedsList(node.pos);
   checkOperandKinds(node, productionKeyOf(node), [left, right], env);
+  if (left.type === "UnaryExpr" && left.op === "typeof") checkTypeNames(right);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 

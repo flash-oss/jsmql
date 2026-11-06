@@ -2903,12 +2903,23 @@ $.tags.join()                // the text JavaScript gives for an array: "a,b"
 ```js
 typeof $.field                     // { $type: "$field" }
 typeof $.age === "string"          // { $eq: [{ $type: "$age" }, "string"] }
-typeof $.age === "number"          // { $in: [{ $type: "$age" }, ["double", "int", "long", "decimal"]] }
+typeof $.ref === "objectId"        // { $eq: [{ $type: "$ref" }, "objectId"] }
+typeof $.age === "number"          // ✗ $type never answers "number": write $.age.isNumber()
+typeof $.flag === "boolean"        // ✗ a JavaScript name: MongoDB names this type "bool"
+typeof $.at === "undefined"        // ✗ write $.at === undefined to test for absence
+typeof $.x === "Object"            // ✗ the error names "object", the close type name
 ```
 
-It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"objectId"` or `"date"`. A name that covers more than one type, such as `"number"`, tests membership in those concrete types. The reason is that `$type` answers with one concrete type.
+`typeof x` gives the BSON type name of `x` as a string, for example `"string"`, `"bool"`, `"objectId"` or `"date"`. A comparison lowers as you write it: the string in the MQL is the string you wrote. In a Filter, `typeof $.age === "string"` is `{ age: { $type: "string" } }`.
 
-**A `typeof` comparison names a BSON type, not a JavaScript type.** MongoDB's vocabulary is the only vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. JSMQL refuses each of these three JavaScript names, and the error points at the MongoDB name. So you never get a test that silently matches nothing. `"undefined"` is a MongoDB type, the deprecated BSON one, so it means only that. Absence has its own spelling: `x === undefined`.
+**A `typeof` comparison names a BSON type, not a JavaScript type.** The compiler checks a constant string against the type names that `$type` can give, deprecated names included. It refuses a string that names no single type, and a string that stands for absence. Each error tells you what to write:
+
+- `"number"` names no single type. The error names the type test `x.isNumber()`.
+- `"undefined"` and `"missing"` stand for absence. The error names `x === undefined`, the one spelling of absence.
+- A JavaScript name gets the MongoDB name: `"bool"`, not `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`.
+- For any other string, the error names the closest type name, for example `"object"` for `"Object"`. When no name is close, the error states that the test can never be true.
+
+The same check applies to each constant string in `typeof x in [...]`. A string that is not a constant, as in `typeof $.x === $.t`, gets no check.
 
 ### Type test methods
 

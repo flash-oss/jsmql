@@ -62,7 +62,7 @@ const AGREE: readonly string[] = [
   "$.d > Date('2024-01-01')",
   // `typeof` — one alias table in src/registry/vocabulary.ts read by both the query and
   // the expression cells, and the reason this suite exists.
-  'typeof $.a === "number"',
+  'typeof $.a === "int"',
   'typeof $.s === "string"',
   // Mod
   "$.a % 2 === 0",

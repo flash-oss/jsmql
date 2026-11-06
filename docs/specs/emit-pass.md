@@ -476,9 +476,18 @@ an element can contain `$and`, `$or` and `$nor`. MEASURED: the server refuses th
 tests of the element itself (`{ $elemMatch: { $or: [{ $gt: 1 }] } }`), and it refuses
 `$expr` in any body. So those bodies take the `$expr` road.
 
-The predicate alias tables (`typeof` spellings, the numeric group) are
-registry data in `vocabulary.ts`, and both the query and the expression cells
-read them.
+The `typeof` tables are registry data in `vocabulary.ts`, and both the query
+and the expression cells read them. `BSON_TYPE_ALIASES` is the closed set of
+type names that the aggregation `$type` can give, deprecated names included.
+`TYPEOF_HINTS` maps a refused spelling to the spelling that the error names:
+a JavaScript type name to its BSON name, `"number"` to `x.isNumber()`, and
+`"undefined"` and `"missing"` to `x === undefined`. Any other spelling outside
+the set gets a `didYouMean` suggestion, with case ignored. A comparison with
+a constant string lowers as written: `{ $eq: [{ $type: x }, "<s>"] }` in a
+value, `{ f: { $type: "<s>" } }` in a Filter. No name expands to a group of
+types. The check also runs over each constant string of `typeof x in [...]`.
+A string that is not a constant gets no check. The query `$type` refuses an
+unknown alias, so the check keeps HR3 for a Filter.
 
 ## The statement target
 
