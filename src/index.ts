@@ -136,8 +136,8 @@ function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): bool
  * The check RECURSES, because a value with no MQL representation has no MQL
  * representation one level down either. `undefined` is the language's existence
  * TEST and never a value (docs/LANGUAGE.md § `undefined`). A nested `undefined`
- * must never reach the compiled document: if it did, it would disagree with
- * itself, because the printer drops the key while the driver sends `null` for it.
+ * must never reach the compiled document. The driver sends it as `null`, but
+ * `jsmql.stringify` refuses it, so the document would have no text.
  */
 function checkValue(value: unknown, slot: number, key?: string): void {
   const where = key !== undefined ? `parameter '${key}'` : `interpolation slot ${slot}`;
