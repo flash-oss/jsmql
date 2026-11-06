@@ -84,9 +84,9 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
       //$.kycNames = $$$.kycs.find({ _id: $.vanId }).nameDetails;
 
       $ = {
-        txId: $._id,
+        time: $.createdAt,
         senderAccountName: $.sender.accountName,
-        kyc: $$$.kycs.find({ _id: $.vanId }).nameDetails, //.pick(["firstName", "middleName", "lastName"]),
+        kyc: $$$.kycs.find({ _id: $.vanId }).nameDetails.pick(["firstName", "middleName", "lastName"]),
       };
 
       // leave only the difference with bank's acc. name
@@ -96,24 +96,24 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
     const mql = jsmql.compile(jsmqlFunc)({ finInstnId: new ObjectId("612309871234098712340987") });
 
     expect(await populateAndQueryDatabase(ctx.task.name, mql)).to.equal(`
-txId                     | senderAccountName | kyc.firstName | kyc.middleName | kyc.lastName
-6960b746f8b86245167c87e3 | SUKARNO           | Sukarno       |                | Sukarno     
-696f57f4b32be86c75b9456b | -SUKARNO          | Sukarno       |                | Sukarno     
-69be5ce0bb86a6485db83f33 |                   | Sukarno       |                | Sukarno     
-69c0495091e4da1ca51d8568 |                   | Sukarno       |                | Sukarno     
-69c2973285178c5adb850067 | 42                | Sukarno       |                | Sukarno     
-69c71e77624190e782bc9649 | SUKARNO SUKARNO   | Sukarno       |                | Sukarno     
-6977f92a8d077641e7166660 | ZHANG WEI         | Wei           | Ming           | Zhang       
-69794481a8b79419c51c8dad | WEI MING ZHANG    | Wei           | Ming           | Zhang       
-697e51ebed1d6ada4ed1a527 | wei zhang         | Wei           | Ming           | Zhang       
-698491bbf576896552d218f3 | MARIA  MARIA      | maria         |                | maria       
-69d14e004022a499e67f1efa | NYOMAN            | Nyoman        |                | Nyoman      
-69d608d8cf99ced357c38fd5 | WAYAN             | Wayan         |                | Wayan       
-69d799583825d93bf7569310 | KADEK             | Kadek         |                | Kadek       
-69dc7365b12f56b6a5b579cf | JOKO              |               |                |             
-69e216c9b44eadbdf6f8a99a | PUTU              |               |                |             
-69e461dcf7217297df82b878 | MADE              |               |                | Made        
-69e938df69d613254716974d | KETUT KETUT       |               |                |             
+time                     | senderAccountName | kyc.firstName | kyc.middleName | kyc.lastName
+2026-03-28T00:19:03.000Z | SUKARNO SUKARNO   | Sukarno       |                | Sukarno     
+2026-03-24T13:52:50.000Z | 42                | Sukarno       |                | Sukarno     
+2026-03-22T19:56:00.000Z |                   | Sukarno       |                | Sukarno     
+2026-03-21T08:54:56.000Z |                   | Sukarno       |                | Sukarno     
+2026-01-20T10:24:52.000Z | -SUKARNO          | Sukarno       |                | Sukarno     
+2026-01-09T08:07:34.000Z | SUKARNO           | Sukarno       |                | Sukarno     
+2026-01-31T19:03:07.000Z | wei zhang         | Wei           | Ming           | Zhang       
+2026-01-27T23:04:33.000Z | WEI MING ZHANG    | Wei           | Ming           | Zhang       
+2026-01-26T23:30:50.000Z | ZHANG WEI         | Wei           | Ming           | Zhang       
+2026-02-05T12:48:59.000Z | MARIA  MARIA      | maria         |                | maria       
+2026-04-04T17:44:32.000Z | NYOMAN            | Nyoman        |                | Nyoman      
+2026-04-08T07:50:48.000Z | WAYAN             | Wayan         |                | Wayan       
+2026-04-09T12:19:36.000Z | KADEK             | Kadek         |                | Kadek       
+2026-04-13T04:39:01.000Z | JOKO              |               |                |             
+2026-04-17T11:17:29.000Z | PUTU              |               |                |             
+2026-04-19T05:02:20.000Z | MADE              |               |                | Made        
+2026-04-22T21:08:47.000Z | KETUT KETUT       |               |                |             
 `);
   });
 });
