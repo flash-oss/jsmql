@@ -22,7 +22,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 
 // Method calls aren't expressible in the query language, so the whole thing
 // falls into `$expr` (still a legal Filter operator).
-jsmql("$.email.split('@').at(1).toLowerCase() === 'gmail.com'");
+jsmql("$.email.split('@').at(1).toLower() === 'gmail.com'");
 // → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] } } }, "gmail.com" ] } }
 
 // Any `;` flips to Pipeline mode — even one stage with a trailing `;`.
@@ -203,7 +203,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to the JSON of a 
 - Binary operators: `+`, `-`, `*`, `/`, `%`, `===`, `!==`, `==`/`!=` (against `null` only — see [Comparison](#comparison)), `>`, `>=`, `<`, `<=`, `&&`, `||`, `??`, `in`, `**`
 - Unary operators: `!`, `-`
 - Ternary operator: `? :`
-- String methods: `.trim()`, `.toLowerCase()`, `.startsWith()`, etc.
+- String methods: `.trim()`, `.toLower()`, `.startsWith()`, etc.
 - Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
 - Number methods and the `Math` constants: `$.n.floor()`, `[$.a, $.b].min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
@@ -344,10 +344,10 @@ A template literal is a string between backticks, with `${expr}` interpolation, 
 JSMQL wraps an interpolated expression in `$toString`, so that the result follows the JS
 coercion rules. So `` `count: ${$.n}` `` works when `$.n` is a number and when it is a string. An expression
 that statically gives a string gets no wrap, so the output stays compact. Examples are a
-string literal, `.toLowerCase()`, `.trim()` and a nested template literal:
+string literal, `.toLower()`, `.trim()` and a nested template literal:
 
 ```js
-`name=${$.name.toLowerCase()}`
+`name=${$.name.toLower()}`
 // → { $concat: ["name=", { $toLower: { $ifNull: ["$name", ""] } }] }
 ```
 
@@ -625,14 +625,14 @@ negative at query time, MongoDB decides the result: `$arrayElemAt` counts from t
 When the key is **provably a string**, it can only be an object property name, because a
 string is never a numeric array index. So JSMQL skips the dispatch and emits `$getField`
 directly. A key is provably a string when it is a string literal, a string-returning
-expression like `.toLowerCase()`, or a `const k = "…"` binding. **A lambda parameter over an
+expression like `.toLower()`, or a `const k = "…"` binding. **A lambda parameter over an
 array whose elements are all strings** is also provably a string.
 A string key that can be missing reads as `""`, because `$getField` refuses a null name. A
-string method reads a missing string as `""`, so `.toLowerCase()` gives such a key:
+string method reads a missing string as `""`, so `.toLower()` gives such a key:
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$scores", {}] } } }
+$.scores[$.key.toLower()] // → { $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$scores", {}] } } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
@@ -1017,7 +1017,7 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 // → $lookup (pipeline: [$match]) + $set { productIds: uniq(flatten($map(result, "productIds"))) }
 ```
 
-The `.size()`, `.reduce` and member-access terminals have precedence: `.filter(p).map(...).size()` emits `$size` against the materialised, transformed slot. A `.map(x => ({ … }))` whose body is an **object literal** gives a document. So it stays in the sub-pipeline as a `$replaceWith`, and a `.take` (or a similar method) after it lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns an object literal does the same. A chain method that the registry does not hold (`.toLowerCase`, `.padStart`, …) takes the expression form, with no change.
+The `.size()`, `.reduce` and member-access terminals have precedence: `.filter(p).map(...).size()` emits `$size` against the materialised, transformed slot. A `.map(x => ({ … }))` whose body is an **object literal** gives a document. So it stays in the sub-pipeline as a `$replaceWith`, and a `.take` (or a similar method) after it lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns an object literal does the same. A chain method that the registry does not hold (`.toLower`, `.padStart`, …) takes the expression form, with no change.
 
 **Validate or reshape with intermediate stages — `.aggregate`.** `.map` reshapes one document at a time, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate`, and write the reshape as `<param> = <expr>`. This replaces the document of the body with the same `$replaceWith` that a `.map` emits.
 
@@ -1511,9 +1511,9 @@ When JSMQL knows what a value *is*, it also knows which methods can follow it. S
 
 ```js
 jsmql.expr('$.createdAt.startOf("month").map(x => x)')   // ✗ .map() on a date
-jsmql.expr('$.createdAt.plus(1, "day").toUpperCase()')   // ✗ .toUpperCase() on a date; format it first: .format("%Y-%m-%d")
+jsmql.expr('$.createdAt.plus(1, "day").toUpper()')       // ✗ .toUpper() on a date; format it first: .format("%Y-%m-%d")
 jsmql.expr('$.items.every(x => x.ok).filter(y => y)')    // ✗ .filter() on a boolean
-jsmql.expr('$.tags.split(",").toUpperCase()')            // ✗ .toUpperCase() on an array; map first: .map(x => x.toUpperCase())
+jsmql.expr('$.tags.split(",").toUpper()')                // ✗ .toUpper() on an array; map first: .map(x => x.toUpper())
 ```
 
 The check covers every method that applies to only one type. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver. It does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that really accepts more than one type:
@@ -1543,7 +1543,7 @@ When JSMQL does not know the type, it rejects nothing and emits the MQL. These v
 
 `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
 
-**This check follows JavaScript, not the coercions of MongoDB.** MongoDB runs `$toUpper` on a date with no error, and gives back the date as a string. JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it passes through with no change, because raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
+**This check follows JavaScript, not the coercions of MongoDB.** MongoDB runs `$toUpper` on a date with no error, and gives back the date as a string. JavaScript throws on `date.toUpperCase()`, and JSMQL refuses `date.toUpper()`, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it passes through with no change, because raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
 
 JSMQL leaves each constraint that depends on your deployment to the server, for example
 sharding, transactions, memory limits and Atlas availability.
@@ -1804,8 +1804,9 @@ Call methods on any expression that produces a string:
 $.name.trim()                      // { $trim: { input: { $ifNull: ["$name", ""] } } }
 $.name.trimStart()                 // { $ltrim: { input: { $ifNull: ["$name", ""] } } }
 $.name.trimEnd()                   // { $rtrim: { input: { $ifNull: ["$name", ""] } } }
-$.name.toLowerCase()               // { $toLower: { $ifNull: ["$name", ""] } }
-$.name.toUpperCase()               // { $toUpper: { $ifNull: ["$name", ""] } }
+$.name.toLower()                   // { $toLower: { $ifNull: ["$name", ""] } }
+$.name.toUpper()                   // { $toUpper: { $ifNull: ["$name", ""] } }
+$.name.toUpperCase()               // ✗ JSMQL spells it .toUpper(), as lodash and MongoDB do; .toLowerCase() is refused too
 $.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: { $ifNull: ["$name", ""] } }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
@@ -1819,7 +1820,7 @@ $.email.indexOfSubstring("@")      // { $indexOfCP: [{ $ifNull: ["$email", ""] }
 $.path.indexOfSubstring("/", 1)    // { $indexOfCP: [{ $ifNull: ["$path", ""] }, "/", 1] }   — the search starts at index 1
 $.text.replace("old", "new")       // { $replaceOne: { input: { $ifNull: ["$text", ""] }, find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: { $ifNull: ["$text", ""] }, find: " ", replacement: "_" } }
-$.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0] }
+$.email.toLower().includes("@")    // { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0] }
 $.email.startsWith("admin@")       // { $eq: [{ $indexOfCP: [{ $ifNull: ["$email", ""] }, "admin@"] }, 0] }
 $.file.endsWith(".pdf")            // substring-equality at the tail (see below)
 $.name.charAt(0)                   // { $substrCP: ["$name", 0, 1] }
@@ -1940,7 +1941,7 @@ $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
 ```
 
-`.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLowerCase()` and `.toUpperCase()` change only the case, and keep all other characters.
+`.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLower()` and `.toUpper()` change only the case, and keep all other characters.
 
 **ASCII-only, by design.** `$toUpper` and `$toLower` work only on ASCII, so an accented letter passes through with no change. The split into words uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits at camelCase boundaries and at characters that are not alphanumeric. An accented character acts as a separator.
 
@@ -1954,7 +1955,7 @@ $.field.length                      // "$field.length"          — a FIELD name
 $.field["length"]                   // { $getField: { field: "length", input: { $ifNull: ["$field", {}] } } } — the same field, bracket access
 
 // Chaining
-$.name.trim().toLowerCase()         // { $toLower: { $trim: { input: { $ifNull: ["$name", ""] } } } }
+$.name.trim().toLower()             // { $toLower: { $trim: { input: { $ifNull: ["$name", ""] } } } }
 
 // On sub-expressions
 ($.firstName + " " + $.lastName).trim()  // { $trim: { input: { $ifNull: [{ $concat: [...] }, ""] } } }
@@ -2435,7 +2436,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 > **JSMQL rejects a chain that cannot type-check.** When you chain a method on a receiver whose type is provably wrong for it, JSMQL throws at compile time. It does not emit MQL that the server would reject. Examples:
 >
 > - `.every(p).map(f)`: a boolean has no methods
-> - `s.toUpperCase().map(f)`: a string is not an array
+> - `s.toUpper().map(f)`: a string is not an array
 > - `a.countBy("t").take(3)`: an object is not an array
 > - over a lookup, `$$$.orders.find(p).take(5)`: `.find` returns one document
 >
@@ -2563,7 +2564,7 @@ A reader of an object is a method of the object:
 
 ```js
 $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
-$.o.mapKeys((v, k) => k.toUpperCase())// rename keys
+$.o.mapKeys((v, k) => k.toUpper())    // rename keys
 $.user.pick(["name", "age"])          // keep only those keys (missing keys drop out)
 $.user.omit(["password"])             // all keys except those
 $.user.pick($.visibleFields)          // the key list read from the document itself
@@ -3825,7 +3826,7 @@ jsmql("delete $.a, delete $.b, $.status = 'done'")
 
 `jsmql.update()` returns the **update document**: the `{ $set, $inc, $unset, … }` shape that `updateOne(filter, update)` takes. It lowers each write to the update operator that means it. It holds constants only.
 
-It refuses a value that depends on the document (`$.b + 1`, `$.name.toUpperCase()`). The reason is that the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` also accepts. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
+It refuses a value that depends on the document (`$.b + 1`, `$.name.toUpper()`). The reason is that the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` also accepts. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
 
 ```js
 jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
@@ -3838,7 +3839,7 @@ jsmql.update("$.updatedAt = Date()")     // → { $currentDate: { updatedAt: tru
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
-jsmql.update("$.name = $.name.toUpperCase()")
+jsmql.update("$.name = $.name.toUpper()")
 // ✗ the value comes from the document, and an update document takes only constants; use jsmql.pipeline("$.a = $.b + 1;")
 ```
 
@@ -4189,7 +4190,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 | Slot | Write any of these | They all mean |
 |---|---|---|
-| **Sort key** — `.sortBy` `.orderBy` | `"cat"` · `d => d.cat` · `d => d.cat.toLowerCase()` | order by that value |
+| **Sort key** — `.sortBy` `.orderBy` | `"cat"` · `d => d.cat` · `d => d.cat.toLower()` | order by that value |
 | **Group key** — `.groupBy` `.countBy` `.keyBy` `.uniqBy` | the above, **plus** `{ cat: "a" }` · `["cat", "a"]` | group on that value |
 | **Unwind path** — `.flatMap` | `"items"` · `d => d.items` | the `items` array field |
 | **Predicate** — `.find` `.filter` `.reject` (and `.map`'s iteratee) | `o => o.cat === "a"` · `{ cat: "a" }` · `["cat", "a"]` · `"active"` (truthy test) | match on `cat` |
@@ -4203,7 +4204,7 @@ $.n = $$$.orders.filter({ userId: $._id }).size();   // ≡ .filter(o => o.userI
 **A group key can be a computed value.** MongoDB evaluates `$group._id` for each document, so all four grouping methods take any expression. The expression lowers directly into the key, with no extra stage:
 
 ```js
-$$.countBy(d => d.category.toLowerCase());
+$$.countBy(d => d.category.toLower());
 // → [{ $group: { _id: { $toLower: "$category" }, … } }, … ]
 
 $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
@@ -4213,7 +4214,7 @@ $$.countBy({ active: true });             // count matching vs not (lodash _.mat
 **A sort key can be a computed value too**, but a `$sort` key must be a literal field path. So JSMQL puts the value in a scratch field first, and clears the field when the chain finishes:
 
 ```js
-$$.sortBy(d => d.category.toLowerCase());
+$$.sortBy(d => d.category.toLower());
 // → [{ $addFields: { "__jsmql.tmp.0": { $toLower: "$category" } } },
 //    { $sort: { "__jsmql.tmp.0": 1 } },
 //    { $unset: "__jsmql" }]
@@ -4611,7 +4612,7 @@ jsmql(`[{ $match: $.status === "active" && $.score > $.threshold }]`);
 // → [{ $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } }]
 
 // Untranslatable shape → falls back to $expr entirely
-jsmql("[{ $match: $.name.toLowerCase() === \"alice\" }]");
+jsmql("[{ $match: $.name.toLower() === \"alice\" }]");
 // → [{ $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "alice"] } } }]
 
 // Object-literal body is passed through unchanged (also the escape hatch)
@@ -5071,8 +5072,8 @@ db.users.aggregate(jsmql(`
 // → db.users.aggregate([{ $match: { age: { $gt: 18 } } }, { $project: { name: 1, email: 1 } }])
 
 // updateOne — `jsmql()` returns an aggregation pipeline so RHS expressions
-// like `.toUpperCase()` actually evaluate server-side
-db.users.updateOne({ _id: 123 }, jsmql("$.name = $.name.toUpperCase()"));
+// like `.toUpper()` actually evaluate server-side
+db.users.updateOne({ _id: 123 }, jsmql("$.name = $.name.toUpper()"));
 // → db.users.updateOne({ _id: 123 }, [{ $set: { name: { $toUpper: "$name" } } }])
 
 // Raw aggregation expression — for embedding inside a hand-written stage body
@@ -5134,7 +5135,7 @@ db.users.updateOne(
 //     { $inc: { visits: 1 }, $set: { status: "active" }, $currentDate: { updatedAt: true }, $unset: { tmp: "" } },
 //   )
 
-jsmql.update("$.name = $.name.toUpperCase()");   // ✗ the value comes from the document, and an update document takes only constants; use the pipeline form
+jsmql.update("$.name = $.name.toUpper()");   // ✗ the value comes from the document, and an update document takes only constants; use the pipeline form
 ```
 
 Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
@@ -5627,7 +5628,7 @@ jsmql.expr('$.firstName + " " + $.lastName')
 // → { $concat: ["$firstName", " ", "$lastName"] }
 
 // Normalized email
-jsmql.expr("$.email.toLowerCase().trim()")
+jsmql.expr("$.email.toLower().trim()")
 // → { $trim: { input: { $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] } } }
 
 // Check domain
@@ -5767,10 +5768,10 @@ String cleanup:
 } }
 
 // Template-tag form
-jsmql`$.email.toLowerCase().trim()`;
+jsmql`$.email.toLower().trim()`;
 
 // Function form
-jsmql(({ $ }) => $.email.toLowerCase().trim());
+jsmql(({ $ }) => $.email.toLower().trim());
 ```
 
 ### `$where` — predicate inside `find()` / `$match`

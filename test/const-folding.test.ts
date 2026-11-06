@@ -245,9 +245,9 @@ describe("const folding — parameterised (jsmql.compile) per-call folding", () 
 
 describe("const folding — native method calls", () => {
   it("array .map with an arrow callback folds (example 5)", () => {
-    expect(
-      jsmql('const bad = ["cancelled", "rejected", "returned"].map(s => s.toUpperCase()); $.status in bad'),
-    ).toEqual({ status: { $in: ["CANCELLED", "REJECTED", "RETURNED"] } });
+    expect(jsmql('const bad = ["cancelled", "rejected", "returned"].map(s => s.toUpper()); $.status in bad')).toEqual({
+      status: { $in: ["CANCELLED", "REJECTED", "RETURNED"] },
+    });
   });
 
   it("array .filter with an arrow callback folds", () => {
@@ -267,7 +267,7 @@ describe("const folding — native method calls", () => {
   });
 
   it("string methods fold (ASCII case, split)", () => {
-    expect(jsmql('const up = "active".toUpperCase(); $.s === up')).toEqual({ s: "ACTIVE" });
+    expect(jsmql('const up = "active".toUpper(); $.s === up')).toEqual({ s: "ACTIVE" });
     expect(jsmql('const parts = "a,b,c".split(","); $.x in parts')).toEqual({ x: { $in: ["a", "b", "c"] } });
   });
 

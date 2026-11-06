@@ -623,7 +623,7 @@ $.orders = $$$.orders.filter(o => o.uid === $._id);  $match($.orders.status === 
 
 A cell that would abort or answer a value on null tests the receiver first
 (`nullOr` in `names.ts`) exactly where the proof says `absent`. A written field
-whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpperCase();`
+whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpper();`
 emits `{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
 says `absent`, because `$getField` aborts the query on a null name (`indexAccess` in
 [lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{ $getField: { field: null,

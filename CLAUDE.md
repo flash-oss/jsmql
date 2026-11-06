@@ -6,7 +6,7 @@ This file gives guidance to Claude Code (claude.ai/code) for work on code in thi
 
 JSMQL is a language for MongoDB aggregation expressions. It is a subset of JavaScript, like SQL for MongoDB, and it uses JS syntax that developers already know. It compiles to MQL JSON.
 
-The primary syntax is JS: `$.age > 18`, `$.name.trim().toLowerCase()`, `$.items.map(x => x * 1.1)`. The `$op(args...)` escape hatch (direct operator form) reaches MongoDB operators that have no JavaScript equivalent (e.g. `$sampleRate(0.1)`, `$stdDevPop($.measurements)`, `$dateTrunc({ date: $.t, unit: "week" })`).
+The primary syntax is JS: `$.age > 18`, `$.name.trim().toLower()`, `$.items.map(x => x * 1.1)`. The `$op(args...)` escape hatch (direct operator form) reaches MongoDB operators that have no JavaScript equivalent (e.g. `$sampleRate(0.1)`, `$stdDevPop($.measurements)`, `$dateTrunc({ date: $.t, unit: "week" })`).
 
 The public API is the `jsmql` callable from `src/index.ts`. It carries its other entry points as properties (`jsmql.compile`, `jsmql.validate`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`, `jsmql.stringify`). The build uses `Object.assign` for the callable/properties shape, not a `namespace` — see the `jsmql` assembly at the foot of [src/index.ts](src/index.ts), and see [src/CLAUDE.md](src/CLAUDE.md) for the reason. Each entry point accepts the same three call shapes: **string** (`jsmql("…")`), **arrow** (`jsmql(({ $ }) => …)`), and **template tag** (`` jsmql`… ${value} …` ``). Each line below names one entry; the linked doc holds the detail:
 

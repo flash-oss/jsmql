@@ -421,8 +421,6 @@ const VALUE_METHOD_SKIP = {
     "trimLeft",
     "trimEnd",
     "trimRight",
-    "toLowerCase",
-    "toUpperCase",
     "substr",
     "substring",
     "charAt",
@@ -453,7 +451,7 @@ const VALUE_METHOD_SKIP = {
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
   // Shimmed to a custom error message: not a real completable method.
-  shimmed: new Set(["toNumber", "unzipWith"]),
+  shimmed: new Set(["toNumber", "toLowerCase", "toUpperCase", "unzipWith"]),
 };
 
 // Per-method augmentation signature. `recv` is the interface to augment; `sig`
@@ -608,6 +606,16 @@ const VALUE_METHOD_SIGNATURES = {
   lowerFirst: { recv: "String", sig: "(): string", doc: "Lower-case the first char — `_.lowerFirst`." },
   kebabCase: { recv: "String", sig: "(): string", doc: "`kebab-case` the string — `_.kebabCase`." },
   snakeCase: { recv: "String", sig: "(): string", doc: "`snake_case` the string — `_.snakeCase`." },
+  toLower: {
+    recv: "String",
+    sig: "(): string",
+    doc: "Lower-case each letter of the string — `_.toLower`, `$toLower`.",
+  },
+  toUpper: {
+    recv: "String",
+    sig: "(): string",
+    doc: "Upper-case each letter of the string — `_.toUpper`, `$toUpper`.",
+  },
   lowerCase: {
     recv: "String",
     sig: "(): string",

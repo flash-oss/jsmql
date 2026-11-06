@@ -823,6 +823,12 @@ var booleanIsNotJsmql = unsupported(
 var toNumberIsNotJsmql = unsupported(
   "'.toNumber()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." + afterStringMethod("toDouble")
 );
+var toLowerCaseIsNotJsmql = unsupported(
+  "'.toLowerCase()' is not part of JSMQL \u2014 '.toLower()' is its spelling, as in lodash's '_.toLower' and MongoDB's '$toLower', and one capability gets one spelling. Write '<value>.toLower()': '$.x.toLower()'."
+);
+var toUpperCaseIsNotJsmql = unsupported(
+  "'.toUpperCase()' is not part of JSMQL \u2014 '.toUpper()' is its spelling, as in lodash's '_.toUpper' and MongoDB's '$toUpper', and one capability gets one spelling. Write '<value>.toUpper()': '$.x.toUpper()'."
+);
 var parseIntIsNotJsmql = unsupported(
   `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.` + afterStringMethod("toDouble")
 );
@@ -3491,8 +3497,8 @@ var NAMES = {
       "'.trimRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
-  toLowerCase: name({
-    doc: "'.toLowerCase()' \u2014 see docs/LANGUAGE.md.",
+  toLower: name({
+    doc: "'.toLower()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
     returns: "string",
@@ -3503,17 +3509,31 @@ var NAMES = {
       args: { sig: "", none: true },
       emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $toLower: r }))
     },
-    stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toLower()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.toLowerCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLowerCase();'"
+      "'.toLower()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLower();'"
     ),
-    group: unsupported("'.toLowerCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.toLower()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "'.toLowerCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+      "'.toLower()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
-  toUpperCase: name({
-    doc: "'.toUpperCase()' \u2014 see docs/LANGUAGE.md.",
+  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
+  toLowerCase: name({
+    doc: "Parsed, then refused: '.toLower()' is JSMQL's spelling.",
+    call: true,
+    on: "any",
+    returns: "string",
+    where: [],
+    filter: toLowerCaseIsNotJsmql,
+    expr: toLowerCaseIsNotJsmql,
+    stream: toLowerCaseIsNotJsmql,
+    statement: toLowerCaseIsNotJsmql,
+    group: toLowerCaseIsNotJsmql,
+    window: toLowerCaseIsNotJsmql
+  }),
+  toUpper: name({
+    doc: "'.toUpper()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
     returns: "string",
@@ -3524,14 +3544,28 @@ var NAMES = {
       args: { sig: "", none: true },
       emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $toUpper: r }))
     },
-    stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toUpper()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.toUpperCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpperCase();'"
+      "'.toUpper()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpper();'"
     ),
-    group: unsupported("'.toUpperCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.toUpper()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "'.toUpperCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+      "'.toUpper()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
+  }),
+  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
+  toUpperCase: name({
+    doc: "Parsed, then refused: '.toUpper()' is JSMQL's spelling.",
+    call: true,
+    on: "any",
+    returns: "string",
+    where: [],
+    filter: toUpperCaseIsNotJsmql,
+    expr: toUpperCaseIsNotJsmql,
+    stream: toUpperCaseIsNotJsmql,
+    statement: toUpperCaseIsNotJsmql,
+    group: toUpperCaseIsNotJsmql,
+    window: toUpperCaseIsNotJsmql
   }),
   substr: name({
     doc: "'.substr()' \u2014 see docs/LANGUAGE.md.",

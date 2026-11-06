@@ -130,7 +130,7 @@ describe("jsmql.update() — the update document", () => {
     expect(jsmql.update("{ $set: { x: 1 }, $unset: { y: '' } }")).toEqual({ $set: { x: 1 }, $unset: { y: "" } });
   });
   it("refuses a value computed from the document, naming the pipeline form", () => {
-    expect(() => jsmql.update("$.name = $.name.toUpperCase()")).toThrow(/takes constants.*pipeline form/s);
+    expect(() => jsmql.update("$.name = $.name.toUpper()")).toThrow(/takes constants.*pipeline form/s);
   });
   it("refuses a bare predicate", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);

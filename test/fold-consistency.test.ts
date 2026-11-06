@@ -35,8 +35,8 @@ const stringCases: Case[] = [];
 for (const v of STRING_SAMPLES) {
   const lit = JSON.stringify(v);
   for (const call of [
-    ".toUpperCase()",
-    ".toLowerCase()",
+    ".toUpper()",
+    ".toLower()",
     ".trim()",
     ".trimStart()",
     ".trimEnd()",

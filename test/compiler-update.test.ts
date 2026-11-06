@@ -125,7 +125,7 @@ describe("compiler/emit/update — writes become their operators", () => {
   });
 
   it("quotes the read that the user wrote, as the server would see it", () => {
-    expect(() => update("$.name = $.name.toUpperCase()")).toThrow(
+    expect(() => update("$.name = $.name.toUpper()")).toThrow(
       "A document-form update takes constants: the server reads '$name' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
     );
     expect(() => update("$set({ a: $.user.name })")).toThrow("the server reads '$user.name' there as the string");

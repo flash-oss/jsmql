@@ -93,8 +93,8 @@ const EXPRESSIONS: readonly string[] = [
   '[["a", 1], ["b", 2]].fromEntries()',
   "({ a: 1 }).assign({ b: 2 })",
   // string methods
-  '"aBc".toUpperCase()',
-  '"AbC".toLowerCase()',
+  '"aBc".toUpper()',
+  '"AbC".toLower()',
   '"  hi  ".trim()',
   '"  hi  ".trimStart()',
   '"  hi  ".trimEnd()',

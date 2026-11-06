@@ -3641,10 +3641,14 @@ declare global {
     toInt(): number;
     /** The value as a 64-bit integer — `$toLong`. */
     toLong(): number;
+    /** Lower-case each letter of the string — `_.toLower`, `$toLower`. */
+    toLower(): string;
     /** A 24-hex string as an ObjectId — `$toObjectId`. */
     toObjectId(): any;
     /** A UUID string as a UUID — `$toUUID`. */
     toUUID(): any;
+    /** Upper-case each letter of the string — `_.toUpper`, `$toUpper`. */
+    toUpper(): string;
     /** Truncate to a length with an omission — `_.truncate`. */
     truncate(options?: { length?: number; omission?: string; separator?: string | RegExp }): string;
     /** `UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`. */

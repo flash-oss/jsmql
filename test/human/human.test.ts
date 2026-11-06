@@ -88,7 +88,7 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
       };
 
       // leave only the difference with bank's acc. name
-      $$.filter((t) => t.bankAccountName !== (t.kyc.firstName + " " + t.kyc.lastName).toUpperCase());
+      $$.filter((t) => t.bankAccountName !== (t.kyc.firstName + " " + t.kyc.lastName).toUpper());
     };
 
     const mql = jsmql.compile(jsmqlFunc)({ finInstnId: new ObjectId("612309871234098712340987") });
