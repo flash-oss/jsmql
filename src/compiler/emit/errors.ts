@@ -420,16 +420,19 @@ export function alwaysAbsent(read: string, holder: string | null, pos: number): 
   );
 }
 
-/** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
-export const newOnFunction = (name: string, pos: number): CodegenError =>
-  new CodegenError(`'${name}' is not a constructor in JSMQL. Call it without 'new': '${name}(…)'.`, pos);
-
-/** `new Foo(1)`: no row names the class. `name` is null when the callee is not a name at all. */
-export const unknownClass = (name: string | null, known: readonly string[], pos: number): CodegenError =>
+/** HR8: JSMQL has no `new` keyword. `name` is the callee, or null when the callee is not a name. */
+export const noNewKeyword = (name: string | null, pos: number): CodegenError =>
   new CodegenError(
     name === null
-      ? "'new' takes the name of a class, as in 'new Date(…)'."
-      : `Unknown class '${name}' in 'new ${name}(…)'.${didYouMean(name, known, (s) => `new ${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.`,
+      ? "JSMQL has no 'new' keyword. Call a constructor such as 'Date(…)', or a declared function, without 'new'."
+      : `JSMQL has no 'new' keyword. Write '${name}(…)'.`,
+    pos,
+  );
+
+/** `new Foo(1)`: JSMQL has no `new` keyword, and no row or binding names `Foo`. */
+export const unknownClass = (name: string, known: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    `JSMQL has no 'new' keyword, and it knows no class '${name}'.${didYouMean(name, known, (s) => `${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one, and call it.`,
     pos,
   );
 

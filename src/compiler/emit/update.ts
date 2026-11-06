@@ -12,7 +12,7 @@ import { staticKey } from "../passes/naming.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { setKey } from "../../registry/mql.ts";
-import { isPlainObject } from "../../bson.ts";
+import { canonicalBsonName, isPlainObject } from "../../bson.ts";
 import { childEnv } from "./inputs.ts";
 import { lowerValue } from "./lower.ts";
 
@@ -65,12 +65,7 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
               claimed.set(path, "$rename");
               break;
             }
-            if (
-              v.type === "NewExpression" &&
-              v.callee.type === "Ident" &&
-              v.callee.name === "Date" &&
-              v.args.length === 0
-            ) {
+            if (isNow(v, valueEnv)) {
               put("$currentDate", path, true, op.pos);
               break;
             }
@@ -187,4 +182,15 @@ function minMax(v: Expr, path: string): { op: "$min" | "$max"; value: Expr } | n
 function number(v: unknown, op: string, pos: number): number {
   if (typeof v !== "number") throw E.updateNeedsNumber(op, "a number", pos);
   return v;
+}
+
+/** `Date()` with no argument: the server's clock. As the whole write it is `$currentDate`. */
+function isNow(v: Expr, env: Env): boolean {
+  return (
+    v.type === "CallExpression" &&
+    v.callee.type === "Ident" &&
+    v.args.length === 0 &&
+    canonicalBsonName(v.callee.name) === "Date" &&
+    !env.scope.has(v.callee.name)
+  );
 }

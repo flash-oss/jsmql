@@ -1317,11 +1317,11 @@ function contextRefBlock(spec) {
 
 // The BSON value constructors. Each has a JavaScript-shaped name rather than a
 // `$`-prefixed operator. The arrow form needs an ambient declaration to type-check.
-// These are DERIVED from the rows that state `newKeyword: "optional"`. A new constructor
+// These are DERIVED from the global rows that list the value position. A new constructor
 // is one row in src/registry/names.ts and nothing needs editing here.
 //
-// Each is emitted as an interface with both a call and a construct signature,
-// because jsmql accepts `Decimal128("1.50")` and `new Decimal128("1.50")` alike.
+// Each is emitted as an interface with a call signature only, because JSMQL has no
+// `new` keyword (HR8): `Decimal128("1.50")` is the one spelling.
 // `Date` is excluded: TypeScript's own library already declares it, and a second
 // `var Date` would collide. Its mongosh spelling `ISODate` is not in that library,
 // so it is declared here.
@@ -1329,11 +1329,10 @@ function constructionFormsBlock() {
   return constructorGlobals()
     .filter(({ name }) => name !== "Date")
     .map(({ name, doc }) => {
-      const jsdoc = `/**\n * ${doc}\n *\n * \`${name}(…)\` and \`new ${name}(…)\` are equivalent; jsmql emits a live BSON\n * value, which is the only form the MongoDB driver accepts in a query document.\n */`;
+      const jsdoc = `/**\n * ${doc}\n *\n * JSMQL emits a live BSON value, which is the only form the MongoDB driver\n * accepts in a query document.\n */`;
       return (
         `interface ${name}Constructor {\n` +
         "  (value?: any): any;\n" +
-        "  new (value?: any): any;\n" +
         "}\n" +
         jsdoc +
         `\nvar ${name}: ${name}Constructor;`

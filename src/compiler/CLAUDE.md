@@ -69,6 +69,8 @@ passes/        naming.ts answers "which row does this node name", "what is the
                inject carries a runtime value in; fresh mints a parameter name;
                position and shape decide which document the program becomes;
                raw-mql checks HR6 on the tree as parsed, before inject.
+               no-new checks HR8 (no `new` keyword) on the tree as parsed,
+               before any pass can fold a `new Date(…)`.
                See docs/specs/desugar-pass.md, docs/specs/constant-engine.md,
                docs/specs/position-pass.md and docs/specs/raw-mql-boundary.md.
 interpret/     the interpreter for MQL expressions: `interpret(mql)` gives the value of a

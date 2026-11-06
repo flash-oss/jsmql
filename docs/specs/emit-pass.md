@@ -1061,7 +1061,7 @@ root), and names the pipeline form as the way to compute.
 | `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
 | `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
 | `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path on both sides) |
-| `$.t = new Date()` | `$currentDate: { t: true }` |
+| `$.t = Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
 | `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |
 | `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |

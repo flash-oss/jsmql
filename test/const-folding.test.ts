@@ -227,7 +227,7 @@ describe("const folding — errors", () => {
 
   it("an invalid constant date is rejected", () => {
     expect(() => jsmql('const d = Date("nope"); $.t < d')).toThrow(
-      'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
+      'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
   });
 });

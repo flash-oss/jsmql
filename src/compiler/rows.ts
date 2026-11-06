@@ -283,7 +283,7 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
     return undefined;
   }
   // A cell that dispatches on the ARGUMENT shape accepts what any of its rules
-  // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
+  // accepts. Read as one rule, so `Date(a, b, c, d, e, f, g, h)` is refused
   // by the count no rule states rather than accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
   // The refusal keys state no count: a constant call is counted by the rule for its
@@ -345,7 +345,6 @@ type EmitRow = {
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | "object";
   family?: Family;
   spreadAlternative?: string;
-  newKeyword?: "required" | "optional" | "forbidden";
   provides?: unknown;
   token?: string;
 };
@@ -699,28 +698,24 @@ export function onlyOf(name: string): readonly string[] {
   return (row(name) as { only?: readonly string[] } | undefined)?.only ?? [];
 }
 
-/** Whether `new` is required, optional or forbidden before this global, or undefined for a non-global. */
-export function newKeywordOf(name: string): "required" | "optional" | "forbidden" | undefined {
-  return emitRow(name)?.newKeyword;
-}
-
 /** Does the row for `name` exist, of kind `root` or `global` — a name reached without a receiver? */
 /**
- * Every value-constructing global, with the `new` rule and the doc its row states —
- * `ObjectId`, `Decimal128`, `MinKey`, `Date`, and their mongosh spellings.
+ * Every value-constructing global, with the doc its row states — `ObjectId`,
+ * `Decimal128`, `MinKey`, `Date`, and their mongosh spellings: a global row that
+ * lists the value position.
  *
  * Read for the ambient `declare global` block (scripts/generate-globals.mjs), so a
  * tenth constructor is one ROW and no generator edit.
  */
-export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
-  const out: { name: string; newKeyword: string; doc: string }[] = [];
+export function constructorGlobals(): readonly { name: string; doc: string }[] {
+  const out: { name: string; doc: string }[] = [];
   for (const [name, r] of Object.entries(ROWS) as [
     string,
-    { kind?: string; newKeyword?: string; doc?: string; where?: readonly string[] },
+    { kind?: string; doc?: string; where?: readonly string[] },
   ][]) {
     // A row that lists no position is a refusal (`RegExp`), not a constructor a program uses.
-    if (r?.kind !== "global" || r.newKeyword !== "optional" || (r.where?.length ?? 0) === 0) continue;
-    out.push({ name, newKeyword: r.newKeyword, doc: r.doc ?? "" });
+    if (r?.kind !== "global" || !(r.where ?? []).includes("value")) continue;
+    out.push({ name, doc: r.doc ?? "" });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -875,7 +870,7 @@ export function streamReceiverNames(): string[] {
 }
 
 /**
- * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`.
+ * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `Date(…)`.
  * A row that lists no position (`Math`, `Array`) is a namespace or a refusal, so no
  * suggestion names it.
  */
@@ -885,12 +880,9 @@ export function bareCallableNames(): string[] {
   );
 }
 
-/** Every global that `new` builds: `new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. */
+/** Every global that builds a value: `Date(…)`, `ObjectId(…)`, `Decimal128(…)`. */
 export function constructibleNames(): string[] {
-  return bareCallableNames().filter((n) => {
-    const k = newKeywordOf(n);
-    return k === "required" || k === "optional";
-  });
+  return bareCallableNames().filter((n) => isGlobalName(n) && lists(n, "value"));
 }
 
 /** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */

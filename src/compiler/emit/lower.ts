@@ -24,7 +24,6 @@ import {
   isCallable,
   isGlobalName,
   namespaceNames,
-  newKeywordOf,
   positionalKeysOf,
   productionForNode,
   productionForOperator,
@@ -910,7 +909,7 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, node.pos);
       throw E.notCallable(node.pos);
     }
-    // With or without `new`, the row answers: a row that lists no position refuses both spellings.
+    // The row answers: a row that lists no position refuses the call.
     if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
     throw E.unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
@@ -918,35 +917,37 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
   throw E.notCallable(node.pos);
 }
 
+/**
+ * `new X(…)` that passes/no-new.ts leaves to this phase (HR8): a name the program
+ * binds, which needs the scope, and a row that every position refuses, whose own
+ * refusal names the way.
+ */
 function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env): unknown {
   const { callee } = node;
-  if (callee.type !== "Ident") throw E.unknownClass(null, [], node.pos);
+  if (callee.type !== "Ident") throw E.noNewKeyword(null, node.pos);
   const { name } = callee;
-  if (env.scope.has(name) && env.lookup(name, callee.pos).ref.kind === "function")
-    throw E.newOnFunction(name, node.pos);
-  if (env.scope.has(name) || !isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
-  // A row that lists no position answers with its own refusal for either spelling.
-  if (newKeywordOf(name) === "forbidden" && (positionsOf(name)?.length ?? 0) > 0) {
-    throw E.newOnFunction(name, node.pos);
+  if (env.scope.has(name)) {
+    if (env.lookup(name, callee.pos).ref.kind === "function") throw E.noNewKeyword(name, node.pos);
+    throw E.unknownClass(name, constructibleNames(), node.pos);
   }
+  if (!isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
+  if ((positionsOf(name)?.length ?? 0) > 0) throw E.noNewKeyword(name, node.pos);
   return dispatchBare(node, name, node.args, env);
 }
 
-/** A global called by name — `Number(x)`, `new Date(…)`, `assert(…)`. */
+/** A global called by name — `Number(x)`, `Date(…)`, `assert(…)`. */
 function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: Env): unknown {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length, proofs);
-  // A refusal names the call as the source spells it: `new Date(…)` or `Date(…)`.
-  const isNew = node.type === "NewExpression";
   if (sel.kind === "rule") {
-    const called = isNew ? `new ${name}()` : `${name}()`;
     const argEnv = childEnv(env, node, "args");
-    checkSlots(called, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
+    checkSlots(`${name}()`, sel.rule.args, exprArgs, true, undefined, env.site.settling, slotProof(argEnv));
     return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
   }
-  const spelled = isNew ? `'new ${name}()'` : name;
+  // A refusal names the call as the source spells it: `new Set(…)` or `Set(…)`.
+  const spelled = node.type === "NewExpression" ? `'new ${name}()'` : name;
   throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 

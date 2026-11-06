@@ -159,9 +159,11 @@ thing, and one capability gets one spelling. The refusal names the method:
 `Long($.x)` names `$.x.toLong()`. A constant is a different class of arguments, and the
 `constant` cell of the row builds it.
 
-`X(…)` and `new X(…)` are both accepted (`newKeyword: "optional"` on every row), and
-`jsmql.stringify` writes `new X(…)` for either. JavaScript's own bare `Date()` returns
-a STRING; JSMQL keeps the syntax and drops that meaning, so one rule covers all nine.
+The source writes `X(…)`. JSMQL has no `new` keyword (HR8): `src/compiler/passes/no-new.ts`
+refuses `new X(…)` on the tree as parsed, and the error names `X(…)`. `jsmql.stringify`
+writes `new X(…)`, because that is the JavaScript of the driver. JavaScript's own bare
+`Date()` returns a STRING; JSMQL keeps the syntax and drops that meaning, so one rule
+covers all nine.
 
 The rows come from two factories in `src/registry/names.ts` — `bsonValue` and
 `bsonSentinel` — so a tenth type needs only one call, and `constructorGlobals()` in

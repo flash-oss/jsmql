@@ -225,13 +225,13 @@ const EVALUABLE_TYPES = [
   "IndexAccess",
   "MethodCall",
   "CallExpression",
-  "NewExpression",
 ] as const;
 /**
  * The expression types deliberately NOT asked about, each for a stated reason. A
  * literal is already the answer, and re-spelling it would rebuild the node every
  * round, so the fixpoint would never settle. A reference, a lambda and a block
- * are not values. `OperatorCall` is the escape hatch above. Together with
+ * are not values. `OperatorCall` is the escape hatch above. A `NewExpression` is
+ * refused (HR8), and the emit phase gives the refusal. Together with
  * `EVALUABLE_TYPES` this must cover every `Expr` type. The two lines below turn a
  * new node type into a compile error here, instead of a subexpression that fold
  * silently never folds.
@@ -256,6 +256,7 @@ const NOT_ASKED_TYPES = [
   "OperatorCall",
   "Lambda",
   "ExprBlock",
+  "NewExpression",
 ] as const;
 type ExprType = Extract<Expr, { type: string }>["type"];
 type Covered = (typeof EVALUABLE_TYPES)[number] | (typeof NOT_ASKED_TYPES)[number];

@@ -763,11 +763,11 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   });
 
   it("the calendar parts of a date are integers", () => {
-    expect(jsmql.expr("new Date($.y, $.m, $.d)")).toEqual({
+    expect(jsmql.expr("Date($.y, $.m, $.d)")).toEqual({
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" },
     });
-    expect(() => jsmql.expr("new Date($.s.trim(), 1, 1)")).toThrow(
-      /'new Date\(\)' argument 1 takes an integer, but got a string\./,
+    expect(() => jsmql.expr("Date($.s.trim(), 1, 1)")).toThrow(
+      /'Date\(\)' argument 1 takes an integer, but got a string\./,
     );
   });
 
@@ -775,24 +775,22 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   // JavaScript cuts the fraction off, and JSMQL does not cut a value silently.
   it.each([0, 1, 2, 3, 4, 5, 6])("a written fraction in calendar part %i is refused", (i) => {
     const parts = [2020, 1, 15, 4, 5, 6, 7].map((n, j) => (j === i ? "1.5" : String(n)));
-    const source = `new Date(${parts.join(", ")})`;
+    const source = `Date(${parts.join(", ")})`;
     const e = refusal(() => jsmql.expr(source));
     expect(e.message).toMatch(
-      new RegExp(
-        `^'new Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`,
-      ),
+      new RegExp(`^'Date\\(\\)' argument ${i + 1} takes an integer, but got a fraction\\. Write an integer, or round`),
     );
     expect(e.pos).toBe(source.indexOf("1.5"));
   });
 
   it("a proven fraction in a calendar part is refused, with each spelling of the call", () => {
     const round = /argument 2 takes an integer, but got a fraction\. Write an integer, or round/;
-    expect(() => jsmql.expr("new Date(2020, 3 / 2)")).toThrow(round);
-    expect(() => jsmql.expr("const m = 1.5; new Date(2020, m)")).toThrow(round);
-    expect(() => jsmql.expr`new Date(2020, ${1.5})`).toThrow(round);
-    expect(() => jsmql.expr.compile(({ m }: { m: number }) => new Date(2020, m))({ m: 1.5 })).toThrow(round);
+    expect(() => jsmql.expr("Date(2020, 3 / 2)")).toThrow(round);
+    expect(() => jsmql.expr("const m = 1.5; Date(2020, m)")).toThrow(round);
+    expect(() => jsmql.expr`Date(2020, ${1.5})`).toThrow(round);
+    expect(() => jsmql.expr.compile(({ m }: { m: number }) => Date(2020, m))({ m: 1.5 })).toThrow(round);
     expect(() => jsmql.expr("Date(2020, 1.5)")).toThrow(/^'Date\(\)' argument 2 takes an integer, but got a fraction/);
-    expect(() => jsmql.expr("new Date(2020, null)")).toThrow("'new Date()' argument 2 takes an integer, but got null.");
+    expect(() => jsmql.expr("Date(2020, null)")).toThrow("'Date()' argument 2 takes an integer, but got null.");
   });
 
   it("whole calendar parts compile", () => {
@@ -802,15 +800,15 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
   // and JSMQL does not cut a value silently.
   it.each([
-    ["written", () => jsmql.expr("new Date(2020.5)"), 9],
-    ["folded", () => jsmql.expr("new Date(3 / 2)"), 11],
-    ["bound", () => jsmql.expr("const n = 2020.5; new Date(n)"), 27],
-    ["interpolated", () => jsmql.expr`new Date(${2020.5})`, 9],
-    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => new Date(n))({ n: 2020.5 }), 20],
+    ["written", () => jsmql.expr("Date(2020.5)"), 5],
+    ["folded", () => jsmql.expr("Date(3 / 2)"), 7],
+    ["bound", () => jsmql.expr("const n = 2020.5; Date(n)"), 23],
+    ["interpolated", () => jsmql.expr`Date(${2020.5})`, 5],
+    ["a parameter", () => jsmql.expr.compile(({ n }: { n: number }) => Date(n))({ n: 2020.5 }), 16],
   ])("a %s fraction as the millisecond count is refused", (_, run, pos) => {
     const e = refusal(run);
     expect(e.message).toMatch(
-      /^'new Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
+      /^'Date\(\)' argument 1 takes an integer, but got a fraction\. Write an integer, or round/,
     );
     expect(e.pos).toBe(pos);
   });
@@ -829,11 +827,11 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   });
 
   it("a date constant is a string, a number or a date", () => {
-    expect(() => jsmql.expr("new Date(true)")).toThrow(
-      /'new Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
+    expect(() => jsmql.expr("Date(true)")).toThrow(
+      /'Date\(\)' argument 1 takes a string, a number or a date, but got a boolean\./,
     );
-    expect(() => jsmql.expr("new Date(null)")).toThrow(
-      "'new Date()' argument 1 takes a string, a number or a date, but got null.",
+    expect(() => jsmql.expr("Date(null)")).toThrow(
+      "'Date()' argument 1 takes a string, a number or a date, but got null.",
     );
     expect(() => jsmql.expr("Date(null)")).toThrow(
       "'Date()' argument 1 takes a string, a number or a date, but got null.",

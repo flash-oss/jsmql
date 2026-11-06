@@ -52,7 +52,7 @@ A node that computes gives each child the `operand` context. These are the nodes
 - `MemberAccess` and `IndexAccess`
 - `TemplateLiteral` and `SpreadElement`
 - the receiver and the arguments of a `MethodCall`
-- the arguments of a `CallExpression` and a `NewExpression`
+- the arguments of a `CallExpression`, and of a `NewExpression` that HR8 leaves to the emit phase
 - the right side of a compound `AssignExpr`
 
 A `Lambda` starts again: its body is `jsmql`, and its stage block is a list of

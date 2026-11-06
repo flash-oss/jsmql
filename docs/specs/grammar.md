@@ -231,9 +231,10 @@ number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
 NUMBER_STATIC  = (* the rows in src/registry/names.ts with `on: "Number"` *)
 
 constructor_call = "new" IDENT ("(" (expression ("," expression)* ","?)? ")")?
-                 (* one node for every class; src/registry/names.ts says what each class
-                    builds, and a class whose row lists no position (`Set`) is refused *)
-objectid_literal = "new"? "ObjectId" "(" (expression ","?)? ")"
+                 (* parsed, then refused (HR8): JSMQL has no `new` keyword. The node keeps
+                    the callee, so the error names `IDENT(…)`; a class whose row lists no
+                    position (`Set`) answers with its own refusal *)
+objectid_literal = "ObjectId" "(" (expression ","?)? ")"
                  (* empty → $createObjectId(); a 24-hex string literal → ObjectId
                     literal (non-24 string throws; pre-2009 timestamp throws);
                     any other expr → $toObjectId(expr) *)
@@ -372,7 +373,7 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 A one-value-in/one-value-out built-in reads two ways: its call form (`Number.isInteger(x)`) and a bare callback reference (`arr.filter(Number.isInteger)`). The parser is **name-blind** and settles neither question — `Long(x)` is a `CallExpression`, a bare `Long` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
 
 - The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it. `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Long` into `x => Long(x)`, and a namespace member such as `Math.floor` into `x => Math.floor(x)`. The row then refuses each of these two, because the element is a value of the document. The refusal names the arrow with the value's own method. The row's `iterateeSlots` layout states which slots accept the spelling; the rewrite never guesses this.
-- A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`. The parser refuses a name whose row says `new` is *required* (`Date`) as a bare callable — real-JS `Date` without `new` ignores its argument, so JSMQL asks for the explicit arrow instead.
+- A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`.
 
 Outside an iteratee slot, a bare name has no value to stand for. The emit phase refuses it: a refused name answers with its row's refusal, and any other name gets the call form (`Long(…)`).
 
@@ -489,5 +490,5 @@ The parser reads `in` like any relational operator. The emitter (`membership` in
 - `JSON.stringify`/`JSON.parse` — no MQL primitive
 - `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive
 - `Number.isFinite()` — MQL has no Infinity literal that can be referenced cleanly
-- `Set` in both spellings (`new Set(…)`, `Set(…)`) — MongoDB has no set type; each set operation is a method of an array, and the refusal names these methods
+- `Set(…)`, and `new Set(…)` — MongoDB has no set type; each set operation is a method of an array, and the refusal names these methods
 - `Array.from(…)` in every form — `n.range()` is the range, and `.map(…)` on an array you already hold is the rest; one capability gets one spelling

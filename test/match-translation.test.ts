@@ -298,7 +298,7 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
     // `{ $toDate }`, so the comparison drops to the $expr residual and codegen
     // refuses it at compile time rather than emit a bogus filter.
     expect(() => jsmql('[$match($.createdAt >= Date("not-a-date"))]')).toThrow(
-      'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
+      'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
   });
 

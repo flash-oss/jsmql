@@ -431,19 +431,17 @@ var conversion = (e) => name({
   )
 });
 var dateRow = (spelling) => global_({
-  doc: `A date. \`new ${spelling}()\` is now; a constant is a literal.`,
+  doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
-  // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
-  // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
-  // same choice every BSON constructor makes, so one rule covers all nine.
-  newKeyword: "optional",
+  // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
+  // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
   provides: "Date",
   returns: "date",
   neverNull: true,
   where: ["value"],
-  filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+  filter: because(`a date is a value, not a test. Compare it: '$.t > ${spelling}("2024-01-01")'.`),
   updateDoc: unsupported(
-    `'new ${spelling}(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`
+    `'${spelling}(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = ${spelling}()' is '$currentDate'. Inside a value, write a date constant ('${spelling}("2026-01-01")'), pass a Date from your code (an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: ${spelling}() };")'), which 'updateOne' accepts as well.`
   ),
   expr: {
     byArgs: {
@@ -460,12 +458,12 @@ var dateRow = (spelling) => global_({
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] }, integer: [0] },
         emit: ({ args, construct }) => construct(
           spelling,
-          `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+          `${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write ${spelling}("2026-01-01") or ${spelling}(0).`,
           args[0]
         )
       },
-      dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate", MILLIS_TO_DATE),
-      // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
+      dynamic: convertsWith(spelling, "toDate", MILLIS_TO_DATE),
+      // MEASURED: Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
       // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
       // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
@@ -475,7 +473,7 @@ var dateRow = (spelling) => global_({
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
       },
       otherwise: unsupported(
-        `'new ${spelling}(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`
+        `'${spelling}(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`
       )
     }
   },
@@ -489,7 +487,6 @@ var dateRow = (spelling) => global_({
 var bsonValue = (e) => global_({
   doc: e.doc,
   token: "Ident",
-  newKeyword: "optional",
   returns: e.returns,
   neverNull: true,
   where: ["value"],
@@ -517,7 +514,6 @@ var bsonValue = (e) => global_({
 var bsonSentinel = (spelling, doc, compare) => global_({
   doc,
   token: "Ident",
-  newKeyword: "optional",
   returns: spelling === "MinKey" ? "minKey" : "maxKey",
   neverNull: true,
   where: ["value"],
@@ -9344,7 +9340,6 @@ var NAMES = {
   assert: global_({
     doc: "'assert(condition[, message]);' \u2014 a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
@@ -9577,7 +9572,6 @@ var NAMES = {
   String: global_({
     doc: "Parsed, then refused: '<value>.toString()' is JSMQL's conversion to a string.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "string",
     where: [],
     filter: stringIsNotJsmql,
@@ -9591,7 +9585,6 @@ var NAMES = {
   Boolean: global_({
     doc: "Parsed, then refused: '!!<value>' is the truthiness of JavaScript, and '.compact()' drops the falsy elements.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "bool",
     where: [],
     filter: booleanIsNotJsmql,
@@ -9606,7 +9599,6 @@ var NAMES = {
   parseInt: global_({
     doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
     filter: parseIntIsNotJsmql,
@@ -9619,7 +9611,6 @@ var NAMES = {
   parseFloat: global_({
     doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
     filter: parseFloatIsNotJsmql,
@@ -10391,7 +10382,6 @@ var NAMES = {
   ObjectId: global_({
     doc: "An ObjectId. Empty mints one, and a 24-hex constant is a literal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "objectId",
     // a mint or a literal: never null
     neverNull: true,
@@ -10431,8 +10421,8 @@ var NAMES = {
   // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
   // builds, and the cell refuses a value that the type CANNOT hold. A value of the
   // document is refused, because its own conversion method says the same thing
-  // (`.toLong()`). JSMQL accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
-  // `new X(…)`. See docs/specs/bson-types.md.
+  // (`.toLong()`). JSMQL writes `X(…)`, with no `new` (HR8); jsmql.stringify writes the
+  // driver's `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
     doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal.",
@@ -10512,7 +10502,6 @@ var NAMES = {
   Number: global_({
     doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
     where: [],
@@ -10526,7 +10515,6 @@ var NAMES = {
   Array: global_({
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Array",
     returns: "array",
     where: [],
@@ -10540,7 +10528,6 @@ var NAMES = {
   Set: global_({
     doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "unknown",
     where: [],
     filter: setIsNotJsmql,
@@ -10561,7 +10548,6 @@ var NAMES = {
   Map: global_({
     doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "object",
     where: [],
     filter: mapIsNotJsmql,
@@ -10574,7 +10560,6 @@ var NAMES = {
   RegExp: global_({
     doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "unknown",
     where: [],
     filter: regExpIsNotJsmql,
@@ -10618,7 +10603,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
-      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
+      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
     ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
@@ -11445,10 +11430,10 @@ var PRODUCTIONS = {
     statement: unsupported("'Class.method()' is not a statement \u2014 see its 'where'.")
   }),
   constructorCall: production({
-    doc: "`new Date(\u2026)`, `new ObjectId(\u2026)`, `new Decimal128(\u2026)`. What each constructor means is in names.ts.",
+    doc: "`new X(\u2026)`: parsed, then refused (HR8). JSMQL has no `new` keyword; the refusal names `X(\u2026)`.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`. names.ts says which constructor it is.
+    // One node for every `new X(…)`, so the refusal can name the callee.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",
@@ -12285,9 +12270,6 @@ function familiesOf(name2) {
 function onlyOf(name2) {
   return row(name2)?.only ?? [];
 }
-function newKeywordOf(name2) {
-  return emitRow(name2)?.newKeyword;
-}
 function isGlobalName(name2) {
   const k = row(name2)?.kind;
   return k === "global" || k === "root";
@@ -12361,10 +12343,7 @@ function bareCallableNames() {
   );
 }
 function constructibleNames() {
-  return bareCallableNames().filter((n2) => {
-    const k = newKeywordOf(n2);
-    return k === "required" || k === "optional";
-  });
+  return bareCallableNames().filter((n2) => isGlobalName(n2) && lists(n2, "value"));
 }
 function valueMethodNames() {
   return methodRows().filter((n2) => lists(n2, "value") || row(n2).expr !== void 0);
@@ -20473,8 +20452,7 @@ var CONSTANT_LITERALS = /* @__PURE__ */ new Set(["NumberLiteral", "StringLiteral
 function bareCall(callee, param, pos) {
   const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
-    if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
-      return void 0;
+    if (!isGlobalName(callee.name) || !isCallable(callee.name)) return void 0;
     return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
   }
   if (callee.type === "MemberAccess" && isNode3(callee.object) && callee.object.type === "Ident") {
@@ -20566,7 +20544,7 @@ function instantOf2(args) {
 }
 var isDateName = (name2) => canonicalBsonName(name2) === "Date";
 function readDateLiteral(node, isBound) {
-  if ((node.type === "NewExpression" || node.type === "CallExpression") && node.callee.type === "Ident") {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
     const name2 = node.callee.name;
     if (!isDateName(name2) || isBound(name2)) return NO2;
     const args = literalsOf(node.args);
@@ -20863,8 +20841,7 @@ var EVALUABLE_TYPES = [
   "MemberAccess",
   "IndexAccess",
   "MethodCall",
-  "CallExpression",
-  "NewExpression"
+  "CallExpression"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
 function fold(program) {
@@ -21157,493 +21134,6 @@ function queryDocument(node, op) {
   if (!isNode5(node) || node.type !== "ObjectLiteral" || dollarKey(node) !== null) return;
   const key = firstKey(node);
   throw refuse(key === null ? "{}" : `{ ${key}: \u2026 }`, `an operand of '${op}'`, node.pos, "a query document (raw MQL)");
-}
-
-// src/compiler/passes/shape.ts
-function statementShaped(node) {
-  if (node.type === "Pipeline" || node.type === "UpdateFilter") return true;
-  if (node.type === "LetDecl" || node.type === "FuncDecl") return true;
-  if (readsAContextRef(node)) return true;
-  const name2 = namedRow(node);
-  if (name2 === null) return false;
-  if (name2 === "assign" && writesItsReceiver(node)) return true;
-  if (lists(name2, "value")) return false;
-  if (node.type === "MethodCall" && isMutator(name2) && !couldWriteItsReceiver(node)) return false;
-  if (node.type === "MethodCall" && !isMutator(name2)) return false;
-  return lists(name2, "statement") || lists(name2, "stream");
-}
-function isBareAssign(program) {
-  const node = program;
-  return namedRow(node) === "assign" && writesItsReceiver(node);
-}
-function writesItsReceiver(node) {
-  const target2 = node.object;
-  return node.type === "MethodCall" && target2 !== void 0 && (target2.type === "FieldRef" || target2.type === "Ident");
-}
-function shapeOf(program) {
-  const root2 = program;
-  if (root2.type === "Pipeline") {
-    const stmts = root2.stmts;
-    const last = stmts[stmts.length - 1];
-    const prelude = stmts.length >= 2 && stmts.slice(0, -1).every((s) => s.type === "LetDecl" || s.type === "FuncDecl");
-    if (last !== void 0 && prelude && !statementShaped(last)) return "filter";
-  }
-  if (statementShaped(root2)) return "pipeline";
-  if (root2.type === "ArrayLiteral") return "pipeline";
-  return "filter";
-}
-function isStageList(program) {
-  const root2 = program;
-  if (root2.type !== "ArrayLiteral") return false;
-  const first = root2.elements?.[0];
-  return first !== void 0 && statementShaped(first);
-}
-
-// src/namespace.ts
-var JSMQL_NS = "__jsmql";
-function bindingSlot(name2) {
-  return `${JSMQL_NS}.var.${name2}`;
-}
-function tmpSlot(n2) {
-  return `${JSMQL_NS}.tmp.${n2}`;
-}
-var SIZE_SLOT2 = `${JSMQL_NS}.size`;
-var GROUP_TMP = `${JSMQL_NS}Tmp`;
-function sanitizeVarSegment(name2) {
-  return name2.replace(/[^A-Za-z0-9_]/g, "_");
-}
-function letFieldVar(field, depth) {
-  return `${JSMQL_NS_VAR}f${depth}_${sanitizeVarSegment(field)}`;
-}
-function letBindingVar(name2, depth) {
-  return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name2)}`;
-}
-function letSysVar(name2, depth) {
-  return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name2)}`;
-}
-var JSMQL_NS_VAR = "jsmql_";
-function exprVar(base) {
-  return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
-}
-
-// src/compiler/emit/names.ts
-var SYSTEM_VARS = [
-  "ROOT",
-  "CURRENT",
-  "REMOVE",
-  "NOW",
-  "CLUSTER_TIME",
-  "DESCEND",
-  "PRUNE",
-  "KEEP",
-  "SEARCH_META",
-  "USER_ROLES"
-];
-var reduceVar = (name2) => "$$" + name2;
-var refOf = (v) => "$$" + v;
-var PLAIN = /^[a-z][A-Za-z0-9_]*$/;
-var KEPT = /^[A-Za-z0-9]$/;
-function mongoVarName(js) {
-  if (PLAIN.test(js) && !js.startsWith("v_")) return js;
-  let out = "v_";
-  for (const ch of js) {
-    if (KEPT.test(ch)) {
-      out += ch;
-      continue;
-    }
-    const cp = ch.codePointAt(0);
-    if (cp === void 0) internalError(`mongoVarName read an empty character in '${js}'`);
-    out += cp < 256 ? "_" + cp.toString(16).padStart(2, "0") : cp < 65536 ? "_u" + cp.toString(16).padStart(4, "0") : "_U" + cp.toString(16).padStart(6, "0");
-  }
-  return out;
-}
-var Capture = class {
-  constructor(level) {
-    /** var name → the value it carries, in first-read order. */
-    this.vars = {};
-    this.byValue = /* @__PURE__ */ new Map();
-    this.level = level;
-  }
-  /** The variable that carries `value` (a `"$path"`). This method mints it on first read. */
-  take(kind, hint2, value) {
-    const have = this.byValue.get(value);
-    if (have !== void 0) return have;
-    const base = kind === "f" ? letFieldVar(hint2, this.level) : kind === "v" ? letBindingVar(hint2, this.level) : letSysVar(hint2, this.level);
-    let name2 = base;
-    for (let n2 = 2; name2 in this.vars; n2++) name2 = `${base}_${n2}`;
-    this.byValue.set(value, name2);
-    this.vars[name2] = value;
-    return name2;
-  }
-  /** Did the compiler capture anything? An empty `let` is noise the server does not need. */
-  get any() {
-    return this.byValue.size > 0;
-  }
-};
-var Scope = class _Scope {
-  constructor(bound, taken) {
-    this.bound = bound;
-    this.taken = taken;
-  }
-  /**
-   * The root scope. `introduced` is every name the program binds anywhere — the
-   * parameters and declarations `namesIn` collects — so a mint made before a
-   * deeper lambda binds its parameter still steps aside from that parameter.
-   */
-  static root(introduced) {
-    const taken = new Set(SYSTEM_VARS);
-    for (const js of introduced) taken.add(mongoVarName(js));
-    return new _Scope(/* @__PURE__ */ new Map(), taken);
-  }
-  /** Is this JavaScript name bound here? */
-  has(js) {
-    return this.bound.has(js);
-  }
-  /** Every name bound to a declared function — the candidates when a call names none of them. */
-  functionNames() {
-    return [...this.bound].filter(([, b]) => b.ref.kind === "function").map(([js]) => js);
-  }
-  /**
-   * What a JavaScript name means here — the ONLY way a read learns it. An
-   * unbound name is the developer's error, positioned at the read.
-   */
-  lookup(js, pos) {
-    const b = this.bound.get(js);
-    if (b === void 0) throw new UnknownIdentifierError(js, pos);
-    return b;
-  }
-  /** A name bound to something other than a variable — the document, a field slot, a function. */
-  declare(js, binding) {
-    const bound = new Map(this.bound);
-    bound.set(js, binding);
-    return new _Scope(bound, this.taken);
-  }
-  /**
-   * Every binding carried in a document FIELD, turned into a name whose read says
-   * what dropped it — the scope after a stage that replaced the document.
-   */
-  dropFields(by, message) {
-    const bound = new Map(this.bound);
-    for (const [js, b] of this.bound) {
-      if (b.ref.kind === "field")
-        bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
-    }
-    return new _Scope(bound, this.taken);
-  }
-  /**
-   * The developer's own variable binder — a lambda parameter, a `$let` var.
-   * The compiler encodes it and never renames it. `type` is what the row says the parameter holds.
-   */
-  param(js, type2, pos, level) {
-    const as = mongoVarName(js);
-    const ref = refOf(as);
-    const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type: type2, mutable: false, pos, level });
-    const taken = new Set(this.taken);
-    taken.add(as);
-    return { as, ref, scope: new _Scope(bound, taken) };
-  }
-  /**
-   * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
-   * … when a name the program uses stands in the way. The compiler never moves
-   * the developer's own names.
-   */
-  bind(hint2) {
-    const base = exprVar(hint2);
-    let as = base;
-    for (let n2 = 2; this.taken.has(as); n2++) as = base + String(n2);
-    const taken = new Set(this.taken);
-    taken.add(as);
-    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken) };
-  }
-};
-var scratchSlot = (n2) => fieldSlot(tmpSlot(n2));
-function fieldSlot(path) {
-  return { path, ref: "$" + path };
-}
-
-// src/compiler/emit/type.ts
-var has2 = (t, k) => t.kinds === "any" || t.kinds.has(k);
-var ANY = { kinds: "any", absent: true, open: true };
-var NOTHING = { kinds: /* @__PURE__ */ new Set(), absent: true, open: false };
-var isNothing = (t) => t.kinds !== "any" && t.kinds.size === 0;
-var DOCUMENT = { kinds: /* @__PURE__ */ new Set(["object"]), absent: false, open: true };
-var of = (k, absent = false) => ({ kinds: /* @__PURE__ */ new Set([k]), absent, open: k === "object" });
-var arrayOf = (element, absent = false) => ({
-  kinds: /* @__PURE__ */ new Set(["array"]),
-  absent,
-  element,
-  open: false
-});
-var tupleOf = (items, absent = false) => ({
-  kinds: /* @__PURE__ */ new Set(["array"]),
-  absent,
-  element: joinAll(items),
-  items,
-  open: false
-});
-var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @__PURE__ */ new Set(["object"]), absent, props, open, ...values === void 0 ? {} : { values } });
-var present = (t) => t.absent ? { ...t, absent: false } : t;
-var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
-var mayBe = has2;
-var cannotBe = (t, k) => t.kinds !== "any" && !t.kinds.has(k);
-var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
-function single2(t) {
-  if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
-  return [...t.kinds][0];
-}
-var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
-function proofOf(t) {
-  if (t.kinds === "any") return "unknown";
-  return t.kinds.size === 0 ? ["null"] : [...t.kinds];
-}
-function elementProofOf(t) {
-  const e = elementOf(t);
-  if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
-  return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
-}
-function itemProofsOf(t) {
-  if (!has2(t, "array") || t.items === void 0) return void 0;
-  return t.items.map((i) => {
-    if (i.kinds === "any") return "unknown";
-    return i.absent ? [...i.kinds, "null"] : [...i.kinds];
-  });
-}
-function elementOf(t) {
-  if (!has2(t, "array")) return NOTHING;
-  const element = t.element ?? ANY;
-  return t.absent ? maybeAbsent(element) : element;
-}
-function itemOf(t, i) {
-  if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
-  return maybeAbsent(elementOf(t));
-}
-function anyItemOf(t) {
-  if (t.kinds === "any") return ANY;
-  if ([...t.kinds].some((k) => k !== "array" && k !== "object")) return ANY;
-  const parts = [];
-  if (t.kinds.has("array")) parts.push(elementOf(t));
-  if (t.kinds.has("object")) parts.push(flattenOnce({ ...t, kinds: /* @__PURE__ */ new Set(["object"]), absent: false }));
-  return maybeAbsent(joinAll(parts));
-}
-function propOf(t, name2) {
-  if (t.kinds === "any") return ANY;
-  const asObject2 = t.kinds.has("object") ? ownProp(t, name2) : NOTHING;
-  const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
-  const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join2(asObject2, asArray);
-  return t.absent ? maybeAbsent(own) : own;
-}
-function unreadable(t, name2, throughArrays) {
-  if (t.kinds === "any" || t.kinds.has("stream")) return null;
-  if (throughArrays && t.kinds.has("array")) {
-    if (t.kinds.size > 1) return null;
-    const inner = unreadable(t.element ?? ANY, name2, true);
-    if (inner === null) return null;
-    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
-  }
-  if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
-  if (t.kinds.size > 1 || t.open || t.props?.has(name2) === true) return null;
-  return { kind: "closed", keys: [...t.props?.keys() ?? []] };
-}
-function unreadableAt(t, path, throughArrays) {
-  const segments = path.split(".");
-  for (let i = 0; i < segments.length; i++) {
-    const why = unreadable(at(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
-    if (why !== null) return { index: i, why };
-  }
-  return null;
-}
-function ownProp(t, name2) {
-  const known = t.props?.get(name2);
-  if (known !== void 0) return known;
-  if (!t.open) return NOTHING;
-  return t.values === void 0 ? ANY : maybeAbsent(t.values);
-}
-function at(t, path) {
-  if (path === "") return t;
-  let cur = t;
-  for (const seg of path.split(".")) {
-    cur = propOf(cur, seg);
-    if (isNothing(cur)) return NOTHING;
-  }
-  return cur;
-}
-function written(doc, path, value) {
-  if (path === "") return value;
-  const dot = path.indexOf(".");
-  const head = dot === -1 ? path : path.slice(0, dot);
-  const rest = dot === -1 ? "" : path.slice(dot + 1);
-  const parent = asObject(doc);
-  if (rest === "") return withProp(parent, head, value);
-  return withProp(
-    parent,
-    head,
-    into(propOf(parent, head), (obj) => written(obj, rest, value))
-  );
-}
-function withProp(obj, name2, value) {
-  const props = new Map(obj.props ?? []);
-  props.set(name2, value);
-  return { ...obj, props };
-}
-function into(t, write) {
-  if (isOnly(t, "array") && !t.absent) return { ...t, element: write(asObject(elementOf(t))) };
-  const asObj = write(asObject(t));
-  const canBeArray = t.kinds === "any" || t.kinds.has("array") && !t.absent;
-  if (!canBeArray) return asObj;
-  const asArr = { ...arrayOf(write(asObject(elementOf(t)))), absent: false };
-  return join2(asObj, asArr);
-}
-function removed(doc, path) {
-  const dot = path.indexOf(".");
-  const head = dot === -1 ? path : path.slice(0, dot);
-  const rest = dot === -1 ? "" : path.slice(dot + 1);
-  if (!has2(doc, "object")) return doc;
-  const props = new Map(doc.props ?? []);
-  if (rest === "") {
-    if (doc.open) props.set(head, NOTHING);
-    else props.delete(head);
-  } else {
-    const child = propOf(doc, head);
-    if (!isNothing(child)) props.set(head, removed(child, rest));
-  }
-  return { ...doc, props };
-}
-function asObject(t) {
-  if (isOnly(t, "object") && !t.absent) return t;
-  const known = t.kinds !== "any" && t.kinds.has("object");
-  return {
-    kinds: /* @__PURE__ */ new Set(["object"]),
-    absent: false,
-    props: known ? t.props : void 0,
-    open: known ? t.open : true,
-    ...known && t.values !== void 0 ? { values: t.values } : {}
-  };
-}
-var joinAll = (list) => list.length === 0 ? NOTHING : list.reduce((acc, t) => join2(acc, t));
-function join2(a, b) {
-  if (isNothing(a)) return maybeAbsent(b);
-  if (isNothing(b)) return maybeAbsent(a);
-  const kinds = a.kinds === "any" || b.kinds === "any" ? "any" : /* @__PURE__ */ new Set([...a.kinds, ...b.kinds]);
-  const out = { kinds, absent: a.absent || b.absent, open: a.open || b.open };
-  if (a.element !== void 0 || b.element !== void 0) out.element = join2(a.element ?? ANY, b.element ?? ANY);
-  if (a.items !== void 0 && b.items !== void 0 && a.items.length === b.items.length) {
-    out.items = a.items.map((t, i) => join2(t, b.items[i]));
-  }
-  if (a.props !== void 0 || b.props !== void 0) {
-    const props = /* @__PURE__ */ new Map();
-    for (const k of /* @__PURE__ */ new Set([...a.props?.keys() ?? [], ...b.props?.keys() ?? []])) {
-      props.set(k, join2(propOf(a, k), propOf(b, k)));
-    }
-    out.props = props;
-  }
-  if (a.values !== void 0 || b.values !== void 0) out.values = join2(a.values ?? ANY, b.values ?? ANY);
-  return out;
-}
-function merge(a, b) {
-  const props = /* @__PURE__ */ new Map();
-  const bOpen = b.kinds === "any" || b.open;
-  for (const [k, t] of a.props ?? []) props.set(k, bOpen ? join2(t, b.values ?? ANY) : t);
-  for (const [k, t] of b.props ?? []) {
-    const base = props.get(k) ?? propOf(a, k);
-    props.set(k, b.absent ? join2(base, t) : t);
-  }
-  const open = a.kinds === "any" || a.open || bOpen;
-  const values = open ? join2(a.values ?? (a.open || a.kinds === "any" ? ANY : NOTHING), b.values ?? (bOpen ? ANY : NOTHING)) : void 0;
-  return objectOf(props, open, open ? values : void 0);
-}
-function familyOf(k) {
-  switch (k) {
-    case "string":
-    case "array":
-    case "number":
-    case "object":
-    case "date":
-    case "stream":
-      return k;
-    default:
-      return null;
-  }
-}
-var isTerm = (e, key) => typeof e === "object" && e !== null && key in e;
-function evaluate2(e, site) {
-  if (typeof e === "string") {
-    switch (e) {
-      case "same":
-        return site.receiver.items === void 0 ? site.receiver : { ...site.receiver, items: void 0 };
-      case "element":
-        return elementOf(site.receiver);
-      case "unknown":
-        return ANY;
-      case "picked":
-        return selectProps(site.receiver, site.names, true);
-      case "omitted":
-        return selectProps(site.receiver, site.names, false);
-      default:
-        return of(e);
-    }
-  }
-  if (isTerm(e, "arrayOf")) return arrayOf(evaluate2(e.arrayOf, site));
-  if (isTerm(e, "elementOf")) return flattenOnce(evaluate2(e.elementOf, site));
-  if (isTerm(e, "callback")) return site.callback(e.callback);
-  if (isTerm(e, "arg")) return site.arg(e.arg);
-  if (isTerm(e, "args")) return joinAll(expandArgs(e.args, site));
-  if (isTerm(e, "merge")) {
-    const terms = expandList(e.merge, site);
-    return terms.reduce((acc, t) => merge(acc, t), objectOf(/* @__PURE__ */ new Map(), false));
-  }
-  if (isTerm(e, "oneOf")) return joinAll(expandList(e.oneOf, site));
-  if (isTerm(e, "recordOf")) return objectOf(/* @__PURE__ */ new Map(), true, evaluate2(e.recordOf, site));
-  if (isTerm(e, "tuple")) return tupleOf(e.tuple.map((t) => evaluate2(t, site)));
-  if (isTerm(e, "itemOf")) {
-    const [of3, n2] = e.itemOf;
-    return itemOf(evaluate2(of3, site), n2);
-  }
-  const map2 = e;
-  const family = site.family ?? familyOfType(site.receiver);
-  if (family !== null) {
-    const term = map2[family];
-    return term === void 0 ? ANY : evaluate2(term, site);
-  }
-  return ANY;
-}
-function expandList(terms, site) {
-  return terms.flatMap(
-    (t) => isTerm(t, "args") ? expandArgs(t.args, site) : [evaluate2(t, site)]
-  );
-}
-function expandArgs(n2, site) {
-  const out = [];
-  for (let i = n2; i < site.argCount; i++) out.push(site.arg(i));
-  return out;
-}
-function flattenOnce(t) {
-  if (t.kinds === "any") return ANY;
-  const parts = [];
-  if (t.kinds.has("array")) parts.push(t.element ?? ANY);
-  if (t.kinds.has("object") && !t.kinds.has("array")) {
-    const values = [...t.props?.values() ?? []];
-    if (t.open) values.push(t.values ?? ANY);
-    return joinAll(values);
-  }
-  const rest = [...t.kinds].filter((k) => k !== "array");
-  if (rest.length > 0) parts.push({ ...t, kinds: new Set(rest), element: void 0, items: void 0 });
-  return joinAll(parts);
-}
-function familyOfType(t) {
-  const k = single2(t);
-  return k === "unknown" ? null : familyOf(k);
-}
-function selectProps(recv, names, keep) {
-  if (names === null) return objectOf(/* @__PURE__ */ new Map(), true);
-  const props = /* @__PURE__ */ new Map();
-  if (keep) {
-    for (const n2 of names) props.set(n2, propOf(recv, n2));
-    return objectOf(props, false);
-  }
-  const open = recv.kinds === "any" || recv.open;
-  for (const [k, t] of recv.props ?? []) if (!names.includes(k)) props.set(k, t);
-  return objectOf(props, open, open ? recv.values : void 0);
 }
 
 // src/levenshtein.ts
@@ -22013,7 +21503,7 @@ var hint = (expected, got = []) => {
   if (expected === "number" && got.includes("date")) {
     return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
   }
-  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
 };
@@ -22608,9 +22098,12 @@ function alwaysAbsent(read3, holder, pos) {
     pos
   );
 }
-var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
+var noNewKeyword = (name2, pos) => new CodegenError(
+  name2 === null ? "JSMQL has no 'new' keyword. Call a constructor such as 'Date(\u2026)', or a declared function, without 'new'." : `JSMQL has no 'new' keyword. Write '${name2}(\u2026)'.`,
+  pos
+);
 var unknownClass = (name2, known, pos) => new CodegenError(
-  name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
+  `JSMQL has no 'new' keyword, and it knows no class '${name2}'.${didYouMean(name2, known, (s) => `${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one, and call it.`,
   pos
 );
 var notCallable = (pos) => new CodegenError(
@@ -23370,6 +22863,523 @@ var arrayReduceShape = (pos) => new CodegenError(
   "'$$.reduce((acc, d) => \u2026, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total \u2014 a sum, a count, a maximum \u2014 is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
   pos
 );
+
+// src/compiler/passes/no-new.ts
+var isNode6 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+function nodesOf(root2, out = []) {
+  if (Array.isArray(root2)) {
+    for (const v of root2) nodesOf(v, out);
+    return out;
+  }
+  if (typeof root2 !== "object" || root2 === null) return out;
+  if (!isPlainObject(root2)) return out;
+  if (isNode6(root2)) out.push(root2);
+  for (const v of Object.values(root2)) nodesOf(v, out);
+  return out;
+}
+function refuseNew(program) {
+  const nodes = nodesOf(program);
+  const bound = new Set(nodes.flatMap((n2) => introducedNames(n2)));
+  const refused = nodes.filter((n2) => n2.type === "NewExpression").sort((a, b) => a.pos - b.pos).find((n2) => {
+    const callee2 = n2.callee;
+    if (callee2.type !== "Ident") return true;
+    const name3 = callee2.name;
+    return !bound.has(name3) && (!isGlobalName(name3) || (positionsOf(name3)?.length ?? 0) > 0);
+  });
+  if (refused === void 0) return;
+  const callee = refused.callee;
+  if (callee.type !== "Ident") throw noNewKeyword(null, refused.pos);
+  const name2 = callee.name;
+  if (!isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), refused.pos);
+  throw noNewKeyword(name2, refused.pos);
+}
+
+// src/compiler/passes/shape.ts
+function statementShaped(node) {
+  if (node.type === "Pipeline" || node.type === "UpdateFilter") return true;
+  if (node.type === "LetDecl" || node.type === "FuncDecl") return true;
+  if (readsAContextRef(node)) return true;
+  const name2 = namedRow(node);
+  if (name2 === null) return false;
+  if (name2 === "assign" && writesItsReceiver(node)) return true;
+  if (lists(name2, "value")) return false;
+  if (node.type === "MethodCall" && isMutator(name2) && !couldWriteItsReceiver(node)) return false;
+  if (node.type === "MethodCall" && !isMutator(name2)) return false;
+  return lists(name2, "statement") || lists(name2, "stream");
+}
+function isBareAssign(program) {
+  const node = program;
+  return namedRow(node) === "assign" && writesItsReceiver(node);
+}
+function writesItsReceiver(node) {
+  const target2 = node.object;
+  return node.type === "MethodCall" && target2 !== void 0 && (target2.type === "FieldRef" || target2.type === "Ident");
+}
+function shapeOf(program) {
+  const root2 = program;
+  if (root2.type === "Pipeline") {
+    const stmts = root2.stmts;
+    const last = stmts[stmts.length - 1];
+    const prelude = stmts.length >= 2 && stmts.slice(0, -1).every((s) => s.type === "LetDecl" || s.type === "FuncDecl");
+    if (last !== void 0 && prelude && !statementShaped(last)) return "filter";
+  }
+  if (statementShaped(root2)) return "pipeline";
+  if (root2.type === "ArrayLiteral") return "pipeline";
+  return "filter";
+}
+function isStageList(program) {
+  const root2 = program;
+  if (root2.type !== "ArrayLiteral") return false;
+  const first = root2.elements?.[0];
+  return first !== void 0 && statementShaped(first);
+}
+
+// src/namespace.ts
+var JSMQL_NS = "__jsmql";
+function bindingSlot(name2) {
+  return `${JSMQL_NS}.var.${name2}`;
+}
+function tmpSlot(n2) {
+  return `${JSMQL_NS}.tmp.${n2}`;
+}
+var SIZE_SLOT2 = `${JSMQL_NS}.size`;
+var GROUP_TMP = `${JSMQL_NS}Tmp`;
+function sanitizeVarSegment(name2) {
+  return name2.replace(/[^A-Za-z0-9_]/g, "_");
+}
+function letFieldVar(field, depth) {
+  return `${JSMQL_NS_VAR}f${depth}_${sanitizeVarSegment(field)}`;
+}
+function letBindingVar(name2, depth) {
+  return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name2)}`;
+}
+function letSysVar(name2, depth) {
+  return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name2)}`;
+}
+var JSMQL_NS_VAR = "jsmql_";
+function exprVar(base) {
+  return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+// src/compiler/emit/names.ts
+var SYSTEM_VARS = [
+  "ROOT",
+  "CURRENT",
+  "REMOVE",
+  "NOW",
+  "CLUSTER_TIME",
+  "DESCEND",
+  "PRUNE",
+  "KEEP",
+  "SEARCH_META",
+  "USER_ROLES"
+];
+var reduceVar = (name2) => "$$" + name2;
+var refOf = (v) => "$$" + v;
+var PLAIN = /^[a-z][A-Za-z0-9_]*$/;
+var KEPT = /^[A-Za-z0-9]$/;
+function mongoVarName(js) {
+  if (PLAIN.test(js) && !js.startsWith("v_")) return js;
+  let out = "v_";
+  for (const ch of js) {
+    if (KEPT.test(ch)) {
+      out += ch;
+      continue;
+    }
+    const cp = ch.codePointAt(0);
+    if (cp === void 0) internalError(`mongoVarName read an empty character in '${js}'`);
+    out += cp < 256 ? "_" + cp.toString(16).padStart(2, "0") : cp < 65536 ? "_u" + cp.toString(16).padStart(4, "0") : "_U" + cp.toString(16).padStart(6, "0");
+  }
+  return out;
+}
+var Capture = class {
+  constructor(level) {
+    /** var name → the value it carries, in first-read order. */
+    this.vars = {};
+    this.byValue = /* @__PURE__ */ new Map();
+    this.level = level;
+  }
+  /** The variable that carries `value` (a `"$path"`). This method mints it on first read. */
+  take(kind, hint2, value) {
+    const have = this.byValue.get(value);
+    if (have !== void 0) return have;
+    const base = kind === "f" ? letFieldVar(hint2, this.level) : kind === "v" ? letBindingVar(hint2, this.level) : letSysVar(hint2, this.level);
+    let name2 = base;
+    for (let n2 = 2; name2 in this.vars; n2++) name2 = `${base}_${n2}`;
+    this.byValue.set(value, name2);
+    this.vars[name2] = value;
+    return name2;
+  }
+  /** Did the compiler capture anything? An empty `let` is noise the server does not need. */
+  get any() {
+    return this.byValue.size > 0;
+  }
+};
+var Scope = class _Scope {
+  constructor(bound, taken) {
+    this.bound = bound;
+    this.taken = taken;
+  }
+  /**
+   * The root scope. `introduced` is every name the program binds anywhere — the
+   * parameters and declarations `namesIn` collects — so a mint made before a
+   * deeper lambda binds its parameter still steps aside from that parameter.
+   */
+  static root(introduced) {
+    const taken = new Set(SYSTEM_VARS);
+    for (const js of introduced) taken.add(mongoVarName(js));
+    return new _Scope(/* @__PURE__ */ new Map(), taken);
+  }
+  /** Is this JavaScript name bound here? */
+  has(js) {
+    return this.bound.has(js);
+  }
+  /** Every name bound to a declared function — the candidates when a call names none of them. */
+  functionNames() {
+    return [...this.bound].filter(([, b]) => b.ref.kind === "function").map(([js]) => js);
+  }
+  /**
+   * What a JavaScript name means here — the ONLY way a read learns it. An
+   * unbound name is the developer's error, positioned at the read.
+   */
+  lookup(js, pos) {
+    const b = this.bound.get(js);
+    if (b === void 0) throw new UnknownIdentifierError(js, pos);
+    return b;
+  }
+  /** A name bound to something other than a variable — the document, a field slot, a function. */
+  declare(js, binding) {
+    const bound = new Map(this.bound);
+    bound.set(js, binding);
+    return new _Scope(bound, this.taken);
+  }
+  /**
+   * Every binding carried in a document FIELD, turned into a name whose read says
+   * what dropped it — the scope after a stage that replaced the document.
+   */
+  dropFields(by, message) {
+    const bound = new Map(this.bound);
+    for (const [js, b] of this.bound) {
+      if (b.ref.kind === "field")
+        bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
+    }
+    return new _Scope(bound, this.taken);
+  }
+  /**
+   * The developer's own variable binder — a lambda parameter, a `$let` var.
+   * The compiler encodes it and never renames it. `type` is what the row says the parameter holds.
+   */
+  param(js, type2, pos, level) {
+    const as = mongoVarName(js);
+    const ref = refOf(as);
+    const bound = new Map(this.bound);
+    bound.set(js, { ref: { kind: "var", ref }, type: type2, mutable: false, pos, level });
+    const taken = new Set(this.taken);
+    taken.add(as);
+    return { as, ref, scope: new _Scope(bound, taken) };
+  }
+  /**
+   * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
+   * … when a name the program uses stands in the way. The compiler never moves
+   * the developer's own names.
+   */
+  bind(hint2) {
+    const base = exprVar(hint2);
+    let as = base;
+    for (let n2 = 2; this.taken.has(as); n2++) as = base + String(n2);
+    const taken = new Set(this.taken);
+    taken.add(as);
+    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken) };
+  }
+};
+var scratchSlot = (n2) => fieldSlot(tmpSlot(n2));
+function fieldSlot(path) {
+  return { path, ref: "$" + path };
+}
+
+// src/compiler/emit/type.ts
+var has2 = (t, k) => t.kinds === "any" || t.kinds.has(k);
+var ANY = { kinds: "any", absent: true, open: true };
+var NOTHING = { kinds: /* @__PURE__ */ new Set(), absent: true, open: false };
+var isNothing = (t) => t.kinds !== "any" && t.kinds.size === 0;
+var DOCUMENT = { kinds: /* @__PURE__ */ new Set(["object"]), absent: false, open: true };
+var of = (k, absent = false) => ({ kinds: /* @__PURE__ */ new Set([k]), absent, open: k === "object" });
+var arrayOf = (element, absent = false) => ({
+  kinds: /* @__PURE__ */ new Set(["array"]),
+  absent,
+  element,
+  open: false
+});
+var tupleOf = (items, absent = false) => ({
+  kinds: /* @__PURE__ */ new Set(["array"]),
+  absent,
+  element: joinAll(items),
+  items,
+  open: false
+});
+var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @__PURE__ */ new Set(["object"]), absent, props, open, ...values === void 0 ? {} : { values } });
+var present = (t) => t.absent ? { ...t, absent: false } : t;
+var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
+var mayBe = has2;
+var cannotBe = (t, k) => t.kinds !== "any" && !t.kinds.has(k);
+var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
+function single2(t) {
+  if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
+  return [...t.kinds][0];
+}
+var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
+function proofOf(t) {
+  if (t.kinds === "any") return "unknown";
+  return t.kinds.size === 0 ? ["null"] : [...t.kinds];
+}
+function elementProofOf(t) {
+  const e = elementOf(t);
+  if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
+  return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
+}
+function itemProofsOf(t) {
+  if (!has2(t, "array") || t.items === void 0) return void 0;
+  return t.items.map((i) => {
+    if (i.kinds === "any") return "unknown";
+    return i.absent ? [...i.kinds, "null"] : [...i.kinds];
+  });
+}
+function elementOf(t) {
+  if (!has2(t, "array")) return NOTHING;
+  const element = t.element ?? ANY;
+  return t.absent ? maybeAbsent(element) : element;
+}
+function itemOf(t, i) {
+  if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
+  return maybeAbsent(elementOf(t));
+}
+function anyItemOf(t) {
+  if (t.kinds === "any") return ANY;
+  if ([...t.kinds].some((k) => k !== "array" && k !== "object")) return ANY;
+  const parts = [];
+  if (t.kinds.has("array")) parts.push(elementOf(t));
+  if (t.kinds.has("object")) parts.push(flattenOnce({ ...t, kinds: /* @__PURE__ */ new Set(["object"]), absent: false }));
+  return maybeAbsent(joinAll(parts));
+}
+function propOf(t, name2) {
+  if (t.kinds === "any") return ANY;
+  const asObject2 = t.kinds.has("object") ? ownProp(t, name2) : NOTHING;
+  const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
+  const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join2(asObject2, asArray);
+  return t.absent ? maybeAbsent(own) : own;
+}
+function unreadable(t, name2, throughArrays) {
+  if (t.kinds === "any" || t.kinds.has("stream")) return null;
+  if (throughArrays && t.kinds.has("array")) {
+    if (t.kinds.size > 1) return null;
+    const inner = unreadable(t.element ?? ANY, name2, true);
+    if (inner === null) return null;
+    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
+  }
+  if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
+  if (t.kinds.size > 1 || t.open || t.props?.has(name2) === true) return null;
+  return { kind: "closed", keys: [...t.props?.keys() ?? []] };
+}
+function unreadableAt(t, path, throughArrays) {
+  const segments = path.split(".");
+  for (let i = 0; i < segments.length; i++) {
+    const why = unreadable(at(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
+    if (why !== null) return { index: i, why };
+  }
+  return null;
+}
+function ownProp(t, name2) {
+  const known = t.props?.get(name2);
+  if (known !== void 0) return known;
+  if (!t.open) return NOTHING;
+  return t.values === void 0 ? ANY : maybeAbsent(t.values);
+}
+function at(t, path) {
+  if (path === "") return t;
+  let cur = t;
+  for (const seg of path.split(".")) {
+    cur = propOf(cur, seg);
+    if (isNothing(cur)) return NOTHING;
+  }
+  return cur;
+}
+function written(doc, path, value) {
+  if (path === "") return value;
+  const dot = path.indexOf(".");
+  const head = dot === -1 ? path : path.slice(0, dot);
+  const rest = dot === -1 ? "" : path.slice(dot + 1);
+  const parent = asObject(doc);
+  if (rest === "") return withProp(parent, head, value);
+  return withProp(
+    parent,
+    head,
+    into(propOf(parent, head), (obj) => written(obj, rest, value))
+  );
+}
+function withProp(obj, name2, value) {
+  const props = new Map(obj.props ?? []);
+  props.set(name2, value);
+  return { ...obj, props };
+}
+function into(t, write) {
+  if (isOnly(t, "array") && !t.absent) return { ...t, element: write(asObject(elementOf(t))) };
+  const asObj = write(asObject(t));
+  const canBeArray = t.kinds === "any" || t.kinds.has("array") && !t.absent;
+  if (!canBeArray) return asObj;
+  const asArr = { ...arrayOf(write(asObject(elementOf(t)))), absent: false };
+  return join2(asObj, asArr);
+}
+function removed(doc, path) {
+  const dot = path.indexOf(".");
+  const head = dot === -1 ? path : path.slice(0, dot);
+  const rest = dot === -1 ? "" : path.slice(dot + 1);
+  if (!has2(doc, "object")) return doc;
+  const props = new Map(doc.props ?? []);
+  if (rest === "") {
+    if (doc.open) props.set(head, NOTHING);
+    else props.delete(head);
+  } else {
+    const child = propOf(doc, head);
+    if (!isNothing(child)) props.set(head, removed(child, rest));
+  }
+  return { ...doc, props };
+}
+function asObject(t) {
+  if (isOnly(t, "object") && !t.absent) return t;
+  const known = t.kinds !== "any" && t.kinds.has("object");
+  return {
+    kinds: /* @__PURE__ */ new Set(["object"]),
+    absent: false,
+    props: known ? t.props : void 0,
+    open: known ? t.open : true,
+    ...known && t.values !== void 0 ? { values: t.values } : {}
+  };
+}
+var joinAll = (list) => list.length === 0 ? NOTHING : list.reduce((acc, t) => join2(acc, t));
+function join2(a, b) {
+  if (isNothing(a)) return maybeAbsent(b);
+  if (isNothing(b)) return maybeAbsent(a);
+  const kinds = a.kinds === "any" || b.kinds === "any" ? "any" : /* @__PURE__ */ new Set([...a.kinds, ...b.kinds]);
+  const out = { kinds, absent: a.absent || b.absent, open: a.open || b.open };
+  if (a.element !== void 0 || b.element !== void 0) out.element = join2(a.element ?? ANY, b.element ?? ANY);
+  if (a.items !== void 0 && b.items !== void 0 && a.items.length === b.items.length) {
+    out.items = a.items.map((t, i) => join2(t, b.items[i]));
+  }
+  if (a.props !== void 0 || b.props !== void 0) {
+    const props = /* @__PURE__ */ new Map();
+    for (const k of /* @__PURE__ */ new Set([...a.props?.keys() ?? [], ...b.props?.keys() ?? []])) {
+      props.set(k, join2(propOf(a, k), propOf(b, k)));
+    }
+    out.props = props;
+  }
+  if (a.values !== void 0 || b.values !== void 0) out.values = join2(a.values ?? ANY, b.values ?? ANY);
+  return out;
+}
+function merge(a, b) {
+  const props = /* @__PURE__ */ new Map();
+  const bOpen = b.kinds === "any" || b.open;
+  for (const [k, t] of a.props ?? []) props.set(k, bOpen ? join2(t, b.values ?? ANY) : t);
+  for (const [k, t] of b.props ?? []) {
+    const base = props.get(k) ?? propOf(a, k);
+    props.set(k, b.absent ? join2(base, t) : t);
+  }
+  const open = a.kinds === "any" || a.open || bOpen;
+  const values = open ? join2(a.values ?? (a.open || a.kinds === "any" ? ANY : NOTHING), b.values ?? (bOpen ? ANY : NOTHING)) : void 0;
+  return objectOf(props, open, open ? values : void 0);
+}
+function familyOf(k) {
+  switch (k) {
+    case "string":
+    case "array":
+    case "number":
+    case "object":
+    case "date":
+    case "stream":
+      return k;
+    default:
+      return null;
+  }
+}
+var isTerm = (e, key) => typeof e === "object" && e !== null && key in e;
+function evaluate2(e, site) {
+  if (typeof e === "string") {
+    switch (e) {
+      case "same":
+        return site.receiver.items === void 0 ? site.receiver : { ...site.receiver, items: void 0 };
+      case "element":
+        return elementOf(site.receiver);
+      case "unknown":
+        return ANY;
+      case "picked":
+        return selectProps(site.receiver, site.names, true);
+      case "omitted":
+        return selectProps(site.receiver, site.names, false);
+      default:
+        return of(e);
+    }
+  }
+  if (isTerm(e, "arrayOf")) return arrayOf(evaluate2(e.arrayOf, site));
+  if (isTerm(e, "elementOf")) return flattenOnce(evaluate2(e.elementOf, site));
+  if (isTerm(e, "callback")) return site.callback(e.callback);
+  if (isTerm(e, "arg")) return site.arg(e.arg);
+  if (isTerm(e, "args")) return joinAll(expandArgs(e.args, site));
+  if (isTerm(e, "merge")) {
+    const terms = expandList(e.merge, site);
+    return terms.reduce((acc, t) => merge(acc, t), objectOf(/* @__PURE__ */ new Map(), false));
+  }
+  if (isTerm(e, "oneOf")) return joinAll(expandList(e.oneOf, site));
+  if (isTerm(e, "recordOf")) return objectOf(/* @__PURE__ */ new Map(), true, evaluate2(e.recordOf, site));
+  if (isTerm(e, "tuple")) return tupleOf(e.tuple.map((t) => evaluate2(t, site)));
+  if (isTerm(e, "itemOf")) {
+    const [of3, n2] = e.itemOf;
+    return itemOf(evaluate2(of3, site), n2);
+  }
+  const map2 = e;
+  const family = site.family ?? familyOfType(site.receiver);
+  if (family !== null) {
+    const term = map2[family];
+    return term === void 0 ? ANY : evaluate2(term, site);
+  }
+  return ANY;
+}
+function expandList(terms, site) {
+  return terms.flatMap(
+    (t) => isTerm(t, "args") ? expandArgs(t.args, site) : [evaluate2(t, site)]
+  );
+}
+function expandArgs(n2, site) {
+  const out = [];
+  for (let i = n2; i < site.argCount; i++) out.push(site.arg(i));
+  return out;
+}
+function flattenOnce(t) {
+  if (t.kinds === "any") return ANY;
+  const parts = [];
+  if (t.kinds.has("array")) parts.push(t.element ?? ANY);
+  if (t.kinds.has("object") && !t.kinds.has("array")) {
+    const values = [...t.props?.values() ?? []];
+    if (t.open) values.push(t.values ?? ANY);
+    return joinAll(values);
+  }
+  const rest = [...t.kinds].filter((k) => k !== "array");
+  if (rest.length > 0) parts.push({ ...t, kinds: new Set(rest), element: void 0, items: void 0 });
+  return joinAll(parts);
+}
+function familyOfType(t) {
+  const k = single2(t);
+  return k === "unknown" ? null : familyOf(k);
+}
+function selectProps(recv, names, keep) {
+  if (names === null) return objectOf(/* @__PURE__ */ new Map(), true);
+  const props = /* @__PURE__ */ new Map();
+  if (keep) {
+    for (const n2 of names) props.set(n2, propOf(recv, n2));
+    return objectOf(props, false);
+  }
+  const open = recv.kinds === "any" || recv.open;
+  for (const [k, t] of recv.props ?? []) if (!names.includes(k)) props.set(k, t);
+  return objectOf(props, open, open ? recv.values : void 0);
+}
 
 // src/compiler/emit/env.ts
 var isForeign = (b) => pipelineOverOf(b.stage) === "foreign";
@@ -26443,14 +26453,14 @@ function callExpression(node, env) {
 }
 function newExpression(node, env) {
   const { callee } = node;
-  if (callee.type !== "Ident") throw unknownClass(null, [], node.pos);
+  if (callee.type !== "Ident") throw noNewKeyword(null, node.pos);
   const { name: name2 } = callee;
-  if (env.scope.has(name2) && env.lookup(name2, callee.pos).ref.kind === "function")
-    throw newOnFunction(name2, node.pos);
-  if (env.scope.has(name2) || !isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
-  if (newKeywordOf(name2) === "forbidden" && (positionsOf(name2)?.length ?? 0) > 0) {
-    throw newOnFunction(name2, node.pos);
+  if (env.scope.has(name2)) {
+    if (env.lookup(name2, callee.pos).ref.kind === "function") throw noNewKeyword(name2, node.pos);
+    throw unknownClass(name2, constructibleNames(), node.pos);
   }
+  if (!isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
+  if ((positionsOf(name2)?.length ?? 0) > 0) throw noNewKeyword(name2, node.pos);
   return dispatchBare(node, name2, node.args, env);
 }
 function dispatchBare(node, name2, args, env) {
@@ -26458,14 +26468,12 @@ function dispatchBare(node, name2, args, env) {
   const exprArgs = args.filter(isExpr2);
   const proofs = proofsFor(args, childEnv(env, node, "args"), true);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
-  const isNew = node.type === "NewExpression";
   if (sel.kind === "rule") {
-    const called = isNew ? `new ${name2}()` : `${name2}()`;
     const argEnv = childEnv(env, node, "args");
-    checkSlots(called, sel.rule.args, exprArgs, true, void 0, env.site.settling, slotProof(argEnv));
+    checkSlots(`${name2}()`, sel.rule.args, exprArgs, true, void 0, env.site.settling, slotProof(argEnv));
     return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
   }
-  const spelled3 = isNew ? `'new ${name2}()'` : name2;
+  const spelled3 = node.type === "NewExpression" ? `'new ${name2}()'` : name2;
   throw refusalFor(sel, spelled3, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda(lambda, args, env, pos, label, fnName) {
@@ -27962,7 +27970,7 @@ function lowerUpdate(program, env) {
               claimed.set(path, "$rename");
               break;
             }
-            if (v.type === "NewExpression" && v.callee.type === "Ident" && v.callee.name === "Date" && v.args.length === 0) {
+            if (isNow(v, valueEnv)) {
               put("$currentDate", path, true, op.pos);
               break;
             }
@@ -28072,6 +28080,9 @@ function minMax(v, path) {
 function number(v, op, pos) {
   if (typeof v !== "number") throw updateNeedsNumber(op, "a number", pos);
   return v;
+}
+function isNow(v, env) {
+  return v.type === "CallExpression" && v.callee.type === "Ident" && v.args.length === 0 && canonicalBsonName(v.callee.name) === "Date" && !env.scope.has(v.callee.name);
 }
 
 // src/index.ts
@@ -28323,6 +28334,7 @@ function expressionOf(program) {
 }
 function lowerMode(mode, api, parsed, values) {
   const resolved = mode === "auto" ? shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter" : mode;
+  refuseNew(parsed);
   rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
   const injected = inject(parsed, values);
   switch (resolved) {

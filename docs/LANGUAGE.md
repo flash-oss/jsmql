@@ -109,7 +109,7 @@ So a comparison that must read exactly ONE value has its own spelling:
 jsmql("$.age > 18 && $.status === 'active'");
 // → {age:{$gt:18},status:"active"}
 
-// `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
+// `Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
 jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`);
 // → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 
@@ -2453,13 +2453,19 @@ $.items.compact()                        // drop JS-falsy values (null, "", 0, f
 
 The bare form is for **arrays of values**. A pipeline stream carries documents, so the stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)).
 
-**`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date("2026-01-01")` is a date constant. A value of the document converts with `.toDate()`.
+**JSMQL has no `new` keyword, and `Date(…)` is a date, not a string.** You write each constructor as a call: `Date(…)`, `ObjectId(…)`, `Decimal128(…)`. The compiler refuses `new X(…)`, and the error names `X(…)` (see [HR8](LANG_RULES.md)). JavaScript's own `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date()` is the current date, and `Date("2026-01-01")` is a date constant. A value of the document converts with `.toDate()`.
+
+```js
+Date("2026-01-01")         // → a date constant
+Date()                     // → "$$NOW"
+new Date("2026-01-01")     // ✗ no new in JSMQL: write Date("2026-01-01")
+```
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `.toDouble()` is the numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `<value>.toDouble()`, or `<value>.toDouble().trunc()` for the whole number `parseInt` would give.
 
 **`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
-`new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new f(1)`) names the call without `new`.
+`new` on a name that JSMQL does not know names the nearest constructor: for `new Dat()`, the suggestion is `Date(…)`. `new` on a function (`new f(1)`) names the call without `new`. `new` on `Set`, `Map` or `RegExp` gets the error of that name, because the error names the JSMQL form.
 
 ### Set operations on arrays
 
@@ -2998,13 +3004,12 @@ $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "i
 
 ### ObjectId literals
 
-You can write a constant `_id` in three ways. They all give the same live BSON ObjectId:
+You can write a constant `_id` in two ways. Both give the same live BSON ObjectId:
 
 ```js
 $._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
 $._id === ObjectId("507f1f77bcf86cd799439011")
-$._id === new ObjectId("507f1f77bcf86cd799439011")
-// all → { _id: new ObjectId("507f1f77bcf86cd799439011") }
+// both → { _id: new ObjectId("507f1f77bcf86cd799439011") }
 
 [0x507f1f77bcf86cd799439011, 0x698a76556c10b90d8bd0497e].has($._id)
 // { _id: { $in: [new ObjectId("507f…"), new ObjectId("698a…")] } }
@@ -3034,7 +3039,7 @@ The value is an `ObjectId` from **your own `bson`** package. JSMQL declares `bso
 
 ### The other BSON types
 
-Eight more BSON types have the same three-way spelling. A constant is a live BSON value. A runtime value converts on the server. `X(…)` and `new X(…)` are equivalent, and `jsmql.stringify` writes the `new X(…)` form.
+Eight more BSON types have the same three-way meaning. A constant is a live BSON value. A runtime value converts on the server. You write `X(…)` with no `new` (HR8). `jsmql.stringify` writes the `new X(…)` form, because that is the JavaScript of the driver.
 
 ```js
 $.price === Decimal128("9.99")     // → { price: new Decimal128("9.99") }
@@ -3090,6 +3095,8 @@ Measurements show two more surprises. `Long + Double` promotes to a double and l
 
 ### Date Constructor and `Date.now()`
 
+JSMQL has no `new` keyword (see [HR8](LANG_RULES.md)), so a date is `Date(…)`. JavaScript's own `Date(…)` returns a string. JSMQL gives the call the date meaning instead.
+
 ```js
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
 Date("2024-01-01")                 // Date(2024-01-01T00:00:00Z)
@@ -3100,9 +3107,9 @@ Date(Date.UTC(2024, 1, 15))        // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
 Date()                             // "$$NOW"  (current date/time)
-Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
-$.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not new Date($.dateString)
-$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }  — a number of milliseconds, not new Date($.ms)
+Date()                             // "$$NOW"  — JavaScript's own `Date()` gives a string
+$.dateString.toDate()              // { $toDate: { $ifNull: ["$dateString", new Date("1970-01-01T00:00:00.000Z")] } }  — not Date($.dateString)
+$.ms.toLong().toDate()             // { $toDate: { $toLong: { $ifNull: ["$ms", 0] } } }  — a number of milliseconds, not Date($.ms)
 Date($.y, $.m, $.d)                // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
@@ -3146,7 +3153,7 @@ $.createdAt.getTime()              // { $toLong: { $ifNull: ["$createdAt", new D
 $.createdAt.toISOString()          // { $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } } }   (that format IS $dateToString's default)
 ```
 
-Under a dot, a date method reads a missing or `null` date as the epoch, `new Date(0)`, the safe value of a date. See [HR5](LANG_RULES.md). So `$.createdAt.getFullYear()` gives `1970` for a document with no `createdAt`. Under `?.`, a date method gives `null`: `$.createdAt?.getFullYear()` is `{ $year: "$createdAt" }`. So a `??` after a date method needs the `?.`: `$.publishedAt?.format("%Y-%m-%d") ?? "unknown"` falls back for a missing `publishedAt`. The dot spelling formats the epoch instead.
+Under a dot, a date method reads a missing or `null` date as the epoch, `Date(0)`, the safe value of a date. See [HR5](LANG_RULES.md). So `$.createdAt.getFullYear()` gives `1970` for a document with no `createdAt`. Under `?.`, a date method gives `null`: `$.createdAt?.getFullYear()` is `{ $year: "$createdAt" }`. So a `??` after a date method needs the `?.`: `$.publishedAt?.format("%Y-%m-%d") ?? "unknown"` falls back for a missing `publishedAt`. The dot spelling formats the epoch instead.
 
 Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone. This matches JavaScript's split between `getHours()` (local) and `getUTCHours()` (UTC):
 
@@ -3798,9 +3805,9 @@ jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
 jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
 jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
 jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
-jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
-// `new Date()` is the server's clock only as the whole write. JSMQL refuses
-// `$.a = { t: new Date() }`: write `$.a.t = new Date()`, or use the pipeline form.
+jsmql.update("$.updatedAt = Date()")     // → { $currentDate: { updatedAt: true } }
+// `Date()` is the server's clock only as the whole write. JSMQL refuses
+// `$.a = { t: Date() }`: write `$.a.t = Date()`, or use the pipeline form.
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
@@ -5093,7 +5100,7 @@ JSMQL accepts a single top-level stage call (`$match(...)`), a single stage-obje
 ```js
 db.users.updateOne(
   { _id: 123 },
-  jsmql.update("$.visits += 1, $.status = 'active', $.updatedAt = new Date(), delete $.tmp"),
+  jsmql.update("$.visits += 1, $.status = 'active', $.updatedAt = Date(), delete $.tmp"),
 );
 // → db.users.updateOne(
 //     { _id: 123 },
@@ -5103,7 +5110,7 @@ db.users.updateOne(
 jsmql.update("$.name = $.name.toUpperCase()");   // ✗ the value comes from the document, and an update document takes only constants; use the pipeline form
 ```
 
-Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= new Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
+Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
 
 The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, not as the field. So JSMQL refuses a value computed from the document, and names the pipeline form instead (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`). `updateOne` accepts that form too, and MongoDB evaluates it server-side.
 
@@ -5174,7 +5181,7 @@ jsmql.stringify(filter);
 
 `JSON.stringify` cannot write that document. A Date and an ObjectId each carry a `toJSON`, so both collapse to a plain string, and the server then compares them as strings. A live `RegExp` becomes `{}`, which matches every document. Every other BSON value becomes its internal byte fields. The document still runs, and it matches nothing.
 
-JSMQL writes every BSON class as `new X(…)`, the form the Node driver needs. The same text runs in mongosh, which exposes the driver's classes as globals. A driver script needs them in scope:
+`jsmql.stringify` writes every BSON class as `new X(…)`, the form the Node driver needs. The same text runs in mongosh, which exposes the driver's classes as globals. A driver script needs them in scope:
 
 ```js
 const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,

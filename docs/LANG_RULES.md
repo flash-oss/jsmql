@@ -121,7 +121,7 @@ The field that the receiver names can be missing from the document, or it can ho
 | object | `{}` |
 | string | `""` |
 | number | `0`, or `1` where the operator refuses `0`, for example `.log()` |
-| date | the epoch, `new Date(0)` |
+| date | the epoch, `Date(0)` |
 
 A method that works on every kind, for example `.toString()`, reads the safe value of the kind that it answers. A kind with no safe value, for example an ObjectId, gives `null`.
 
@@ -249,6 +249,19 @@ $.a.slice(null)              // ✗ the start of .slice() takes an integer, and 
 $slice($.a, null)            // → { $slice: ["$a", null] }   as written, by HR2
 $.a.has(null)                // → { $in: [null, { $ifNull: ["$a", []] }] }   null is the value to find
 ```
+
+**HR8 — JSMQL has no `new` keyword.**
+
+You write each constructor as a call: a date is `Date(…)`, and a BSON value is `ObjectId(…)`, `Decimal128(…)` and so on. The compiler refuses every `new X(…)` at the position of `new`. The error names `X(…)` when JSMQL has that call. A name that JSMQL refuses anyway, for example `Set`, keeps its own error, because that error names the JSMQL way. JavaScript's own `Date(…)` returns a string. JSMQL gives the call the date meaning (SR2).
+
+```js
+Date("2026-01-01")           // → a date constant
+Date(2026, 0, 15)            // → the calendar form: 15 January 2026, in UTC
+Date()                       // → "$$NOW"   the date now
+new Date("2026-01-01")       // ✗ no new in JSMQL: write Date("2026-01-01")
+```
+
+A value that your program passes in is JavaScript, not JSMQL. So a `jsmql.compile` parameter or a template `${new Date()}` value can hold a date that `new` made.
 
 ## SOFT RULES
 

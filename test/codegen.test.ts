@@ -989,12 +989,8 @@ describe("ObjectId literal (in-source constant)", () => {
     expect("$expr" in out).toBe(false);
   });
 
-  it('accepts new ObjectId("hex") identically to the bare-call form', () => {
-    const bare = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
-    const knew = jsmql(`$._id === new ObjectId("${HEX}")`) as { _id: ObjectId };
-    expect(knew._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
-    expect(knew).toEqual({ _id: new ObjectId("698a76556c10b90d8bd0497e") });
-    expect(knew).toEqual(bare);
+  it('refuses new ObjectId("hex"), and names the call without new (HR8)', () => {
+    expect(() => jsmql(`$._id === new ObjectId("${HEX}")`)).toThrow("JSMQL has no 'new' keyword. Write 'ObjectId(…)'.");
   });
 
   it("an array of ObjectId literals lowers to $in with live instances", () => {
@@ -1003,9 +999,8 @@ describe("ObjectId literal (in-source constant)", () => {
     expect(out._id.$in.map((o) => o.toHexString())).toEqual(["698a76556c10b90d8bd0497e", "507f1f77bcf86cd799439011"]);
   });
 
-  it('works as an object-literal value too — { _id: ObjectId("…") } and the new form', () => {
+  it('works as an object-literal value too — { _id: ObjectId("…") }', () => {
     expect(jsmql(`{ _id: ObjectId("${HEX}") }`)).toEqual({ _id: new ObjectId("698a76556c10b90d8bd0497e") });
-    expect(jsmql(`{ _id: new ObjectId("${HEX}") }`)).toEqual({ _id: new ObjectId("698a76556c10b90d8bd0497e") });
   });
 
   it("ObjectId literal in aggregation-expression position lands directly in the expression", () => {
@@ -1042,7 +1037,6 @@ describe("ObjectId literal (in-source constant)", () => {
 
   it("the no-argument form lowers to $createObjectId() (server-side fresh id)", () => {
     expect(jsmql.expr(`ObjectId()`)).toEqual({ $createObjectId: {} });
-    expect(jsmql.expr(`new ObjectId()`)).toEqual({ $createObjectId: {} });
   });
 
   it("a dynamic argument is refused, and .toObjectId() converts on the server", () => {
@@ -1143,11 +1137,8 @@ describe("ObjectId plausibility floor (timestamp predating MongoDB = typo)", () 
     expect(() => jsmql(`{ _id: 0x123456781234567812345678 }`)).toThrow(/1979-09-05.*older than the smallest/);
   });
 
-  it('rejects the same too-old id written as ObjectId("…") / new ObjectId("…")', () => {
+  it('rejects the same too-old id written as ObjectId("…")', () => {
     expect(() => jsmql.expr(`ObjectId("123456781234567812345678")`)).toThrow(/older than the smallest valid ObjectId/);
-    expect(() => jsmql.expr(`new ObjectId("123456781234567812345678")`)).toThrow(
-      /older than the smallest valid ObjectId/,
-    );
   });
 
   it("the error names the decoded timestamp date (actionable DX)", () => {
@@ -3936,7 +3927,7 @@ describe("typeof", () => {
   });
 });
 
-describe("new Date()", () => {
+describe("Date()", () => {
   it("no-arg maps to $$NOW", () => {
     expect(jsmql.expr("Date()")).toEqual("$$NOW");
   });
@@ -3978,7 +3969,7 @@ describe("new Date()", () => {
     // `{ $toDate: "not-a-date" }` at parse time. So this refuses the value here,
     // instead of emitting MQL that cannot run. The message names the value and the format to use.
     expect(() => jsmql.expr('Date("not-a-date")')).toThrow(
-      'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
+      'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
     expect(() => jsmql.expr('Date("not-a-date")')).toThrow(/ISO 8601/);
   });
@@ -3995,8 +3986,8 @@ describe("new Date()", () => {
     ]);
   });
   it("rejects more than 7 args", () => {
-    expect(() => jsmql.expr("new Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(
-      "'new Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
+    expect(() => jsmql.expr("Date(1, 2, 3, 4, 5, 6, 7, 8)")).toThrow(
+      "'Date(year, month, day, hour, minute, second, ms)' requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
     );
   });
 });
@@ -8040,7 +8031,43 @@ describe("error cases", () => {
   });
 });
 
-describe("constructors — 'new' as JavaScript reads it, and the way forward", () => {
+describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
+  it("refuses 'new' at its position, names the call without it, and folds nothing first", () => {
+    const noNew = (name: string) => `JSMQL has no 'new' keyword. Write '${name}(…)'.`;
+    const at = (name: string, pos: number) => ({
+      valid: false,
+      errors: [{ message: noNew(name), pos, code: "CODEGEN_ERROR" }],
+    });
+    expect(jsmql.validate("new Date()")).toEqual(at("Date", 0));
+    // A constant date is refused too: no pass folds it to its value before the check.
+    expect(jsmql.validate('$.t > new Date("2026-01-01")')).toEqual(at("Date", 6));
+    expect(jsmql.validate("$.t > new Date(2026, 0, 1)")).toEqual(at("Date", 6));
+    expect(jsmql.validate("true ? 1 : new Date(0)")).toEqual(at("Date", 11));
+    expect(jsmql.validate("$._id === new ObjectId()")).toEqual(at("ObjectId", 10));
+    expect(jsmql.validate("$.n === new Long(5)")).toEqual(at("Long", 8));
+    expect(jsmql.validate('$.t > new ISODate("2026-01-01")')).toEqual(at("ISODate", 6));
+    expect(jsmql.validate("$.a = new Date(); $.b = 1;")).toEqual(at("Date", 6));
+    expect(jsmql.validate("$.a = new Date()")).toEqual(at("Date", 6));
+    // Each entry and each call form refuses it.
+    expect(() => jsmql.expr('new Date("2026-01-01")')).toThrow(noNew("Date"));
+    expect(() => jsmql.filter('$.t > new Date("2026-01-01")')).toThrow(noNew("Date"));
+    expect(() => jsmql.pipeline("$.t = new Date();")).toThrow(noNew("Date"));
+    expect(() => jsmql.update("$.t = new Date()")).toThrow(noNew("Date"));
+    expect(() => jsmql`$.t > new Date(${"2026-01-01"})`).toThrow(noNew("Date"));
+    expect(() => jsmql(({ $ }) => $.t > new Date("2026-01-01"))).toThrow(noNew("Date"));
+    expect(() => jsmql.compile(({ d }: { d: string }, { $ }) => $.t > new Date(d))({ d: "2026-01-01" })).toThrow(
+      noNew("Date"),
+    );
+    // The spelling with no 'new' compiles.
+    expect(jsmql('$.t > Date("2026-01-01")')).toEqual({ t: { $gt: new Date("2026-01-01T00:00:00.000Z") } });
+    expect(jsmql.expr("Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
+    expect(jsmql.expr("Date()")).toEqual("$$NOW");
+    // A value that the caller passes in is the caller's own JavaScript, not JSMQL.
+    expect(jsmql`$.t > ${new Date("2026-01-01T00:00:00.000Z")}`).toEqual({
+      t: { $gt: new Date("2026-01-01T00:00:00.000Z") },
+    });
+  });
+
   it("refuses 'Set' in both spellings, and names the array methods", () => {
     // MongoDB has no set type, so an array method does each set operation. The error
     // stands at the node that names `Set`; a call without `new` stands at its `(`.
@@ -8068,18 +8095,18 @@ describe("constructors — 'new' as JavaScript reads it, and the way forward", (
   it("names the call without 'new' for a function", () => {
     // A type name as a conversion function is not part of JSMQL, with 'new' or without it.
     expect(() => jsmql.expr("new Number(5)")).toThrow(/^'Number\(x\)' is not part of JSMQL/);
-    expect(() => jsmql("const f = (x) => x; $.a = new f(1);")).toThrow(
-      "'f' is not a constructor in JSMQL. Call it without 'new': 'f(…)'.",
-    );
+    expect(() => jsmql("const f = (x) => x; $.a = new f(1);")).toThrow("JSMQL has no 'new' keyword. Write 'f(…)'.");
+    expect(() => jsmql.expr("new assert(1)")).toThrow("JSMQL has no 'new' keyword. Write 'assert(…)'.");
   });
 
   it("names the nearest class for an unknown one", () => {
     expect(() => jsmql.expr("new Dat()")).toThrow(
-      "Unknown class 'Dat' in 'new Dat(…)'. Did you mean 'new Date(…)'? MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+      "JSMQL has no 'new' keyword, and it knows no class 'Dat'. Did you mean 'Date(…)'? MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one, and call it.",
     );
     expect(() => jsmql.expr("new Foo(1)")).toThrow(
-      "Unknown class 'Foo' in 'new Foo(…)'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+      "JSMQL has no 'new' keyword, and it knows no class 'Foo'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one, and call it.",
     );
+    expect(jsmql.validate("$.a > 1 && new Foo()").errors[0].pos).toBe(11);
   });
 
   it("refuses 'Map' and 'RegExp' in both spellings, and names the JSMQL form", () => {
@@ -8115,7 +8142,7 @@ describe("constructors — 'new' as JavaScript reads it, and the way forward", (
       "Unknown function 'Sett(...)'. Declare it first with `const Sett = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Sett(...)`; for a method, `receiver.Sett(...)`.",
     );
     expect(() => jsmql.expr("new Sett([1])")).toThrow(
-      "Unknown class 'Sett' in 'new Sett(…)'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+      "JSMQL has no 'new' keyword, and it knows no class 'Sett'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one, and call it.",
     );
   });
 });

@@ -200,7 +200,7 @@ constants only.
 | `$.n += k` / `-=` / `++` / `--` | `$inc` |
 | `$.n *= k` | `$mul` |
 | `delete $.a` | `$unset: { a: "" }` |
-| `$.t = new Date()` | `$currentDate: { t: true }` |
+| `$.t = Date()` | `$currentDate: { t: true }` |
 | `$.n = [$.n, k].min()` / `.max()` | `$min` / `$max` |
 | `$.tags.push(x)` / `.pop()` / `.shift()` | `$push` / `$pop` |
 | `$.b = $.a` paired with `delete $.a`, either order | `$rename` |
@@ -213,9 +213,9 @@ alternative to name. The message quotes the read as the server would see it, for
 example `'$name'` for `$.name`. A copy of the whole document (`$.a = $`) has no
 `$rename` form, so its refusal names the pipeline form alone. The rename pair above is the one read of the document that a
 document-form update takes, because `$rename` names the source field rather than
-evaluating it. A value the server computes without reading the document (`new Date()`
+evaluating it. A value the server computes without reading the document (`Date()`
 inside a value, `ObjectId()`, `Date.now()`) is refused by its row's `updateDoc` cell,
-which names the write that does exist (`$.<field> = new Date()` is `$currentDate`) and
+which names the write that does exist (`$.<field> = Date()` is `$currentDate`) and
 the pipeline form. A row without that cell gets the position's general sentence from
 `refusalFor` in [src/compiler/emit/errors.ts](../../src/compiler/emit/errors.ts). The
 lowering also refuses two writes to one path, and anything that is not a write or an

@@ -1,5 +1,5 @@
 // The BSON value constructors: `ObjectId`, `Decimal128`, `Long`, `Int32`,
-// `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, in both spellings each.
+// `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, each written without `new` (HR8).
 //
 // Every document here is asserted as MQL and, when a mongod is reachable, RUN —
 // because a `toEqual` proves what jsmql emits and never that the server accepts it
@@ -89,16 +89,18 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(filter(`$.tags === Long("5")`)).toEqual({ tags: Long.fromString("5") });
   });
 
-  it("takes both spellings of `new`, and the mongosh names", () => {
-    expect(jsmql.filter(`$.price === new Decimal128("9.99")`)).toEqual(jsmql.filter(`$.price === Decimal128("9.99")`));
+  it("takes the mongosh names, and refuses `new` (HR8)", () => {
+    expect(() => jsmql.filter(`$.price === new Decimal128("9.99")`)).toThrow(
+      "JSMQL has no 'new' keyword. Write 'Decimal128(…)'.",
+    );
     expect(jsmql.filter(`$.price === NumberDecimal("9.99")`)).toEqual(jsmql.filter(`$.price === Decimal128("9.99")`));
     expect(jsmql.filter(`$.n === NumberLong("9007199254740993")`)).toEqual(
       jsmql.filter(`$.n === Long("9007199254740993")`),
     );
     expect(jsmql.filter("$.count === NumberInt(3)")).toEqual(jsmql.filter("$.count === Int32(3)"));
-    expect(jsmql.filter(`$.t > ISODate("2020-01-01")`)).toEqual(jsmql.filter(`$.t > new Date("2020-01-01")`));
-    // JavaScript's bare `Date()` answers a string; jsmql keeps the syntax, not that meaning.
-    expect(jsmql.pipeline("$.a = Date();")).toEqual(jsmql.pipeline("$.a = new Date();"));
+    expect(jsmql.filter(`$.t > ISODate("2020-01-01")`)).toEqual(jsmql.filter(`$.t > Date("2020-01-01")`));
+    // JavaScript's bare `Date()` answers a string; JSMQL keeps the syntax, not that meaning.
+    expect(jsmql.pipeline("$.a = Date();")).toEqual([{ $set: { a: "$$NOW" } }]);
   });
 
   it("refuses a value of the document, and names the value's own conversion method", () => {

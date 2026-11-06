@@ -32,7 +32,7 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   constants only, so this cell is always a refusal. A row adds this cell when
   the general sentence for the position (`NO_CELL` in
   `src/compiler/emit/errors.ts`) cannot name the row's own alternative — for
-  example `new Date()` → `$currentDate`. A `$op` row (`mongo`) states no
+  example `Date()` → `$currentDate`. A `$op` row (`mongo`) states no
   refusal: a `$op(…)` call is the developer's own MQL, and it takes HR2's plain
   form wherever its row states no rule (HR3 does not apply to it).
 

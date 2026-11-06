@@ -685,8 +685,6 @@ type ListedCells<W extends readonly Position[]> = {
 type GlobalSpec<W extends readonly Position[]> = {
   doc: string;
   token: TokenName;
-  /** `new` before it. `ObjectId` takes both spellings; `Map` demands it, as JavaScript does. */
-  newKeyword: "required" | "optional" | "forbidden";
   /** When it is also a namespace: the family a name bound to it resolves against. */
   provides?: Family;
   returns: TypeExpr;
@@ -786,19 +784,17 @@ const conversion = (e: { method: string; operator: string; returns: TypeExpr; sa
  */
 const dateRow = (spelling: string) =>
   global_({
-    doc: `A date. \`new ${spelling}()\` is now; a constant is a literal.`,
+    doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
     token: "Ident",
-    // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
-    // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
-    // same choice every BSON constructor makes, so one rule covers all nine.
-    newKeyword: "optional",
+    // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
+    // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
     provides: "Date",
     returns: "date",
     neverNull: true,
     where: ["value"],
-    filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+    filter: because(`a date is a value, not a test. Compare it: '$.t > ${spelling}("2024-01-01")'.`),
     updateDoc: unsupported(
-      `'new ${spelling}(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`,
+      `'${spelling}(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = ${spelling}()' is '$currentDate'. Inside a value, write a date constant ('${spelling}("2026-01-01")'), pass a Date from your code (an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: ${spelling}() };")'), which 'updateOne' accepts as well.`,
     ),
     expr: {
       byArgs: {
@@ -816,12 +812,12 @@ const dateRow = (spelling: string) =>
           emit: ({ args, construct }) =>
             construct(
               spelling,
-              `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+              `${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write ${spelling}("2026-01-01") or ${spelling}(0).`,
               args[0],
             ),
         },
-        dynamic: convertsWith(spelling === "Date" ? "new Date" : spelling, "toDate", MILLIS_TO_DATE),
-        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
+        dynamic: convertsWith(spelling, "toDate", MILLIS_TO_DATE),
+        // MEASURED: Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
         // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
         // integer. MEASURED: `$dateFromParts` refuses a fractional double or Decimal128 in
         // each of the seven parts, and reads a whole double. JavaScript cuts a fraction off,
@@ -831,7 +827,7 @@ const dateRow = (spelling: string) =>
           emit: ({ args, value }) => dateFromParts(args.map(value), null),
         },
         otherwise: unsupported(
-          `'new ${spelling}(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`,
+          `'${spelling}(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`,
         ),
       },
     },
@@ -857,7 +853,6 @@ const bsonValue = (e: {
   global_({
     doc: e.doc,
     token: "Ident",
-    newKeyword: "optional",
     returns: e.returns,
     neverNull: true,
     where: ["value"],
@@ -894,7 +889,6 @@ const bsonSentinel = (spelling: string, doc: string, compare: string) =>
   global_({
     doc,
     token: "Ident",
-    newKeyword: "optional",
     returns: spelling === "MinKey" ? "minKey" : "maxKey",
     neverNull: true,
     where: ["value"],
@@ -10640,7 +10634,6 @@ export const NAMES = {
   assert: global_({
     doc: "'assert(condition[, message]);' — a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
@@ -10889,7 +10882,6 @@ export const NAMES = {
   String: global_({
     doc: "Parsed, then refused: '<value>.toString()' is JSMQL's conversion to a string.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "string",
     where: [],
     filter: stringIsNotJsmql,
@@ -10904,7 +10896,6 @@ export const NAMES = {
   Boolean: global_({
     doc: "Parsed, then refused: '!!<value>' is the truthiness of JavaScript, and '.compact()' drops the falsy elements.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "bool",
     where: [],
     filter: booleanIsNotJsmql,
@@ -10920,7 +10911,6 @@ export const NAMES = {
   parseInt: global_({
     doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
     filter: parseIntIsNotJsmql,
@@ -10934,7 +10924,6 @@ export const NAMES = {
   parseFloat: global_({
     doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     returns: "number",
     where: [],
     filter: parseFloatIsNotJsmql,
@@ -11743,7 +11732,6 @@ export const NAMES = {
   ObjectId: global_({
     doc: "An ObjectId. Empty mints one, and a 24-hex constant is a literal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "objectId",
     // a mint or a literal: never null
     neverNull: true,
@@ -11786,8 +11774,8 @@ export const NAMES = {
   // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
   // builds, and the cell refuses a value that the type CANNOT hold. A value of the
   // document is refused, because its own conversion method says the same thing
-  // (`.toLong()`). JSMQL accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
-  // `new X(…)`. See docs/specs/bson-types.md.
+  // (`.toLong()`). JSMQL writes `X(…)`, with no `new` (HR8); jsmql.stringify writes the
+  // driver's `new X(…)`. See docs/specs/bson-types.md.
 
   Decimal128: bsonValue({
     spelling: "Decimal128",
@@ -11877,7 +11865,6 @@ export const NAMES = {
   Number: global_({
     doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
     where: [],
@@ -11892,7 +11879,6 @@ export const NAMES = {
   Array: global_({
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
-    newKeyword: "forbidden",
     provides: "Array",
     returns: "array",
     where: [],
@@ -11907,7 +11893,6 @@ export const NAMES = {
   Set: global_({
     doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "unknown",
     where: [],
     filter: setIsNotJsmql,
@@ -11929,7 +11914,6 @@ export const NAMES = {
   Map: global_({
     doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
     token: "Ident",
-    newKeyword: "required",
     returns: "object",
     where: [],
     filter: mapIsNotJsmql,
@@ -11943,7 +11927,6 @@ export const NAMES = {
   RegExp: global_({
     doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
     token: "Ident",
-    newKeyword: "optional",
     returns: "unknown",
     where: [],
     filter: regExpIsNotJsmql,
@@ -11989,7 +11972,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
-      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
+      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
     ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),

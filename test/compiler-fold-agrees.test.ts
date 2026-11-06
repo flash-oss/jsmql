@@ -218,7 +218,6 @@ const EXPRESSIONS: readonly string[] = [
   "[{ n: 1 }].xorBy([{ n: 2, t: 'x' }, { n: 2, t: 'y' }], o => o.n)",
   // constructors
   'ObjectId("507f1f77bcf86cd799439011")',
-  'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",
   // dates: UTC, and MongoDB's own numbering
   'Date("2020-03-05T20:30:40.123Z").getFullYear()',
@@ -404,7 +403,6 @@ const NO_OPERAND: readonly string[] = [
   "Math.E",
   // a constructor takes a constant only: a value of the document is refused, and '.toObjectId()' converts it
   'ObjectId("507f1f77bcf86cd799439011")',
-  'new ObjectId("507f1f77bcf86cd799439011")',
 ];
 
 describe.skipIf(!up)("compiler/passes/fold — the value it computes is the value the server computes", () => {

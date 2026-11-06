@@ -174,7 +174,7 @@ export const hint = (expected: ArgType | readonly ArgType[], got: readonly strin
   if (expected === "number" && got.includes("date")) {
     return " To add time to a date or subtract time from it, use '.plus(n, unit)' or '.minus(n, unit)'. For the time between two dates, use '.diff(other, unit)'.";
   }
-  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
 };

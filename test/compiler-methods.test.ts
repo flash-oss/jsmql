@@ -2344,8 +2344,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // `Set` demands `new`, so no bare spelling of it applies to an element.
-    expect(() => expr("$.a.map(Set)")).toThrow(/takes an arrow/);
+    // MongoDB has no set type, so the row of `Set` refuses the call on each element.
+    expect(() => expr("$.a.map(Set)")).toThrow(/is not part of JSMQL, because MongoDB has no set type/);
   });
 
   it("lowers a regex literal's own methods", () => {

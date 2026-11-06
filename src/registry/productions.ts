@@ -1046,10 +1046,10 @@ export const PRODUCTIONS = {
   }),
 
   constructorCall: production({
-    doc: "`new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. What each constructor means is in names.ts.",
+    doc: "`new X(…)`: parsed, then refused (HR8). JSMQL has no `new` keyword; the refusal names `X(…)`.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`. names.ts says which constructor it is.
+    // One node for every `new X(…)`, so the refusal can name the callee.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",

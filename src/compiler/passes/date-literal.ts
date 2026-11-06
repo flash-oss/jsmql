@@ -1,16 +1,15 @@
 // A DATE LITERAL: a date that the source spells with literal parts. The constant engine
 // reads it before any lowering, because the server cannot compute some of these:
 // `{ $toDate: 0 }` fails there (the driver sends an integer as an int), so the lowering of
-// `new Date(0)` has no value that the interpreter can give.
+// `Date(0)` has no value that the interpreter can give.
 //
-//   new Date(0)                          the instant at millisecond 0
-//   new Date("2026-01-01")               the instant that the string names
-//   new Date(2026, 1, 1)                 the parts, in UTC
-//   Date(…)                              the same instants, with no `new`
+//   Date(0)                              the instant at millisecond 0
+//   Date("2026-01-01")                   the instant that the string names
+//   Date(2026, 1, 1)                     the parts, in UTC
 //   Date.UTC(2026, 1, 1)                 the same instant, as a number of milliseconds
 //
 // The calendar-parts form counts months from ZERO and rolls an out-of-range part over,
-// exactly as JavaScript does: `new Date(2020, 1, 1)` is February, and `new Date(2024, 12, 1)`
+// exactly as JavaScript does: `Date(2020, 1, 1)` is February, and `Date(2024, 12, 1)`
 // is January 2025. The runtime cell adds one for `$dateFromParts`, which counts from one
 // and rolls over the same way. See docs/specs/constant-engine.md.
 
@@ -36,9 +35,9 @@ function literalsOf(args: readonly { type: string }[]): unknown[] | null {
   return out;
 }
 
-/** The instant of `new Date(…)` with literal arguments, or null where the call has no date constant. */
+/** The instant of `Date(…)` with literal arguments, or null where the call has no date constant. */
 function instantOf(args: readonly unknown[]): Date | null {
-  // `new Date()` reads the clock, so it is never a constant.
+  // `Date()` reads the clock, so it is never a constant.
   if (args.length === 0) return null;
   if (args.length === 1) {
     const [a] = args;
@@ -62,14 +61,14 @@ const isDateName = (name: string): boolean => canonicalBsonName(name) === "Date"
  * `isBound` says whether the program binds a name, which then is no global.
  */
 export function readDateLiteral(node: Expr, isBound: (name: string) => boolean): DateReading {
-  if ((node.type === "NewExpression" || node.type === "CallExpression") && node.callee.type === "Ident") {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
     const name = node.callee.name;
     if (!isDateName(name) || isBound(name)) return NO;
     const args = literalsOf(node.args);
     const date = args === null ? null : instantOf(args);
     return date === null ? NO : { ok: true, value: date };
   }
-  // `Date.UTC(…)`: ONE number is a YEAR here, where `new Date(n)` reads it as milliseconds.
+  // `Date.UTC(…)`: ONE number is a YEAR here, where `Date(n)` reads it as milliseconds.
   // The call goes through the parts form, so the two spellings cannot disagree.
   if (node.type === "MethodCall" && node.name === "UTC" && node.object.type === "Ident") {
     const on = node.object.name;

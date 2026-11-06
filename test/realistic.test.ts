@@ -1284,7 +1284,7 @@ describe("lookup by `_id` and tenant", { features: ["Filters"] }, () => {
 describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
   // Query by `_id` with a constant ObjectId. The leanest form is the `0x` hex
   // literal — type `0x` and paste the 24-char id, no quotes or `ObjectId(...)`
-  // wrapper. `ObjectId("…")` / `new ObjectId("…")` are equivalent. jsmql mints a
+  // wrapper. `ObjectId("…")` gives the same value. JSMQL mints a
   // live BSON ObjectId (not a string, not an Extended-JSON envelope), so the
   // match uses the `_id` index directly.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
