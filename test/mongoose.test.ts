@@ -192,7 +192,7 @@ describe("@koresar/jsmql/mongoose — findByIdAndUpdate (id-at-0)", () => {
   it("leaves the id slot alone and lowers only the update slot", () => {
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    Model.findByIdAndUpdate("507f1f77bcf86cd799439011", ({ $ }: any) => ($.lastSeen = new Date(0)));
+    Model.findByIdAndUpdate("507f1f77bcf86cd799439011", ({ $ }: any) => ($.lastSeen = Date(0)));
     expect(recorded[0].args[0]).toBe("507f1f77bcf86cd799439011");
     expect(recorded[0].args[1]).toEqual({ $set: { lastSeen: new Date(0) } });
   });

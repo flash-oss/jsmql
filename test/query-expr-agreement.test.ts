@@ -59,7 +59,7 @@ const AGREE: readonly string[] = [
   "$.t === true",
   "$.t === false",
   "$.s === 'hello'",
-  "$.d > new Date('2024-01-01')",
+  "$.d > Date('2024-01-01')",
   // `typeof` — one alias table in src/registry/vocabulary.ts read by both the query and
   // the expression cells, and the reason this suite exists.
   'typeof $.a === "number"',

@@ -30,27 +30,27 @@ describe("const folding — collapse to Filter", () => {
     expect(jsmql('const status = "active"; $.status === status')).toEqual({ status: "active" });
   });
 
-  it("new Date(literal) folds to a BSON Date", () => {
-    expect(jsmql('let date = new Date("2020-01-01"); $.createdAt < date')).toEqual({
+  it("Date(literal) folds to a BSON Date", () => {
+    expect(jsmql('let date = Date("2020-01-01"); $.createdAt < date')).toEqual({
       createdAt: { $lt: new Date("2020-01-01T00:00:00.000Z") },
     });
   });
 
   it("a constant date is a literal in a pipeline too — the $match can use the index", () => {
-    expect(jsmql('const d = new Date("2026-09-01"); $match({ x: d })')).toEqual([
+    expect(jsmql('const d = Date("2026-09-01"); $match({ x: d })')).toEqual([
       { $match: { x: new Date("2026-09-01T00:00:00.000Z") } },
     ]);
-    expect(jsmql("const d = new Date(2026, 8, 1); $$.filter(o => o.t >= d)")).toEqual([
+    expect(jsmql("const d = Date(2026, 8, 1); $$.filter(o => o.t >= d)")).toEqual([
       { $match: { t: { $gte: new Date("2026-09-01T00:00:00.000Z") } } },
     ]);
-    expect(jsmql('const d = new Date("2026-09-01"); $.t = d')).toEqual([
+    expect(jsmql('const d = Date("2026-09-01"); $.t = d')).toEqual([
       { $set: { t: new Date("2026-09-01T00:00:00.000Z") } },
     ]);
   });
 
   it("a constant date's arithmetic folds to the instant the server would compute", () => {
     expect(
-      jsmql(`const start = new Date("2026-09-01");
+      jsmql(`const start = Date("2026-09-01");
              const end = start.plus(1, "month");
              $$.filter(d => d.createdAt >= start && d.createdAt < end)`),
     ).toEqual([
@@ -60,11 +60,11 @@ describe("const folding — collapse to Filter", () => {
         },
       },
     ]);
-    expect(jsmql('const d = new Date("2026-01-31"); $match({ day: d.plus(1, "month").format("%Y-%m-%d") })')).toEqual([
+    expect(jsmql('const d = Date("2026-01-31"); $match({ day: d.plus(1, "month").format("%Y-%m-%d") })')).toEqual([
       { $match: { day: "2026-02-28" } },
     ]);
     // a timezone is the server's table, so that form stays a runtime one
-    expect(jsmql('const d = new Date("2026-09-01"); $match({ x: d.plus(1, "month", "Europe/Kyiv") })')).toEqual([
+    expect(jsmql('const d = Date("2026-09-01"); $match({ x: d.plus(1, "month", "Europe/Kyiv") })')).toEqual([
       {
         $match: {
           $expr: {
@@ -133,7 +133,7 @@ describe("const folding — pipeline interaction", () => {
   });
 
   it("mixed fold + runtime binding stays a Pipeline", () => {
-    expect(jsmql("const x = 5; const t = new Date(); $match($.a === x && $.b >= t)")).toEqual([
+    expect(jsmql("const x = 5; const t = Date(); $match($.a === x && $.b >= t)")).toEqual([
       { $set: { "__jsmql.var.t": "$$NOW" } },
       { $match: { a: 5, $expr: { $gte: ["$b", "$__jsmql.var.t"] } } },
       { $unset: "__jsmql" },
@@ -168,8 +168,8 @@ describe("const folding — fallback to runtime binding", () => {
     ]);
   });
 
-  it("new Date() (reads the clock) stays runtime", () => {
-    expect(jsmql("const now = new Date(); $match($.createdAt < now)")).toEqual([
+  it("Date() (reads the clock) stays runtime", () => {
+    expect(jsmql("const now = Date(); $match($.createdAt < now)")).toEqual([
       { $set: { "__jsmql.var.now": "$$NOW" } },
       { $match: { $expr: { $lt: ["$createdAt", "$__jsmql.var.now"] } } },
       { $unset: "__jsmql" },
@@ -195,9 +195,9 @@ describe("const folding — fallback to runtime binding", () => {
 describe("const folding — declaration lists", () => {
   it("folds a declarator from the one before it in the same list, and emits no stage", () => {
     // The motivating shape: a window bounded by a constant date.
-    expect(
-      jsmql('const start = new Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)'),
-    ).toEqual({ t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") } });
+    expect(jsmql('const start = Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)')).toEqual({
+      t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") },
+    });
     // Folded declarations emit no stage, so the program still collapses to a Filter.
     expect(jsmql("const ms = 1000, day = ms * 60 * 60 * 24; $.elapsedMs > day")).toEqual({
       elapsedMs: { $gt: 86400000 },
@@ -226,7 +226,7 @@ describe("const folding — errors", () => {
   });
 
   it("an invalid constant date is rejected", () => {
-    expect(() => jsmql('const d = new Date("nope"); $.t < d')).toThrow(
+    expect(() => jsmql('const d = Date("nope"); $.t < d')).toThrow(
       'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
     );
   });

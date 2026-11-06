@@ -286,9 +286,7 @@ describe("stringify: what it refuses", () => {
 
 describe("stringify: the compiler's own documents", () => {
   it("prints a filter holding every literal kind the language folds", () => {
-    const filter = jsmql(
-      '$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")',
-    );
+    const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > Date("2026-01-01")');
     expect(stringify(filter)).toBe(
       [
         "{",

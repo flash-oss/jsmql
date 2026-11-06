@@ -140,7 +140,7 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("$.a.sortBy(true)")).toThrow(
       "'.sortBy()' argument 1 takes a sort specification, but got a boolean.",
     );
-    expect(() => jsmql.expr('$.a.toSorted(new Date("2020-01-01"))')).toThrow(
+    expect(() => jsmql.expr('$.a.toSorted(Date("2020-01-01"))')).toThrow(
       "'.toSorted()' argument 1 takes a sort specification, but got a date.",
     );
     expect(() => jsmql.expr("$.a.orderBy(null)")).toThrow(
@@ -751,7 +751,7 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   it("a value of the document is refused, and the refusal names the value's own method", () => {
     for (const [src, method] of [
       ["ObjectId($.s)", "toObjectId"],
-      ["new Date($.t)", "toDate"],
+      ["Date($.t)", "toDate"],
       ["ISODate($.t)", "toDate"],
       ["UUID($.s)", "toUUID"],
       ["Long($.n)", "toLong"],
@@ -796,7 +796,7 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   });
 
   it("whole calendar parts compile", () => {
-    expect(jsmql.expr("new Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
   });
 
   // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
@@ -816,10 +816,10 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
   });
 
   it("a whole millisecond count and a string are date constants, and a value of the document is refused", () => {
-    expect(jsmql.expr("new Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
-    expect(jsmql.expr("new Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
-    expect(jsmql.expr(`new Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
-    expect(() => jsmql.expr("new Date($.n)")).toThrow(/Write '<value>\.toDate\(\)'/);
+    expect(jsmql.expr("Date(1700000000000)")).toEqual(new Date("2023-11-14T22:13:20.000Z"));
+    expect(jsmql.expr("Date(-1)")).toEqual(new Date("1969-12-31T23:59:59.999Z"));
+    expect(jsmql.expr(`Date("2024-01-01")`)).toEqual(new Date("2024-01-01T00:00:00.000Z"));
+    expect(() => jsmql.expr("Date($.n)")).toThrow(/Write '<value>\.toDate\(\)'/);
     expect(() => jsmql.expr("Date(2020.5)")).toThrow(/^'Date\(\)' argument 1 takes an integer, but got a fraction/);
   });
 
@@ -839,7 +839,7 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
       "'Date()' argument 1 takes a string, a number or a date, but got null.",
     );
     // A string that no date parser reads keeps the refusal that names the two date constants.
-    expect(() => jsmql.expr('new Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
+    expect(() => jsmql.expr('Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 
   it("a numeric constant is a string or a number", () => {

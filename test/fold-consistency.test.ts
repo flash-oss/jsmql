@@ -226,8 +226,8 @@ const DATE_SAMPLES = [
 const DATE_UNITS = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
 const dateCases: Case[] = [];
 for (const v of DATE_SAMPLES) {
-  const lit = `new Date("${v}")`;
-  const other = 'new Date("2026-01-31T23:59:00Z")';
+  const lit = `Date("${v}")`;
+  const other = 'Date("2026-01-31T23:59:00Z")';
   const calls = [
     ".getFullYear()",
     ".getMonth()",

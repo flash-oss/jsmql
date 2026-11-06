@@ -231,10 +231,10 @@ describe("compiler/emit/lower — calls", () => {
   });
 
   it("lowers a constructor by its argument class, and refuses a value of the document", () => {
-    expect(expr("new Date()")).toBe("$$NOW");
+    expect(expr("Date()")).toBe("$$NOW");
     expect(expr("ObjectId()")).toEqual({ $createObjectId: {} });
     // A value of the document converts with the value's own method, and the refusal names it.
-    expect(() => expr("new Date($.ms)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
+    expect(() => expr("Date($.ms)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
     expect(() => expr("ObjectId($.id)")).toThrow(/Write '<value>\.toObjectId\(\)'/);
     // A type name as a conversion function is not part of JSMQL, for a constant too.
     expect(() => expr("Number($.s)")).toThrow(/^'Number\(x\)' is not part of JSMQL.*'\$\.x\?\.toDouble\(\)'/);

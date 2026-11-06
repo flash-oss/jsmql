@@ -196,7 +196,7 @@ const OWN_TYPE: readonly [string, unknown][] = [
     [{ $set: { x: new UUID(UUID_TEXT) } }, { $set: { r: { $toUUID: "$x" } } }],
   ],
   [
-    `$.x = new Date("2024-01-01"); $.r = $.x.toDate();`,
+    `$.x = Date("2024-01-01"); $.r = $.x.toDate();`,
     [{ $set: { x: new Date("2024-01-01") } }, { $set: { r: { $toDate: "$x" } } }],
   ],
   [`$.x = "a"; $.r = $.x.toString();`, [{ $set: { x: "a" } }, { $set: { r: { $toString: "$x" } } }]],
@@ -215,9 +215,7 @@ describe("compiler — a conversion takes a value of its own type", () => {
     expect(() => jsmql.pipeline(`$.r = UUID(UUID("${UUID_TEXT}"));`)).toThrow(
       /'UUID\(\)' argument 1 takes a string, but got binary data\./,
     );
-    expect(() => jsmql.pipeline(`$.x = new Date("2024-01-01"); $.r = Long($.x);`)).toThrow(
-      /Write '<value>\.toLong\(\)'/,
-    );
+    expect(() => jsmql.pipeline(`$.x = Date("2024-01-01"); $.r = Long($.x);`)).toThrow(/Write '<value>\.toLong\(\)'/);
     expect(() => jsmql.pipeline(`$.x = UUID("${UUID_TEXT}"); $.r = ObjectId($.x);`)).toThrow(
       /Write '<value>\.toObjectId\(\)'/,
     );

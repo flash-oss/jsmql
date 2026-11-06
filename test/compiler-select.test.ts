@@ -38,7 +38,7 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
   const pick = (name: string, src: string, receiver: Receiver = NONE) =>
     select(consult(name, "value"), receiver, shapeOf(argsOf(src)), argsOf(src).length, UNPROVEN);
 
-  it("routes each class of `new Date(…)`", () => {
+  it("routes each class of `Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
     // a value of the document is refused, and the refusal names the value's own method
     expect(pick("Date", "f($.ms)")).toMatchObject({ kind: "refused" });

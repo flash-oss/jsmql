@@ -19,7 +19,7 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a > 1")).toEqual({ a: { $gt: 1 } });
     expect(filter("1 < $.a")).toEqual({ a: { $gt: 1 } });
     expect(filter("$.a.b.c > 5")).toEqual({ "a.b.c": { $gt: 5 } });
-    expect(filter('$.d > new Date("2024-01-01")')).toEqual({ d: { $gt: new Date("2024-01-01") } });
+    expect(filter('$.d > Date("2024-01-01")')).toEqual({ d: { $gt: new Date("2024-01-01") } });
     expect(String((filter("$._id === 0x507f1f77bcf86cd799439011") as { _id: unknown })._id)).toBe(
       "507f1f77bcf86cd799439011",
     );
@@ -344,7 +344,7 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.n.inRange(-10, 0)")).toEqual({ n: { $gte: -10, $lt: 0 } });
     expect(filter("$.a.b.inRange(1, 2)")).toEqual({ "a.b": { $gte: 1, $lt: 2 } });
     // a date field takes the same clause
-    expect(filter('$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
+    expect(filter('$.t.inRange(Date("2024-01-01"), Date("2025-01-01"))')).toEqual({
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
     // a bound read at run time cannot order here, and keeps the $min/$max expression
@@ -356,7 +356,7 @@ describe("compiler/emit/filter — methods and operators", () => {
     // A date bound reads a missing receiver as the epoch.
     const d = new Date("2024-01-01T00:00:00.000Z");
     const t = { $ifNull: ["$t", new Date(0)] };
-    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
+    expect(filter('$.t.inRange(Date("2024-01-01"))')).toEqual({
       $expr: { $and: [{ $gte: [t, { $min: [0, d] }] }, { $lt: [t, { $max: [0, d] }] }] },
     });
   });

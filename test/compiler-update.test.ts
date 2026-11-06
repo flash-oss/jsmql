@@ -54,7 +54,7 @@ describe("compiler/emit/update — writes become their operators", () => {
       }),
     ).toEqual({ $inc: { n: 2, m: -3, r: 1, s: -1 }, $mul: { p: 2, q: 0.25 } });
     expect(applied("$.a = [1, 2]", (d) => (d.a = [1, 2]))).toEqual({ $set: { a: [1, 2] } });
-    expect(update('$.d = new Date("2024-01-01")')).toEqual({ $set: { d: new Date("2024-01-01") } });
+    expect(update('$.d = Date("2024-01-01")')).toEqual({ $set: { d: new Date("2024-01-01") } });
   });
 
   it("pushes, pops, bounds, dates and renames", () => {

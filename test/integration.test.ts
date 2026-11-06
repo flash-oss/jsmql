@@ -183,7 +183,7 @@ $ = { codes: $.items.map(s => s.qty.toString().padStart(s.qty, "0")) };`,
 
   // Date literal folded into the query doc (not trapped in $expr) + status match.
   it("filter: orders shipped on/after a date", async () => {
-    const rows = await find("orders", `$.status === "shipped" && $.placedAt >= new Date("2026-06-01")`);
+    const rows = await find("orders", `$.status === "shipped" && $.placedAt >= Date("2026-06-01")`);
     expect(hexes(rows)).toEqual(ids(ID.order, [8, 9, 13, 15, 18, 19]));
   });
 
@@ -266,7 +266,7 @@ $ = {
   it("pipeline: revenue by buyer department (lookup + unwind + group)", async () => {
     const rows = await aggregate(
       "orders",
-      `$match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
+      `$match($.status === "shipped" && $.placedAt >= Date("2026-01-01"));
 $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
 $unwind($.buyer);
 $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
@@ -785,7 +785,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.items.productId === myProductIds && o.placedAt > new Date("2025-01-01"))
+  .filter(o => o.items.productId === myProductIds && o.placedAt > Date("2025-01-01"))
   .toSorted({ placedAt: -1 })
   .take(100)
   .map("items")
@@ -812,7 +812,7 @@ $$ = candidateProductIds
     // The equality in the `&&` is the localField/foreignField pair on the multikey
     // `items.productId`; the date bound is a $match beside it, over the pair's
     // matches. The fixture is fixed in time, so the bound is a constant date where
-    // the flagship example writes `new Date().minus(1, "year")` — the one order it
+    // the flagship example writes `Date().minus(1, "year")` — the one order it
     // drops (placed 2024-12-01) holds only a product Bo already owns.
     // Bo owns the headphones, laptop stand, notebook and desk lamp. Two other
     // orders pair a keyboard with something Bo owns, so the keyboard scores 2;
@@ -904,7 +904,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.items.some(i => myProductIds.has(i.productId)) && o.placedAt > new Date("2025-01-01"))
+  .filter(o => o.items.some(i => myProductIds.has(i.productId)) && o.placedAt > Date("2025-01-01"))
   .toSorted({ placedAt: -1 })
   .take(100)
   .flatMap("items")

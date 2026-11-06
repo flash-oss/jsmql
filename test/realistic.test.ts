@@ -34,7 +34,7 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 //      then value-mode .map/.flatten/.uniq).
 //   3) products co-purchased by everyone who bought those in the last year — the
 //      equality in the `&&` is the indexed localField/foreignField pair, the date
-//      bound (`new Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
+//      bound (`Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
 //      beside it; .flatMap("productIds") inside the join hands each id to the
 //      callbacks after it — minus what the user already owns, tallied into a
 //      { productId: count } map with .countBy()
@@ -67,7 +67,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))
+  .filter(o => o.productIds === myProductIds && o.createdAt > Date().minus(1, "year"))
   .toSorted({ createdAt: -1 })
   .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
   .flatMap("productIds")
@@ -374,7 +374,7 @@ describe("top-orders report by department", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql`
-$match($.status === "shipped" && $.placedAt >= new Date("2026-01-01"));
+$match($.status === "shipped" && $.placedAt >= Date("2026-01-01"));
 $lookup({ from: "users", localField: "userId", foreignField: "_id", as: "buyer" });
 $unwind($.buyer);
 $group({ _id: $.buyer.department, revenue: $sum($.total), orders: $sum(1) });
@@ -552,7 +552,7 @@ describe("orders summary through $facet (`$ = { k: <$$ chain> }`)", { features: 
       jsmql(`$$.filter({ status: "shipped" });
 $ = {
   topByScore: $$.toSorted({ score: -1 }).take(10),
-  recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
+  recent:     $$.filter(o => o.createdAt >= Date("2026-01-01")),
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
@@ -576,9 +576,7 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
     // in matching foreign docs). The result is the same as if the aggregation
     // had been run on `transactions` from the start, but the call site keeps
     // its original collection.
-    expect(
-      jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`,
-    ).toEqual([
+    expect(jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { $expr: false } },
       {
         $unionWith: {
@@ -603,7 +601,7 @@ describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines
     // `$$.filter({ field: value })` — it says the same thing without the `$.`
     // and `===` — while a predicate with a range or null test stays on
     // `$match(<expr>)`, which reads better than a lambda for that.
-    expect(jsmql`$$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
+    expect(jsmql`$$.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") }, client: 156 } },
     ]);
   });
@@ -1105,7 +1103,7 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
     "compiles to the expected MQL",
     { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
-      expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
+      expect(jsmql(`$.loginCount += 1, $.lastSeenAt = Date()`)).toEqual([
         { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: "$$NOW" } },
       ]);
     },
@@ -1201,7 +1199,7 @@ $project({ total: basePrice });
 describe("active premium subscribers", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.subscribers.find(jsmql(...))" }, () => {
     expect(
-      jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > new Date("2026-05-01")`),
+      jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > Date("2026-05-01")`),
     ).toEqual({
       "subscription.tier": "premium",
       status: "active",
@@ -1215,7 +1213,7 @@ describe("recent shipped orders for a customer", { features: ["Filters"] }, () =
     expect(
       jsmql`
 $.customerId === "cust_42" &&
-$.placedAt >= new Date("2026-01-01") && $.placedAt < new Date("2026-02-01") &&
+$.placedAt >= Date("2026-01-01") && $.placedAt < Date("2026-02-01") &&
 $.status === "shipped"
       `,
     ).toEqual({
@@ -1234,7 +1232,7 @@ describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
 
 describe("archivable docs (not pinned, untouched since)", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < new Date("2025-01-01")`)).toEqual({
+    expect(jsmql(`$.pinned !== true && $.lastModifiedAt < Date("2025-01-01")`)).toEqual({
       pinned: { $ne: true },
       lastModifiedAt: { $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
@@ -1257,11 +1255,11 @@ describe("users with a non-null email", { features: ["Filters"] }, () => {
 });
 
 describe("payments since a cutoff (Date folded into query doc)", { features: ["Filters"] }, () => {
-  // `new Date(<literal>)` is folded to a real JS Date at compile time, so the
+  // `Date(<literal>)` is folded to a real JS Date at compile time, so the
   // `createdAt` index is still usable — the comparison stays at the top level
   // instead of being trapped inside an `$expr`.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)).toEqual({
+    expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`)).toEqual({
       method: "postalDelivery",
       createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") },
     });
@@ -2151,7 +2149,7 @@ describe("days since last login (.abs() + .diff + ?? + new Date)", { features: [
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`(new Date().diff($.lastLoginAt, "day") ?? -1).abs()`)).toEqual({
+      expect(jsmql.expr(`(Date().diff($.lastLoginAt, "day") ?? -1).abs()`)).toEqual({
         $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },
@@ -2163,7 +2161,7 @@ describe("days since document was created", { features: ["Date and time"] }, () 
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })`)).toEqual({
+      expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: Date(), unit: "day" })`)).toEqual({
         $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" },
       });
     },
@@ -2531,7 +2529,7 @@ describe("archive inactive users to a warehouse through $out (multi-stage)", { f
     () => {
       expect(
         jsmql`
-$match($.active === false && $.lastSeen < new Date("2025-01-01"));
+$match($.active === false && $.lastSeen < Date("2025-01-01"));
 $$$$.dw.archive_users = $$;
       `,
       ).toEqual([
@@ -2886,7 +2884,7 @@ describe("daily revenue summary (`$$ = [{ … : $$.reduce(…) }]` scalar wrap)"
       // named-keys shape the user wrote.
       expect(
         jsmql`
-$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
+$match($.placedAt >= Date("2026-05-01") && $.placedAt < Date("2026-06-01"));
 $$ = [{
   orders:    $$.reduce((acc, o) => acc + 1, 0),
   revenue:   $$.reduce((acc, o) => acc + o.total, 0),
@@ -2937,7 +2935,7 @@ describe(
         // accumulator on the `$group`.
         expect(
           jsmql`
-$match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01"));
+$match($.placedAt >= Date("2026-05-01") && $.placedAt < Date("2026-06-01"));
 $$ = [$$.reduce(
   (acc, o) => ({
     ...acc,
@@ -3327,7 +3325,7 @@ describe("Per-user order report with counts at three nesting levels", { features
     // orders $lookup.let as `jsmql_s0_size`). Verified end-to-end on a live mongod.
     expect(
       jsmql(`
-$match($.createdAt >= new Date(2026, 1, 1));
+$match($.createdAt >= Date(2026, 1, 1));
 $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
     totalShipments: $$$.shipments.filter({ orderId: o._id }).size(),
@@ -3603,12 +3601,12 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
       // Named constants read like config, but each folds at compile time and
       // inlines — no `$set`, no `__jsmql` scratch. The array `.map(...).snakeCase`
       // etc. run once during compilation, the arithmetic collapses to a number,
-      // and `new Date("…")` becomes a real BSON date, so the whole thing lowers to
+      // and `Date("…")` becomes a real BSON date, so the whole thing lowers to
       // the index-friendly query document you would write by hand.
       expect(
         jsmql(`
           const CLOSED = ["cancelled", "rejected", "refunded"].map(s => s.toUpperCase());
-          const CUTOFF = new Date("2024-01-01");
+          const CUTOFF = Date("2024-01-01");
           const MAX_RETRIES = 2 ** 4;
           $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES
         `),

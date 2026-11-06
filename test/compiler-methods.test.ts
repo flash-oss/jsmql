@@ -2618,8 +2618,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       $switch: { branches: [{ case: { $gt: ["$n", 1] }, then: "big" }], default: "small" },
     });
     // a constant constructor folds; its month counts from 0, as JavaScript's does
-    expect(expr("new Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
-    expect(expr("new Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
+    expect(expr("Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
+    expect(expr("Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
     expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
       $toLong: {
         $dateFromParts: {
@@ -2927,7 +2927,7 @@ describe.skipIf(!up)("compiler/emit — the `?.` that a conversion refusal names
       "Double($.s)",
       "Decimal128($.s)",
       "UUID($.s)",
-      "new Date($.s)",
+      "Date($.s)",
       "ObjectId($.s)",
     ]) {
       let message = "";
@@ -2975,10 +2975,10 @@ describe.skipIf(!up)("compiler/emit — a number of milliseconds converts with .
     expect(got.map((r) => canonical(r.x))).toEqual(MILLIS.map(([, , want]) => canonical(want)));
   });
 
-  it("is the spelling that the refusal of new Date(x) names, because .toDate() alone stops on an int", async () => {
+  it("is the spelling that the refusal of Date(x) names, because .toDate() alone stops on an int", async () => {
     let message = "";
     try {
-      expr("new Date($.v)");
+      expr("Date($.v)");
     } catch (e) {
       message = (e as Error).message;
     }
@@ -3267,7 +3267,7 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   toLong: ["$.nope.toLong()", "(0).toLong()"],
   toDecimal: ["$.nope.toDecimal()", "(0).toDecimal()"],
   toBool: ["$.nope.toBool()", "(false).toBool()"],
-  toDate: ["$.nope.toDate()", "new Date(0).toDate()"],
+  toDate: ["$.nope.toDate()", "Date(0).toDate()"],
 };
 
 /**

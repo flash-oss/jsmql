@@ -457,10 +457,10 @@ describe("an operator's literal operand is your own MQL — date slots", () => {
     });
   });
 
-  it("a field ref, a $-string field path, and new Date(...) in a date slot compile", () => {
+  it("a field ref, a $-string field path, and Date(...) in a date slot compile", () => {
     expect(jsmql.expr("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
     expect(jsmql.expr('$year("$createdAt")')).toEqual({ $year: "$createdAt" }); // HR1: a $-string is a field ref
-    expect(jsmql.expr('$dateAdd({ startDate: new Date("2020-01-01"), unit: "day", amount: 1 })')).toEqual({
+    expect(jsmql.expr('$dateAdd({ startDate: Date("2020-01-01"), unit: "day", amount: 1 })')).toEqual({
       $dateAdd: { startDate: new Date("2020-01-01T00:00:00.000Z"), unit: "day", amount: 1 },
     });
     // a negative integer amount is fine
@@ -3772,7 +3772,7 @@ describe("date difference (.diff)", () => {
     });
   });
   it("accepts an ObjectId receiver and argument (mongod reads their timestamps)", () => {
-    expect(jsmql.expr('new Date().diff($._id, "day")')).toEqual({
+    expect(jsmql.expr('Date().diff($._id, "day")')).toEqual({
       $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" },
     });
   });
@@ -3938,59 +3938,59 @@ describe("typeof", () => {
 
 describe("new Date()", () => {
   it("no-arg maps to $$NOW", () => {
-    expect(jsmql.expr("new Date()")).toEqual("$$NOW");
+    expect(jsmql.expr("Date()")).toEqual("$$NOW");
   });
   it("with a field arg is refused, and names .toDate()", () => {
-    expect(() => jsmql.expr("new Date($.ts)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
+    expect(() => jsmql.expr("Date($.ts)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
   });
   it("with constant string literal folds to a real Date (not $toDate)", () => {
-    // A compile-time-constant `new Date(...)` denotes a constant Date, so it
+    // A compile-time-constant `Date(...)` denotes a constant Date, so it
     // folds to a real BSON Date that works in BOTH aggregation-expression and
     // query-document positions. `{ $toDate }` only works in the former.
-    expect(jsmql.expr('new Date("2024-01-01")')).toEqual(new Date("2024-01-01T00:00:00.000Z"));
+    expect(jsmql.expr('Date("2024-01-01")')).toEqual(new Date("2024-01-01T00:00:00.000Z"));
   });
-  it("new Date(y, m) folds to a UTC Date — month 1 is February, as in JavaScript", () => {
-    expect(jsmql.expr("new Date(2024, 1)")).toEqual(new Date("2024-02-01T00:00:00.000Z"));
+  it("Date(y, m) folds to a UTC Date — month 1 is February, as in JavaScript", () => {
+    expect(jsmql.expr("Date(2024, 1)")).toEqual(new Date("2024-02-01T00:00:00.000Z"));
   });
-  it("new Date(y, m, d) folds to a UTC Date", () => {
-    expect(jsmql.expr("new Date(2024, 1, 15)")).toEqual(new Date("2024-02-15T00:00:00.000Z"));
+  it("Date(y, m, d) folds to a UTC Date", () => {
+    expect(jsmql.expr("Date(2024, 1, 15)")).toEqual(new Date("2024-02-15T00:00:00.000Z"));
   });
-  it("new Date(y, m, d, h, mi, s, ms) folds to a UTC Date", () => {
-    expect(jsmql.expr("new Date(2024, 12, 31, 23, 59, 58, 999)")).toEqual(new Date("2025-01-31T23:59:58.999Z"));
+  it("Date(y, m, d, h, mi, s, ms) folds to a UTC Date", () => {
+    expect(jsmql.expr("Date(2024, 12, 31, 23, 59, 58, 999)")).toEqual(new Date("2025-01-31T23:59:58.999Z"));
   });
   it("a month above 12 rolls into the next year, as both engines do", () => {
-    expect(jsmql.expr("new Date(2024, 13, 1)")).toEqual(new Date("2025-02-01T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2024, 13, 1)")).toEqual(new Date("2025-02-01T00:00:00.000Z"));
   });
   it("a runtime month gets the +1 that $dateFromParts needs", () => {
-    expect(jsmql.expr("new Date($.y, $.m, 1)")).toEqual({
+    expect(jsmql.expr("Date($.y, $.m, 1)")).toEqual({
       $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: 1 },
     });
   });
   it("a literal month 0 is January and -1 rolls back a year, as in JavaScript", () => {
     // Months count from 0, so month 0 is January and month -1 is December of the year
     // before. Date.UTC counts the same way.
-    expect(jsmql.expr("new Date(2024, 0, 15)")).toEqual(new Date("2024-01-15T00:00:00.000Z"));
-    expect(jsmql.expr("new Date(2024, -1, 15)")).toEqual(new Date("2023-12-15T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2024, 0, 15)")).toEqual(new Date("2024-01-15T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2024, -1, 15)")).toEqual(new Date("2023-12-15T00:00:00.000Z"));
     expect(jsmql.expr("Date.UTC(2024, 0, 15)")).toEqual(1705276800000);
   });
   it("rejects a constant date string that cannot be parsed (HR3)", () => {
     // jsmql knows the value at compile time, and the server rejects the equivalent
     // `{ $toDate: "not-a-date" }` at parse time. So this refuses the value here,
     // instead of emitting MQL that cannot run. The message names the value and the format to use.
-    expect(() => jsmql.expr('new Date("not-a-date")')).toThrow(
+    expect(() => jsmql.expr('Date("not-a-date")')).toThrow(
       'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
     );
-    expect(() => jsmql.expr('new Date("not-a-date")')).toThrow(/ISO 8601/);
+    expect(() => jsmql.expr('Date("not-a-date")')).toThrow(/ISO 8601/);
   });
   it("constant Date folds in query-document position too", () => {
     // In a Filter / `$match` object-literal passthrough (a query document, not an
     // aggregation expression) a `{ $toDate }` shape reads as an inert literal
     // subdocument — matching nothing. A real Date is what the query language
     // compares against.
-    expect(jsmql('{ createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } }')).toEqual({
+    expect(jsmql('{ createdAt: { $gte: Date("2026-05-17T02:57:59.714Z") } }')).toEqual({
       createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") },
     });
-    expect(jsmql('[$match({ createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } })]')).toEqual([
+    expect(jsmql('[$match({ createdAt: { $gte: Date("2026-05-17T02:57:59.714Z") } })]')).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") } } },
     ]);
   });
@@ -4008,8 +4008,8 @@ describe("Date.UTC()", () => {
   it("Date.UTC(y) — year-only form", () => {
     expect(jsmql.expr("Date.UTC(1970)")).toEqual(0);
   });
-  it("new Date(Date.UTC(...)) with constant parts folds to a real UTC Date", () => {
-    expect(jsmql.expr("new Date(Date.UTC(2024, 1, 15))")).toEqual(new Date("2024-02-15T00:00:00.000Z"));
+  it("Date(Date.UTC(...)) with constant parts folds to a real UTC Date", () => {
+    expect(jsmql.expr("Date(Date.UTC(2024, 1, 15))")).toEqual(new Date("2024-02-15T00:00:00.000Z"));
   });
   it("Date.UTC requires at least 1 arg", () => {
     expect(() => jsmql.expr("Date.UTC()")).toThrow(
@@ -5931,7 +5931,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   });
   it("rejects a date-receiver + string/number/array/object method", () => {
     // Every date-producing method: the five that return a date (same-as-receiver,
-    // so they carry no invariant `returns`) plus the `new Date(…)` constructor.
+    // so they carry no invariant `returns`) plus the `Date(…)` constructor.
     expect(() => jsmql.expr('$.t.startOf("month").map(x => x)')).toThrow(
       "'.map()' is not available on a 'date' — it is defined on 'array', 'stream'.",
     );
@@ -7054,7 +7054,7 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
   it(".inRange() reads a date receiver too — a date tests a range the way a number does", () => {
     const lo = new Date("2024-01-01T00:00:00.000Z");
     const hi = new Date("2025-01-01T00:00:00.000Z");
-    expect(jsmql.expr('$.t.startOf("day").inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
+    expect(jsmql.expr('$.t.startOf("day").inRange(Date("2024-01-01"), Date("2025-01-01"))')).toEqual({
       $and: [
         {
           $gte: [
@@ -10418,7 +10418,7 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("new Date args", () => {
-    expect(jsmql.expr("new Date(2020, 1, 1,)")).toEqual(new Date("2020-02-01T00:00:00.000Z"));
+    expect(jsmql.expr("Date(2020, 1, 1,)")).toEqual(new Date("2020-02-01T00:00:00.000Z"));
   });
 
   it("Date.UTC args", () => {
