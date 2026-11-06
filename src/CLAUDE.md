@@ -13,7 +13,7 @@ string  →  compiler/lex  →  compiler/parse  →  compiler/passes (fold, desu
 - `cli.ts` and `mongoose.ts` call `jsmql` and nothing below it.
 - `errors.ts`, `namespace.ts` and `levenshtein.ts` are leaves the compiler shares. Each imports nothing.
 - `bson.ts` is the one module that names `bson`, a peer dependency. So the value JSMQL emits is the caller's own class. It builds values with the real classes. It recognises a value with `instanceof` or with the `_bsontype` tag, so a value from a second copy of `bson` still counts. It also re-exports the registry's realm-independent recognisers: `isDate`, `isRegExp`, `isBytes` and `isPlainObject`. No module tests a value with `instanceof Date` or against `Object.prototype`, because a value from another realm fails both tests — `test/cross-realm.test.ts` holds the line. See docs/specs/bson-types.md § Recognition across realms.
-- `stringify.ts` is the one MQL printer. It turns a compiled document into the JavaScript code that rebuilds it. It is also a leaf, and the only text form of a document anywhere: the CLI, both site pages, the expectation rewriters and one compiler refusal all read it, and none of them holds a copy. See docs/specs/mql-stringify.md.
+- `stringify.ts` is the one MQL printer. It turns a compiled document into the JavaScript code that rebuilds it. It is also a leaf. It is the only text form of a document anywhere. The CLI, both site pages, the expectation rewriters and the compiler's refusals read it, and none of them holds a copy. See docs/specs/mql-stringify.md.
 - `globals.ts` is generated from the registry rows and the vendored MQL spec, by `scripts/generate-globals.mjs`. Never edit it by hand.
 
 ## Invariants

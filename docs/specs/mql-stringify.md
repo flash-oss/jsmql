@@ -150,7 +150,7 @@ the fault, not report it. Each one raises a `TypeError`:
 | the CLI | `stringify(result, { indent, width })` — [cli.md](cli.md) |
 | `index.html`, `playground.html` | `jsmql.stringify` from the same bundle they compile with — [site.md](site.md) |
 | `scripts/regen-expectations.mjs`, `scripts/convert-expectations.mjs` | through `spell()` in `scripts/expectations.mjs`, so a suite reads as the CLI prints |
-| `src/compiler/emit/check.ts` | to name a value inside a refusal, so a Date in a message reads as a date |
+| `src/compiler/emit/errors.ts` | to show a run-time value in a refusal: a string as its literal, a document through `holes()`, which writes `…` for each leaf |
 | `test/probe` | to print what the server returned — see [test/CLAUDE.md](../../test/CLAUDE.md) |
 
 One place deliberately does NOT use it: the equality key in
