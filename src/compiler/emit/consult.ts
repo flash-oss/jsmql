@@ -12,6 +12,7 @@
 
 import type { Arity, Family, Position } from "../../registry/vocabulary.ts";
 import { NAMES } from "../../registry/names.ts";
+import { suggestedAs } from "../rows.ts";
 import { PRODUCTIONS } from "../../registry/productions.ts";
 import type { Where } from "../passes/position.ts";
 
@@ -202,6 +203,8 @@ export function everyName(): readonly string[] {
 /**
  * Every METHOD name: a row that a value calls after a dot. A global (`Number`) and a static
  * of a namespace (`Array.isArray`) are not methods, so a suggestion after a dot never names one.
+ * A row that refuses in every position is not here either, because a suggestion must name a
+ * method that runs. A renamed row stays, and the suggestion shows its new name (`suggestedAs`).
  */
 export function everyMethodName(): readonly string[] {
   const namespaces = new Set(
@@ -210,7 +213,7 @@ export function everyMethodName(): readonly string[] {
       .map(([n]) => n),
   );
   return everyName().filter((n) => {
-    if (n.startsWith("$")) return false;
+    if (n.startsWith("$") || suggestedAs(n) === undefined) return false;
     const on = familiesFor(n);
     return on === "any" || (on !== undefined && on.some((f) => !namespaces.has(f)));
   });

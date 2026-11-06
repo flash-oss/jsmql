@@ -48,6 +48,12 @@ refuses. The refusal (`errors.ts`) puts that sentence after its head. For exampl
 `.length()` on an array, the message names `string` as the family that has the
 method. It also suggests `.size()` to count the elements.
 
+A suggestion for an unknown method takes its name from `suggestedAs`
+(`src/compiler/rows.ts`). A row that refuses in every position is not a suggestion.
+A row that states `renamedTo` (`.toLowerCase()`, built with `renamed(…)`) still
+matches the typo. The message then shows the method that the row names. So a typo
+leads to a method that runs in one step.
+
 `select` refuses a rule whose slot cannot take the proven kind. See [The kind of a slot](#the-kind-of-a-slot).
 
 ```js

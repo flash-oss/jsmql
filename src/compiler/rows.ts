@@ -326,6 +326,18 @@ export function positionsOf(name: string): readonly Position[] | undefined {
   return row(name)?.where;
 }
 
+/**
+ * The name that a "did you mean" suggestion shows for the row `name`. For a renamed row,
+ * it is the method that JSMQL writes (`toLowerCase` gives `toLower`). For a row that runs,
+ * it is the name itself. For any other row that refuses in every position, it is undefined.
+ */
+export function suggestedAs(name: string): string | undefined {
+  const r = row(name) as { where: readonly Position[]; renamedTo?: string } | undefined;
+  if (r === undefined) return undefined;
+  if (r.renamedTo !== undefined) return r.renamedTo;
+  return r.where.length === 0 ? undefined : name;
+}
+
 /** Does the row for `name` list `where`? False for a name with no row at all. */
 export function lists(name: string, where: Position): boolean {
   return row(name)?.where.includes(where) === true;

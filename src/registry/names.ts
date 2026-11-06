@@ -238,6 +238,13 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   sibling?: Readonly<Partial<Record<Family, string>>>;
   /**
+   * The method that JSMQL writes for this name. A row with this fact refuses in every
+   * position, and the refusal names the method. A typo that is close to this name gets
+   * the method as its suggestion, so the user reaches a method that runs in one step.
+   * Build such a row with `renamed(…)`.
+   */
+  renamedTo?: string;
+  /**
    * The stream cell's stages give every document back as it arrived — fewer of
    * them, none changed. `.uniq()` groups on a key and `$replaceWith`s the document
    * it kept. So the `$group` in it replaces nothing that a later link or statement
@@ -772,6 +779,32 @@ const conversion = (e: { method: string; operator: string; returns: TypeExpr; sa
       `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
     ),
   });
+
+/**
+ * A method name that JSMQL writes as another method. The parser accepts the name, so
+ * JSMQL can refuse it with a message, and every position refuses it. `reason` says why
+ * `to` is the spelling of `from`. `also` adds one sentence for the row's own case.
+ */
+const renamed = (e: { from: string; to: string; reason: string; returns: TypeExpr; also?: string }) => {
+  const refusal = unsupported(
+    `'.${e.from}()' is not part of JSMQL — '.${e.to}()' is ${e.reason}, and one capability gets one spelling. Write '<value>.${e.to}()': '$.x.${e.to}()'.` +
+      (e.also ?? ""),
+  );
+  return name({
+    doc: `Parsed, then refused: JSMQL writes '.${e.to}()'.`,
+    call: true,
+    on: "any",
+    returns: e.returns,
+    renamedTo: e.to,
+    where: [],
+    filter: refusal,
+    expr: refusal,
+    stream: refusal,
+    statement: refusal,
+    group: refusal,
+    window: refusal,
+  });
+};
 
 /**
  * One BSON value constructor, and its mongosh spelling where it has one.
@@ -1511,18 +1544,6 @@ const numberIsNotJsmql = unsupported(
 );
 const booleanIsNotJsmql = unsupported(
   "'Boolean(x)' is not part of JSMQL — it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'.",
-);
-/** lodash's `_.toNumber`, spelled as a method. JavaScript has no `.toNumber()`. */
-const toNumberIsNotJsmql = unsupported(
-  "'.toNumber()' is not part of JSMQL — '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." +
-    afterStringMethod("toDouble"),
-);
-/** JavaScript's case methods, spelled as lodash and MongoDB spell them. See docs/LANGUAGE.md § String Methods. */
-const toLowerCaseIsNotJsmql = unsupported(
-  "'.toLowerCase()' is not part of JSMQL — '.toLower()' is its spelling, as in lodash's '_.toLower' and MongoDB's '$toLower', and one capability gets one spelling. Write '<value>.toLower()': '$.x.toLower()'.",
-);
-const toUpperCaseIsNotJsmql = unsupported(
-  "'.toUpperCase()' is not part of JSMQL — '.toUpper()' is its spelling, as in lodash's '_.toUpper' and MongoDB's '$toUpper', and one capability gets one spelling. Write '<value>.toUpper()': '$.x.toUpper()'.",
 );
 const parseIntIsNotJsmql = unsupported(
   "'parseInt()' is not part of JSMQL — '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number." +
@@ -4484,19 +4505,12 @@ export const NAMES = {
     window: unsupported("'.toLower()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
-  toLowerCase: name({
-    doc: "Parsed, then refused: '.toLower()' is JSMQL's spelling.",
-    call: true,
-    on: "any",
+  // JavaScript's name; lodash and MongoDB write '.toLower()'.
+  toLowerCase: renamed({
+    from: "toLowerCase",
+    to: "toLower",
+    reason: "the JSMQL spelling, as in lodash's '_.toLower' and MongoDB's '$toLower'",
     returns: "string",
-    where: [],
-    filter: toLowerCaseIsNotJsmql,
-    expr: toLowerCaseIsNotJsmql,
-    stream: toLowerCaseIsNotJsmql,
-    statement: toLowerCaseIsNotJsmql,
-    group: toLowerCaseIsNotJsmql,
-    window: toLowerCaseIsNotJsmql,
   }),
 
   toUpper: name({
@@ -4519,19 +4533,12 @@ export const NAMES = {
     window: unsupported("'.toUpper()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
-  toUpperCase: name({
-    doc: "Parsed, then refused: '.toUpper()' is JSMQL's spelling.",
-    call: true,
-    on: "any",
+  // JavaScript's name; lodash and MongoDB write '.toUpper()'.
+  toUpperCase: renamed({
+    from: "toUpperCase",
+    to: "toUpper",
+    reason: "the JSMQL spelling, as in lodash's '_.toUpper' and MongoDB's '$toUpper'",
     returns: "string",
-    where: [],
-    filter: toUpperCaseIsNotJsmql,
-    expr: toUpperCaseIsNotJsmql,
-    stream: toUpperCaseIsNotJsmql,
-    statement: toUpperCaseIsNotJsmql,
-    group: toUpperCaseIsNotJsmql,
-    window: toUpperCaseIsNotJsmql,
   }),
 
   substr: name({
@@ -6109,19 +6116,13 @@ export const NAMES = {
 
   // the conversions: one method per MongoDB `$to…` operator, named as the operator is
   toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
-  // The parser accepts the name so it gets an answer, and every position refuses it.
-  toNumber: name({
-    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
-    call: true,
-    on: "any",
+  // lodash's `_.toNumber`, spelled as a method. JavaScript has no `.toNumber()`.
+  toNumber: renamed({
+    from: "toNumber",
+    to: "toDouble",
+    reason: "its numeric conversion",
     returns: "number",
-    where: [],
-    filter: toNumberIsNotJsmql,
-    expr: toNumberIsNotJsmql,
-    stream: toNumberIsNotJsmql,
-    statement: toNumberIsNotJsmql,
-    group: toNumberIsNotJsmql,
-    window: toNumberIsNotJsmql,
+    also: afterStringMethod("toDouble"),
   }),
   toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
   toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),

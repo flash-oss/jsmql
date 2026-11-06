@@ -7996,6 +7996,18 @@ describe("error cases", () => {
     // and a near-miss resolves to it.
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
+  it("a misspelled renamed method names the method that JSMQL writes", () => {
+    expect(() => jsmql.expr("$.name.toLowerCse()")).toThrow(/Did you mean '\.toLower\(\)'/);
+    expect(() => jsmql.expr("$.name.toUpperCse()")).toThrow(/Did you mean '\.toUpper\(\)'/);
+    expect(() => jsmql.expr("$.n.toNumbr()")).toThrow(/Did you mean '\.toDouble\(\)'/);
+    expect(() => jsmql("$.name = $.name.toLowerCse();")).toThrow(/Did you mean '\.toLower\(\)'/);
+    // A field read on a proven string names the method that runs, not the refused name.
+    expect(() => jsmql.expr("$.s.trim().toUpperCase")).toThrow("Write '.toUpper()' to call the method.");
+  });
+  it("a misspelled method never names a method that refuses in every position", () => {
+    // `.forEach()` refuses everywhere, so a typo of it gets no suggestion.
+    expect(() => jsmql.expr("$.a.forEch(x => x)")).toThrow(/^Unknown method '\.forEch\(\)' at position 3\.\n/);
+  });
   it("names a working form for a namespace value, a refused callback and a spread into a JS call", () => {
     expect(() => jsmql.expr("Math + 1")).toThrow(
       "'Math' is a namespace, not a value. Write a member: 'Math.random()', or a number method: '$.n.abs()'.",

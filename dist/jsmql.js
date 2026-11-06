@@ -446,6 +446,25 @@ var conversion = (e) => name({
     `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
   )
 });
+var renamed = (e) => {
+  const refusal = unsupported(
+    `'.${e.from}()' is not part of JSMQL \u2014 '.${e.to}()' is ${e.reason}, and one capability gets one spelling. Write '<value>.${e.to}()': '$.x.${e.to}()'.` + (e.also ?? "")
+  );
+  return name({
+    doc: `Parsed, then refused: JSMQL writes '.${e.to}()'.`,
+    call: true,
+    on: "any",
+    returns: e.returns,
+    renamedTo: e.to,
+    where: [],
+    filter: refusal,
+    expr: refusal,
+    stream: refusal,
+    statement: refusal,
+    group: refusal,
+    window: refusal
+  });
+};
 var dateRow = (spelling) => global_({
   doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
@@ -819,15 +838,6 @@ var numberIsNotJsmql = unsupported(
 );
 var booleanIsNotJsmql = unsupported(
   "'Boolean(x)' is not part of JSMQL \u2014 it is the truthiness of JavaScript, which '!!' says too, and one capability gets one spelling. Write '!!<value>': '!!$.x'. In a callback, write 'x => !!x'. For '.filter(Boolean)', write '.compact()'."
-);
-var toNumberIsNotJsmql = unsupported(
-  "'.toNumber()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." + afterStringMethod("toDouble")
-);
-var toLowerCaseIsNotJsmql = unsupported(
-  "'.toLowerCase()' is not part of JSMQL \u2014 '.toLower()' is its spelling, as in lodash's '_.toLower' and MongoDB's '$toLower', and one capability gets one spelling. Write '<value>.toLower()': '$.x.toLower()'."
-);
-var toUpperCaseIsNotJsmql = unsupported(
-  "'.toUpperCase()' is not part of JSMQL \u2014 '.toUpper()' is its spelling, as in lodash's '_.toUpper' and MongoDB's '$toUpper', and one capability gets one spelling. Write '<value>.toUpper()': '$.x.toUpper()'."
 );
 var parseIntIsNotJsmql = unsupported(
   `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.` + afterStringMethod("toDouble")
@@ -3514,23 +3524,14 @@ var NAMES = {
       "'.toLower()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLower();'"
     ),
     group: unsupported("'.toLower()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.toLower()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    window: unsupported("'.toLower()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
-  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
-  toLowerCase: name({
-    doc: "Parsed, then refused: '.toLower()' is JSMQL's spelling.",
-    call: true,
-    on: "any",
-    returns: "string",
-    where: [],
-    filter: toLowerCaseIsNotJsmql,
-    expr: toLowerCaseIsNotJsmql,
-    stream: toLowerCaseIsNotJsmql,
-    statement: toLowerCaseIsNotJsmql,
-    group: toLowerCaseIsNotJsmql,
-    window: toLowerCaseIsNotJsmql
+  // JavaScript's name; lodash and MongoDB write '.toLower()'.
+  toLowerCase: renamed({
+    from: "toLowerCase",
+    to: "toLower",
+    reason: "the JSMQL spelling, as in lodash's '_.toLower' and MongoDB's '$toLower'",
+    returns: "string"
   }),
   toUpper: name({
     doc: "'.toUpper()' \u2014 see docs/LANGUAGE.md.",
@@ -3549,23 +3550,14 @@ var NAMES = {
       "'.toUpper()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpper();'"
     ),
     group: unsupported("'.toUpper()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.toUpper()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    window: unsupported("'.toUpper()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
-  // JavaScript's name: the parser accepts it so it gets an answer, and every position refuses it.
-  toUpperCase: name({
-    doc: "Parsed, then refused: '.toUpper()' is JSMQL's spelling.",
-    call: true,
-    on: "any",
-    returns: "string",
-    where: [],
-    filter: toUpperCaseIsNotJsmql,
-    expr: toUpperCaseIsNotJsmql,
-    stream: toUpperCaseIsNotJsmql,
-    statement: toUpperCaseIsNotJsmql,
-    group: toUpperCaseIsNotJsmql,
-    window: toUpperCaseIsNotJsmql
+  // JavaScript's name; lodash and MongoDB write '.toUpper()'.
+  toUpperCase: renamed({
+    from: "toUpperCase",
+    to: "toUpper",
+    reason: "the JSMQL spelling, as in lodash's '_.toUpper' and MongoDB's '$toUpper'",
+    returns: "string"
   }),
   substr: name({
     doc: "'.substr()' \u2014 see docs/LANGUAGE.md.",
@@ -5032,19 +5024,13 @@ var NAMES = {
   }),
   // the conversions: one method per MongoDB `$to…` operator, named as the operator is
   toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
-  // The parser accepts the name so it gets an answer, and every position refuses it.
-  toNumber: name({
-    doc: "Parsed, then refused: '.toDouble()' is JSMQL's numeric conversion.",
-    call: true,
-    on: "any",
+  // lodash's `_.toNumber`, spelled as a method. JavaScript has no `.toNumber()`.
+  toNumber: renamed({
+    from: "toNumber",
+    to: "toDouble",
+    reason: "its numeric conversion",
     returns: "number",
-    where: [],
-    filter: toNumberIsNotJsmql,
-    expr: toNumberIsNotJsmql,
-    stream: toNumberIsNotJsmql,
-    statement: toNumberIsNotJsmql,
-    group: toNumberIsNotJsmql,
-    window: toNumberIsNotJsmql
+    also: afterStringMethod("toDouble")
   }),
   toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
   toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
@@ -12173,6 +12159,12 @@ function elementsOf(name2) {
 }
 function positionsOf(name2) {
   return row(name2)?.where;
+}
+function suggestedAs(name2) {
+  const r = row(name2);
+  if (r === void 0) return void 0;
+  if (r.renamedTo !== void 0) return r.renamedTo;
+  return r.where.length === 0 ? void 0 : name2;
 }
 function lists(name2, where) {
   return row(name2)?.where.includes(where) === true;
@@ -21557,7 +21549,7 @@ function everyMethodName() {
     Object.entries(NAMES).filter(([, r]) => r.provides !== void 0).map(([n2]) => n2)
   );
   return everyName().filter((n2) => {
-    if (n2.startsWith("$")) return false;
+    if (n2.startsWith("$") || suggestedAs(n2) === void 0) return false;
     const on = familiesFor(n2);
     return on === "any" || on !== void 0 && on.some((f) => !namespaces.has(f));
   });
@@ -22112,7 +22104,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       );
     case "unknown":
       return new CodegenError(
-        `Unknown ${container === "" ? "name" : "method"} '${spelled3}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
+        `Unknown ${container === "" ? "name" : "method"} '${spelled3}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, (c) => format(suggestedAs(c) ?? c))}`,
         pos
       );
     case "wrongReceiver": {
@@ -22231,9 +22223,13 @@ var EXAMPLE_METHOD = {
   object: "keys"
 };
 var spelledField = (name2) => /^[A-Za-z_$][\w$]*$/.test(name2) ? `.${name2}` : `[${JSON.stringify(name2)}]`;
-var methodsOf = (family) => valueMethodNames().filter((n2) => familiesOf(n2)?.includes(family) === true);
+var methodsOf = (family) => valueMethodNames().filter((n2) => {
+  const shown = suggestedAs(n2);
+  return shown !== void 0 && familiesOf(shown)?.includes(family) === true;
+});
+var spelledMethod = (name2) => `.${suggestedAs(name2) ?? name2}()`;
 function methodFix(name2, family) {
-  if (methodsOf(family).includes(name2)) return `Write '.${name2}()' to call the method.`;
+  if (methodsOf(family).includes(name2)) return `Write '${spelledMethod(name2)}' to call the method.`;
   const sibling = siblingOf(name2, family);
   if (sibling !== null) return sibling;
   if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name2)})'.`;
@@ -22242,7 +22238,7 @@ function methodFix(name2, family) {
 function readFix(name2, kinds) {
   const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : void 0;
   if (family === void 0) return "Read the field from an object instead.";
-  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family)).trim();
+  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family), spelledMethod).trim();
   if (near !== "") return near;
   const example = EXAMPLE_METHOD[family];
   return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
@@ -26538,7 +26534,7 @@ function receiverOf(recv, env) {
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
   return { kind: "opaque", lowered, possible };
 }
-var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
+var spelledMethod2 = (name2, recv) => recv.type === "Ident" && NAMESPACES2.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
 var METHOD_NAMES = everyMethodName();
@@ -26566,7 +26562,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const argEnv = childEnv(env, node, "args");
   const proofs = proofsFor(args, argEnv, true, { node: recvNode, env: recvEnv });
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, proofs);
-  const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
+  const spelled3 = spelledMethod2(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
   if (sel.kind === "rule") {
@@ -28137,14 +28133,14 @@ function lowerUpdate(program, env) {
     if (s.type !== "UpdateFilter") continue;
     for (const op of s.ops) if (op.type === "DeleteStmt") deleted.add(pathOf2(op.target, op.pos));
   }
-  const renamed = /* @__PURE__ */ new Set();
+  const renamed2 = /* @__PURE__ */ new Set();
   const valueEnv = scope.at(UPDATE_DOC);
   for (const stmt of stmts) {
     if (stmt.type === "UpdateFilter") {
       for (const op of stmt.ops) {
         if (op.type === "DeleteStmt") {
           const path2 = pathOf2(op.target, op.pos);
-          if (!renamed.has(path2)) put("$unset", path2, "", op.pos);
+          if (!renamed2.has(path2)) put("$unset", path2, "", op.pos);
           continue;
         }
         const path = pathOf2(op.target, op.pos);
@@ -28153,7 +28149,7 @@ function lowerUpdate(program, env) {
           case "=": {
             if (v.type === "FieldRef") {
               if (!deleted.has(v.path)) throw updateCopyNeedsPipeline(v.path, path, op.pos);
-              renamed.add(v.path);
+              renamed2.add(v.path);
               put("$rename", v.path, path, op.pos);
               if (claimed.has(path)) throw updateConflict(path, claimed.get(path), "$rename", op.pos);
               claimed.set(path, "$rename");

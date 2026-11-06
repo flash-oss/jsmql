@@ -5585,7 +5585,7 @@ Use `jsmql.validate()` for:
 
 ## Error Messages
 
-An error says what is wrong and, where it can, what to write instead. For an unknown name, it suggests the nearest known name. An error from the lexer or the parser gives the position in the source.
+An error says what is wrong and, where it can, what to write instead. For an unknown name, it suggests the nearest known name. A suggestion names only a method that runs. When the nearest name is one that JSMQL writes another way, for example `.toLowerCase()`, the suggestion names the method that JSMQL writes. An error from the lexer or the parser gives the position in the source.
 
 ```js
 jsmql("age > 18");              // ✗ an unknown name; the suggestion is $.age
@@ -5594,6 +5594,7 @@ jsmql("$.age >>");              // ✗ an unexpected token, with its position
 jsmql('$.status in "active"');  // ✗ the right side of `in` must be a list
 jsmql("$.name.frobulate()");    // ✗ an unknown method, and no known name is near it
 jsmql("$.name.trinm()");        // ✗ an unknown method; the suggestion is .trim()
+jsmql("$.name.toLowerCse()");   // ✗ an unknown method; the suggestion is .toLower(), not .toLowerCase()
 ```
 
 ---

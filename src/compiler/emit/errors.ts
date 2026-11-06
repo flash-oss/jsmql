@@ -30,6 +30,7 @@ import {
   siblingOf,
   spreadAlternativeOf,
   streamReceiverNames,
+  suggestedAs,
   valueMethodNames,
   valueTwinOf,
 } from "../rows.ts";
@@ -124,7 +125,7 @@ export function refusalFor(
       );
     case "unknown":
       return new CodegenError(
-        `Unknown ${container === "" ? "name" : "method"} '${spelled}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
+        `Unknown ${container === "" ? "name" : "method"} '${spelled}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, (c) => format(suggestedAs(c) ?? c))}`,
         pos,
       );
     case "wrongReceiver": {
@@ -343,9 +344,18 @@ const EXAMPLE_METHOD: Readonly<Partial<Record<Family, string>>> = {
 const spelledField = (name: string): string =>
   /^[A-Za-z_$][\w$]*$/.test(name) ? `.${name}` : `[${JSON.stringify(name)}]`;
 
-/** The methods a value of this family has. */
+/**
+ * The methods a value of this family has. A renamed row stays when its new name runs on
+ * the family. A message then spells it as `spelledMethod` does.
+ */
 const methodsOf = (family: Family): string[] =>
-  valueMethodNames().filter((n) => familiesOf(n)?.includes(family) === true);
+  valueMethodNames().filter((n) => {
+    const shown = suggestedAs(n);
+    return shown !== undefined && familiesOf(shown)?.includes(family) === true;
+  });
+
+/** A method of `methodsOf` as a message writes it: `.toLower()` for `toLowerCase`. */
+const spelledMethod = (name: string): string => `.${suggestedAs(name) ?? name}()`;
 
 /**
  * What the reader of `name` most likely means on a value of `family`: the method of
@@ -353,7 +363,7 @@ const methodsOf = (family: Family): string[] =>
  * `.size()`), or a read of each element's field. Null when none of these applies.
  */
 function methodFix(name: string, family: Family): string | null {
-  if (methodsOf(family).includes(name)) return `Write '.${name}()' to call the method.`;
+  if (methodsOf(family).includes(name)) return `Write '${spelledMethod(name)}' to call the method.`;
   const sibling = siblingOf(name, family);
   if (sibling !== null) return sibling;
   if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name)})'.`;
@@ -364,7 +374,7 @@ function methodFix(name: string, family: Family): string | null {
 function readFix(name: string, kinds: readonly Kind[]): string {
   const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : undefined;
   if (family === undefined) return "Read the field from an object instead.";
-  const near = methodFix(name, family) ?? didYouMean(name, methodsOf(family)).trim();
+  const near = methodFix(name, family) ?? didYouMean(name, methodsOf(family), spelledMethod).trim();
   if (near !== "") return near;
   const example = EXAMPLE_METHOD[family];
   return example === undefined
