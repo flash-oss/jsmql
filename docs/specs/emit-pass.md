@@ -985,10 +985,11 @@ takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
 The globals follow JavaScript where the two number differently or the server
 holds a different equality. `Date(y, m, d, …)` and `Date.UTC(…)` count
 the month from 0, like `getMonth()`, so the month moves up by one on the way
-to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
+to `$dateFromParts` (folded for a literal). `.isNaN()` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
-measured), and `Number.isInteger` excludes NaN and the infinities the same
-way. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
+measured), and `.isInteger()` excludes NaN and the infinities the same
+way. Each one binds a computed receiver once in a `$let`, and the receiver check
+refuses the static `Number.isInteger(x)` or `Number.isNaN(x)`. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
 `.toDouble()` is the numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
 index as its radix, and `$toInt` refuses a fractional string.

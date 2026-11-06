@@ -2308,13 +2308,13 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
     expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
     expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);
-    expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
+    expect(compiled("$.n.isInteger()", () => Number.isInteger(DOC.n))).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
         { $eq: ["$n", { $trunc: "$n" }] },
       ],
     });
-    expect(compiled("Number.isInteger($.neg)", () => Number.isInteger(DOC.neg))).toEqual({
+    expect(compiled("$.neg.isInteger()", () => Number.isInteger(DOC.neg))).toEqual({
       $and: [
         {
           $and: [{ $isNumber: "$neg" }, { $not: [{ $in: [{ $toString: "$neg" }, ["NaN", "Infinity", "-Infinity"]] }] }],
@@ -2322,9 +2322,44 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         { $eq: ["$neg", { $trunc: "$neg" }] },
       ],
     });
-    expect(compiled("Number.isNaN($.n)", () => Number.isNaN(DOC.n))).toEqual({
+    expect(compiled("$.n.isNaN()", () => Number.isNaN(DOC.n))).toEqual({
       $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
     });
+    // a missing value is no number, and a string is no number, as in JavaScript
+    expect(compiled("$.nope.isInteger()", () => false)).toEqual({
+      $and: [
+        {
+          $and: [
+            { $isNumber: "$nope" },
+            { $not: [{ $in: [{ $toString: "$nope" }, ["NaN", "Infinity", "-Infinity"]] }] },
+          ],
+        },
+        { $eq: ["$nope", { $trunc: "$nope" }] },
+      ],
+    });
+    expect(compiled("$.csv.isNaN()", () => Number.isNaN(DOC.csv))).toEqual({
+      $and: [{ $isNumber: "$csv" }, { $eq: [{ $toString: "$csv" }, "NaN"] }],
+    });
+    // a computed receiver is bound once
+    expect(compiled("$.n.abs().isInteger()", () => false)).toEqual({
+      $let: {
+        vars: { jsmqlV: { $abs: { $ifNull: ["$n", 0] } } },
+        in: {
+          $and: [
+            {
+              $and: [
+                { $isNumber: "$$jsmqlV" },
+                { $not: [{ $in: [{ $toString: "$$jsmqlV" }, ["NaN", "Infinity", "-Infinity"]] }] },
+              ],
+            },
+            { $eq: ["$$jsmqlV", { $trunc: "$$jsmqlV" }] },
+          ],
+        },
+      },
+    });
+    // a namespace is no value: each static refuses, and the message names the method
+    expect(() => expr("Number.isInteger($.n)")).toThrow(/'\$\.x\.isInteger\(\)'/);
+    expect(() => expr("Number.isNaN($.n)")).toThrow(/'\$\.x\.isNaN\(\)'/);
     expect(compiled("$.a.isArray()", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
     expect(compiled("$.n.isArray()", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
     expect(compiled("$.nope.isArray()", () => false)).toEqual({ $isArray: "$nope" });
@@ -2399,7 +2434,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
   });
 
-  it("applies a bare callable static to each element, and refuses a type name as a callback", () => {
+  it("refuses a static and a type name as a callback, and names the arrow", () => {
     // A type name as a conversion function is not part of JSMQL, in a callback too.
     expect(() => expr("$.a.map(String)")).toThrow(/In a callback, write 'x => x\.toString\(\)'/);
     expect(() => expr("$.a.map(Number)")).toThrow(/In a callback, write 'x => x\.toDouble\(\)'/);
@@ -2422,7 +2457,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("[$.neg, $.n].map(x => x.abs())", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
       $map: { input: ["$neg", "$n"], as: "x", in: { $abs: { $ifNull: ["$$x", 0] } } },
     });
-    expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toEqual({
+    expect(() => expr("$.a.some(Number.isInteger)")).toThrow(/'x => x\.isInteger\(\)'/);
+    expect(compiled("$.a.some(x => x.isInteger())", () => DOC.a.some(Number.isInteger))).toEqual({
       $anyElementTrue: {
         $map: {
           input: { $ifNull: ["$a", []] },
@@ -3314,8 +3350,8 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   random: ["(1).random(6)", "$.nope.random($.nope)"],
   PI: ["Math.PI"],
   E: ["Math.E"],
-  isInteger: ["Number.isInteger($.n)", "Number.isInteger($.nope)"],
-  isNaN: ["Number.isNaN($.n)", "Number.isNaN($.nope)"],
+  isInteger: ["$.n.isInteger()"],
+  isNaN: ["$.n.isNaN()"],
   isArray: ["$.a.isArray()"],
   isString: ["$.s.isString()"],
   isNumber: ["$.n.isNumber()"],

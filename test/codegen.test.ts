@@ -5775,6 +5775,8 @@ describe("every method declares the receiver family it needs", () => {
     isObject: "a type test: it asks the type of any value",
     isUUID: "a type test: it asks the type of any value",
     isArray: "a type test: it asks the type of any value",
+    isInteger: "a type test: it asks the type of any value",
+    isNaN: "a type test: it asks the type of any value",
     isBoolean: "refused on every receiver, and the refusal names '.isBool()'",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
@@ -7451,18 +7453,20 @@ describe("regex method variants", () => {
 });
 
 describe("Number static predicates", () => {
-  it("Number.isInteger(x)", () => {
-    expect(jsmql.expr("Number.isInteger($.n)")).toEqual({
+  it(".isInteger()", () => {
+    expect(jsmql.expr("$.n.isInteger()")).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
         { $eq: ["$n", { $trunc: "$n" }] },
       ],
     });
   });
-  it("Number.isNaN(x)", () => {
-    expect(jsmql.expr("Number.isNaN($.x)")).toEqual({
-      $and: [{ $isNumber: "$x" }, { $eq: [{ $toString: "$x" }, "NaN"] }],
-    });
+  it(".isNaN()", () => {
+    expect(jsmql.expr("$.x.isNaN()")).toEqual({ $and: [{ $isNumber: "$x" }, { $eq: [{ $toString: "$x" }, "NaN"] }] });
+  });
+  it("refuses Number.isInteger() and Number.isNaN(), and names the method", () => {
+    expect(() => jsmql.expr("Number.isInteger($.n)")).toThrow(/'\$\.x\.isInteger\(\)'/);
+    expect(() => jsmql("Number.isNaN($.n)")).toThrow(/'\$\.x\.isNaN\(\)'/);
   });
   it("Number.isFinite(x) throws helpful error", () => {
     expect(() => jsmql.expr("Number.isFinite($.x)")).toThrow(
@@ -8026,15 +8030,17 @@ describe("error cases", () => {
       "'Math' is a namespace, not a value. Write a member: 'Math.random()', or a number method: '$.n.abs()'.",
     );
     expect(() => jsmql.expr("$.a.map(Math.floor)")).toThrow("In a callback, write 'x => x.floor()'.");
-    expect(() => jsmql.expr("Number.isInteger(...$.a)")).toThrow(
-      "Spread (...) is not supported in Number.isInteger(...) — pass each argument on its own: 'Number.isInteger(value)'.",
+    expect(() => jsmql.expr("Date.UTC(...$.a)")).toThrow(
+      "Spread (...) is not supported in Date.UTC(...) — pass each argument on its own: 'Date.UTC(year[, month, day, hour, minute, second, ms])'.",
     );
   });
   it("near-miss Math member gets a suggestion", () => {
     expect(() => jsmql.expr("Math.randon()")).toThrow(/Did you mean 'Math\.random'/);
   });
-  it("near-miss Number static method gets a suggestion", () => {
-    expect(() => jsmql.expr("Number.isItneger($.x)")).toThrow(/Did you mean 'Number\.isInteger'/);
+  it("a Number static suggests no refused static", () => {
+    expect(() => jsmql.expr("Number.isItneger($.x)")).toThrow(
+      /^Unknown method 'Number\.isItneger\(\)' at position 6\.\n/,
+    );
   });
   it("near-miss static gets a suggestion, and never a refused static", () => {
     expect(() => jsmql.expr("Date.noww()")).toThrow(/Did you mean 'Date\.now'/);
@@ -10476,13 +10482,8 @@ describe("trailing commas (JS syntax)", () => {
     expect(r.errors[0].message).toMatch("'Long(…)' takes one constant.");
   });
 
-  it("Number static method args", () => {
-    expect(jsmql.expr("Number.isInteger($.x,)")).toEqual({
-      $and: [
-        { $and: [{ $isNumber: "$x" }, { $not: [{ $in: [{ $toString: "$x" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
-        { $eq: ["$x", { $trunc: "$x" }] },
-      ],
-    });
+  it("static method args", () => {
+    expect(jsmql.expr("Date.UTC(2020, 1,)")).toBe(1580515200000);
   });
 
   it("object method args", () => {

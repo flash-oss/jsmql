@@ -6224,6 +6224,68 @@ export const NAMES = {
     window: unsupported("'.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
+  isInteger: name({
+    doc: "'.isInteger()' — is the value a number with no fraction? See docs/LANGUAGE.md.",
+    call: true,
+    on: "any",
+    // `Number.isInteger(x)` parses, and the receiver check refuses the namespace with this sentence
+    sibling: {
+      Number:
+        "One capability gets one spelling, and the value's own method is shorter. Write '<value>.isInteger()': '$.x.isInteger()'. As a callback, write 'x => x.isInteger()'.",
+    },
+    returns: "bool",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      // NaN and the infinities are numbers that `$trunc` gives back unchanged, so the finite test comes first
+      emit: ({ recv, bind }) => {
+        const test = (v: unknown) => ({ $and: [isFiniteNumber(v), { $eq: [v, { $trunc: v }] }] });
+        if (typeof recv === "string" && recv.startsWith("$")) return test(recv);
+        const v = bind("v");
+        return { $let: { vars: { [v.as]: recv }, in: test(v.ref) } };
+      },
+    },
+    stream: unsupported("'.isInteger()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.isInteger()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isInteger();'",
+    ),
+    group: unsupported("'.isInteger()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.isInteger()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+  isNaN: name({
+    doc: "'.isNaN()' — is the value the number NaN? See docs/LANGUAGE.md.",
+    call: true,
+    on: "any",
+    // `Number.isNaN(x)` parses, and the receiver check refuses the namespace with this sentence
+    sibling: {
+      Number:
+        "One capability gets one spelling, and the value's own method is shorter. Write '<value>.isNaN()': '$.x.isNaN()'. As a callback, write 'x => x.isNaN()'.",
+    },
+    returns: "bool",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      // MEASURED: the server holds NaN equal to itself, so the test reads the text of the number
+      emit: ({ recv, bind }) => {
+        const test = (v: unknown) => ({ $and: [{ $isNumber: v }, { $eq: [{ $toString: v }, "NaN"] }] });
+        if (typeof recv === "string" && recv.startsWith("$")) return test(recv);
+        const v = bind("v");
+        return { $let: { vars: { [v.as]: recv }, in: test(v.ref) } };
+      },
+    },
+    stream: unsupported("'.isNaN()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.isNaN()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isNaN();'",
+    ),
+    group: unsupported("'.isNaN()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.isNaN()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
   isUUID: name({
     doc: "'.isUUID()' — is the value a UUID, a binData of subtype 4? See docs/LANGUAGE.md.",
     call: true,
@@ -10915,54 +10977,6 @@ export const NAMES = {
     ),
   }),
 
-  isInteger: name({
-    doc: "'Number.isInteger(value)' — a $type test against the integral BSON types.",
-    call: true,
-    on: "Number",
-    returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({
-        $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }],
-      }),
-    },
-    stream: unsupported("'Number.isInteger()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Number.isInteger()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Number.isInteger(…);'",
-    ),
-    group: unsupported("'Number.isInteger()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Number.isInteger()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
-  }),
-
-  isNaN: name({
-    doc: "'Number.isNaN(value)' — emits { $ne: [x, x] }.",
-    call: true,
-    on: "Number",
-    returns: "bool",
-    neverNull: "always",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
-      emit: ({ args, value }) => ({
-        $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }],
-      }),
-    },
-    stream: unsupported("'Number.isNaN()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Number.isNaN()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Number.isNaN(…);'",
-    ),
-    group: unsupported("'Number.isNaN()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Number.isNaN()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
-  }),
-
   isFinite: name({
     doc: "'Number.isFinite(value)' — parses, then refused: there is no Infinity/NaN literal to compare against.",
     call: true,
@@ -12028,9 +12042,9 @@ export const NAMES = {
       "'NumberInt(<constant>)' — this constant is not a whole number in the 32-bit range (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)' to keep a fraction.",
   }),
 
-  // The namespace of 'Number.isInteger(x)'. Every position refuses a call of the name itself.
+  // The namespace of 'Number.isFinite(x)'. Every position refuses a call of the name itself.
   Number: global_({
-    doc: "The Number namespace: 'Number.isInteger(x)'. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
+    doc: "The Number namespace. Nothing on it is JSMQL; see its refusal. A call is refused: '<value>.toDouble()' is JSMQL's numeric conversion.",
     token: "Ident",
     provides: "Number",
     returns: "number",

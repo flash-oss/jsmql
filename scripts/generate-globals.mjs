@@ -495,6 +495,8 @@ const VALUE_METHOD_SIGNATURES = {
   isDate: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a date? — `$type`." },
   isObjectId: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value an ObjectId? — `$type`." },
   isArray: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value an array? — `$isArray`." },
+  isInteger: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a number with no fraction?" },
+  isNaN: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value the number NaN?" },
   isObject: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a document? An array is not one. — `$type`." },
   isUUID: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a UUID (a binData of subtype 4)?" },
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────

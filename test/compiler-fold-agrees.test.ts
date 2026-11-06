@@ -83,9 +83,9 @@ const EXPRESSIONS: readonly string[] = [
   "Math.PI",
   "Math.E",
   "(0.5).round()",
-  // statics
-  "Number.isInteger(4)",
-  "Number.isInteger(4.5)",
+  // type tests
+  "(4).isInteger()",
+  "(4.5).isInteger()",
   "({ a: 1, b: 2 }).keys()",
   "({ a: 1, b: 2 }).values()",
   "({ a: 1 }).entries()",

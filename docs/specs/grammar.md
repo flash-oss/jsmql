@@ -370,7 +370,7 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 
 ## Built-in call vs bare reference
 
-A one-value-in/one-value-out built-in reads two ways: its call form (`Number.isInteger(x)`) and a bare callback reference (`arr.filter(Number.isInteger)`). The parser is **name-blind** and settles neither question — `Long(x)` is a `CallExpression`, a bare `Long` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
+A one-value-in/one-value-out built-in reads two ways: its call form (`Long(x)`) and a bare callback reference (`arr.map(Long)`). The parser is **name-blind** and settles neither question — `Long(x)` is a `CallExpression`, a bare `Long` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
 
 - The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it. `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Long` into `x => Long(x)`, and a namespace member such as `Math.floor` into `x => Math.floor(x)`. The row then refuses each of these two, because the element is a value of the document. The refusal names the arrow with the value's own method. The row's `iterateeSlots` layout states which slots accept the spelling; the rewrite never guesses this.
 - A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`.

@@ -3540,8 +3540,12 @@ declare global {
     isDouble(): boolean;
     /** Is the value a 32-bit integer? — `$type`. */
     isInt(): boolean;
+    /** Is the value a number with no fraction? */
+    isInteger(): boolean;
     /** Is the value a 64-bit integer? — `$type`. */
     isLong(): boolean;
+    /** Is the value the number NaN? */
+    isNaN(): boolean;
     /** Is the value a number of any BSON type? — `$isNumber`. */
     isNumber(): boolean;
     /** Is the value a document? An array is not one. — `$type`. */
@@ -3655,8 +3659,12 @@ declare global {
     isDouble(): boolean;
     /** Is the value a 32-bit integer? — `$type`. */
     isInt(): boolean;
+    /** Is the value a number with no fraction? */
+    isInteger(): boolean;
     /** Is the value a 64-bit integer? — `$type`. */
     isLong(): boolean;
+    /** Is the value the number NaN? */
+    isNaN(): boolean;
     /** Is the value a number of any BSON type? — `$isNumber`. */
     isNumber(): boolean;
     /** Is the value a document? An array is not one. — `$type`. */
@@ -3753,8 +3761,12 @@ declare global {
     isDouble(): boolean;
     /** Is the value a 32-bit integer? — `$type`. */
     isInt(): boolean;
+    /** Is the value a number with no fraction? */
+    isInteger(): boolean;
     /** Is the value a 64-bit integer? — `$type`. */
     isLong(): boolean;
+    /** Is the value the number NaN? */
+    isNaN(): boolean;
     /** Is the value a number of any BSON type? — `$isNumber`. */
     isNumber(): boolean;
     /** Is the value a document? An array is not one. — `$type`. */
@@ -3850,8 +3862,12 @@ declare global {
     isDouble(): boolean;
     /** Is the value a 32-bit integer? — `$type`. */
     isInt(): boolean;
+    /** Is the value a number with no fraction? */
+    isInteger(): boolean;
     /** Is the value a 64-bit integer? — `$type`. */
     isLong(): boolean;
+    /** Is the value the number NaN? */
+    isNaN(): boolean;
     /** Is the value a number of any BSON type? — `$isNumber`. */
     isNumber(): boolean;
     /** Is the value a document? An array is not one. — `$type`. */
@@ -3944,8 +3960,12 @@ declare global {
     isDouble(): boolean;
     /** Is the value a 32-bit integer? — `$type`. */
     isInt(): boolean;
+    /** Is the value a number with no fraction? */
+    isInteger(): boolean;
     /** Is the value a 64-bit integer? — `$type`. */
     isLong(): boolean;
+    /** Is the value the number NaN? */
+    isNaN(): boolean;
     /** Is the value a number of any BSON type? — `$isNumber`. */
     isNumber(): boolean;
     /** Is the value a document? An array is not one. — `$type`. */

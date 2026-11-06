@@ -115,8 +115,12 @@ describe("registry — every declared spelling compiles and means its arrow", ()
       const { src, expr } = source(c.name, c.family, c.slot, SPELLINGS[c.form][0]);
       try {
         compile(src, expr);
+        // No static is a JSMQL name in a callback, so a bare callable reads as its arrow, and the row of the static refuses it.
+        if (c.form === "bareCallable") broken.push(`${c.name} <${c.family}> slot ${c.slot} accepts a bare static`);
       } catch (e) {
-        broken.push(`${c.name} <${c.family}> slot ${c.slot} as ${c.form}: ${(e as Error).message.slice(0, 70)}`);
+        const message = (e as Error).message;
+        if (c.form === "bareCallable" && message.includes("'x => x.isInteger()'")) continue;
+        broken.push(`${c.name} <${c.family}> slot ${c.slot} as ${c.form}: ${message.slice(0, 70)}`);
       }
     }
     expect(broken).toEqual([]);

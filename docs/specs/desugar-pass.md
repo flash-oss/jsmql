@@ -198,8 +198,9 @@ field path (measured).
 
 `bareCallable` is a callable handed over unapplied — `$.items.filter(Number.isInteger)` — and
 it means the arrow that applies it to the element, `x => Number.isInteger(x)`. A type
-name rewrites the same way (`.map(Long)` is `x => Long(x)`), and its row refuses the
-call, because the element is a value of the document.
+name rewrites the same way (`.map(Long)` is `x => Long(x)`). The row of each such name
+refuses the call, and the refusal names the arrow with the value's own method:
+`x => x.isInteger()`, `x => x.toLong()`.
 The row's `iterateeSlots` decides which slots take it. The rewrite only tells a
 callable global apart from a binding. A binding stays as written. A global that
 lists no position (`Set`) is rewritten too, and its row refuses the call.

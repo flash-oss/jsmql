@@ -2460,12 +2460,13 @@ $.xs.size()                                  // the element count — a string h
 
 ### Bare built-in callbacks
 
-A static that tests one value works bare as the callback, as in plain JavaScript: `Number.isInteger`. It is a short form of the one-parameter arrow `x => Number.isInteger(x)`. It lowers to exactly what that arrow lowers to. `Array.isArray` is not a JSMQL name, so write the arrow with the method:
+A static is not a callback in JSMQL, because each static that tests one value is a method of the value. Write the arrow with the method. The error for a bare static names that arrow:
 
 ```js
-$.values.filter(Number.isInteger)   // the whole numbers
-$.rows.some(x => x.isArray())       // does any element hold an array?
-$.rows.some(Array.isArray)          // ✗ Array.isArray is not a JSMQL name; the error names x => x.isArray()
+$.values.filter(x => x.isInteger())  // the whole numbers
+$.rows.some(x => x.isArray())        // does any element hold an array?
+$.values.filter(Number.isInteger)    // ✗ Number.isInteger is not a JSMQL name; the error names x => x.isInteger()
+$.rows.some(Array.isArray)           // ✗ Array.isArray is not a JSMQL name; the error names x => x.isArray()
 ```
 
 A type name is not a callback, because a type name as a conversion function is not part of JSMQL. Write the arrow with the value's own method. Each refused form gets an error that names the arrow:
@@ -2942,15 +2943,18 @@ $.qty.isNumber() && $.at.isDate()  // { qty: { $type: "number" }, at: { $type: "
 - **`Array.isArray(x)` is not a JSMQL name.** The value's own method is shorter, and one capability gets one spelling. The error names `x.isArray()`.
 - **A type test gives a boolean, and `typeof` gives a string.** You can compute with the type name, for example `(typeof $.x).toUpperCase()` or `"type: " + typeof $.x`. A `typeof` comparison also names each BSON type, for example `"regex"` or `"null"`. For the types that a type test names, the test is the short form.
 
-### Number static predicates
+### Integer and NaN tests
 
 ```js
-Number.isInteger($.n)              // true if $.n is int/long, or a double with no fractional part
-Number.isNaN($.x)                  // { $and: [{ $isNumber: "$x" }, { $eq: [{ $toString: "$x" }, "NaN"] }] }
+$.n.isInteger()                    // true if $.n is int/long, or a finite double with no fractional part
+$.x.isNaN()                        // { $and: [{ $isNumber: "$x" }, { $eq: [{ $toString: "$x" }, "NaN"] }] }
                                    // MongoDB's $eq says NaN == NaN, so JS's self-comparison
                                    // trick cannot work: the test is a numeric-type check plus
                                    // a string comparison of the value's own rendering.
+Number.isInteger($.n)              // ✗ not a JSMQL name; the error names $.x.isInteger()
 ```
+
+Each test works on every kind of value, as `Number.isInteger` and `Number.isNaN` do in JavaScript. A missing value or a string gives `false`. JSMQL refuses `Number.isInteger(x)` and `Number.isNaN(x)`, because the value's own method is shorter, and one capability gets one spelling.
 
 JSMQL does not support `Number.isFinite()`, because MongoDB has no Infinity literal to refer to cleanly. To test for a finite value, write the bounds directly, for example `$.x > -1e300 && $.x < 1e300`. You can also use `$convert` with an `onError` clause.
 
