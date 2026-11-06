@@ -6191,6 +6191,26 @@ export const NAMES = {
     reason: "the boolean test, as MongoDB names the type 'bool'",
     returns: "bool",
   }),
+  // The missing-field test is a comparison, not a method. JSMQL has no spelling for
+  // the deprecated BSON undefined type, so the name has only the one meaning.
+  isUndefined: (() => {
+    const refusal = unsupported(
+      "'.isUndefined()' is not part of JSMQL. A comparison with undefined is the missing-field test, and one capability gets one spelling. Write '<value> === undefined': '$.x === undefined'.",
+    );
+    return name({
+      doc: "Parsed, then refused: JSMQL writes '<value> === undefined'.",
+      call: true,
+      on: "any",
+      returns: "bool",
+      where: [],
+      filter: refusal,
+      expr: refusal,
+      stream: refusal,
+      statement: refusal,
+      group: refusal,
+      window: refusal,
+    });
+  })(),
   isDate: typeTest({ method: "isDate", alias: "date", doc: "is the value a date?" }),
   isObjectId: typeTest({ method: "isObjectId", alias: "objectId", doc: "is the value an ObjectId?" }),
   isObject: typeTest({ method: "isObject", alias: "object", doc: "is the value a document? An array is not one." }),

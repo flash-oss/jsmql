@@ -451,7 +451,7 @@ const VALUE_METHOD_SKIP = {
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
   // Shimmed to a custom error message: not a real completable method.
-  shimmed: new Set(["toNumber", "toLowerCase", "toUpperCase", "isBoolean", "unzipWith"]),
+  shimmed: new Set(["toNumber", "toLowerCase", "toUpperCase", "isBoolean", "isUndefined", "unzipWith"]),
 };
 
 // Per-method augmentation signature. `recv` is the interface to augment; `sig`

@@ -5800,6 +5800,7 @@ describe("every method declares the receiver family it needs", () => {
     isInteger: "a type test: it asks the type of any value",
     isNaN: "a type test: it asks the type of any value",
     isBoolean: "refused on every receiver, and the refusal names '.isBool()'",
+    isUndefined: "refused on every receiver, and the refusal names the comparison with undefined",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
     const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();
