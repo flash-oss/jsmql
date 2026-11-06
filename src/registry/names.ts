@@ -1563,6 +1563,14 @@ const NO_IS_FINITE = unsupported(
   "Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the \"double\" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: \"double\", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.",
 );
 
+/**
+ * `Math.pow(base, exponent)` and `.pow(exponent)`: the operator `**` says the same
+ * thing, and one capability gets one spelling. The refusal stands in every position.
+ */
+const NO_POW = unsupported(
+  "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
+);
+
 export const NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -11505,24 +11513,19 @@ export const NAMES = {
   }),
 
   pow: name({
-    doc: "'Math.pow(base, exponent)' is not part of JSMQL — '**' says the same thing.",
+    doc: "'Math.pow(base, exponent)' and '.pow(exponent)' are not part of JSMQL — '**' says the same thing.",
     call: true,
     on: "Math",
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        // The parser accepts the name so it gets an answer, and this cell refuses it.
-        Math: unsupported(
-          "'Math.pow(base, exponent)' is not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
-        ),
-      },
-    },
-    stream: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    statement: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    group: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
-    window: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+    // The name parses so that it gets an answer, as 'Math.pow(…)' and as '.pow(…)'.
+    // One refusal in every position names the operator.
+    where: [],
+    filter: NO_POW,
+    expr: NO_POW,
+    stream: NO_POW,
+    statement: NO_POW,
+    group: NO_POW,
+    window: NO_POW,
   }),
 
   atan2: name({

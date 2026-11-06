@@ -2201,6 +2201,9 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ["Math.atan2($.y, $.x)", "'<y>.atan2(<x>)'"],
       ["Math.max($.a, $.b)", "'[a, b].max()'"],
       ["Math.pow($.x, 2)", "'base ** exponent'"],
+      // The method spelling of a static that JSMQL refuses takes the same refusal.
+      ["$.n.pow(2)", "'$.n ** 2'"],
+      ["$.a.map(x => x.pow(2))", "'$.n ** 2'"],
     ]) {
       expect(() => expr(src), src).toThrow(dot);
     }

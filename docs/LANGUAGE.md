@@ -2828,6 +2828,7 @@ Each other `Math` member says the same thing as a number method or an operator, 
 ```js
 Math.abs($.delta)                  // ✗ not a JSMQL name; write $.delta.abs()
 Math.pow($.base, 2)                // ✗ not a JSMQL name; write $.base ** 2
+$.base.pow(2)                      // ✗ not a JSMQL name; write $.base ** 2
 Math.max($.a, $.b)                 // ✗ not a JSMQL name; write [$.a, $.b].max()
 $.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x => x.floor())
 ```
