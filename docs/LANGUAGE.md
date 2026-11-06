@@ -2939,7 +2939,7 @@ $.qty.isNumber() && $.at.isDate()  // { qty: { $type: "number" }, at: { $type: "
 - **A type test is MongoDB's type name, not lodash's.** `.isObject()` is `false` for an array, where lodash's `_.isObject([])` is `true`. The boolean test is `.isBool()`, as MongoDB names the type, and JSMQL refuses lodash's `.isBoolean()`.
 - **`.isUUID()` also tests the subtype.** `$type` names each binary value `"binData"`. A UUID is the binary subtype 4, and the query language cannot test a subtype. So `.isUUID()` takes the `$expr` form in a Filter.
 - **`Array.isArray(x)` is not a JSMQL name.** The value's own method is shorter, and one capability gets one spelling. The error names `x.isArray()`.
-- **A type test and a `typeof` comparison give the same MQL.** `$.name.isString()` and `typeof $.name === "string"` are two spellings of one test. `typeof` also gives the type name itself, and it names each BSON type, for example `"regex"` or `"null"`.
+- **A type test gives a boolean, and `typeof` gives a string.** You can compute with the type name, for example `(typeof $.x).toUpperCase()` or `"type: " + typeof $.x`. A `typeof` comparison also names each BSON type, for example `"regex"` or `"null"`. For the types that a type test names, the test is the short form.
 
 ### Number static predicates
 
