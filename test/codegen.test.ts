@@ -4069,7 +4069,7 @@ describe("Math.*", () => {
   it(".round() takes the one-operand form", () => {
     expect(jsmql.expr("$.x.round()")).toEqual({ $round: { $ifNull: ["$x", 0] } });
   });
-  it(".pow()", () => {
+  it("the operator ** (JSMQL has no .pow())", () => {
     expect(jsmql.expr("2 ** $.n")).toEqual({ $pow: [2, "$n"] });
   });
   it(".sqrt()", () => {

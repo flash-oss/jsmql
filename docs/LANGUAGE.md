@@ -348,7 +348,7 @@ string literal, `.toLowerCase()`, `.trim()` and a nested template literal:
 
 ```js
 `name=${$.name.toLowerCase()}`
-// → { $concat: ["name=", { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }] }
+// → { $concat: ["name=", { $toLower: { $ifNull: ["$name", ""] } }] }
 ```
 
 A template with one expression and no text is the value of that expression as a string. `$concat` of one string is that string, so the compiler emits the part alone:
@@ -706,7 +706,7 @@ $.a.map(x => x?.size())   // the test stays; behind it, `x` is there
 |---|---|---|
 | Bare read | `null` for a missing value | `$.user?.name` → `{ $ifNull: ["$user.name", null] }` |
 | Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: "$user.name" } }] }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: { $ifNull: ["$user.name", ""] } } }] }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
 | `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $size: { $ifNull: ["$user.tags", []] } }] }` |
