@@ -69,6 +69,10 @@ const AGREE: readonly string[] = [
   '$.d >= Date("2024-06-01")',
   'typeof $.a === "string"',
   'typeof $.a !== "bool"',
+  // a type test takes the query form of `typeof`
+  "$.a.isString()",
+  "!$.a.isBool()",
+  "$.a.isDate() || $.a.isBool()",
   "$.a === 1 || $.b === 2",
   "$.b === 2 && $.n > 1",
   "$.a",
@@ -111,6 +115,7 @@ const SAME_QUERY: readonly string[] = [
   "$.n > $.b",
   "$.n + 1 > 5",
   "$.n.abs() > 5",
+  "$.a.isUUID()",
 ];
 
 /**
@@ -129,6 +134,8 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a !== 1", why: ARRAY_ELEMENT_WISE },
   { src: '$.tags === "red"', why: ARRAY_ELEMENT_WISE },
   { src: 'typeof $.a === "number"', why: ARRAY_ELEMENT_WISE },
+  { src: "$.a.isNumber()", why: ARRAY_ELEMENT_WISE },
+  { src: "$.a.isObject()", why: ARRAY_ELEMENT_WISE },
   { src: "$.a === 1 && $.a === 2", why: ARRAY_ELEMENT_WISE },
   { src: "!($.a === 1)", why: ARRAY_ELEMENT_WISE },
   { src: "$.a.q === undefined", why: "The same prefix array, through the presence spelling." },

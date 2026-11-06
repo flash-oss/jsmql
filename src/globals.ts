@@ -3526,12 +3526,34 @@ declare global {
     intersection(other: any[]): T[];
     /** Intersection by iteratee — `_.intersectionBy`. */
     intersectionBy(...args: any[]): T[];
+    /** Is the value a boolean? — `$type`. */
+    isBool(): boolean;
+    /** Is the value a date? — `$type`. */
+    isDate(): boolean;
+    /** Is the value a Decimal128? — `$type`. */
+    isDecimal(): boolean;
     /** Do the two arrays share no element. */
     isDisjointFrom(other: any[]): boolean;
+    /** Is the value a double? — `$type`. */
+    isDouble(): boolean;
+    /** Is the value a 32-bit integer? — `$type`. */
+    isInt(): boolean;
+    /** Is the value a 64-bit integer? — `$type`. */
+    isLong(): boolean;
+    /** Is the value a number of any BSON type? — `$isNumber`. */
+    isNumber(): boolean;
+    /** Is the value a document? An array is not one. — `$type`. */
+    isObject(): boolean;
+    /** Is the value an ObjectId? — `$type`. */
+    isObjectId(): boolean;
+    /** Is the value a string? — `$type`. */
+    isString(): boolean;
     /** Does `other` hold every element. */
     isSubsetOf(other: any[]): boolean;
     /** Does this array hold every element of `other`. */
     isSupersetOf(other: any[]): boolean;
+    /** Is the value a UUID (a binData of subtype 4)? */
+    isUUID(): boolean;
     /** Index elements by iteratee (omit for identity) — `_.keyBy`. */
     keyBy(iteratee?: string | number | ((value: T) => any)): Record<string, T>;
     /** Last element — `_.last`. */
@@ -3619,6 +3641,28 @@ declare global {
     escape(): string;
     /** The index of the first `searchString` at or after `position`, in code points, or -1 — `String.prototype.indexOf`. */
     indexOfSubstring(searchString: string, position?: number): number;
+    /** Is the value a boolean? — `$type`. */
+    isBool(): boolean;
+    /** Is the value a date? — `$type`. */
+    isDate(): boolean;
+    /** Is the value a Decimal128? — `$type`. */
+    isDecimal(): boolean;
+    /** Is the value a double? — `$type`. */
+    isDouble(): boolean;
+    /** Is the value a 32-bit integer? — `$type`. */
+    isInt(): boolean;
+    /** Is the value a 64-bit integer? — `$type`. */
+    isLong(): boolean;
+    /** Is the value a number of any BSON type? — `$isNumber`. */
+    isNumber(): boolean;
+    /** Is the value a document? An array is not one. — `$type`. */
+    isObject(): boolean;
+    /** Is the value an ObjectId? — `$type`. */
+    isObjectId(): boolean;
+    /** Is the value a string? — `$type`. */
+    isString(): boolean;
+    /** Is the value a UUID (a binData of subtype 4)? */
+    isUUID(): boolean;
     /** `kebab-case` the string — `_.kebabCase`. */
     kebabCase(): string;
     /** `lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`. */
@@ -3689,6 +3733,28 @@ declare global {
     hypot(...values: number[]): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** Is the value a boolean? — `$type`. */
+    isBool(): boolean;
+    /** Is the value a date? — `$type`. */
+    isDate(): boolean;
+    /** Is the value a Decimal128? — `$type`. */
+    isDecimal(): boolean;
+    /** Is the value a double? — `$type`. */
+    isDouble(): boolean;
+    /** Is the value a 32-bit integer? — `$type`. */
+    isInt(): boolean;
+    /** Is the value a 64-bit integer? — `$type`. */
+    isLong(): boolean;
+    /** Is the value a number of any BSON type? — `$isNumber`. */
+    isNumber(): boolean;
+    /** Is the value a document? An array is not one. — `$type`. */
+    isObject(): boolean;
+    /** Is the value an ObjectId? — `$type`. */
+    isObjectId(): boolean;
+    /** Is the value a string? — `$type`. */
+    isString(): boolean;
+    /** Is the value a UUID (a binData of subtype 4)? */
+    isUUID(): boolean;
     /** The natural logarithm, or the logarithm to `base` — `Math.log`. */
     log(base?: number): number;
     /** The base-10 logarithm — `Math.log10`. */
@@ -3762,12 +3828,34 @@ declare global {
       unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
       timezone?: string,
     ): boolean;
+    /** Is the value a boolean? — `$type`. */
+    isBool(): boolean;
+    /** Is the value a date? — `$type`. */
+    isDate(): boolean;
+    /** Is the value a Decimal128? — `$type`. */
+    isDecimal(): boolean;
+    /** Is the value a double? — `$type`. */
+    isDouble(): boolean;
+    /** Is the value a 32-bit integer? — `$type`. */
+    isInt(): boolean;
+    /** Is the value a 64-bit integer? — `$type`. */
+    isLong(): boolean;
+    /** Is the value a number of any BSON type? — `$isNumber`. */
+    isNumber(): boolean;
+    /** Is the value a document? An array is not one. — `$type`. */
+    isObject(): boolean;
+    /** Is the value an ObjectId? — `$type`. */
+    isObjectId(): boolean;
     /** Whether both dates fall in the same `unit`. */
     isSame(
       other: Date,
       unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
       timezone?: string,
     ): boolean;
+    /** Is the value a string? — `$type`. */
+    isString(): boolean;
+    /** Is the value a UUID (a binData of subtype 4)? */
+    isUUID(): boolean;
     /** ISO 8601 week of the year — `$isoWeek`. */
     isoWeek(timezone?: string): number;
     /** ISO 8601 year — `$isoWeekYear`. */
@@ -3832,6 +3920,28 @@ declare global {
     week(timezone?: string): number;
   }
   interface Boolean {
+    /** Is the value a boolean? — `$type`. */
+    isBool(): boolean;
+    /** Is the value a date? — `$type`. */
+    isDate(): boolean;
+    /** Is the value a Decimal128? — `$type`. */
+    isDecimal(): boolean;
+    /** Is the value a double? — `$type`. */
+    isDouble(): boolean;
+    /** Is the value a 32-bit integer? — `$type`. */
+    isInt(): boolean;
+    /** Is the value a 64-bit integer? — `$type`. */
+    isLong(): boolean;
+    /** Is the value a number of any BSON type? — `$isNumber`. */
+    isNumber(): boolean;
+    /** Is the value a document? An array is not one. — `$type`. */
+    isObject(): boolean;
+    /** Is the value an ObjectId? — `$type`. */
+    isObjectId(): boolean;
+    /** Is the value a string? — `$type`. */
+    isString(): boolean;
+    /** Is the value a UUID (a binData of subtype 4)? */
+    isUUID(): boolean;
     /** The value as a boolean — MongoDB's `$toBool`, which reads every string as true. */
     toBool(): boolean;
     /** The value as a Decimal128 — `$toDecimal`. */

@@ -11,7 +11,7 @@
 // guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Decimal128, Long, MongoClient, type Collection } from "mongodb";
+import { Binary, Decimal128, Long, MongoClient, ObjectId, UUID, type Collection } from "mongodb";
 import { expr, filter } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
@@ -57,6 +57,14 @@ const DOC = {
   mixed: [0, 1, "", "a", null, false, true],
   // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
   mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
+  // one value of each BSON type that a type test names
+  bt: {
+    l: Long.fromNumber(5),
+    dec: Decimal128.fromString("1.5"),
+    oid: new ObjectId("6ac24965791743238d44920a"),
+    uuid: new UUID("6ac24965-7917-4323-8d44-920ad1d69b94"),
+    bin: new Binary(Buffer.from("hi")),
+  },
 };
 
 type Case = { src: string; js: (d: typeof DOC) => unknown; note?: string; unordered?: true };
@@ -820,6 +828,7 @@ describe("compiler/emit — object methods", () => {
                     "pairs",
                     "mixed",
                     "mo",
+                    "bt",
                   ],
                 ],
               },
@@ -2109,6 +2118,72 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
   });
 
+  it("tests the BSON type of a value with each type test, and a missing value is of no type", () => {
+    expect(compiled("$.s.isString()", () => true)).toEqual({ $eq: [{ $type: "$s" }, "string"] });
+    expect(compiled("$.a.isString()", () => false)).toEqual({ $eq: [{ $type: "$a" }, "string"] });
+    expect(compiled("$.n.isNumber()", () => true)).toEqual({ $isNumber: "$n" });
+    expect(compiled("$.bt.dec.isNumber()", () => true)).toEqual({ $isNumber: "$bt.dec" });
+    expect(compiled("$.csv.isNumber()", () => false)).toEqual({ $isNumber: "$csv" });
+    expect(compiled("$.n.isDouble()", () => true)).toEqual({ $eq: [{ $type: "$n" }, "double"] });
+    // the driver writes a whole JavaScript number as a 32-bit integer
+    expect(compiled("$.neg.isInt()", () => true)).toEqual({ $eq: [{ $type: "$neg" }, "int"] });
+    expect(compiled("$.n.isInt()", () => false)).toEqual({ $eq: [{ $type: "$n" }, "int"] });
+    expect(compiled("$.bt.l.isLong()", () => true)).toEqual({ $eq: [{ $type: "$bt.l" }, "long"] });
+    expect(compiled("$.bt.dec.isDecimal()", () => true)).toEqual({ $eq: [{ $type: "$bt.dec" }, "decimal"] });
+    expect(compiled("$.mo.f.isBool()", () => true)).toEqual({ $eq: [{ $type: "$mo.f" }, "bool"] });
+    expect(compiled("$.d.isDate()", () => true)).toEqual({ $eq: [{ $type: "$d" }, "date"] });
+    expect(compiled("$.bt.oid.isObjectId()", () => true)).toEqual({ $eq: [{ $type: "$bt.oid" }, "objectId"] });
+    expect(compiled("$.o.isObject()", () => true)).toEqual({ $eq: [{ $type: "$o" }, "object"] });
+    // an array is not a document, unlike lodash's `_.isObject`
+    expect(compiled("$.a.isObject()", () => false)).toEqual({ $eq: [{ $type: "$a" }, "object"] });
+    // `$type` names every binData "binData", so `.isUUID()` also asks for subtype 4
+    const uuidTest = (v: string) => ({
+      $and: [
+        { $eq: [{ $type: v }, "binData"] },
+        { $ne: [{ $convert: { input: v, to: "string", format: "uuid", onError: null } }, null] },
+      ],
+    });
+    expect(compiled("$.bt.uuid.isUUID()", () => true)).toEqual(uuidTest("$bt.uuid"));
+    expect(compiled("$.bt.bin.isUUID()", () => false)).toEqual(uuidTest("$bt.bin"));
+    expect(compiled("$.kname.isUUID()", () => false)).toEqual(uuidTest("$kname"));
+    // a computed receiver is bound once
+    expect(compiled("$.kname.trim().isUUID()", () => false)).toEqual({
+      $let: { vars: { jsmqlV: { $trim: { input: { $ifNull: ["$kname", ""] } } } }, in: uuidTest("$$jsmqlV") },
+    });
+    // HR5: a missing value has the `$type` "missing", so the dot needs no safe value
+    expect(compiled("$.nope.isString()", () => false)).toEqual({ $eq: [{ $type: "$nope" }, "string"] });
+    expect(compiled("$.nope.isNumber()", () => false)).toEqual({ $isNumber: "$nope" });
+    expect(compiled("$.mo.d.isObject()", () => false)).toEqual({ $eq: [{ $type: "$mo.d" }, "object"] });
+    expect(compiled("$.nope.isUUID()", () => false)).toEqual(uuidTest("$nope"));
+    // a `?.` gives null for a missing value
+    expect(compiled("$.nope?.isString()", () => null)).toEqual(
+      nullOr("$nope", { $eq: [{ $type: "$nope" }, "string"] }),
+    );
+    // a constant folds
+    expect(expr('"a".isString()')).toBe(true);
+    expect(expr("[1].isString()")).toBe(false);
+  });
+
+  it("gives each type test the query form of `typeof`, and `.isUUID()` the `$expr` form", () => {
+    expect(filter("$.s.isString()")).toEqual({ s: { $type: "string" } });
+    expect(filter("$.n.isNumber()")).toEqual({ n: { $type: "number" } });
+    expect(filter("!$.o.isObject()")).toEqual({ $nor: [{ o: { $type: "object" } }] });
+    expect(filter("$.docs.some(x => x.k.isString())")).toEqual({ docs: { $elemMatch: { k: { $type: "string" } } } });
+    expect(filter("$.bt.uuid.isUUID()")).toEqual({
+      $expr: {
+        $and: [
+          { $eq: [{ $type: "$bt.uuid" }, "binData"] },
+          { $ne: [{ $convert: { input: "$bt.uuid", to: "string", format: "uuid", onError: null } }, null] },
+        ],
+      },
+    });
+  });
+
+  it("refuses lodash's `.isBoolean()`, and names `.isBool()`", () => {
+    expect(() => expr("$.x.isBoolean()")).toThrow(/'\.isBool\(\)'/);
+    expect(() => filter("$.x.isBoolean()")).toThrow(/'\.isBool\(\)'/);
+  });
+
   it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
     const epoch = new Date("1970-01-01T00:00:00.000Z");
     expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
@@ -3233,6 +3308,17 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   isInteger: ["Number.isInteger($.n)", "Number.isInteger($.nope)"],
   isNaN: ["Number.isNaN($.n)", "Number.isNaN($.nope)"],
   isArray: ["Array.isArray($.a)", "Array.isArray($.nope)"],
+  isString: ["$.s.isString()"],
+  isNumber: ["$.n.isNumber()"],
+  isDouble: ["$.n.isDouble()"],
+  isInt: ["$.neg.isInt()"],
+  isLong: ["$.n.isLong()"],
+  isDecimal: ["$.n.isDecimal()"],
+  isBool: ["$.n.isBool()"],
+  isDate: ["$.d.isDate()"],
+  isObjectId: ["$.n.isObjectId()"],
+  isObject: ["$.o.isObject()"],
+  isUUID: ["$.n.isUUID()"],
   // dates
   getFullYear: ["$.d.getFullYear()"],
   getMonth: ["$.d.getMonth()"],

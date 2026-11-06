@@ -5763,6 +5763,18 @@ describe("every method declares the receiver family it needs", () => {
     toObjectId: "a MongoDB conversion: the server judges the value",
     toUUID: "a MongoDB conversion: the server judges the value",
     toNumber: "refused on every receiver, and the refusal names '.toDouble()'",
+    isString: "a type test: it asks the type of any value",
+    isNumber: "a type test: it asks the type of any value",
+    isDouble: "a type test: it asks the type of any value",
+    isInt: "a type test: it asks the type of any value",
+    isLong: "a type test: it asks the type of any value",
+    isDecimal: "a type test: it asks the type of any value",
+    isBool: "a type test: it asks the type of any value",
+    isDate: "a type test: it asks the type of any value",
+    isObjectId: "a type test: it asks the type of any value",
+    isObject: "a type test: it asks the type of any value",
+    isUUID: "a type test: it asks the type of any value",
+    isBoolean: "refused on every receiver, and the refusal names '.isBool()'",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
     const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();

@@ -453,7 +453,7 @@ const VALUE_METHOD_SKIP = {
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
   // Shimmed to a custom error message: not a real completable method.
-  shimmed: new Set(["toNumber", "unzipWith"]),
+  shimmed: new Set(["toNumber", "isBoolean", "unzipWith"]),
 };
 
 // Per-method augmentation signature. `recv` is the interface to augment; `sig`
@@ -469,6 +469,8 @@ const OPT_ITER = "iteratee?: string | number | ((value: T) => any)";
 const PRED = "predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)";
 /** The interfaces of the values that a `$to…` conversion reads. */
 const CONVERTIBLE = ["String", "Number", "Date", "Boolean"];
+/** The interfaces of the values that a type test reads: every kind with an interface to augment. */
+const TYPE_TESTED = ["String", "Number", "Date", "Boolean", "Array"];
 
 const VALUE_METHOD_SIGNATURES = {
   // ── conversions: MongoDB's `$to…` operators, on every kind of value ─────────
@@ -484,6 +486,18 @@ const VALUE_METHOD_SIGNATURES = {
   toDate: { recv: ["String", "Number", "Date"], sig: "(): Date", doc: "The value as a date — `$toDate`." },
   toObjectId: { recv: "String", sig: "(): any", doc: "A 24-hex string as an ObjectId — `$toObjectId`." },
   toUUID: { recv: "String", sig: "(): any", doc: "A UUID string as a UUID — `$toUUID`." },
+  // ── type tests: the BSON type of the value, on every kind of value ─────────
+  isString: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a string? — `$type`." },
+  isNumber: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a number of any BSON type? — `$isNumber`." },
+  isDouble: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a double? — `$type`." },
+  isInt: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a 32-bit integer? — `$type`." },
+  isLong: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a 64-bit integer? — `$type`." },
+  isDecimal: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a Decimal128? — `$type`." },
+  isBool: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a boolean? — `$type`." },
+  isDate: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a date? — `$type`." },
+  isObjectId: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value an ObjectId? — `$type`." },
+  isObject: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a document? An array is not one. — `$type`." },
+  isUUID: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a UUID (a binData of subtype 4)?" },
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
   uniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy — `_.uniq`." },
   uniqBy: { recv: "Array", sig: `(${ITER}): T[]`, doc: "Duplicate-free by iteratee — `_.uniqBy`." },

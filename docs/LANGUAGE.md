@@ -2907,6 +2907,38 @@ It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"o
 
 **A `typeof` comparison names a BSON type, not a JavaScript type.** MongoDB's vocabulary is the only vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. JSMQL refuses each of these three JavaScript names, and the error points at the MongoDB name. So you never get a test that silently matches nothing. `"undefined"` is a MongoDB type, the deprecated BSON one, so it means only that. Absence has its own spelling: `x === undefined`.
 
+### Type test methods
+
+A type test asks for the BSON type of a value. There is one test for each type that a [conversion method](#type-conversion-methods) gives, and one for a document. Each test works on every kind of value, and it gives `true` or `false`:
+
+```js
+$.name.isString()                  // { $eq: [{ $type: "$name" }, "string"] }
+$.qty.isNumber()                   // { $isNumber: "$qty" }   — a double, an int, a long or a Decimal128
+$.qty.isDouble()                   // { $eq: [{ $type: "$qty" }, "double"] }
+$.qty.isInt()                      // "int"
+$.qty.isLong()                     // "long"
+$.qty.isDecimal()                  // "decimal"
+$.flag.isBool()                    // "bool"
+$.at.isDate()                      // "date"
+$.ref.isObjectId()                 // "objectId"
+$.meta.isObject()                  // "object"   — a document; an array is not one
+$.id.isUUID()                      // { $and: [{ $eq: [{ $type: "$id" }, "binData"] }, { $ne: [{ $convert: { input: "$id", to: "string", format: "uuid", onError: null } }, null] }] }
+```
+
+In a Filter, each test except `.isUUID()` is the query form of `$type`:
+
+```js
+$.name.isString()                  // { name: { $type: "string" } }
+$.qty.isNumber() && $.at.isDate()  // { qty: { $type: "number" }, at: { $type: "date" } }
+```
+
+- **A missing value is of no type.** `$type` gives `"missing"` for it, so each test gives `false` under a dot, with no `$ifNull`. Under `?.`, the test gives `null` for a missing value, as every method does (see [HR5](LANG_RULES.md)).
+- **A Filter reads an array element by element.** `{ qty: { $type: "number" } }` also selects `qty: [1]`, where the expression form gives `false`. `typeof` has the same reading. See [SR2](LANG_RULES.md).
+- **A type test is MongoDB's type name, not lodash's.** `.isObject()` is `false` for an array, where lodash's `_.isObject([])` is `true`. The boolean test is `.isBool()`, as MongoDB names the type, and JSMQL refuses lodash's `.isBoolean()`.
+- **`.isUUID()` also tests the subtype.** `$type` names each binary value `"binData"`. A UUID is the binary subtype 4, and the query language cannot test a subtype. So `.isUUID()` takes the `$expr` form in a Filter.
+- **A type test and a `typeof` comparison give the same MQL.** `$.name.isString()` and `typeof $.name === "string"` are two spellings of one test. `typeof` also gives the type name itself, and it names each BSON type, for example `"regex"` or `"null"`.
+- For an array, write `Array.isArray(x)`. See [Object Operations](#object-operations).
+
 ### Number static predicates
 
 ```js

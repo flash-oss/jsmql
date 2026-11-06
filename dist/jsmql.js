@@ -446,6 +446,35 @@ var conversion = (e) => name({
     `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
   )
 });
+var typeTest = (e) => name({
+  doc: `'.${e.method}()' \u2014 ${e.doc} See docs/LANGUAGE.md.`,
+  call: true,
+  on: "any",
+  returns: "bool",
+  neverNull: true,
+  where: ["value", "filter"],
+  // The query form is the one that `typeof x === "<alias>"` gives, so an index can use it.
+  filter: {
+    args: { sig: "", none: true },
+    emit: ({ recv, pathOf: pathOf3 }) => {
+      const path = recv === null ? null : pathOf3(recv);
+      return path === null ? null : queryOwnValue(path, { $type: e.alias });
+    }
+  },
+  expr: {
+    args: { sig: "", none: true },
+    // an array literal goes one level deeper, so the server reads it as one argument
+    emit: ({ recv }) => e.alias === "number" ? { $isNumber: singleArrayArg(recv) } : { $eq: [{ $type: singleArrayArg(recv) }, e.alias] }
+  },
+  stream: unsupported(`'.${e.method}()' has no stream form: it produces a value, not a stream of documents.`),
+  statement: unsupported(
+    `'.${e.method}()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.${e.method}();'`
+  ),
+  group: unsupported(`'.${e.method}()' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
 var dateRow = (spelling) => global_({
   doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
@@ -822,6 +851,9 @@ var booleanIsNotJsmql = unsupported(
 );
 var toNumberIsNotJsmql = unsupported(
   "'.toNumber()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion, and one capability gets one spelling. Write '<value>.toDouble()': '$.x.toDouble()'." + afterStringMethod("toDouble")
+);
+var isBooleanIsNotJsmql = unsupported(
+  "'.isBoolean()' is not part of JSMQL \u2014 '.isBool()' tests for a boolean, as MongoDB names the type 'bool'. Write '<value>.isBool()': '$.x.isBool()'."
 );
 var parseIntIsNotJsmql = unsupported(
   `'parseInt()' is not part of JSMQL \u2014 '.toDouble()' is its numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write '<value>.toDouble()', or '<value>.toDouble().trunc()' for the whole number.` + afterStringMethod("toDouble")
@@ -5020,6 +5052,68 @@ var NAMES = {
   toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: /* @__PURE__ */ new Date(0) }),
   toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
   toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
+  // the type tests: one method per type that a conversion method gives, and one for a document
+  isString: typeTest({ method: "isString", alias: "string", doc: "is the value a string?" }),
+  isNumber: typeTest({
+    method: "isNumber",
+    alias: "number",
+    doc: "is the value a number of any BSON type? Emits $isNumber."
+  }),
+  isDouble: typeTest({ method: "isDouble", alias: "double", doc: "is the value a double?" }),
+  isInt: typeTest({ method: "isInt", alias: "int", doc: "is the value a 32-bit integer?" }),
+  isLong: typeTest({ method: "isLong", alias: "long", doc: "is the value a 64-bit integer?" }),
+  isDecimal: typeTest({ method: "isDecimal", alias: "decimal", doc: "is the value a Decimal128?" }),
+  isBool: typeTest({ method: "isBool", alias: "bool", doc: "is the value a boolean?" }),
+  // The parser accepts lodash's name, and each position refuses it with the JSMQL name.
+  isBoolean: name({
+    doc: "Parsed, then refused: '.isBool()' is JSMQL's boolean test.",
+    call: true,
+    on: "any",
+    returns: "bool",
+    where: [],
+    filter: isBooleanIsNotJsmql,
+    expr: isBooleanIsNotJsmql,
+    stream: isBooleanIsNotJsmql,
+    statement: isBooleanIsNotJsmql,
+    group: isBooleanIsNotJsmql,
+    window: isBooleanIsNotJsmql
+  }),
+  isDate: typeTest({ method: "isDate", alias: "date", doc: "is the value a date?" }),
+  isObjectId: typeTest({ method: "isObjectId", alias: "objectId", doc: "is the value an ObjectId?" }),
+  isObject: typeTest({ method: "isObject", alias: "object", doc: "is the value a document? An array is not one." }),
+  isUUID: name({
+    doc: "'.isUUID()' \u2014 is the value a UUID, a binData of subtype 4? See docs/LANGUAGE.md.",
+    call: true,
+    on: "any",
+    returns: "bool",
+    neverNull: true,
+    where: ["value"],
+    // The query language has no test for the subtype of a binData.
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      // `$type` names every binData "binData". MEASURED: `$convert` to a string with the
+      // format "uuid" gives the text of a subtype-4 value, and it fails on any other subtype.
+      // `$convert` gives a value of another type unchanged, so the `$type` test comes first.
+      emit: ({ recv, bind }) => {
+        const test = (v2) => ({
+          $and: [
+            { $eq: [{ $type: v2 }, "binData"] },
+            { $ne: [{ $convert: { input: v2, to: "string", format: "uuid", onError: null } }, null] }
+          ]
+        });
+        if (typeof recv === "string" && recv.startsWith("$")) return test(recv);
+        const v = bind("v");
+        return { $let: { vars: { [v.as]: singleArrayArg(recv) }, in: test(v.ref) } };
+      }
+    },
+    stream: unsupported("'.isUUID()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.isUUID()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isUUID();'"
+    ),
+    group: unsupported("'.isUUID()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.isUUID()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
@@ -10712,7 +10806,7 @@ function membershipQuery(input) {
   if (c === null || !Array.isArray(c.value)) return null;
   return queryAmong(path, c.value);
 }
-function typeTest(input) {
+function typeTest2(input) {
   const [l, r] = input.args;
   const pick = (a, b) => a.type === "UnaryExpr" && a.op === "typeof" && b.type === "StringLiteral" ? { operand: a.argument, spelling: b.value } : null;
   const t = pick(l, r) ?? pick(r, l);
@@ -10750,7 +10844,7 @@ function comparesALength(input) {
   return isLength(l) || isLength(r);
 }
 function strictEqualityQuery(input, negated) {
-  const typed = typeTest(input);
+  const typed = typeTest2(input);
   if (typed !== null) {
     if (typed.alias === "array") {
       return negated ? queryOwnValue(typed.path, { $not: { $type: "array" } }) : queryOwnValue(typed.path, { $type: "array" });

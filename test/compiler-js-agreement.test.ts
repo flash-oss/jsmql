@@ -73,6 +73,10 @@ const ARRAY_RULE =
 const INDEXABLE_HAS =
   "`.has(x)` emits `{ f: x }` \u2014 MongoDB's \"equals, or is an array containing\" \u2014 which selects an array holding the needle and a field equal to it. JavaScript's Array has no `.has`, so JavaScript throws on every document and selects none.";
 
+/** A type test is a JSMQL name. JavaScript has no such method, so it throws on every document and selects none. */
+const NO_JS_METHOD =
+  'JavaScript has no `.isString()` method, so JavaScript throws on every document and selects none. The query road selects each string, as `typeof $.a === "string"` does.';
+
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   { src: '$.tags.has("vip")', why: INDEXABLE_HAS },
@@ -86,6 +90,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a > 1", why: ARRAY_RULE },
   { src: 'typeof $.a === "number"', why: ARRAY_RULE },
   { src: 'typeof $.a !== "number"', why: ARRAY_RULE },
+  { src: "$.a.isString()", why: NO_JS_METHOD },
   { src: "$.n.v === 1", why: ARRAY_RULE },
   { src: "$.n.v !== undefined", why: ARRAY_RULE },
   { src: "$.n.v != null", why: ARRAY_RULE },
