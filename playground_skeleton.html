@@ -1785,9 +1785,15 @@
         // new input with the old example's compile mode. `setMode` also
         // refreshes the call-site hint through `updateUsageBar`.
         setMode(modeForCall(ex.call), { rerender: false });
+        // Another example's output starts at its top. The remembered offset is for one document only.
+        mqlScroll = { left: 0, top: 0 };
+        outputIsMql = false;
         loadingFromList = true;
-        inputCm.setValue(ex.query);
-        loadingFromList = false;
+        try {
+          inputCm.setValue(ex.query);
+        } finally {
+          loadingFromList = false;
+        }
         // As a safeguard, this explicitly re-renders after every state update
         // finishes. Assume that `setValue` no longer fires the change event some day, for example when CM
         // optimises a no-op replaceRange. This still guarantees that the output panel
@@ -2250,14 +2256,12 @@
           setOutput("", { message: true });
           outputCm.setOption("mode", { name: "javascript" });
           outputPanel.classList.remove("error");
-          // Empty editor is a fresh start — drop any sticky strict-shape
-          // mode back to AUTO so the next thing the user types compiles
-          // through `jsmql()`, which detects the shape. `rerender: false` prevents
-          // a recursive call of render() (the code is already inside it); `setMode`
-          // still refreshes the (always-on) call-site hint.
+          // The edit that empties the editor drops the mode back to AUTO (the
+          // `change` handler below). A render alone keeps it, so a mode click on an
+          // empty editor stays chosen.
           currentColl = "collection";
           lastOutputIsPipeline = false;
-          setMode("auto", { rerender: false });
+          updateUsageBar();
           return;
         }
 
@@ -2302,11 +2306,13 @@
           // predicate. Those throws carry the same actionable wording that the
           // library shows at the call site, so the script surfaces them in the error
           // panel. The exception does not leave stale output on the page.
-          let out;
+          let out, rendered;
           try {
             out = varsActive
               ? (COMPILE_FNS[currentMode] || jsmql.compile)(arrow.src)(vars.obj)
               : (MODE_FNS[currentMode] || jsmql)(src);
+            // The printer can refuse a value too. Its error belongs in the panel, like a compile error.
+            rendered = prettify.checked ? pretty(out) : compact(out);
           } catch (err) {
             const pos = toQueryPos(typeof err.pos === "number" ? err.pos : 0);
             if (typeof err.pos === "number" && err.code === "SYNTAX_ERROR" && pos >= 0) {
@@ -2321,7 +2327,6 @@
             return;
           }
           outputCm.setOption("mode", { name: "javascript" });
-          const rendered = prettify.checked ? pretty(out) : compact(out);
           setOutput(rendered);
           outputStatsEl.textContent = statsOf(rendered);
           outputPanel.classList.remove("error");
@@ -2346,6 +2351,9 @@
       }
 
       inputCm.on("change", () => {
+        // An empty editor is a fresh start: the next thing the user types compiles
+        // through `jsmql()`, which detects the shape.
+        if (inputCm.getValue().trim() === "") setMode("auto", { rerender: false });
         render();
         saveState();
       });
@@ -2419,6 +2427,8 @@
       //      `staleExampleSession` discarded that session, so the visitor lands
       //      on the same example with its CURRENT text, not the copy
       //      saved against an older example set;
+      //   2c. the example a current session held unmodified, with no hash: the
+      //      same example, so its slug and its saved compile mode stay;
       //   3. a saved free-form query — restored with the compile mode it was
       //      last rendered with, so the output matches what the user left;
       //   4. the first example — the default for a first visit.
@@ -2446,11 +2456,28 @@
         if (saved && typeof saved.vars === "string" && saved.vars !== "") {
           varsCm.setValue(saved.vars);
         }
+        // An example the session held unmodified opens as that example, with the
+        // compile mode the session saved: a mode click on an example is the
+        // visitor's choice, and `selectExample` alone would reset it.
+        const savedSlug =
+          saved && typeof saved.slug === "string" && examples.has(saved.slug) && saved.input === examples.get(saved.slug).query
+            ? saved.slug
+            : null;
+        const reopen = (slug) => {
+          selectExample(slug, { scroll: true });
+          if (slug === savedSlug && MODE_FNS[saved.mode] && saved.mode !== currentMode) {
+            setMode(saved.mode);
+            // `selectExample` saved the example's own mode; the session keeps the visitor's.
+            saveState();
+          }
+        };
         const initialSlug = orderedSlugs.length > 0 ? slugFromHash() : null;
         if (initialSlug && examples.has(initialSlug)) {
-          selectExample(initialSlug, { scroll: true });
+          reopen(initialSlug);
         } else if (revisit) {
           selectExample(revisit, { scroll: true });
+        } else if (savedSlug) {
+          reopen(savedSlug);
         } else if (saved && typeof saved.input === "string" && saved.input.trim() !== "") {
           setMode(MODE_FNS[saved.mode] ? saved.mode : "auto", { rerender: false });
           inputCm.setValue(saved.input);
