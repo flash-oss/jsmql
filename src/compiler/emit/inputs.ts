@@ -616,8 +616,8 @@ export function stageInputs(
   /**
    * A callback's FIRST parameter IS the stream's element: the document itself, so
    * its fields are top-level paths — or, after `.flatMap("items")`, the unwound
-   * field, so its fields are `items.<field>` (the chain's `element`). lodash lets a
-   * callback name an index and the receiver too; a stream has no per-document
+   * field, so its fields are `items.<field>` (the chain's `element`). A callback
+   * can also name an index and the receiver; a stream has no per-document
    * index, and the receiver is the stream itself, so each is bound as a name
    * whose READ says what to write instead.
    */

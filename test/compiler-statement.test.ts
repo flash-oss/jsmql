@@ -764,7 +764,7 @@ describe("compiler/emit/statement — the stream road", () => {
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $unset: "__jsmql" },
     ]);
-    // lodash reads an object here as a matcher, not as directions
+    // an object in this slot is a matcher, not a set of directions
     expect(() => pipeline("$$ = $$.sortBy({ k: -1 });")).toThrow(/reads an object as a lodash matcher/);
     expect(() => pipeline("$$ = $$.sort({ a: 2 });")).toThrow(/takes a direction: 1, -1/);
   });
@@ -1221,14 +1221,14 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
 });
 
 describe("compiler/emit/statement — an empty key list, against the server's own answer", () => {
-  it.skipIf(!up)("`.pick([])` makes each element `{}`, as lodash's `_.pick(o, [])` does", async () => {
+  it.skipIf(!up)("`.pick([])` makes each element `{}`", async () => {
     expect(await run("$$.pick([]);")).toEqual([{}, {}]);
     expect(await run("$ = $.pick([]);")).toEqual([{}, {}]);
     // The element stays where it lives on the document, as it does for a named field.
     expect(await run('$$.flatMap("items").pick([]);')).toEqual([{ items: {} }, { items: {} }]);
   });
 
-  it.skipIf(!up)("`.omit([])` keeps each document as it is, as lodash's `_.omit(o, [])` does", async () => {
+  it.skipIf(!up)("`.omit([])` keeps each document as it is", async () => {
     const docs = await coll!.find({}).toArray();
     expect(await run("$$.omit([]); $.x = 1;")).toEqual(docs.map((d) => ({ ...d, x: 1 })));
   });

@@ -1413,7 +1413,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
 });
 
 describe("the lodash set methods, .compact, .flat and the bare sorts work on an unwound ELEMENT", () => {
-  // MEASURED on the project's mongod over ids: [3, 1, 2, null, 0, 2] — lodash's answers:
+  // MEASURED on the project's mongod over ids: [3, 1, 2, null, 0, 2] — the expected answers:
   // .difference([1, 2]) keeps 3, null, 0; .intersection([1, 2, 9]) keeps one 1 and one 2;
   // .compact().sortBy() answers 1, 2, 2, 3.
 
@@ -1430,7 +1430,7 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
     ]);
-    // a variable list is an ARRAY that is there: a missing one is empty, as lodash reads it
+    // a variable list is an ARRAY that is there: a missing one is empty
     expect(jsmql('$$.flatMap("ids").difference($.mine);')).toEqual([
       { $unwind: "$ids" },
       { $match: { $expr: { $not: { $in: ["$ids", { $ifNull: ["$mine", []] }] } } } },
@@ -2107,7 +2107,7 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
     ]);
   });
 
-  it("the key-less .countBy() / .groupBy() / .keyBy() key on the element itself, as lodash's identity default does", () => {
+  it("the key-less .countBy() / .groupBy() / .keyBy() key on the element itself", () => {
     expect(jsmql("$$.countBy();")).toEqual([
       { $group: { _id: "$$ROOT", __jsmqlTmp: { $sum: 1 } } },
       {

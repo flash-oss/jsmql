@@ -471,7 +471,7 @@ describe.skipIf(up === null)(
       await client?.close();
     });
 
-    it("the link after `.intersection()` reads the unwound value, as lodash does", async () => {
+    it("the link after `.intersection()` reads the unwound value", async () => {
       const answer = async (source: string, by: string): Promise<unknown[]> =>
         await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
       // lodash: `_.intersection([3, 1, 2, 2, 1], [1, 2])` is `[1, 2]`.
@@ -503,7 +503,7 @@ describe.skipIf(up === null)(
 
     it("`.uniq()` on whole documents gives back the first of two equal documents", async () => {
       // An int and a double of one value compare equal, so `.uniq()` keeps one document,
-      // and lodash keeps the first one. `$type` shows which document came back.
+      // and the first one stays. `$type` shows which document came back.
       const pair = client.db("jsmql_compiler_types").collection("first_kept");
       await pair.deleteMany({});
       await pair.insertMany([

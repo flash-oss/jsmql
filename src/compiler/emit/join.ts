@@ -95,7 +95,7 @@ export type Lookup = {
   /**
    * The array holds ONE document that is the value: `.find` (unwrapped with
    * `$first`, absent when nothing matched), or a collapse (`countBy`, which
-   * gives `{}` when nothing matched, as lodash answers for an empty array).
+   * gives `{}` when nothing matched).
    */
   readonly one: false | "find" | "collapse";
   /** What the materialised slot holds once unwrapped. */

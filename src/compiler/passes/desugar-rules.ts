@@ -454,7 +454,7 @@ function asArrow(
     if (a.entries.length === 0) return undefined;
     const tests = matchTests(param, "", a.entries, pos);
     if (tests === undefined) return undefined;
-    // `{ a: {} }` matches every value, the way lodash's does: there is nothing to test.
+    // `{ a: {} }` matches every value: there is nothing to test.
     if (tests.length === 0)
       return { type: "Lambda", params: [param], body: { type: "BooleanLiteral", value: true, pos }, pos };
     // The chain is left-associated, the way `a === 1 && b === 2 && c === 3` parses.
@@ -478,7 +478,7 @@ function asArrow(
 }
 
 /**
- * The tests a matcher object states, read the way lodash's `_.matches` reads it.
+ * The tests a matcher object states, with the API of lodash's `_.matches`.
  * It is a PARTIAL deep match, not an equality: `{ a: { b: { c: 3 } } }` is
  * `x.a.b.c === 3` and says nothing about `x.a.b.d`. `{ qty: { $gt: 5 } }` is the
  * field `qty.$gt` equal to 5, because a matcher's keys are field names. An array

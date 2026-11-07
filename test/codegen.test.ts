@@ -4906,7 +4906,7 @@ describe("array method additions", () => {
   it('.toString() after a string method under a dot adds no $ifNull: the method reads a missing string as ""', () => {
     expect(jsmql.expr("$.name.toLower().toString()")).toEqual({ $toString: { $toLower: { $ifNull: ["$name", ""] } } });
   });
-  it('.toString() under a dot reads a missing receiver as "", as lodash\'s _.toString does', () => {
+  it('.toString() under a dot reads a missing receiver as ""', () => {
     expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: { $ifNull: ["$n", ""] } });
     // A receiver of the array family also reads as "", not as the text of `[]`.
     expect(jsmql.pipeline('$.arr = $.x?.split(","); $.out = $.arr.toString();')).toEqual([
@@ -5264,7 +5264,7 @@ describe("toSorted / sort key function", () => {
     });
   });
   it("a computed key under a minus is the key with the direction flipped — never the negated key sorted descending", () => {
-    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) answers [3, 2, 1], as lodash does.
+    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) answers [3, 2, 1].
     expect(jsmql.expr("$.nums.sortBy(x => -x)")).toEqual({
       $map: {
         input: {
@@ -7921,7 +7921,7 @@ describe("Object.groupBy — refused; the receiver form is the one spelling", ()
     });
   }
 
-  it("the receiver form groups by the key, as lodash does", () => {
+  it("the receiver form groups by the key", () => {
     expect(jsmql.expr("$.items.groupBy(x => x.category)")).toEqual({
       $arrayToObject: {
         $map: {

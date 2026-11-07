@@ -4355,10 +4355,10 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); no argument is the natural order'
+        sortSpec: '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); no argument is the natural order'
       },
       stream: {
-        sortSpec: '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); a stream has no natural order, so a key is required'
+        sortSpec: '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); a stream has no natural order, so a key is required'
       }
     },
     returns: { array: "same", stream: "stream" },
@@ -6780,7 +6780,7 @@ var NAMES = {
               [sorted.as]: {
                 $sortArray: {
                   input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
-                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort — lodash's answer
+                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort
                   sortBy: { k: -1 }
                 }
               }
@@ -7946,7 +7946,7 @@ var NAMES = {
     },
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
-      // Last wins, as lodash's does; "last" follows the stream's current order.
+      // Last wins; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" })
     },
     statement: unsupported(
@@ -8210,7 +8210,7 @@ var NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
+      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named.
       emit: ({ args, value, element }) => {
         const at2 = element().path;
         const keys = value(args[0]);
@@ -8929,7 +8929,7 @@ var NAMES = {
     },
     stream: {
       args: { sig: "other", exact: 1, slotType: { 0: "array" } },
-      // The elements in `other`, one document per distinct element — lodash keeps each value once.
+      // The elements in `other`, one document per distinct element, so each value comes back once.
       emit: ({ args, predicate, bind, element }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);

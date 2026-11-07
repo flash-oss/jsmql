@@ -60,7 +60,7 @@ assert($$.size() === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
-  .$sort({ createdAt: -1 }) // same as _.sort()
+  .$sort({ createdAt: -1 }) // the $sort stage as a link of the chain
   .take(10)
   .map("productIds")
   .flatten()
@@ -704,7 +704,7 @@ describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pip
     // An API response carries a few public fields of each active user and nothing
     // else. `$ = $.pick([...])` reads as "the document becomes these fields of
     // itself", and lowers to the one `$project` the stream spelling `$$.pick([...])`
-    // emits — `_id` goes too unless it is named, as lodash's pick has it.
+    // emits — `_id` goes too unless it is named.
     expect(
       jsmql`
 $match($.status === "active");
@@ -727,9 +727,8 @@ describe(
       // Field-level access control: each document carries the viewer's own list of
       // readable field names, so the key list is only known at query time. jsmql walks
       // the record's own keys and matches each against that list — `$objectToArray` +
-      // `$filter` + `$arrayToObject`. A viewer with no list sees nothing, as lodash
-      // reads a missing key list, and the `$ifNull` is what keeps `$in` from aborting
-      // the whole command on it. Verified on mongod.
+      // `$filter` + `$arrayToObject`. A viewer with no list sees nothing, and the
+      // `$ifNull` keeps `$in` from aborting the whole command on it. Verified on mongod.
       expect(
         jsmql`
 $match($.deletedAt == null);
@@ -841,7 +840,7 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
 describe("list the start date of each week in a plan (lodash `.range`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.plans.aggregate(jsmql(...))" }, () => {
     // `$.weeks.range()` is `_.range(weeks)`: the integers 0 .. weeks - 1. A plan with
-    // no `weeks` field gets an empty list, because lodash reads a missing bound as 0.
+    // no `weeks` field gets an empty list, because a missing bound reads as 0 (HR5).
     expect(
       jsmql`
 $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));

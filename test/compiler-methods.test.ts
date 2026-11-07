@@ -243,7 +243,7 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // lodash's answers: _.lowerCase and _.upperCase over the same fields
+    // the expected answers: the lower-case and upper-case words of the same fields
     expect(compiled("$.w.lowerCase()", () => "foo bar baz qux")).toEqual({
       $toLower: {
         $reduce: {
@@ -358,7 +358,7 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // a missing field: the dot form answers "" as lodash does, and `?.` answers null
+    // a missing field: the dot form answers "", and `?.` answers null
     expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
     expect(compiled("$.nope?.upperCase()", () => null)).toHaveProperty("$cond");
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
@@ -653,7 +653,7 @@ describe("compiler/emit — object methods", () => {
     });
   });
 
-  it("finds the key of the first entry that passes, as lodash's _.findKey does", () => {
+  it("finds the key of the first entry that passes", () => {
     // lodash's `_.findKey`: the first own key whose value passes, or `undefined`
     const findKey = <V>(o: Record<string, V> | undefined, p: (v: V, k: string) => unknown): string | undefined =>
       Object.keys(o ?? {}).find((k) => p(o![k], k));
@@ -860,7 +860,7 @@ describe("compiler/emit — object methods", () => {
         },
       },
     });
-    // A missing key list picks nothing and omits nothing, as lodash does — `$in` would
+    // A missing key list picks nothing and omits nothing — `$in` would
     // otherwise ABORT the command on a second operand that is not an array.
     expect(compiled("$.o.pick($.nope)", () => ({}))).toEqual({
       $arrayToObject: {
@@ -1745,7 +1745,7 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
   });
 
-  it("folds, sets and groups as lodash does", () => {
+  it("folds, sets and groups each array", () => {
     // `$sum`, `$avg` and `$max` answer null as they answer `[]`, so HR5 adds no `$ifNull`.
     expect(compiled("$.a.sum()", (d) => 6)).toEqual({ $sum: "$a" });
     expect(compiled("$.a.mean()", (d) => 2)).toEqual({ $avg: "$a" });
@@ -2906,7 +2906,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ['$.a.differenceBy($.b, "id")', [], [1, 2]],
   ['$.a.intersectionBy($.b, "id")', [], []],
   ['$.a.xorBy($.b, "id")', [], [1, 2]],
-  // a missing RECEIVER runs on `[]` (HR5), the reading lodash gives it
+  // a missing RECEIVER runs on `[]` (HR5)
   ["$.a.isSubsetOf($.b)", true, false],
   ["$.a.isSupersetOf($.b)", true, true],
   ["$.a.isDisjointFrom($.b)", true, true],
@@ -2917,7 +2917,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.initial()", [], [1]],
   ["$.o.pick($.b)", {}, {}],
   ["$.o.omit($.b)", {}, { x: 1 }],
-  // a missing list ARGUMENT of a set operation is the empty list, as lodash reads it
+  // a missing list ARGUMENT of a set operation is the empty list
   ["$.a.union($.b)", [], [1, 2]],
   ["$.a.intersection($.b)", [], []],
   ["$.a.symmetricDifference($.b)", [], [1, 2]],

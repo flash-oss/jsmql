@@ -324,7 +324,7 @@ export const slotAggregate = (
 /** `0 - n`. It folds for a constant. */
 export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });
 
-/** A group key as the string that a document key must be. A missing key becomes `null`, as lodash spells it. */
+/** A group key as the string that a document key must be. A missing key becomes `"null"`. */
 export const stringKeyExpr = (value: unknown): unknown => ({ $ifNull: [{ $toString: value }, "null"] });
 
 /** An iteratee over an array: the element variable, and the body that reads it. */

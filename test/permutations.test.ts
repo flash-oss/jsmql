@@ -136,7 +136,7 @@ const STREAM_RESHAPERS = [
   "shuffle()",
   "flatMap('items')",
 ];
-// NB `countBy`/`groupBy` are NOT stream reshapers: like lodash they COLLAPSE the
+// NB `countBy`/`groupBy` are NOT stream reshapers: they COLLAPSE the
 // stream to a single object (`{ <key>: <count> }` / `{ <key>: [docs] }`), so they
 // live with the value-collapsing terminals below, not here — pairing them with a
 // field-stripping reshaper would feed `$arrayToObject` a null key (mongod-rejected).
@@ -201,7 +201,7 @@ const STREAM_READS: Readonly<Record<string, readonly string[]>> = {
   "tail()": [],
   "slice(0, 3)": [],
   "uniqBy('type')": ["type"],
-  // lodash's pick and omit take a missing key as it is: they read nothing that must be there.
+  // pick and omit take a missing key as it is: they read nothing that must be there.
   "pick(['id', 'val'])": [],
   "omit(['items'])": [],
   "sample()": [],

@@ -181,7 +181,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   streamBody?: "document";
   /**
    * The stream cell folds the whole stream into ONE document — `countBy`, `keyBy`
-   * and `groupBy`: `$$.groupBy(d => d.cat)` builds lodash's one object. On another
+   * and `groupBy`: `$$.groupBy(d => d.cat)` builds one object. On another
    * collection the joined array then holds that one document, which IS the value —
    * so the read unwraps it.
    */
@@ -214,8 +214,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /**
    * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
    * states it only where it differs from the safe value of the row's family. The
-   * logarithm of 0 stops the command, so `.log()` reads 1, as lodash's `_.divide()`
-   * reads a missing divisor as 1. A method that works on every kind reads the safe
+   * logarithm of 0 stops the command, so `.log()` reads 1. A method that works on every kind reads the safe
    * value of the kind that it answers: `.toString()` reads `""`, `.toBool()` reads
    * false. MEASURED: `{ $ln: 0 }` stops the command, and `$.nope.log()` is 0, as
    * `(1).log()` is. test/compiler-methods.test.ts measures each row.
@@ -1068,7 +1067,7 @@ const callOf = (recv: Expr, name: string, args: readonly Expr[]): Expr => ({
   pos: recv.pos,
 });
 const identOf = (name: string, pos: number): Expr => ({ type: "Ident", name, pos });
-/** `[...(list ?? [])]` — the list argument of a set method, read as the ARRAY it is: a missing one is empty, as lodash reads it. */
+/** `[...(list ?? [])]` — the list argument of a set method, read as the ARRAY it is: a missing one is empty. */
 const listOf = (list: Expr): Expr => {
   if (list.type === "ArrayLiteral") return list;
   const empty: Expr = { type: "ArrayLiteral", elements: [], pos: list.pos };
@@ -1187,7 +1186,7 @@ const arrayOrEmpty = (recv: unknown): unknown => {
 };
 
 /**
- * A list ARGUMENT, read as the array it is: a missing one is `[]`, as lodash reads it.
+ * A list ARGUMENT, read as the array it is: a missing one is `[]`.
  * A list the proof shows THERE takes no guard, so `$.z.union($.a.uniq())` reads the
  * `.uniq()` as it is. See `arrayOrEmpty`.
  */
@@ -1378,8 +1377,8 @@ const spelledKeys = (e: Expr): string[] | null =>
     : null;
 
 /**
- * HR5's safe value for a cell that serves a number and a date. It is 0, as lodash reads
- * `_.inRange(null, -1, 1)`, or the epoch when a bound is a date. `dispatchOn` wraps the
+ * HR5's safe value for a cell that serves a number and a date. It is 0, or the epoch
+ * when a bound is a date. `dispatchOn` wraps the
  * receiver of a one-family row on its own, and a receiver of a proven family too.
  * `.clamp()` and `.inRange()` take a number or a date. So for any other receiver the
  * cell states the wrap, and the kind of its bounds picks the value.
@@ -1456,7 +1455,7 @@ function groupedByKey(
   };
 }
 
-/** A number that reads a null or missing value as 0, as lodash does. `there` says the proof shows it present. */
+/** A number that reads a null or missing value as 0. `there` says the proof shows it present. */
 const orZero = (v: unknown, there: boolean): unknown =>
   v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
 
@@ -1465,7 +1464,7 @@ const orZero = (v: unknown, there: boolean): unknown =>
  * receiver is `upper`, and `lower` is 0. The bounds swap when `lower` is the larger one. Two whole bounds give a whole
  * number, both ends included, and any other pair gives a fractional number. A constant
  * pair decides the form here. The server tests a pair that is known only at run time.
- * A missing bound reads as 0, as lodash reads it.
+ * A missing bound reads as 0.
  *
  *   (1).random(6)     → { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }
  *   $.a.random($.b)   → a `$let` of the two ends, and a `$cond` on whether both are whole
@@ -1525,7 +1524,7 @@ const RANGE_ARGS: Arity = {
  *   $.n.range()    → { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
  */
 function rangeOf({ recv, args, value, bind, present }: ExprIn): unknown {
-  // lodash reads a missing bound as 0; `$range` stops the command on null
+  // a missing bound reads as 0 (HR5); `$range` stops the command on null
   const self = orZero(recv, present);
   const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
   if (args.length === 2) return { $range: [start, end, value(args[1])] };
@@ -5419,11 +5418,11 @@ export const NAMES = {
     iterateeSlots: {
       array: {
         sortSpec:
-          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); no argument is the natural order',
+          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); no argument is the natural order',
       },
       stream: {
         sortSpec:
-          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); a stream has no natural order, so a key is required',
+          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); a stream has no natural order, so a key is required',
       },
     },
     returns: { array: "same", stream: "stream" },
@@ -7952,7 +7951,7 @@ export const NAMES = {
               [sorted.as]: {
                 $sortArray: {
                   input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
-                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort — lodash's answer
+                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort
                   sortBy: { k: -1 },
                 },
               },
@@ -9155,7 +9154,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
-      // Last wins, as lodash's does; "last" follows the stream's current order.
+      // Last wins; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" }),
     },
     statement: unsupported(
@@ -9428,7 +9427,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
+      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named.
       emit: ({ args, value, element }) => {
         const at = element().path;
         const keys = value(args[0]) as string[];
@@ -10191,7 +10190,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "other", exact: 1, slotType: { 0: "array" } },
-      // The elements in `other`, one document per distinct element — lodash keeps each value once.
+      // The elements in `other`, one document per distinct element, so each value comes back once.
       emit: ({ args, predicate, bind, element }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
