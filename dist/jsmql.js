@@ -147,10 +147,6 @@ function constantText(value) {
   }
   return null;
 }
-var isSingleCodePointLiteral = (value) => {
-  const text = constantText(value);
-  return text !== null && [...text].length === 1;
-};
 function mongoRegexOptions(jsFlags) {
   let out = "";
   for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
@@ -664,21 +660,14 @@ var collapse = (key, acc) => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } }
 ];
 function padded(side, recv, args, value, bind) {
-  const target2 = value(args[0]);
+  const length = value(args[0]);
   const pad2 = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
-  const need = { $subtract: [target2, { $strLenCP: v.ref }] };
-  const filler = (count) => {
-    const repeated = {
-      $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", pad2] } }
-    };
-    return isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(count)] };
-  };
-  const half = side === "both" ? bind("half") : null;
-  const padding = half !== null ? { $concat: [filler({ $floor: half.ref }), v.ref, filler({ $ceil: half.ref })] } : { $concat: side === "start" ? [filler(need), v.ref] : [v.ref, filler(need)] };
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [half === null ? need : half.ref, 0] }, padding, v.ref] };
-  const body = half === null ? bounded : { $let: { vars: { [half.as]: { $divide: [need, 2] } }, in: bounded } };
-  return { $let: { vars: { [v.as]: recv }, in: body } };
+  const atStart = { $concat: [pad2, "$$value"] };
+  const atEnd = { $concat: ["$$value", pad2] };
+  const step2 = side === "start" ? atStart : side === "end" ? atEnd : { $cond: [{ $mod: ["$$this", 2] }, ...length % 2 === 1 ? [atEnd, atStart] : [atStart, atEnd]] };
+  const input = { $range: [length, { $strLenCP: v.ref }, -1] };
+  return { $let: { vars: { [v.as]: recv }, in: { $reduce: { input, initialValue: v.ref, in: step2 } } } };
 }
 function identity(bind) {
   const x = bind("x");
@@ -3924,7 +3913,14 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
@@ -3939,14 +3935,20 @@ var NAMES = {
   padEnd: name({
     doc: "'.padEnd()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
@@ -3965,7 +3967,14 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "length[, chars]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "length[, pad]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("both", r, args, value, bind))
     },
     stream: unsupported("'.pad()' has no stream form: it produces a value, not a stream of documents."),
@@ -21955,6 +21964,16 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     if (e !== void 0 && numberOf(e) === 0) {
       throw new CodegenError(
         `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos
+      );
+    }
+  }
+  for (const i of args.oneChar ?? []) {
+    const e = operands[i];
+    const text = e?.type === "StringLiteral" ? e.value : e?.type === "Injected" && typeof e.value === "string" ? e.value : null;
+    if (text !== null && (text.length !== 1 || text.charCodeAt(0) > 127)) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${i + 1} takes one ASCII character, but got ${JSON.stringify(text)}.`,
         e.pos
       );
     }

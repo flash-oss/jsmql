@@ -37,7 +37,6 @@ import {
   indexedPairs,
   isFiniteNumber,
   isIfNullWrapped,
-  isSingleCodePointLiteral,
   iterateeKeys,
   joinWords,
   joinedWith,
@@ -1106,9 +1105,14 @@ const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
 ];
 
 /**
- * `.padStart`, `.padEnd` and `.pad` repeat the pad to the target length. They cut it to fit when the pad
- * has more than one character. `.pad` fills both sides, as `_.pad` does. The start takes the floor of
- * half the missing characters. The end takes the ceil. Each side repeats the pad from its first character.
+ * `.padStart`, `.padEnd` and `.pad` take a constant length of 1 or more and a pad of one ASCII
+ * character (the `args` of each row). One `$reduce` adds the pad once for each missing character.
+ * Its `$range` counts down from the length to the length of the string. MEASURED: the range is
+ * empty when the string is long enough, so the string stays as it is.
+ *
+ * `.pad` adds the pad at the end on the first step, then at the start, and so on. So the end takes
+ * the odd character, as `_.pad` does. `$$this` is the length on the first step, so a step whose
+ * `$$this` has the parity of the length adds at the end.
  */
 function padded(
   side: "start" | "end" | "both",
@@ -1117,34 +1121,21 @@ function padded(
   value: (e: Expr) => unknown,
   bind: (hint: string) => Minted,
 ): unknown {
-  const target = value(args[0]);
+  // the row's `constant` and `slotRange` rules hold the length to a whole number of 1 or more
+  const length = value(args[0]) as number;
   const pad = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
-  const need = { $subtract: [target, { $strLenCP: v.ref }] };
-  const filler = (count: unknown): unknown => {
-    const repeated = {
-      $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", pad] } },
-    };
-    return isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(count)] };
-  };
-  // `.pad` reads half the missing characters twice on each side, so one binding holds it
-  const half = side === "both" ? bind("half") : null;
-  const padding =
-    half !== null
-      ? { $concat: [filler({ $floor: half.ref }), v.ref, filler({ $ceil: half.ref })] }
-      : { $concat: side === "start" ? [filler(need), v.ref] : [v.ref, filler(need)] };
-  // A target the DATA decides can be missing or null, and `$range` refuses a
-  // non-numeric end — measured, it stops the whole query. JavaScript pads nothing
-  // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
-  // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
-  // and a target already shorter than the string. A number LITERAL needs no test.
-  const bounded =
-    args[0].type === "NumberLiteral"
-      ? padding
-      : { $cond: [{ $gt: [half === null ? need : half.ref, 0] }, padding, v.ref] };
-  const body = half === null ? bounded : { $let: { vars: { [half.as]: { $divide: [need, 2] } }, in: bounded } };
+  const atStart = { $concat: [pad, "$$value"] };
+  const atEnd = { $concat: ["$$value", pad] };
+  const step =
+    side === "start"
+      ? atStart
+      : side === "end"
+        ? atEnd
+        : { $cond: [{ $mod: ["$$this", 2] }, ...(length % 2 === 1 ? [atEnd, atStart] : [atStart, atEnd])] };
+  const input = { $range: [length, { $strLenCP: v.ref }, -1] };
   // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
-  return { $let: { vars: { [v.as]: recv }, in: body } };
+  return { $let: { vars: { [v.as]: recv }, in: { $reduce: { input, initialValue: v.ref, in: step } } } };
 }
 
 /** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
@@ -4958,7 +4949,14 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind)),
     },
@@ -4975,14 +4973,20 @@ export const NAMES = {
   padEnd: name({
     doc: "'.padEnd()' — see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind)),
     },
@@ -5003,7 +5007,14 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "length[, chars]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "length[, pad]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("both", r, args, value, bind)),
     },

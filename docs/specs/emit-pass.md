@@ -223,6 +223,7 @@ refusals for a spread or a computed key inside an object body
 
 - whole-number, field-name and field-path slots, ranges and enums;
 - `constant` slots, and a non-empty or non-zero slot;
+- a slot that takes one ASCII character (`oneChar`);
 - a zero with an alternative of its own (`zeroRefused`);
 - an integer slot or receiver (`integer`, where `-1` is the receiver);
 - a `BodyRule` field of a method's options document (`args.body`): required and

@@ -648,8 +648,8 @@ const VALUE_METHOD_SIGNATURES = {
   escape: { recv: "String", sig: "(): string", doc: "Escape HTML entities — `_.escape`." },
   pad: {
     recv: "String",
-    sig: "(length: number, chars?: string): string",
-    doc: "Pad both sides to `length` with `chars` (default a space); the end takes the odd character — `_.pad`.",
+    sig: "(length: number, pad?: string): string",
+    doc: "Pad both sides to a constant `length` with one ASCII character (default a space); the end takes the odd character — `_.pad`.",
   },
   truncate: {
     recv: "String",

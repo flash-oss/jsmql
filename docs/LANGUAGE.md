@@ -1827,15 +1827,30 @@ $.first.trim() + " " + $.last      // { $concat: [{ $trim: ... }, " ", "$last"] 
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: { $ifNull: ["$email", ""] }, regex: "^[a-z]" } }
 $.text.matchAll(/word/g)           // { $regexFindAll: { input: { $ifNull: ["$text", ""] }, regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
-$.code.padStart(5, "0")            // padded via $reduce + $range + $concat (no length guard — an already-long string concats an empty filler)
-$.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
-$.note.padEnd(10)                  // (default pad char is space)
+$.code.padStart(5, "0")            // "42" → "00042"   (see "Padding" below)
+$.note.padEnd(10)                  // the default pad is a space
 "-".repeat($.n)                    // $reduce concatenating "-" n times
 
 // Regex receiver methods — equivalent to .match / .search-style calls
 /^[a-z]/.test($.s)                 // { $regexMatch: { input: "$s", regex: "^[a-z]" } }
 /word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
 /word/gi.test($.s)                 // { $regexMatch: { input: "$s", regex: "word", options: "i" } }  — g dropped
+```
+
+**Padding.** `.padStart(length[, pad])`, `.padEnd(length[, pad])` and `.pad(length[, pad])` take a
+constant length of 1 or more. The pad is one ASCII character, and it is a space when you omit it. A string that is `length` or longer stays the same. `.pad()` pads both sides, as lodash's
+`_.pad` does. When the padding is an odd number of characters, the end gets one more character.
+JavaScript also accepts a length from the data, a pad of two or more characters and a non-ASCII pad.
+JSMQL refuses them, because a fixed width is the padding that analytics needs. For other padding,
+write the MQL yourself with `$reduce` and `$concat`.
+
+```js
+$.code.padStart(5, "0")            // { $let: { vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
+                                   //   in: { $reduce: { input: { $range: [5, { $strLenCP: "$$jsmqlPad" }, -1] },
+                                   //     initialValue: "$$jsmqlPad", in: { $concat: ["0", "$$value"] } } } } }
+$.code.pad(8, "*")                 // "abc" → "**abc***"
+$.code.padStart($.width)           // ✗ the length must be a constant
+$.code.padStart(5, "ab")           // ✗ the pad is one character
 ```
 
 **`.endsWith()` and indices out of range.** MongoDB's `$substrCP` is stricter than the string
@@ -1938,13 +1953,8 @@ $.s.startCase()          // "foo_bar" → "Foo Bar"
 $.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
 $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
-$.s.pad(8, "_-")         // "abc" → "_-abc_-_"      (both sides; the end takes the odd character)
+$.s.pad(8, "_")          // "abc" → "__abc___"      (both sides; see "Padding" above)
 ```
-
-`.pad(length[, chars])` pads both sides of the string to `length`, as `_.pad` does. When the padding
-is an odd number of characters, the end gets one more character than the start. Each side repeats
-`chars` from its first character, and cuts the last repeat to fit. `chars` is a space when you omit it.
-A string that is `length` or longer, or an empty `chars`, gives the string with no change.
 
 `.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLower()` and `.toUpper()` change only the case, and keep all other characters.
 

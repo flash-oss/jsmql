@@ -122,42 +122,30 @@ describe("compiler/emit — string methods", () => {
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
         in: {
-          $concat: [
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", "-"] },
-              },
-            },
-            "$$jsmqlPad",
-          ],
+          $reduce: {
+            input: { $range: [7, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["-", "$$value"] },
+          },
         },
       },
     });
-    expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toEqual({
+    expect(compiled('$.csv.padEnd(8, "x")', (d) => d.csv.padEnd(8, "x"))).toEqual({
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
         in: {
-          $concat: [
-            "$$jsmqlPad",
-            {
-              $substrCP: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "xy"] },
-                  },
-                },
-                0,
-                { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-              ],
-            },
-          ],
+          $reduce: {
+            input: { $range: [8, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["$$value", "x"] },
+          },
         },
       },
     });
+    // a string that is long enough stays as it is, and a "$" pad stays text
+    compiled('$.csv.padStart(3, "-")', (d) => d.csv.padStart(3, "-"));
+    compiled('$.csv.padEnd(9, "$")', (d) => d.csv.padEnd(9, "$"));
+    compiled("$.nope.padStart(3)", () => "   ");
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
       $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", { $ifNull: ["$csv", ""] }] } },
     });
@@ -2095,99 +2083,78 @@ describe("compiler/emit — number ranges", () => {
   });
 });
 
-/** lodash's `_.pad` (with its `createPadding`), the answer each `.pad()` case compares with. */
+/** lodash's `_.pad` for a pad of one character, the answer each `.pad()` case compares with. */
 const lodashPad = (string: unknown, length?: number, chars?: string): string => {
   const s = string == null ? "" : String(string);
   const size = [...s].length;
   const target = Math.trunc(Number(length ?? 0)) || 0;
   if (!target || size >= target) return s;
-  const fill = (n: number): string => {
-    const c = chars ?? " ";
-    if (c.length < 2) return c.repeat(n);
-    return [...c.repeat(Math.ceil(n / [...c].length))].slice(0, n).join("");
-  };
+  const fill = (n: number): string => (chars ?? " ").repeat(n);
   const mid = (target - size) / 2;
   return fill(Math.floor(mid)) + s + fill(Math.ceil(mid));
 };
 
 describe("compiler/emit — `.pad()` is lodash's `_.pad`", () => {
-  it("pads both sides, and gives the end the odd character", () => {
-    expect(compiled('$.csv.pad(12, "xyz")', (d) => lodashPad(d.csv, 12, "xyz"))).toEqual({
+  it("adds the pad on alternate sides, and gives the end the odd character", () => {
+    // the step whose `$$this` has the parity of the length adds at the end
+    expect(compiled("$.csv.pad(9)", (d) => lodashPad(d.csv, 9))).toEqual({
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
         in: {
-          $let: {
-            vars: { jsmqlHalf: { $divide: [{ $subtract: [12, { $strLenCP: "$$jsmqlPad" }] }, 2] } },
-            in: {
-              $concat: [
-                {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $floor: "$$jsmqlHalf" }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "xyz"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $floor: "$$jsmqlHalf" }] },
-                  ],
-                },
-                "$$jsmqlPad",
-                {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $ceil: "$$jsmqlHalf" }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "xyz"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $ceil: "$$jsmqlHalf" }] },
-                  ],
-                },
-              ],
-            },
+          $reduce: {
+            input: { $range: [9, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $cond: [{ $mod: ["$$this", 2] }, { $concat: ["$$value", " "] }, { $concat: [" ", "$$value"] }] },
           },
         },
       },
     });
-    // The cases add an even and an odd count of characters, with the default pad and a one-character pad.
-    compiled("$.csv.pad(9)", (d) => lodashPad(d.csv, 9));
-    compiled('$.csv.pad(8, "*")', (d) => lodashPad(d.csv, 8, "*"));
-    compiled('$.csv.pad(10, "ab")', (d) => lodashPad(d.csv, 10, "ab"));
+    expect(compiled('$.csv.pad(8, "*")', (d) => lodashPad(d.csv, 8, "*"))).toEqual({
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $reduce: {
+            input: { $range: [8, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $cond: [{ $mod: ["$$this", 2] }, { $concat: ["*", "$$value"] }, { $concat: ["$$value", "*"] }] },
+          },
+        },
+      },
+    });
+    compiled('$.csv.pad(6, "$")', (d) => lodashPad(d.csv, 6, "$"));
+    compiled('$.csv.pad(7, "-")', (d) => lodashPad(d.csv, 7, "-"));
   });
 
-  it("keeps the string when the pad is empty or the length is not more than the string", () => {
-    compiled('$.csv.pad(9, "")', (d) => lodashPad(d.csv, 9, ""));
+  it("keeps the string when the length is not more than the string", () => {
     compiled('$.csv.pad(2, "-")', (d) => lodashPad(d.csv, 2, "-"));
     compiled('$.csv.pad(5, "-")', (d) => lodashPad(d.csv, 5, "-"));
-    compiled('$.csv.pad(-4, "-")', (d) => lodashPad(d.csv, -4, "-"));
-  });
-
-  it("tests a length that the data gives, and keeps the string when the length is missing", () => {
-    expect(compiled('$.csv.pad($.a.size() * 4, "ab")', (d) => lodashPad(d.csv, d.a.length * 4, "ab"))).toHaveProperty(
-      "$let.in.$let.in.$cond.0",
-      { $gt: ["$$jsmqlHalf", 0] },
-    );
-    compiled("$.csv.pad($.nope)", (d) => lodashPad(d.csv, (d as { nope?: number }).nope));
   });
 
   it("pads the empty string for a missing receiver, and answers null after `?.`", () => {
-    compiled('$.nope.pad(5, "ab")', () => lodashPad(undefined, 5, "ab"));
+    compiled('$.nope.pad(5, "-")', () => lodashPad(undefined, 5, "-"));
     expect(compiled("$.nope?.pad(5)", () => null)).toHaveProperty("$cond");
   });
 
   it("folds a constant receiver", () => {
-    expect(compiled('"abc".pad(8, "_-")', () => lodashPad("abc", 8, "_-"))).toBe("_-abc_-_");
+    expect(compiled('"abc".pad(8, "_")', () => lodashPad("abc", 8, "_"))).toBe("__abc___");
   });
 
-  it("refuses an argument of the wrong kind, and names each parameter", () => {
+  it("takes a constant length of 1 or more and a pad of one ASCII character", () => {
+    expect(() => expr("$.s.pad($.n)")).toThrow(
+      "'pad' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+    );
+    expect(() => expr("$.s.pad(5, $.c)")).toThrow(
+      "'pad' argument 2 must be a compile-time constant. The server reads it before any document. It got an expression.",
+    );
+    expect(() => expr("$.s.pad(0)")).toThrow("'pad' argument 1 must be a number of 1 or more. It got 0.");
+    expect(() => expr("$.s.pad(-4)")).toThrow("'pad' argument 1 must be a number of 1 or more. It got -4.");
+    expect(() => expr('$.s.pad(5, "ab")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "ab".`);
+    expect(() => expr('$.s.pad(5, "")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "".`);
+    expect(() => expr('$.s.pad(5, "é")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "é".`);
     expect(() => expr('$.s.pad("3")')).toThrow("'.pad()' argument 1 takes an integer, but got a string.");
     expect(() => expr("$.s.pad(3, 0)")).toThrow("'.pad()' argument 2 takes a string, but got a number.");
     expect(() => expr("$.s.pad(null)")).toThrow("'.pad()' argument 1 takes an integer, but got null.");
-    expect(() => expr("$.s.pad()")).toThrow("'.pad(length[, chars])' requires 1 or 2 arguments, got 0");
+    expect(() => expr("$.s.pad()")).toThrow("'.pad(length[, pad])' requires 1 or 2 arguments, got 0");
   });
 });
 
@@ -3575,7 +3542,6 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   indexOfSubstring: ['$.nope?.indexOfSubstring("b")', '$.mo.d?.indexOfSubstring("b")'],
   replace: ['$.nope?.replace("a", "x")', '$.mo.d?.replace("a", "x")'],
   replaceAll: ['$.nope?.replaceAll(",", ";")', '$.mo.d?.replaceAll(",", ";")'],
-  padEnd: ["$.nope?.padEnd(9)", "$.mo.d?.padEnd(9)"],
   repeat: ["$.nope?.repeat(2)", "$.mo.d?.repeat(2)"],
   escape: ["$.nope?.escape()", "$.mo.d?.escape()"],
   toReversed: ["$.nope?.toReversed()", "$.mo.d?.toReversed()"],

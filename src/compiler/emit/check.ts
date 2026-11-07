@@ -412,6 +412,17 @@ export function checkSlots(
       );
     }
   }
+  for (const i of args.oneChar ?? []) {
+    const e = operands[i];
+    const text =
+      e?.type === "StringLiteral" ? e.value : e?.type === "Injected" && typeof e.value === "string" ? e.value : null;
+    if (text !== null && (text.length !== 1 || text.charCodeAt(0) > 0x7f)) {
+      throw new CodegenError(
+        `'${spell(name)}' argument ${i + 1} takes one ASCII character, but got ${JSON.stringify(text)}.`,
+        e!.pos,
+      );
+    }
+  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
