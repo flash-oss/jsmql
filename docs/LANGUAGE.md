@@ -2356,7 +2356,7 @@ A **key function** can name a deep path: `x => x.a.b.c` → `sortBy: { "a.b.c": 
 
 #### lodash iteratee and predicate shorthands
 
-Every higher-order value method accepts the same lodash vocabulary of iteratees and predicates. This includes the native JS methods (`.map`, `.filter`, `.find`, `.findIndex`, `.findLast`, `.some`, `.every`, `.flatMap`) and the lodash methods (`.sumBy`, `.uniqBy`, `.groupBy`, `.reject`, `.takeWhile`, `.differenceBy`, …). Each shorthand desugars to exactly what the equivalent one-parameter arrow emits:
+Most higher-order value methods accept the shorthands below, for example `.filter({ active: true })`. Some methods take an arrow only, for example `.reduce((acc, x) => …)` and `.mapValues((v, k) => …)`. The `iterateeSlots` cell of each row in `src/registry/names.ts` states which slots accept which shorthands. Each shorthand desugars to exactly what the equivalent one-parameter arrow emits:
 
 | shorthand | example | equivalent arrow |
 |---|---|---|
@@ -2559,7 +2559,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The iteratee of `invertBy` reads the value only, as in lodash. So it takes the same shorthands as `groupBy`: `"field"`, an index, `{ field: value }` and `["field", value]`.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The predicate of `findKey` is the same arrow, or one of the [lodash shorthands](#lodash-iteratee-and-predicate-shorthands). A shorthand reads the value of each entry. The iteratee of `invertBy` reads the value only, as in lodash, so it takes the same shorthands as `groupBy`.
 
 A reader of an object is a method of the object:
 
@@ -2573,6 +2573,8 @@ $.pick(["name", "age"])               // the document itself is a receiver too �
 $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.pickBy(v => v)                    // keep the truthy entries: JavaScript's rule, so "" and 0 drop out (see Truthy and falsy)
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
+$.o.findKey(v => v > 1)               // the key of the first entry whose value passes
+$.team.findKey({ role: "admin" })     // a shorthand reads the value of each entry
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
 $.o.invertBy()                        // { <value>: [keys that hold it] } — no key is lost
 $.team.invertBy("role")               // { admin: ["bob"], user: ["ann", "cy"] }
@@ -2588,6 +2590,8 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 ```
 
 > `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
+
+> `findKey` answers the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is.
 
 > `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys`, `invert` and `invertBy` **stringify** the key that they make, with `$toString`. When two keys have the same name, `mapKeys` and `invert` keep the last one, as in lodash. `invertBy` keeps every original key in a list, in entry order, and the order of its new keys is unspecified. A missing or null iteratee result becomes the key `"null"`, as in `groupBy`. lodash spells a missing result `"undefined"`. A live mongod verified every shape here.
 

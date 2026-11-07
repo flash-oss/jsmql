@@ -454,6 +454,7 @@ const VALUE_METHOD_SKIP = {
     "omit",
     "pickBy",
     "omitBy",
+    "findKey",
     "invert",
     "invertBy",
     "toPairs",

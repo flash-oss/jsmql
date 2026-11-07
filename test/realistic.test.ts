@@ -870,6 +870,62 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
   });
 });
 
+describe("pick the warehouse that ships an order (`.findKey`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // `stock` maps each warehouse code to its stock record. `.findKey()` gives the code of
+    // the first warehouse that passes, and no field when no warehouse passes. The
+    // `{ qty: 0 }` shorthand reads each record: `s => s.qty === 0`.
+    expect(
+      jsmql`
+$.outOfStockAt = $.stock.findKey({ qty: 0 });
+$.shipFrom = $.stock.findKey((s, site) => site !== $.homeSite && s.qty >= $.qty);
+      `,
+    ).toEqual([
+      {
+        $set: {
+          outOfStockAt: {
+            $getField: {
+              field: "k",
+              input: {
+                $first: {
+                  $filter: {
+                    input: { $objectToArray: { $ifNull: ["$stock", {}] } },
+                    as: "jsmqlKv",
+                    cond: { $let: { vars: { x: "$$jsmqlKv.v" }, in: { $eq: ["$$x.qty", 0] } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $set: {
+          shipFrom: {
+            $getField: {
+              field: "k",
+              input: {
+                $first: {
+                  $filter: {
+                    input: { $objectToArray: { $ifNull: ["$stock", {}] } },
+                    as: "jsmqlKv",
+                    cond: {
+                      $let: {
+                        vars: { s: "$$jsmqlKv.v", site: "$$jsmqlKv.k" },
+                        in: { $and: [{ $ne: ["$$site", "$homeSite"] }, { $gte: ["$$s.qty", "$qty"] }] },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 describe("list the members of each role in a workspace (lodash `.invertBy`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.workspaces.aggregate(jsmql(...))" }, () => {
     // `members` maps a user name to the user's settings. `.invertBy("role")` reverses
