@@ -447,7 +447,19 @@ const VALUE_METHOD_SKIP = {
   // augmented. See VALUE_METHOD_SIGNATURES.
   dateNative: new Set(NATIVE_DATE_METHODS),
   // Object-receiver: no safe interface (Object is the base of everything).
-  object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs", "assign"]),
+  object: new Set([
+    "mapValues",
+    "mapKeys",
+    "pick",
+    "omit",
+    "pickBy",
+    "omitBy",
+    "findKey",
+    "invert",
+    "invertBy",
+    "toPairs",
+    "assign",
+  ]),
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
   // Shimmed to a custom error message: not a real completable method.

@@ -912,6 +912,11 @@ the JavaScript truth rules of [LANGUAGE.md § Truthy and
 falsy](../LANGUAGE.md#truthy-and-falsy). `$.o.pickBy(v => v)` drops a `""`
 value, as lodash does.
 
+`.findKey()` reads the same pairs as `.pickBy()`. Its answer is the `k` of the
+first pair that passes: `$getField` over the `$first` of the `$filter`. When
+no pair passes, `$first` of `[]` is missing, so the answer is missing, as the
+answer of `.find()` is.
+
 Where JavaScript and MongoDB number differently, the cell follows
 JavaScript: `getMonth()` and `getDay()` count from 0 (`$month` and
 `$dayOfWeek` count from 1), so each subtracts 1. The local-time accessors
@@ -929,6 +934,12 @@ the body is plain arithmetic, and the compiler reads both through a `$let`
 when the body calls anything, because a call may lower to a `$reduce` of its
 own and shadow them. `elements` binds one parameter per position of one
 array element — `.zipWith`'s arrow over a `$zip` pair.
+
+`objIteratee` is the object callback `(value[, key]) => …`, bound to one
+`$objectToArray` pair. An object method whose lodash iteratee reads the value
+only (`.invertBy()`) takes `iteratee` instead. Its row states an `object` slot
+layout, so the desugar pass rewrites each shorthand to an arrow. The cell then
+binds the arrow's parameter to the pair's value with a `$let`.
 
 ```
 $.a.reduce((acc, x) => acc + x, 0)

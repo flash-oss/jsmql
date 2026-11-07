@@ -786,6 +786,29 @@ function groupedByKey(input, it, bind) {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } }
   };
 }
+function invertedByKey(pairs, it, bind) {
+  const kv = bind("kv");
+  const entries = bind("entries");
+  const key = bind("key");
+  const value = `${kv.ref}.v`;
+  const path = typeof it.in === "string" && (it.in === it.ref || it.in.startsWith(`${it.ref}.`));
+  const keyOf2 = path ? value + it.in.slice(it.ref.length) : { $let: { vars: { [it.as]: value }, in: it.in } };
+  const keysOf2 = { $filter: { input: entries.ref, cond: { $eq: ["$$this.k", key.ref] } } };
+  return {
+    $let: {
+      vars: { [entries.as]: { $map: { input: pairs, as: kv.as, in: { k: stringKeyExpr(keyOf2), v: `${kv.ref}.k` } } } },
+      in: {
+        $arrayToObject: {
+          $map: {
+            input: { $setUnion: [`${entries.ref}.k`, []] },
+            as: key.as,
+            in: { k: key.ref, v: { $map: { input: keysOf2, in: "$$this.v" } } }
+          }
+        }
+      }
+    }
+  };
+}
 var orZero = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
 function randomOf({ recv, args, value, bind, present: present2 }) {
   const self = orZero(recv, present2);
@@ -8372,6 +8395,36 @@ var NAMES = {
     group: unsupported("'.omitBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.omitBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  findKey: name({
+    doc: "'.findKey()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    // MEASURED: `$getField` over a `$first` of `$objectToArray: null` is null, for a missing `o` and for `o: null`
+    passesNull: true,
+    on: "object",
+    params: ["value", "key"],
+    // lodash's `_.findKey` takes its shorthands, and each one reads the VALUE, as `.find()` reads the element
+    iterateeSlots: {
+      object: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
+    // MEASURED: the key of the first entry that passes, and MISSING when no entry passes, as `.find()` is
+    returns: "string",
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
+        const it = objIteratee(args[0], "truth");
+        const hit = { $first: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
+        return { $getField: { field: "k", input: hit } };
+      }
+    },
+    stream: unsupported("'.findKey()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.findKey()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findKey();'"
+    ),
+    group: unsupported("'.findKey()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.findKey()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   invert: name({
     doc: "'.invert()' \u2014 see docs/LANGUAGE.md.",
     call: true,
@@ -8402,6 +8455,34 @@ var NAMES = {
     ),
     group: unsupported("'.invert()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.invert()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  invertBy: name({
+    doc: "'.invertBy()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "object",
+    params: ["value"],
+    iterateeSlots: {
+      object: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"]
+      }
+    },
+    returns: { recordOf: { arrayOf: "string" } },
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, iteratee, bind, present: present2 }) => invertedByKey(pairsOfObject(recv, present2), args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
+    },
+    stream: unsupported("'.invertBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.invertBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.invertBy();'"
+    ),
+    group: unsupported("'.invertBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.invertBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
   }),
   toPairs: name({
     doc: "'.toPairs()' \u2014 see docs/LANGUAGE.md.",
