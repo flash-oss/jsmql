@@ -102,13 +102,13 @@ describe(".slice — rejection branches", () => {
 
   it("negative start → non-negative integer error", () => {
     expect(() => jsmql("$$ = $$.slice(-1, 5);")).toThrow(
-      "'slice' argument 1 must be a number of 0 or more. It got -1.",
+      "'.slice()' argument 1 must be a number of 0 or more. It got -1.",
     );
   });
 
   it("negative end → non-negative integer error", () => {
     expect(() => jsmql("$$ = $$.slice(0, -3);")).toThrow(
-      "'slice' argument 2 must be a number of 0 or more. It got -3.",
+      "'.slice()' argument 2 must be a number of 0 or more. It got -3.",
     );
   });
 
@@ -124,13 +124,13 @@ describe(".slice — rejection branches", () => {
 
   it("non-literal argument → unsupported on streams error", () => {
     expect(() => jsmql("$$ = $$.slice($.offset, 5);")).toThrow(
-      "'slice' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.slice()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
   });
 
   it("spread argument is rejected", () => {
     expect(() => jsmql("$$ = $$.slice(...[0, 5]);")).toThrow(
-      "'slice' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.slice()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
   });
 });
@@ -154,14 +154,14 @@ describe(".take(n) → $limit — lodash first-n", () => {
 
   it("rejects a non-integer / negative / computed / extra-arg / spread", () => {
     expect(() => jsmql("$$ = $$.take(1.5);")).toThrow("'.take()' argument 1 takes an integer, but got a fraction.");
-    expect(() => jsmql("$$ = $$.take(-1);")).toThrow("'take' argument 1 must be a number of 0 or more. It got -1.");
+    expect(() => jsmql("$$ = $$.take(-1);")).toThrow("'.take()' argument 1 must be a number of 0 or more. It got -1.");
     expect(() => jsmql('$$ = $$.take("x");')).toThrow("'.take()' argument 1 takes an integer, but got a string.");
     expect(() => jsmql("$$ = $$.take($.n);")).toThrow(
-      "'take' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.take()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => jsmql("$$ = $$.take(1, 2);")).toThrow("'.take([n=1])' requires 0 or 1 arguments, got 2");
     expect(() => jsmql("$$ = $$.take(...[1]);")).toThrow(
-      "'take' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.take()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
   });
 });
@@ -562,7 +562,7 @@ describe(".sampleSize(n) → $sample", () => {
 
   it("rejects size < 1", () => {
     expect(() => jsmql("$$ = $$.sampleSize(0);")).toThrow(
-      "'sampleSize' argument 1 must be a number of 1 or more. It got 0.",
+      "'.sampleSize()' argument 1 must be a number of 1 or more. It got 0.",
     );
   });
 });

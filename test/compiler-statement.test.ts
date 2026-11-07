@@ -1190,21 +1190,21 @@ describe("compiler/emit/statement — a regex literal in MQL that you write is a
 });
 
 describe("compiler/emit/statement — the server accepts every pipeline this file asserts", () => {
-  it("ran each one, or none", async () => {
-    // The cases above register their sources whether a server runs or not.
-    expect(RUNS.length).toBeGreaterThan(0);
-    // The allowances have teeth only while each entry is actually asserted somewhere.
+  // An allowance has an effect only while a case in this file asserts its source.
+  it("asserts each allowance in a case above", () => {
     for (const src of [...Object.keys(NEEDS_MORE_THAN_A_SERVER), ...Object.keys(REFUSED_BY_ENVIRONMENT)]) {
       expect(RUNS, src).toContain(src);
     }
-    if (coll === null) return;
+  });
+
+  it.skipIf(!up)("runs each pipeline", async () => {
     const refused: string[] = [];
     const byEnvironment: string[] = [];
     let ran = 0;
     for (const src of RUNS) {
       if (src in NEEDS_MORE_THAN_A_SERVER) continue;
       try {
-        await coll.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
+        await coll!.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
         ran++;
       } catch (e) {
         const message = (e as Error).message;

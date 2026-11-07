@@ -960,29 +960,29 @@ const canonical = (v: unknown): string =>
       : x,
   );
 
-describe("compiler/emit/join — the server runs every pipeline this file asserts, and answers as JavaScript would", () => {
-  it("ran each one, or none", async () => {
-    // The cases above register their sources whether a server runs or not.
-    expect(RUNS.length).toBeGreaterThan(0);
-    if (coll === null) return;
-    const problems: string[] = [];
-    for (const { src, expected } of RUNS) {
-      let docs: Record<string, unknown>[];
-      try {
-        docs = await coll.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
-      } catch (e) {
-        problems.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${(e as Error).message}`);
-        continue;
+describe.skipIf(!up)(
+  "compiler/emit/join — the server runs every pipeline this file asserts, and answers as JavaScript would",
+  () => {
+    it("runs each pipeline", async () => {
+      const problems: string[] = [];
+      for (const { src, expected } of RUNS) {
+        let docs: Record<string, unknown>[];
+        try {
+          docs = await coll!.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
+        } catch (e) {
+          problems.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${(e as Error).message}`);
+          continue;
+        }
+        if (expected === undefined) continue;
+        // a `$group` answers its keys in no promised order, so documents compare with keys sorted
+        const got = canonical(docs.map((d) => idsOf(d, true)));
+        const want = canonical(expected);
+        if (got !== want) problems.push(`${src}\n  got  ${got}\n  want ${want}`);
       }
-      if (expected === undefined) continue;
-      // a `$group` answers its keys in no promised order, so documents compare with keys sorted
-      const got = canonical(docs.map((d) => idsOf(d, true)));
-      const want = canonical(expected);
-      if (got !== want) problems.push(`${src}\n  got  ${got}\n  want ${want}`);
-    }
-    expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
-  });
-});
+      expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
+    });
+  },
+);
 
 describe.skipIf(!up)("compiler/emit/join — the pair is answered from the foreign index", () => {
   it("answers the pair from the multikey index when either side is an array", async () => {

@@ -776,6 +776,11 @@ export type Arity = {
    */
   zeroRefused?: Readonly<Record<number, string>>;
   /**
+   * Slots whose literal string must be exactly one ASCII character. `.padStart(5, "0")`
+   * repeats one character, so the compiler refuses a pad of two characters, an empty pad and `"é"`.
+   */
+  oneChar?: readonly number[];
+  /**
    * Slots whose literal number must be an integer. `-1` names the receiver.
    * MEASURED: `{ $range: [0, 2.5] }` is refused, because `$range` counts in
    * whole numbers.

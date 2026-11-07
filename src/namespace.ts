@@ -119,7 +119,7 @@ const JSMQL_NS_VAR = "jsmql_";
 // MongoDB variable. That name shares one flat scope with the user's own lambda
 // parameters. A bare name (`s`, `v`, `kv`) is therefore a capture hazard whenever
 // the lowering also splices OUTER-scope codegen into the `$let`'s `in:` clause:
-// `.padStart(s.n)` inside `.map(s => …)` would re-resolve `s` against the
+// `.lastIndexOf(s.n)` inside `.map(s => …)` would re-resolve `s` against the
 // receiver instead. This namespace uses the same grammar constraint as the
 // correlation vars above (lowercase lead, `[A-Za-z0-9_]`), so the shared
 // `jsmql` prefix carries over.

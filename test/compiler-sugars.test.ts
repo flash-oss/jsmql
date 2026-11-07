@@ -14,7 +14,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
 import { expr, pipeline } from "../src/compiler/index.ts";
-import { liveClient } from "./fixtures/live.ts";
+import { liveClient, liveUp } from "./fixtures/live.ts";
+
+const up = await liveUp();
 
 const MAIN = [
   { _id: 1, a: 1, tag: "t1", xs: [3, 1, 2] },
@@ -1314,20 +1316,17 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
   });
 });
 
-describe("compiler/emit — the server runs every pipeline this file asserts", () => {
-  it("ran each one, or none", async () => {
-    // The cases above register their sources whether a server runs or not.
-    expect(RUNS.length).toBeGreaterThan(0);
-    if (db === null) return;
+describe.skipIf(!up)("compiler/emit — the server runs every pipeline this file asserts", () => {
+  it("runs each pipeline", async () => {
     const problems: string[] = [];
     for (const { src, expected, reads } of RUNS) {
       let docs: Record<string, unknown>[];
       try {
-        docs = await db
+        docs = await db!
           .collection("main")
           .aggregate(pipeline(src) as Record<string, unknown>[])
           .toArray();
-        if (reads !== undefined) docs = await db.collection(reads).find().sort({ _id: 1 }).toArray();
+        if (reads !== undefined) docs = await db!.collection(reads).find().sort({ _id: 1 }).toArray();
       } catch (e) {
         problems.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${(e as Error).message}`);
         continue;

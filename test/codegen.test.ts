@@ -3380,7 +3380,7 @@ describe("replacing date parts (.set)", () => {
   });
   it("needs a written-out object literal — MongoDB reads the parts by name", () => {
     expect(() => jsmql.expr("$.t.set($.parts)")).toThrow(
-      "'set' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.set()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => jsmql.expr("$.t.set({ ...$.p })")).toThrow(
       "MQL has no spread in an object. Write '<a>.assign(<b>)' instead.",
@@ -4859,7 +4859,7 @@ describe("array method additions", () => {
   });
   it(".toSpliced still refuses a negative deleteCount", () => {
     expect(() => jsmql.expr("$.xs.toSpliced(1, -1)")).toThrow(
-      "'toSpliced' argument 2 must be a number from 0 to Infinity. It got -1.",
+      "'.toSpliced()' argument 2 must be a number of 0 or more. It got -1.",
     );
   });
   it(".with(i, v) replaces an element by index", () => {
@@ -4890,7 +4890,7 @@ describe("array method additions", () => {
   });
   it(".with with a negative index literal throws", () => {
     expect(() => jsmql.expr("$.xs.with(-1, 9)")).toThrow(
-      "'with' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.with()' argument 1 must be a number of 0 or more. It got -1.",
     );
   });
   it("enforces .with arity (exactly 2)", () => {
@@ -5523,9 +5523,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         in: { $slice: [{ $ifNull: ["$a", []] }, "$$jsmqlI", 2] },
       },
     });
-    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(
-      "'chunk' argument 1 must be a number from 1 to Infinity. It got 0.",
-    );
+    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow("'.chunk()' argument 1 must be a number of 1 or more. It got 0.");
   });
   it(".intersection and .difference are MongoDB's set operators: each value once", () => {
     // A `$filter` would keep the receiver's duplicates. The set operators keep each value
@@ -6501,15 +6499,11 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     );
   });
   it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
-    expect(() => jsmql.expr("$.a.take(-1)")).toThrow(
-      "'take' argument 1 must be a number from 0 to Infinity. It got -1.",
-    );
+    expect(() => jsmql.expr("$.a.take(-1)")).toThrow("'.take()' argument 1 must be a number of 0 or more. It got -1.");
     expect(() => jsmql.expr("$.a.takeRight(-1)")).toThrow(
-      "'takeRight' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.takeRight()' argument 1 must be a number of 0 or more. It got -1.",
     );
-    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow(
-      "'drop' argument 1 must be a number from 0 to Infinity. It got -1.",
-    );
+    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow("'.drop()' argument 1 must be a number of 0 or more. It got -1.");
   });
 });
 
@@ -6900,7 +6894,7 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
       },
     });
     expect(() => jsmql.expr("$.a.sampleSize(-1)")).toThrow(
-      "'sampleSize' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.sampleSize()' argument 1 must be a number of 0 or more. It got -1.",
     );
   });
 });
@@ -7501,103 +7495,16 @@ describe("Number static predicates", () => {
 });
 
 describe("string padding methods", () => {
-  it("padStart with an explicit one-character pad skips the trim (it lands exactly)", () => {
+  it("padStart adds the pad at the start once for each missing character", () => {
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
-          $concat: [
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", "0"] },
-              },
-            },
-            "$$jsmqlPad",
-          ],
-        },
-      },
-    });
-  });
-  it("trims a multi-character pad to the remaining width, like JS", () => {
-    // JS pads to exactly `targetLength` characters, cutting the pad mid-string:
-    // "gold".padStart(9, "US") === "USUSUgold". Repeating the pad (target - len)
-    // times over-fills, so the repeated run is trimmed back.
-    expect(jsmql.expr('$.code.padStart(5, "US")')).toEqual({
-      $let: {
-        vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
-        in: {
-          $concat: [
-            {
-              $substrCP: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "US"] },
-                  },
-                },
-                0,
-                { $max: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-              ],
-            },
-            "$$jsmqlPad",
-          ],
-        },
-      },
-    });
-  });
-  it("a runtime pad expression is always trimmed (length unknown at compile time)", () => {
-    const trimmed = {
-      $cond: [
-        { $lte: ["$code", null] },
-        null,
-        {
-          $let: {
-            vars: { jsmqlPad: "$code" },
-            in: {
-              $concat: [
-                {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "$sep"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                  ],
-                },
-                "$$jsmqlPad",
-              ],
-            },
+          $reduce: {
+            input: { $range: [5, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["0", "$$value"] },
           },
-        },
-      ],
-    };
-    expect(jsmql.expr("$.code.padStart(5, $.sep)")).toEqual({
-      $let: {
-        vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
-        in: {
-          $concat: [
-            {
-              $substrCP: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "$sep"] },
-                  },
-                },
-                0,
-                { $max: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-              ],
-            },
-            "$$jsmqlPad",
-          ],
         },
       },
     });
@@ -7607,85 +7514,52 @@ describe("string padding methods", () => {
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$s", ""] } },
         in: {
-          $concat: [
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [10, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", " "] },
-              },
-            },
-            "$$jsmqlPad",
-          ],
-        },
-      },
-    });
-  });
-  it("padEnd order is str-then-pad", () => {
-    expect(jsmql.expr('$.s.padEnd(10, "-")')).toEqual({
-      $let: {
-        vars: { jsmqlPad: { $ifNull: ["$s", ""] } },
-        in: {
-          $concat: [
-            "$$jsmqlPad",
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [10, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", "-"] },
-              },
-            },
-          ],
-        },
-      },
-    });
-  });
-  // The targetLength/padString args are generated in the OUTER scope but land inside
-  // the $let, so a lambda param sharing the binding's name would be captured without a
-  // gensym: the args re-resolve against the receiver string and the padding silently
-  // vanishes (on mongod: ["7","42"] instead of ["007","***42"]).
-  it("a lambda param named 's' is not captured by the internal binding", () => {
-    expect(jsmql.expr("$.items.map(s => s.code.padStart(s.width, s.pad))")).toEqual({
-      $map: {
-        input: { $ifNull: ["$items", []] },
-        as: "s",
-        in: {
-          $let: {
-            vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
-            in: {
-              $cond: [
-                { $gt: [{ $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }, 0] },
-                {
-                  $concat: [
-                    {
-                      $substrCP: [
-                        {
-                          $reduce: {
-                            input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
-                            initialValue: "",
-                            in: { $concat: ["$$value", "$$s.pad"] },
-                          },
-                        },
-                        0,
-                        { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
-                      ],
-                    },
-                    "$$jsmqlPad",
-                  ],
-                },
-                "$$jsmqlPad",
-              ],
-            },
+          $reduce: {
+            input: { $range: [10, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: [" ", "$$value"] },
           },
         },
       },
     });
   });
+  it("padEnd adds the pad at the end", () => {
+    expect(jsmql.expr('$.s.padEnd(10, "-")')).toEqual({
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$s", ""] } },
+        in: {
+          $reduce: {
+            input: { $range: [10, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["$$value", "-"] },
+          },
+        },
+      },
+    });
+  });
+  it("takes a constant length of 1 or more and a pad of one ASCII character", () => {
+    expect(() => jsmql.expr("$.code.padStart($.width)")).toThrow(
+      "'.padStart()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
+    );
+    expect(() => jsmql.expr("$.code.padEnd(5, $.sep)")).toThrow(
+      "'.padEnd()' argument 2 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
+    );
+    expect(() => jsmql.expr("$.code.padStart(0)")).toThrow(
+      "'.padStart()' argument 1 must be a number of 1 or more. It got 0.",
+    );
+    expect(() => jsmql.expr('$.code.padStart(5, "US")')).toThrow(
+      `'.padStart()' argument 2 takes one ASCII character, but got "US".`,
+    );
+    expect(() => jsmql.expr('$.code.padEnd(5, "")')).toThrow(
+      `'.padEnd()' argument 2 takes one ASCII character, but got "".`,
+    );
+    expect(() => jsmql.expr('$.code.padEnd(5, "é")')).toThrow(
+      `'.padEnd()' argument 2 takes one ASCII character, but got "é".`,
+    );
+  });
   it("a lambda param named after the binding itself gensyms the binding, not the param", () => {
-    // The user's name stays the `as`, and ours moves aside to `jsmqlPad2`. The target width
-    // still reads the USER's param, while the receiver length reads OUR gensymmed binding.
-    const need = { $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] };
-    expect(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))")).toEqual({
+    // The user's name stays the `as`, and the compiler renames ours to `jsmqlPad2`.
+    expect(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(5))")).toEqual({
       $map: {
         input: { $ifNull: ["$items", []] },
         as: "jsmqlPad",
@@ -7693,22 +7567,11 @@ describe("string padding methods", () => {
           $let: {
             vars: { jsmqlPad2: { $ifNull: ["$$jsmqlPad.code", ""] } },
             in: {
-              $cond: [
-                { $gt: [{ $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
-                {
-                  $concat: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", " "] },
-                      },
-                    },
-                    "$$jsmqlPad2",
-                  ],
-                },
-                "$$jsmqlPad2",
-              ],
+              $reduce: {
+                input: { $range: [5, { $strLenCP: "$$jsmqlPad2" }, -1] },
+                initialValue: "$$jsmqlPad2",
+                in: { $concat: [" ", "$$value"] },
+              },
             },
           },
         },
@@ -7723,43 +7586,8 @@ describe("string padding methods", () => {
 // A lowering that binds its receiver in a `$let` and then splices a USER
 // expression into the body must not name that binding something the user might
 // have named a lambda param — the spliced `$$name` would silently re-point at
-// the receiver. That produces wrong VALUES, not errors: `.padStart(3, s.pad)`
-// would read `.pad` off the code string and return null.
+// the receiver. That produces wrong VALUES, not errors.
 describe("internal $let bindings never capture a lambda param", () => {
-  it("padStart's pad argument still reads the lambda param, not the receiver", () => {
-    // The pad char resolves to the $map element ("$$s.pad"), and the binding is `jsmqlPad`, not `s`.
-    const need = { $subtract: [3, { $strLenCP: "$$jsmqlPad" }] };
-    expect(jsmql.expr("$.items.map(s => s.code.padStart(3, s.pad))")).toEqual({
-      $map: {
-        input: { $ifNull: ["$items", []] },
-        as: "s",
-        in: {
-          $let: {
-            vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
-            in: {
-              $concat: [
-                {
-                  $substrCP: [
-                    {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: [3, { $strLenCP: "$$jsmqlPad" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "$$s.pad"] },
-                      },
-                    },
-                    0,
-                    { $max: [0, { $subtract: [3, { $strLenCP: "$$jsmqlPad" }] }] },
-                  ],
-                },
-                "$$jsmqlPad",
-              ],
-            },
-          },
-        },
-      },
-    });
-  });
-
   it("a colliding lambda param makes the internal binding gensym", () => {
     // `jsmqlArr` as a param name pushes the internal binding to `jsmqlArr2`,
     // so the needle keeps reading the element.
@@ -9025,7 +8853,9 @@ describe(".flat / .flatMap", () => {
     });
   });
   it("rejects flat(2)", () => {
-    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow("'flat' argument 1 must be a number from 1 to 1. It got 2.");
+    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow(
+      "'.flat()' argument 1 must be a number from 1 to 1. It got 2.",
+    );
   });
   it("flatMap with lambda", () => {
     expect(jsmql.expr("$.docs.flatMap(d => d.tags)")).toEqual({
@@ -10643,7 +10473,7 @@ describe("internal expression-variable names never capture a user param", () => 
       },
     ],
     [
-      "$.r.map(jsmqlPad => jsmqlPad.c.padStart(jsmqlPad.w))",
+      "$.r.map(jsmqlPad => jsmqlPad.c.padStart(5))",
       "jsmqlPad",
       {
         $map: {
@@ -10653,22 +10483,11 @@ describe("internal expression-variable names never capture a user param", () => 
             $let: {
               vars: { jsmqlPad2: { $ifNull: ["$$jsmqlPad.c", ""] } },
               in: {
-                $cond: [
-                  { $gt: [{ $subtract: ["$$jsmqlPad.w", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
-                  {
-                    $concat: [
-                      {
-                        $reduce: {
-                          input: { $range: [0, { $subtract: ["$$jsmqlPad.w", { $strLenCP: "$$jsmqlPad2" }] }] },
-                          initialValue: "",
-                          in: { $concat: ["$$value", " "] },
-                        },
-                      },
-                      "$$jsmqlPad2",
-                    ],
-                  },
-                  "$$jsmqlPad2",
-                ],
+                $reduce: {
+                  input: { $range: [5, { $strLenCP: "$$jsmqlPad2" }, -1] },
+                  initialValue: "$$jsmqlPad2",
+                  in: { $concat: [" ", "$$value"] },
+                },
               },
             },
           },
@@ -11092,16 +10911,11 @@ describe("internal expression-variable names never capture a user param", () => 
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
-          $concat: [
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", "0"] },
-              },
-            },
-            "$$jsmqlPad",
-          ],
+          $reduce: {
+            input: { $range: [5, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["0", "$$value"] },
+          },
         },
       },
     });

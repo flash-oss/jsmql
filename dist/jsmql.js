@@ -147,10 +147,6 @@ function constantText(value) {
   }
   return null;
 }
-var isSingleCodePointLiteral = (value) => {
-  const text = constantText(value);
-  return text !== null && [...text].length === 1;
-};
 function mongoRegexOptions(jsFlags) {
   let out = "";
   for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
@@ -664,15 +660,14 @@ var collapse = (key, acc) => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } }
 ];
 function padded(side, recv, args, value, bind) {
-  const target2 = value(args[0]);
+  const length = value(args[0]);
   const pad2 = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
-  const need = { $subtract: [target2, { $strLenCP: v.ref }] };
-  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad2] } } };
-  const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
-  return { $let: { vars: { [v.as]: recv }, in: bounded } };
+  const atStart = { $concat: [pad2, "$$value"] };
+  const atEnd = { $concat: ["$$value", pad2] };
+  const step2 = side === "start" ? atStart : side === "end" ? atEnd : { $cond: [{ $mod: ["$$this", 2] }, ...length % 2 === 1 ? [atEnd, atStart] : [atStart, atEnd]] };
+  const input = { $range: [length, { $strLenCP: v.ref }, -1] };
+  return { $let: { vars: { [v.as]: recv }, in: { $reduce: { input, initialValue: v.ref, in: step2 } } } };
 }
 function identity(bind) {
   const x = bind("x");
@@ -789,6 +784,29 @@ function groupedByKey(input, it, bind) {
   const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
   return {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } }
+  };
+}
+function invertedByKey(pairs, it, bind) {
+  const kv = bind("kv");
+  const entries = bind("entries");
+  const key = bind("key");
+  const value = `${kv.ref}.v`;
+  const path = typeof it.in === "string" && (it.in === it.ref || it.in.startsWith(`${it.ref}.`));
+  const keyOf2 = path ? value + it.in.slice(it.ref.length) : { $let: { vars: { [it.as]: value }, in: it.in } };
+  const keysOf2 = { $filter: { input: entries.ref, cond: { $eq: ["$$this.k", key.ref] } } };
+  return {
+    $let: {
+      vars: { [entries.as]: { $map: { input: pairs, as: kv.as, in: { k: stringKeyExpr(keyOf2), v: `${kv.ref}.k` } } } },
+      in: {
+        $arrayToObject: {
+          $map: {
+            input: { $setUnion: [`${entries.ref}.k`, []] },
+            as: key.as,
+            in: { k: key.ref, v: { $map: { input: keysOf2, in: "$$this.v" } } }
+          }
+        }
+      }
+    }
   };
 }
 var orZero = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
@@ -3918,7 +3936,14 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
@@ -3933,14 +3958,20 @@ var NAMES = {
   padEnd: name({
     doc: "'.padEnd()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
@@ -3949,6 +3980,32 @@ var NAMES = {
     ),
     group: unsupported("'.padEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.padEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  pad: name({
+    doc: "'.pad()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: {
+        sig: "length[, pad]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1]
+      },
+      emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("both", r, args, value, bind))
+    },
+    stream: unsupported("'.pad()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.pad()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pad();'"
+    ),
+    group: unsupported("'.pad()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.pad()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   repeat: name({
     doc: "'.repeat()' \u2014 see docs/LANGUAGE.md.",
@@ -8398,6 +8455,34 @@ var NAMES = {
     ),
     group: unsupported("'.invert()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.invert()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  invertBy: name({
+    doc: "'.invertBy()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "object",
+    params: ["value"],
+    iterateeSlots: {
+      object: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"]
+      }
+    },
+    returns: { recordOf: { arrayOf: "string" } },
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, iteratee, bind, present: present2 }) => invertedByKey(pairsOfObject(recv, present2), args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
+    },
+    stream: unsupported("'.invertBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.invertBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.invertBy();'"
+    ),
+    group: unsupported("'.invertBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.invertBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
   }),
   toPairs: name({
     doc: "'.toPairs()' \u2014 see docs/LANGUAGE.md.",
@@ -21964,6 +22049,16 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
       );
     }
   }
+  for (const i of args.oneChar ?? []) {
+    const e = operands[i];
+    const text = e?.type === "StringLiteral" ? e.value : e?.type === "Injected" && typeof e.value === "string" ? e.value : null;
+    if (text !== null && (text.length !== 1 || text.charCodeAt(0) > 127)) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${i + 1} takes one ASCII character, but got ${JSON.stringify(text)}.`,
+        e.pos
+      );
+    }
+  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
@@ -22016,8 +22111,11 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     const e = operands[Number(i)];
     const n2 = e === void 0 ? null : numberOf(e);
     if (n2 !== null && (n2 < lo || n2 > hi)) {
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
+      const bound = hi === Number.MAX_SAFE_INTEGER || hi === Infinity ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`,
+        e.pos
+      );
     }
   }
   for (const i of args.nonZero ?? []) {
@@ -22033,7 +22131,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     const e = operands[i];
     if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
       throw new CodegenError(
-        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        `'${spell2(name2)}' argument ${i + 1} must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.`,
         e.pos
       );
     }
