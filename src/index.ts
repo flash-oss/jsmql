@@ -166,6 +166,10 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
       );
     }
     if (v === null || typeof v !== "object") return v;
+    // The driver sends an Invalid Date as the epoch, so a comparison with it silently answers.
+    if (isDate(v) && Number.isNaN(Date.prototype.getTime.call(v))) {
+      refuse("is an Invalid Date. The driver sends it as 1970-01-01. Pass a valid Date, or null.", path);
+    }
     // A BSON class carries its own value; its internals are not the developer's data.
     if (bsonTagOf(v) !== undefined || isDate(v) || isRegExp(v) || isBytes(v)) return v;
     if (above.has(v))

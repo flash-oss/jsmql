@@ -5380,7 +5380,7 @@ Each restriction throws a clear `FunctionInputError` that names the problem and 
 
 ### Param values
 
-Each value on the params object must be a JSON-safe literal: a number, a string, a boolean, `null`, a plain array, or a plain object. JSMQL applies the same check that template-tag interpolation uses. It rejects `NaN`, `Infinity`, a function, a Symbol, `undefined`, and a circular reference — at call time, with a `JsmqlInterpolationError` that names the binding key. JSMQL accepts a BigInt and turns it into a `Long`. It refuses a value past the 64-bit range.
+Each value on the params object must be a JSON-safe literal: a number, a string, a boolean, `null`, a plain array, or a plain object. JSMQL applies the same check that template-tag interpolation uses. It rejects `NaN`, `Infinity`, an Invalid Date, a function, a Symbol, `undefined`, and a circular reference — at call time, with a `JsmqlInterpolationError` that names the binding key. JSMQL accepts a BigInt and turns it into a `Long`. It refuses a value past the 64-bit range.
 
 A BSON instance value — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and ObjectId (matched by its `_bsontype` field) — passes through to the MQL output as the live JS instance, exactly the way the template-tag form preserves it. This pass-through works **anywhere** in the binding value: at the top level, nested inside an object, nested inside an array, and at any depth. The same shape that works through interpolation also works through a parameter binding, and you do not unpack it by hand at the call site:
 

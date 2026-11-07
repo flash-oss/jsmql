@@ -28636,6 +28636,9 @@ function driverValue(value, slot, key) {
       );
     }
     if (v === null || typeof v !== "object") return v;
+    if (isDate(v) && Number.isNaN(Date.prototype.getTime.call(v))) {
+      refuse2("is an Invalid Date. The driver sends it as 1970-01-01. Pass a valid Date, or null.", path);
+    }
     if (bsonTagOf(v) !== void 0 || isDate(v) || isRegExp(v) || isBytes(v)) return v;
     if (above.has(v))
       throw new JsmqlInterpolationError(

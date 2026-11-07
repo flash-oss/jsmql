@@ -21,6 +21,17 @@ describe("jsmql template-tag interpolation guards", () => {
   it("rejects NaN, Infinity, -Infinity", () => {
     for (const v of [NaN, Infinity, -Infinity]) expect(() => jsmql`$.x === ${v}`).toThrow(JsmqlInterpolationError);
   });
+
+  it("rejects an Invalid Date, which the driver sends as the epoch", () => {
+    const invalid = new Date("2026-01-01T");
+    expect(() => jsmql`$.t > ${invalid}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.t > ${[invalid]}[0]`).toThrow(/at \[0\] is an Invalid Date/);
+    expect(() => jsmql.compile("({ d }, { $ }) => $.t > d")({ d: invalid })).toThrow(
+      /parameter 'd' is an Invalid Date/,
+    );
+    // A valid Date still passes as it is.
+    expect(jsmql.compile("({ d }, { $ }) => $.t > d")({ d: new Date(0) })).toEqual({ t: { $gt: new Date(0) } });
+  });
   it("rejects circular objects", () => {
     const cyc: Record<string, unknown> = {};
     cyc.self = cyc;

@@ -91,7 +91,9 @@ primitive or a typed array other than Uint8Array. The driver sends such an objec
 as `{}` or as index keys, which is never its data. The walk also refuses an object
 that only sets `Symbol.toStringTag` to "Date", "RegExp" or "Map". `bson` finds
 these three kinds by the tag alone, so it sends such an object as that kind. The walk also refuses
-`undefined`, a function, a symbol, a number that is not finite, and a cycle.
+`undefined`, a function, a symbol, a number that is not finite, an Invalid Date, and a cycle.
+The driver sends an Invalid Date as the epoch, so a comparison with it would answer with
+no error.
 
 ### Shadowing
 
@@ -112,7 +114,7 @@ jsmql.validate(input)     // { valid, errors } instead of a throw
 `jsmql.compile` resolves the arrow source and parses it once. The source is `Function.prototype.toString.call` for a function input and the trimmed string itself for a string input. `parseEntry` gives the params, the toolbox names and the program. The returned closure, on each call:
 
 1. Looks each destructured key up on the params object. It refuses a missing key by name, and the message shows the call that passes it.
-2. Checks each value (`checkValue`, shared with the template tag): it refuses `undefined`, a function, a symbol, a non-finite number and a circular structure, by slot (`JsmqlInterpolationError`, with the key on `.key`).
+2. Checks each value (`checkValue`, shared with the template tag): it refuses `undefined`, a function, a symbol, a non-finite number, an Invalid Date and a circular structure, by slot (`JsmqlInterpolationError`, with the key on `.key`).
 3. Injects the values, folds, desugars, positions, and lowers through the same `lowerMode` the one-shot entry uses ([strict-shape-entries.md](strict-shape-entries.md)), so it shapes and refuses a compiled program as it does the one-shot form.
 
 `jsmql.compile(fn)` is the parse-once-bind-many surface: each compiled callable captures the parsed program in its closure, so a repeated call injects a fresh value into the same tree. The one-shot `jsmql(fn)` form re-parses on every call.
