@@ -2050,18 +2050,24 @@
         return { src: prefix + query + "\n}", prefixLen: prefix.length };
       }
 
-      // This persists the editor session to localStorage: the JSMQL query, the Variables object, and
+      // This persists the editor session: the JSMQL query, the Variables object, and
       // the active compile mode. So a page refresh restores exactly what
       // the user had open. The query and the Variables are the user's
       // own work. The compile mode rides along, so the restored query produces
-      // the same MQL output that it did before the refresh. Both calls sit inside a try block,
-      // because localStorage access throws when storage is unavailable: private
+      // the same MQL output that it did before the refresh. Each access sits inside a try block,
+      // because storage access throws when storage is unavailable: private
       // mode, disabled cookies, or a sandboxed iframe. Persistence is a
       // best-effort nicety, never a hard dependency.
       //
+      // Two stores hold the session. sessionStorage belongs to one tab and survives
+      // its refresh, so a refresh restores the work of this tab, even when another
+      // tab of the playground saved later. localStorage holds the session that any tab
+      // saved last, so a new tab opens the most recent work. A refresh reads
+      // sessionStorage first.
+      //
       // The key is scoped to the page's full URL, origin plus path, not a fixed
       // string. So two playgrounds served from different locations keep separate
-      // sessions. The browser already scopes localStorage by origin, so
+      // sessions. The browser already scopes storage by origin, so
       // :1234 and :4321 never collide, but it does not scope by path. Without the
       // pathname, every playground under the same origin, for example
       // jsmql.js.org/playground.html and a dev copy at .../experiment/, would
@@ -2069,38 +2075,43 @@
       // the key states itself: "state depends on the whole URL".
       const STORAGE_KEY =
         "jsmql-playground:session:v1:" + location.origin + location.pathname;
+      // This tab's store first, then the store that every tab shares.
+      const STORES = [() => sessionStorage, () => localStorage];
       function saveState() {
-        try {
-          localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-              // Which example set was on the page when this was written, and
-              // which example the editor held unmodified (null once the
-              // user types anything of their own). `staleExampleSession` reads
-              // both to decide whether a restore would show outdated content.
-              stamp: EXAMPLES_STAMP,
-              slug: activeSlug,
-              input: inputCm.getValue(),
-              vars: varsCm.getValue(),
-              mode: currentMode,
-            }),
-          );
-        } catch {}
-      }
-      function loadState() {
-        try {
-          const raw = localStorage.getItem(STORAGE_KEY);
-          if (!raw) return null;
-          const s = JSON.parse(raw);
-          return s && typeof s === "object" ? s : null;
-        } catch {
-          return null;
+        const text = JSON.stringify({
+          // `stamp` names the example set on the page when this was saved.
+          // `slug` names the example that the editor held unmodified, and it is
+          // null after the user types. `staleExampleSession` reads both to decide
+          // whether a restore would show outdated content.
+          stamp: EXAMPLES_STAMP,
+          slug: activeSlug,
+          input: inputCm.getValue(),
+          vars: varsCm.getValue(),
+          mode: currentMode,
+        });
+        for (const store of STORES) {
+          try {
+            store().setItem(STORAGE_KEY, text);
+          } catch {}
         }
       }
+      function loadState() {
+        for (const store of STORES) {
+          try {
+            const raw = store().getItem(STORAGE_KEY);
+            if (!raw) continue;
+            const s = JSON.parse(raw);
+            if (s && typeof s === "object") return s;
+          } catch {}
+        }
+        return null;
+      }
       function dropState() {
-        try {
-          localStorage.removeItem(STORAGE_KEY);
-        } catch {}
+        for (const store of STORES) {
+          try {
+            store().removeItem(STORAGE_KEY);
+          } catch {}
+        }
       }
 
       // Was this session written against a different example set, AND does it
@@ -2167,7 +2178,7 @@
       // This decodes a `#s=<payload>` share hash into a session, or returns null when the hash
       // is not a share link, or cannot be decoded. A malformed link falls through to
       // the normal restore ladder, and does not blank the page. An unknown mode
-      // coerces to `auto`, as the localStorage-restore path does.
+      // coerces to `auto`, as the restore of a saved session does.
       function parseShareHash() {
         const raw = location.hash.slice(1);
         if (!raw.startsWith("s=")) return null;
@@ -2185,9 +2196,9 @@
       }
       // This loads a decoded share session into the editors, then normalises the URL.
       // The snapshot now lives in the editors, and, through the change-to-`saveState`
-      // hooks that the `setValue` calls fire, in localStorage too. So the script drops the consumed `#s=`
+      // hooks that the `setValue` calls fire, in the saved session too. So the script drops the consumed `#s=`
       // hash. Otherwise the hash would linger and go stale the moment the
-      // user edits. This mirrors the order that the localStorage-restore path uses: mode
+      // user edits. This mirrors the order that the restore of a saved session uses: mode
       // before the input `setValue`, so the synchronous render sees it.
       function applySharedSession(shared) {
         varsCm.setValue(shared.vars);
@@ -2418,7 +2429,7 @@
       // a saved vars value is restored on every non-share path. This is the priority order:
       //   1. a `#s=` share link. This is an explicit snapshot of a person's session
       //      (Variables, query, and compile mode), and it wins over everything, and over
-      //      a saved localStorage session. `applySharedSession` normalises the
+      //      a saved session. `applySharedSession` normalises the
       //      URL afterwards, so the consumed link does not go stale on edit.
       //   2. a URL hash that targets a real example. This is a shared or explicit `#slug`
       //      link, present only when the visitor views an unmodified example; a free edit

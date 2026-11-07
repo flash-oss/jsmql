@@ -241,14 +241,16 @@ the printer, a validation error, or MQL.
 
 ### The session in storage
 
-`saveState()` writes `{ stamp, slug, input, vars, mode }` under one key for each page URL. The start
+`saveState()` writes `{ stamp, slug, input, vars, mode }` under one key for each page URL, in two
+stores. `sessionStorage` belongs to one tab and survives its refresh. `localStorage` holds the
+session that any tab saved last. `loadState()` reads `sessionStorage` first. The start
 of the page reads it through the ladder in the script. The ladder tries these in order: a share
 link, a `#slug` hash, a superseded example, an unchanged example, a saved query, the first example.
 
 - **P6.** `slug` is not null only while the editor holds that example unchanged.
   `staleExampleSession` reads it to replace a superseded example.
-- Two tabs of one page share the key. The session of the last tab that saves replaces the other. The page has no `storage`
-  listener, so an open tab does not see the other tab's work until it reloads.
+- **P7.** A refresh restores the work of its own tab, even when another tab saved later. A new
+  tab opens the session that any tab saved last.
 
 ## The landing page
 
@@ -263,5 +265,5 @@ link, a `#slug` hash, a superseded example, an unchanged example, a saved query,
 - **S1.** A link opens the example it names, also before the bundle loads.
 - **S2.** No output stays "compiling…" after the import fails.
 
-The browser checks of P2 to P5, S1 and S2 are manual: the suites do not run a browser.
+The browser checks of P2 to P5, P7, S1 and S2 are manual: the suites do not run a browser.
 [test/site.test.ts](../../test/site.test.ts) compiles every landing-page example.
