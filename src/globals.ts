@@ -3681,6 +3681,8 @@ declare global {
     lowerCase(): string;
     /** Lower-case the first char — `_.lowerFirst`. */
     lowerFirst(): string;
+    /** Pad both sides to `length` with `chars` (default a space); the end takes the odd character — `_.pad`. */
+    pad(length: number, chars?: string): string;
     /** `snake_case` the string — `_.snakeCase`. */
     snakeCase(): string;
     /** `Start Case` the string — `_.startCase`. */

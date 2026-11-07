@@ -1105,9 +1105,13 @@ const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } },
 ];
 
-/** `.padStart` / `.padEnd`: the pad, repeated to the target length, and cut to fit when it is more than one character. */
+/**
+ * `.padStart`, `.padEnd` and `.pad` repeat the pad to the target length. They cut it to fit when the pad
+ * has more than one character. `.pad` fills both sides, as `_.pad` does. The start takes the floor of
+ * half the missing characters. The end takes the ceil. Each side repeats the pad from its first character.
+ */
 function padded(
-  side: "start" | "end",
+  side: "start" | "end" | "both",
   recv: unknown,
   args: readonly Expr[],
   value: (e: Expr) => unknown,
@@ -1117,17 +1121,30 @@ function padded(
   const pad = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
   const need = { $subtract: [target, { $strLenCP: v.ref }] };
-  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
-  const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
+  const filler = (count: unknown): unknown => {
+    const repeated = {
+      $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", pad] } },
+    };
+    return isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(count)] };
+  };
+  // `.pad` reads half the missing characters twice on each side, so one binding holds it
+  const half = side === "both" ? bind("half") : null;
+  const padding =
+    half !== null
+      ? { $concat: [filler({ $floor: half.ref }), v.ref, filler({ $ceil: half.ref })] }
+      : { $concat: side === "start" ? [filler(need), v.ref] : [v.ref, filler(need)] };
   // A target the DATA decides can be missing or null, and `$range` refuses a
   // non-numeric end — measured, it stops the whole query. JavaScript pads nothing
   // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
   // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
   // and a target already shorter than the string. A number LITERAL needs no test.
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
+  const bounded =
+    args[0].type === "NumberLiteral"
+      ? padding
+      : { $cond: [{ $gt: [half === null ? need : half.ref, 0] }, padding, v.ref] };
+  const body = half === null ? bounded : { $let: { vars: { [half.as]: { $divide: [need, 2] } }, in: bounded } };
   // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
-  return { $let: { vars: { [v.as]: recv }, in: bounded } };
+  return { $let: { vars: { [v.as]: recv }, in: body } };
 }
 
 /** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
@@ -4975,6 +4992,27 @@ export const NAMES = {
     ),
     group: unsupported("'.padEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.padEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  pad: name({
+    doc: "'.pad()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "length[, chars]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      emit: ({ recv, args, value, bind, present }) =>
+        nullOr(recv, present, bind, (r) => padded("both", r, args, value, bind)),
+    },
+    stream: unsupported("'.pad()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.pad()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pad();'",
+    ),
+    group: unsupported("'.pad()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.pad()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   repeat: name({

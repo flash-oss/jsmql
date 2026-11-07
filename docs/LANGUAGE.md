@@ -1938,7 +1938,13 @@ $.s.startCase()          // "foo_bar" → "Foo Bar"
 $.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
 $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
+$.s.pad(8, "_-")         // "abc" → "_-abc_-_"      (both sides; the end takes the odd character)
 ```
+
+`.pad(length[, chars])` pads both sides of the string to `length`, as `_.pad` does. When the padding
+is an odd number of characters, the end gets one more character than the start. Each side repeats
+`chars` from its first character, and cuts the last repeat to fit. `chars` is a space when you omit it.
+A string that is `length` or longer, or an empty `chars`, gives the string with no change.
 
 `.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLower()` and `.toUpper()` change only the case, and keep all other characters.
 

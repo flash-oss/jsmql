@@ -668,11 +668,17 @@ function padded(side, recv, args, value, bind) {
   const pad2 = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
   const need = { $subtract: [target2, { $strLenCP: v.ref }] };
-  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad2] } } };
-  const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
-  return { $let: { vars: { [v.as]: recv }, in: bounded } };
+  const filler = (count) => {
+    const repeated = {
+      $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", pad2] } }
+    };
+    return isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(count)] };
+  };
+  const half = side === "both" ? bind("half") : null;
+  const padding = half !== null ? { $concat: [filler({ $floor: half.ref }), v.ref, filler({ $ceil: half.ref })] } : { $concat: side === "start" ? [filler(need), v.ref] : [v.ref, filler(need)] };
+  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [half === null ? need : half.ref, 0] }, padding, v.ref] };
+  const body = half === null ? bounded : { $let: { vars: { [half.as]: { $divide: [need, 2] } }, in: bounded } };
+  return { $let: { vars: { [v.as]: recv }, in: body } };
 }
 function identity(bind) {
   const x = bind("x");
@@ -3949,6 +3955,25 @@ var NAMES = {
     ),
     group: unsupported("'.padEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.padEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  pad: name({
+    doc: "'.pad()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "length[, chars]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("both", r, args, value, bind))
+    },
+    stream: unsupported("'.pad()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.pad()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pad();'"
+    ),
+    group: unsupported("'.pad()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.pad()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   repeat: name({
     doc: "'.repeat()' \u2014 see docs/LANGUAGE.md.",

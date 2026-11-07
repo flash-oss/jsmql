@@ -646,6 +646,11 @@ const VALUE_METHOD_SIGNATURES = {
   startCase: { recv: "String", sig: "(): string", doc: "`Start Case` the string — `_.startCase`." },
   camelCase: { recv: "String", sig: "(): string", doc: "`camelCase` the string — `_.camelCase`." },
   escape: { recv: "String", sig: "(): string", doc: "Escape HTML entities — `_.escape`." },
+  pad: {
+    recv: "String",
+    sig: "(length: number, chars?: string): string",
+    doc: "Pad both sides to `length` with `chars` (default a space); the end takes the odd character — `_.pad`.",
+  },
   truncate: {
     recv: "String",
     sig: "(options?: { length?: number; omission?: string; separator?: string | RegExp }): string",

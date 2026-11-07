@@ -2095,6 +2095,102 @@ describe("compiler/emit — number ranges", () => {
   });
 });
 
+/** lodash's `_.pad` (with its `createPadding`), the answer each `.pad()` case compares with. */
+const lodashPad = (string: unknown, length?: number, chars?: string): string => {
+  const s = string == null ? "" : String(string);
+  const size = [...s].length;
+  const target = Math.trunc(Number(length ?? 0)) || 0;
+  if (!target || size >= target) return s;
+  const fill = (n: number): string => {
+    const c = chars ?? " ";
+    if (c.length < 2) return c.repeat(n);
+    return [...c.repeat(Math.ceil(n / [...c].length))].slice(0, n).join("");
+  };
+  const mid = (target - size) / 2;
+  return fill(Math.floor(mid)) + s + fill(Math.ceil(mid));
+};
+
+describe("compiler/emit — `.pad()` is lodash's `_.pad`", () => {
+  it("pads both sides, and gives the end the odd character", () => {
+    expect(compiled('$.csv.pad(12, "xyz")', (d) => lodashPad(d.csv, 12, "xyz"))).toEqual({
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $let: {
+            vars: { jsmqlHalf: { $divide: [{ $subtract: [12, { $strLenCP: "$$jsmqlPad" }] }, 2] } },
+            in: {
+              $concat: [
+                {
+                  $substrCP: [
+                    {
+                      $reduce: {
+                        input: { $range: [0, { $floor: "$$jsmqlHalf" }] },
+                        initialValue: "",
+                        in: { $concat: ["$$value", "xyz"] },
+                      },
+                    },
+                    0,
+                    { $max: [0, { $floor: "$$jsmqlHalf" }] },
+                  ],
+                },
+                "$$jsmqlPad",
+                {
+                  $substrCP: [
+                    {
+                      $reduce: {
+                        input: { $range: [0, { $ceil: "$$jsmqlHalf" }] },
+                        initialValue: "",
+                        in: { $concat: ["$$value", "xyz"] },
+                      },
+                    },
+                    0,
+                    { $max: [0, { $ceil: "$$jsmqlHalf" }] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    // The cases add an even and an odd count of characters, with the default pad and a one-character pad.
+    compiled("$.csv.pad(9)", (d) => lodashPad(d.csv, 9));
+    compiled('$.csv.pad(8, "*")', (d) => lodashPad(d.csv, 8, "*"));
+    compiled('$.csv.pad(10, "ab")', (d) => lodashPad(d.csv, 10, "ab"));
+  });
+
+  it("keeps the string when the pad is empty or the length is not more than the string", () => {
+    compiled('$.csv.pad(9, "")', (d) => lodashPad(d.csv, 9, ""));
+    compiled('$.csv.pad(2, "-")', (d) => lodashPad(d.csv, 2, "-"));
+    compiled('$.csv.pad(5, "-")', (d) => lodashPad(d.csv, 5, "-"));
+    compiled('$.csv.pad(-4, "-")', (d) => lodashPad(d.csv, -4, "-"));
+  });
+
+  it("tests a length that the data gives, and keeps the string when the length is missing", () => {
+    expect(compiled('$.csv.pad($.a.size() * 4, "ab")', (d) => lodashPad(d.csv, d.a.length * 4, "ab"))).toHaveProperty(
+      "$let.in.$let.in.$cond.0",
+      { $gt: ["$$jsmqlHalf", 0] },
+    );
+    compiled("$.csv.pad($.nope)", (d) => lodashPad(d.csv, (d as { nope?: number }).nope));
+  });
+
+  it("pads the empty string for a missing receiver, and answers null after `?.`", () => {
+    compiled('$.nope.pad(5, "ab")', () => lodashPad(undefined, 5, "ab"));
+    expect(compiled("$.nope?.pad(5)", () => null)).toHaveProperty("$cond");
+  });
+
+  it("folds a constant receiver", () => {
+    expect(compiled('"abc".pad(8, "_-")', () => lodashPad("abc", 8, "_-"))).toBe("_-abc_-_");
+  });
+
+  it("refuses an argument of the wrong kind, and names each parameter", () => {
+    expect(() => expr('$.s.pad("3")')).toThrow("'.pad()' argument 1 takes an integer, but got a string.");
+    expect(() => expr("$.s.pad(3, 0)")).toThrow("'.pad()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.s.pad(null)")).toThrow("'.pad()' argument 1 takes an integer, but got null.");
+    expect(() => expr("$.s.pad()")).toThrow("'.pad(length[, chars])' requires 1 or 2 arguments, got 0");
+  });
+});
+
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
   it("drops the falsy elements with `.compact()`, through the proof of the element", () => {
     expect(compiled('$.csv.split(",").compact()', (d) => d.csv.split(",").filter((x) => x))).toEqual({
@@ -3217,6 +3313,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   search: ["$.csv.search(/z/)"],
   padStart: ["$.csv.padStart(9)"],
   padEnd: ["$.csv.padEnd(9)"],
+  pad: ["$.csv.pad(9)"],
   repeat: ["$.csv.repeat(2)"],
   indexOf: ["$.a.indexOf(9)"],
   indexOfSubstring: ['$.csv.indexOfSubstring("b")'],
