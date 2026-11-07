@@ -1911,11 +1911,10 @@ $.s.indexOfSubstring("b", $.from)  // { $indexOfCP: [{ $ifNull: ["$s", ""] }, "b
 missing or null, and every derived length needs `$strLenCP`. So JSMQL coerces the receiver of every
 length that it derives: `.endsWith()` binds `{ $ifNull: ["$file", ""] }` above.
 
-A string method on a receiver that JSMQL cannot prove is there gets a test first, and answers
-`null`. This is the JavaScript-method rule of [Type-aware dispatch](#type-aware-dispatch). On an
-absent field, `.length()`, `.padStart(5, "0")` and `.endsWith(…)` are all `null`. A *type* mismatch
-is still an error: an array or a number where the method expects a string fails as the server
-reports it.
+A string method on an absent field runs on `""`, and after `?.` it answers `null` (HR5, see
+[Type-aware dispatch](#type-aware-dispatch)). So on an absent field, `.length()` is `0`,
+`.padStart(5, "0")` is `"00000"` and `.endsWith(…)` is `false`. A *type* mismatch is still an error:
+an array or a number where the method expects a string fails as the server reports it.
 
 Note: JSMQL folds the length of a **literal** at compile time. It counts **code points**, as
 `$strLenCP` does, not the UTF-16 units of JS. So `"a👍b"` is 3, not 4.
