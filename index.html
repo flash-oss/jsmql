@@ -1395,6 +1395,14 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
       // rebuilds it. So a Date, an ObjectId or a Binary reads here exactly as the CLI and the playground
       // write it, and it pastes into a shell as it stands. The page holds no printer of its own that could
       // drift from that one.
+      // Each link is set before the import: the bundle is large, and a click while it loads
+      // must still open the example it names.
+      for (const el of [...examples, ...versus]) {
+        el.querySelector("[data-play]").href =
+          "playground.html#s=" +
+          toB64Url(JSON.stringify({ v: 1, input: sources.get(el), vars: "", mode: el.dataset.mode || "auto" }));
+      }
+
       let entries, stringify;
       try {
         const { jsmql } = await import("./dist/jsmql.js");
@@ -1408,14 +1416,15 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
         };
       } catch {
         document.getElementById("live-notice").hidden = false;
+        // Nothing compiles now, so no output stays "compiling…".
+        for (const out of document.querySelectorAll("pre.out.pending")) {
+          out.querySelector("code").textContent = "The compiler did not load, so this example shows no MQL.";
+        }
       }
 
       for (const el of [...examples, ...versus]) {
         const mode = el.dataset.mode || "auto";
         const source = sources.get(el);
-
-        el.querySelector("[data-play]").href =
-          "playground.html#s=" + toB64Url(JSON.stringify({ v: 1, input: source, vars: "", mode }));
 
         if (!entries) continue;
 
