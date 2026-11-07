@@ -8,7 +8,7 @@
  *
  *     User.find("$.age > 18");                       // → Model.find({ age: { $gt: 18 } })
  *     User.aggregate(({ $ }) => { $match($.age > 18); $sort({ age: 1 }); });
- *     User.updateMany({}, ({ $ }) => $.score += 1);  // → updateMany({}, [{ $set: { score: { $add: ["$score", 1] } } }])
+ *     User.updateMany({}, ({ $ }) => $.score += 1);  // → updateMany({}, { $inc: { score: 1 } })
  *
  * ## Detection rule
  *
@@ -96,8 +96,8 @@ export default function jsmqlMongoose(mongoose: any): void {
   //      entry when the input is a string or function; pass everything else
   //      through untouched.
   //   4. Delegate to the captured original with `.call(this, …)` so the
-  //      subclass receiver and any extra trailing args (projection, options)
-  //      reach mongoose unchanged.
+  //      subclass receiver and the other declared arguments (projection,
+  //      options) reach mongoose unchanged.
   //
   // The captured original is named `_<method>`, not `<method>`, to
   // avoid the named-function-expression shadowing pitfall: inside
