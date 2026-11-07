@@ -324,6 +324,14 @@ export const slotAggregate = (
 /** `0 - n`. It folds for a constant. */
 export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });
 
+/**
+ * A computed key (`{ [k]: v }`) as the string that `$arrayToObject` takes. JavaScript
+ * turns a key into a string (`{ [7]: 1 }` is `{ "7": 1 }`), and the server refuses a key
+ * of any other kind. A key that is null or missing becomes `""`, the name that a read of
+ * it (`o[k]`) uses. MEASURED: the server refuses an int key and a null key.
+ */
+export const propertyKeyExpr = (key: unknown): unknown => ({ $toString: { $ifNull: [key, ""] } });
+
 /** A group key as the string that a document key must be. A missing key becomes `"null"`. */
 export const stringKeyExpr = (value: unknown): unknown => ({ $ifNull: [{ $toString: value }, "null"] });
 

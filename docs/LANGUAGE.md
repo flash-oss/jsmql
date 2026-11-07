@@ -437,16 +437,19 @@ An object is useful as an argument of `$push` in `group()`, as a value in a `$pr
 A key can be a computed expression, as in JS:
 
 ```js
-{ [$.k]: 1 }                       // → { $arrayToObject: [[{ k: "$k", v: 1 }]] }
-{ a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [[{ k: "a", v: 1 }, { k: "$dynKey", v: 2 }]] }
+{ [$.k]: 1 }                       // → { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$k", ""] } }, v: 1 }]] }
+{ a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [[{ k: "a", v: 1 }, { k: { $toString: { $ifNull: ["$dynKey", ""] } }, v: 2 }]] }
+{ [7]: 1 }                         // → { $arrayToObject: [[{ k: "7", v: 1 }]] }
 ```
 
 When a static block of keys holds at least one computed key, the block compiles to the `{ k, v }` pair form of `$arrayToObject`. So MongoDB can build the object at query time. JSMQL wraps the array of pairs one level deeper, as `{ $arrayToObject: [pairs] }`, because MongoDB reads a bare literal array as an *argument list*. The wrap makes the array of pairs the single argument.
 
+A key is a string, as in JavaScript: `$toString` makes the text of a number or a boolean key, and a constant key is its text. A key that the compiler can prove is a string stays as it is. **A null or missing key is `""`, not JavaScript's `"null"` or `"undefined"`.** This is the key that a read `o[k]` uses for the same value (see [Bracket Access](#bracket-access)), so `{ ...acc, [s]: (acc[s] ?? 0) + 1 }` writes and reads one key. An object or an array as a key is a server error.
+
 A computed key can be in the same object as a spread. JSMQL builds each block separately, then `$mergeObjects` joins them:
 
 ```js
-{ ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [[{ k: "$k", v: "$v" }]] }] }
+{ ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$k", ""] } }, v: "$v" }]] }] }
 ```
 
 #### Shorthand Properties

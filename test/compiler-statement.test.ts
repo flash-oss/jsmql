@@ -1238,11 +1238,10 @@ describe("compiler/emit/statement — a read of the whole document never carries
   });
 
   it("reads the whole document without the namespace in a keyed reducer wrap", () => {
-    // Not in the live list: `$arrayToObject` needs a string key, and the fixture has no string field.
     expect(
-      pipeline("let t = $.a + 1; $.y = t; $$ = [$$.reduce((acc, d) => ({ ...acc, [d.k]: d }), {})];").slice(2),
+      clear("let t = $.a + 1; $.y = t; $$ = [$$.reduce((acc, d) => ({ ...acc, [d.k]: d }), {})];").slice(2),
     ).toEqual([
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$k", v: CLEAR_ROOT } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$k", ""] } }, v: CLEAR_ROOT } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
@@ -1306,6 +1305,45 @@ afterAll(async () => {
 /** A source's pipeline, run over the live collection. */
 const run = (src: string): Promise<Record<string, unknown>[]> =>
   coll!.aggregate<Record<string, unknown>>(pipeline(src) as Record<string, unknown>[]).toArray();
+
+describe("compiler/emit/statement — a computed key is a string, against the server's own answer", () => {
+  // JavaScript turns a computed key into a string, and `$arrayToObject` refuses any other kind.
+  it.skipIf(!up)("writes a number key as its text, as JavaScript does", async () => {
+    expect(compiled("$.o = { [$.a]: 1 };")).toEqual([
+      { $set: { o: { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$a", ""] } }, v: 1 }]] } } },
+    ]);
+    expect((await run("$.o = { [$.a]: 1 };")).map((d) => d.o)).toEqual([{ "2": 1 }, { "9": 1 }]);
+    // A constant key is the text itself.
+    expect(compiled("$.o = { [7]: 1, [true]: 2 };")).toEqual([
+      {
+        $set: {
+          o: {
+            $arrayToObject: [
+              [
+                { k: "7", v: 1 },
+                { k: "true", v: 2 },
+              ],
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it.skipIf(!up)("writes and reads one key, so a count over numbers is correct", async () => {
+    const got = await run("$.counts = $.items.reduce((acc, x) => ({ ...acc, [x]: (acc[x] ?? 0) + 1 }), {});");
+    expect(got.map((d) => d.counts)).toEqual([{ "1": 1, "2": 1 }, {}]);
+  });
+
+  it.skipIf(!up)("keys the stream reducer wrap by the text of the field", async () => {
+    const src = "$$ = [$$.reduce((acc, d) => ({ ...acc, [d._id]: d.a }), {})];";
+    expect(compiled(src)).toEqual([
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$_id", ""] } }, v: "$a" } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(await run(src)).toEqual([{ "1": 2, "2": 9 }]);
+  });
+});
 
 /** Does any field at any depth carry the compiler's namespace? */
 const holdsNamespace = (v: unknown): boolean =>

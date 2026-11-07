@@ -349,14 +349,15 @@ by hand for those.
 
 `$$ = [$$.reduce((acc, d) => ({ ...acc, [d.<keyPath>]: <d.<valPath>|d> }), {})];`
 
-This is the single-computed-key form of the object-returning reducer. It differs from
+The key is the text of the field (`propertyKeyExpr`), the rule of every computed key. See
+LANGUAGE.md § Computed Keys. This is the single-computed-key form of the object-returning reducer. It differs from
 the static-key object-reducer above, where the user names every accumulator at
 compile time, because here the **keys come from runtime data**: one input
 document gives one output entry, and both the key and the value come from the doc. It lowers to:
 
 ```js
 [
-  { $group: { _id: null, __jsmqlTmp: { $push: { k: "$<keyPath>", v: "$<valPath>"|"$$ROOT" } } } },
+  { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$<keyPath>", ""] } }, v: "$<valPath>"|<the document> } } } },
   { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } }
 ]
 ```
@@ -365,9 +366,9 @@ Supported body shapes:
 
 | JSMQL | MQL output |
 |---|---|
-| `(acc, d) => ({ ...acc, [d.id]: d.name })` | `{ k: "$id", v: "$name" }` |
-| `(acc, d) => ({ ...acc, [d.user.email]: d.score })` | `{ k: "$user.email", v: "$score" }` (nested paths) |
-| `(acc, d) => ({ ...acc, [d.id]: d })` | `{ k: "$id", v: "$$ROOT" }` (bare-doc value) |
+| `(acc, d) => ({ ...acc, [d.id]: d.name })` | `{ k: { $toString: { $ifNull: ["$id", ""] } }, v: "$name" }` |
+| `(acc, d) => ({ ...acc, [d.user.email]: d.score })` | `{ k: { $toString: { $ifNull: ["$user.email", ""] } }, v: "$score" }` (nested paths) |
+| `(acc, d) => ({ ...acc, [d.id]: d })` | `{ k: { $toString: { $ifNull: ["$id", ""] } }, v: "$$ROOT" }` (bare-doc value; see [let-bindings.md](let-bindings.md#the-whole-document-as-a-value)) |
 | `(acc, d) => ({ [d.id]: d.name })` | same as the spread form (the `...acc` is optional, JS-faithful boilerplate) |
 
 The init MUST be `{}` (empty object). Mixed shapes (a computed key with static

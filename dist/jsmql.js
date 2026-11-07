@@ -254,6 +254,7 @@ var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
 var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 var negate = (n2) => typeof n2 === "number" ? -n2 : { $subtract: [0, n2] };
+var propertyKeyExpr = (key) => ({ $toString: { $ifNull: [key, ""] } });
 var stringKeyExpr = (value) => ({ $ifNull: [{ $toString: value }, "null"] });
 var distinctKeysExpr = (arr, it) => ({
   $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.in) } }, []]
@@ -26575,13 +26576,20 @@ function textValue(value, pos, env) {
       throw runTimeValueAsMql(value, env.site.where, pos, "A string that JSMQL reads as text is never MQL.");
   }
 }
+function propertyKey(key, env) {
+  const c = constantOf(key);
+  if (c.ok && (typeof c.value === "number" || typeof c.value === "boolean")) return String(c.value);
+  const k = lowerValue(key, env);
+  if (kindOf4(key, env) !== "string") return propertyKeyExpr(k);
+  return isPresent(key, env) ? k : { $ifNull: [k, ""] };
+}
 function objectLiteral(node, entries, env) {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list) => {
     if (list.some((e) => e.type === "KeyValueEntry" && e.key.kind === "computed")) {
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
-        const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
+        const k = e.key.kind === "static" ? e.key.name : propertyKey(e.key.expr, inner);
         return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
@@ -27478,7 +27486,12 @@ function reduceWrapStages(list, wholeDocument) {
   if (keyed2 !== null) {
     if (init.type !== "ObjectLiteral" || init.entries.length !== 0) throw reduceWrapKeyedInit(init.pos);
     return [
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed2.k, v: keyed2.v === ROOT ? wholeDocument() : keyed2.v } } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: propertyKeyExpr(keyed2.k), v: keyed2.v === ROOT ? wholeDocument() : keyed2.v } }
+        }
+      },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } }
     ];
   }

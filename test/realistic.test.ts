@@ -418,7 +418,7 @@ $project({
                     $arrayToObject: [
                       [
                         {
-                          k: "$$this",
+                          k: { $toString: { $ifNull: ["$$this", ""] } },
                           v: {
                             $add: [
                               {
@@ -2191,7 +2191,7 @@ describe("dynamic pivot row with computed key + shorthand property", { features:
           in: {
             $arrayToObject: [
               [
-                { k: "$$p.category", v: "$$p.price" },
+                { k: { $toString: { $ifNull: ["$$p.category", ""] } }, v: "$$p.price" },
                 { k: "p", v: "$$p" },
               ],
             ],

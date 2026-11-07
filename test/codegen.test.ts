@@ -747,7 +747,9 @@ describe("object spread", () => {
 
   it("computed key inside a static block uses $arrayToObject for that block only", () => {
     expect(jsmql.expr("$foo({ ...$.base, [$.k]: $.v })")).toEqual({
-      $foo: { $mergeObjects: ["$base", { $arrayToObject: [[{ k: "$k", v: "$v" }]] }] },
+      $foo: {
+        $mergeObjects: ["$base", { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$k", ""] } }, v: "$v" }]] }],
+      },
     });
   });
 
@@ -766,7 +768,7 @@ describe("object spread", () => {
               $arrayToObject: [
                 [
                   {
-                    k: "$$this",
+                    k: { $toString: { $ifNull: ["$$this", ""] } },
                     v: {
                       $add: [
                         {
@@ -2648,7 +2650,9 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: { $ifNull: ["$xs", []] },
         initialValue: {},
-        in: { $mergeObjects: ["$$value", { $arrayToObject: [[{ k: "$$this", v: 1 }]] }] },
+        in: {
+          $mergeObjects: ["$$value", { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$$this", ""] } }, v: 1 }]] }],
+        },
       },
     });
     // Read the accumulator with bracket access in the body — confirms the
@@ -2664,7 +2668,7 @@ describe("reduce accumulator type narrowing", () => {
               $arrayToObject: [
                 [
                   {
-                    k: "$$this",
+                    k: { $toString: { $ifNull: ["$$this", ""] } },
                     v: {
                       $getField: {
                         field: { $toString: { $ifNull: ["$$this", ""] } },
@@ -2811,7 +2815,7 @@ describe("reduce accumulator type narrowing", () => {
               $arrayToObject: [
                 [
                   {
-                    k: "$$this",
+                    k: { $toString: { $ifNull: ["$$this", ""] } },
                     v: {
                       $ifNull: [
                         {
@@ -9039,7 +9043,9 @@ describe("computed object keys", () => {
   // (`$foo` is an unknown-op shape probe — it carries no arg-type validation, so
   // these exercise the computed-key → $arrayToObject lowering, not op semantics.)
   it("single computed key", () => {
-    expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({ $foo: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
+    expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({
+      $foo: { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$k", ""] } }, v: 1 }]] },
+    });
   });
   it("$arrayToObject escape hatch: the array literal is the operand list, as in MQL", () => {
     expect(jsmql.expr(`$arrayToObject([[["a", 1], ["b", 2]]])`)).toEqual({
@@ -9068,7 +9074,7 @@ describe("computed object keys", () => {
         $arrayToObject: [
           [
             { k: "a", v: 1 },
-            { k: "$k", v: 2 },
+            { k: { $toString: { $ifNull: ["$k", ""] } }, v: 2 },
           ],
         ],
       },

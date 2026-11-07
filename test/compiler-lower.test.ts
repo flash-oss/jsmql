@@ -50,7 +50,7 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("{ [$.k]: 1, b: 2 }")).toEqual({
       $arrayToObject: [
         [
-          { k: "$k", v: 1 },
+          { k: { $toString: { $ifNull: ["$k", ""] } }, v: 1 },
           { k: "b", v: 2 },
         ],
       ],

@@ -18,6 +18,7 @@
 import type { Expr, Stage } from "../../registry/vocabulary.ts";
 import { chainBase } from "../passes/naming.ts";
 import * as E from "./errors.ts";
+import { propertyKeyExpr } from "../../registry/mql.ts";
 
 type Lambda = Extract<Expr, { type: "Lambda" }>;
 type Call = Extract<Expr, { type: "MethodCall" }>;
@@ -204,7 +205,12 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>, 
   if (keyed !== null) {
     if (init.type !== "ObjectLiteral" || init.entries.length !== 0) throw E.reduceWrapKeyedInit(init.pos);
     return [
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed.k, v: keyed.v === ROOT ? wholeDocument() : keyed.v } } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: propertyKeyExpr(keyed.k), v: keyed.v === ROOT ? wholeDocument() : keyed.v } },
+        },
+      },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ];
   }

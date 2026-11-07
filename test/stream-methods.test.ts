@@ -1927,21 +1927,26 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
 
   it("basic shape: `{...acc, [d.id]: d.name}` → $arrayToObject", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$id", ""] } }, v: "$name" } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
   it("nested key path: `{...acc, [d.user.email]: d.score}`", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.user.email]: d.score }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$user.email", v: "$score" } } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$user.email", ""] } }, v: "$score" } },
+        },
+      },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
   it("bare-doc value (`[d.id]: d`) uses $$ROOT", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d }), {})];")).toEqual([
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$$ROOT" } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$id", ""] } }, v: "$$ROOT" } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
@@ -1959,7 +1964,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
   it("composes with a preceding $match", () => {
     expect(jsmql("$match($.active === true); $$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})]")).toEqual([
       { $match: { active: true } },
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: { $toString: { $ifNull: ["$id", ""] } }, v: "$name" } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });

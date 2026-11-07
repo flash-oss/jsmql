@@ -13,7 +13,7 @@ import type { Expr, FieldFamily, Position, Truth, Type } from "../../registry/vo
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { bigIntToLong, isPlainObject, ObjectId, regexValue } from "../../bson.ts";
-import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
+import { isNotNullish, isNullish, mongoRegexOptions, propertyKeyExpr, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { constantOf, provideLowering } from "../passes/evaluate.ts";
@@ -416,6 +416,19 @@ function textValue(value: string, pos: number, env: Env): unknown {
   }
 }
 
+/**
+ * A computed key as the string that `$arrayToObject` takes (`propertyKeyExpr`). A key that
+ * the proof shows is a string that is there needs no conversion.
+ */
+function propertyKey(key: Expr, env: Env): unknown {
+  // A constant key is the string JavaScript makes of it: `{ [7]: 1 }` is `{ "7": 1 }`.
+  const c = constantOf(key);
+  if (c.ok && (typeof c.value === "number" || typeof c.value === "boolean")) return String(c.value);
+  const k = lowerValue(key, env);
+  if (kindOf(key, env) !== "string") return propertyKeyExpr(k);
+  return isPresent(key, env) ? k : { $ifNull: [k, ""] };
+}
+
 function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): unknown {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list: readonly ObjectEntry[]): unknown => {
@@ -423,7 +436,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       // `$arrayToObject` reads a literal array as its argument LIST, so the pairs are wrapped one level deeper.
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
-        const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
+        const k = e.key.kind === "static" ? e.key.name : propertyKey(e.key.expr, inner);
         return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
