@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
 // `$match` translates expression-form predicates to MongoDB's query language
-// when the predicate is index-safe, falling back to $expr for the parts that
-// are not. This avoids the silent index-disabling effect of `{ $expr: ... }`.
+// when the predicate is index-safe, and falls back to $expr for the parts that
+// are not. So the filter does not silently lose its index to `{ $expr: ... }`.
 //
 // See `docs/specs/emit-pass.md` § The filter target for the translation rules and
 // the documented semantic divergences from the aggregation form.
@@ -53,7 +53,7 @@ describe("$match translation — ordered comparisons", () => {
     expect(jsmql("[$match($.qty <= 5)]")).toEqual([{ $match: { qty: { $lte: 5 } } }]);
   });
 
-  it("translates string ordered comparison (lexicographic dates etc.)", () => {
+  it("translates string ordered comparison (lexicographic dates and the like)", () => {
     expect(jsmql('[$match($.placedAt >= "2026-01-01")]')).toEqual([{ $match: { placedAt: { $gte: "2026-01-01" } } }]);
   });
 
@@ -63,7 +63,7 @@ describe("$match translation — ordered comparisons", () => {
   });
 });
 
-describe("$match translation — null vs missing semantics", () => {
+describe("$match translation — null and missing semantics", () => {
   // `===` / `!==` are strict (JS-like): missing fields are NOT null.
   // `==` / `!=` are loose: missing fields are treated as null.
   // The strict form compiles to `$type: "null"` so MongoDB excludes
@@ -119,7 +119,7 @@ describe("$match translation — partial extraction", () => {
   // When part of an `&&` predicate is translatable and part is not, we keep
   // the translatable half in query-language form (so indexes still apply)
   // and wrap the residual in $expr.
-  it("keeps index-using clause, wraps residual in $expr", () => {
+  it("keeps the clause that uses an index, wraps residual in $expr", () => {
     expect(jsmql('[$match($.status === "active" && $.score > $.threshold)]')).toEqual([
       { $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } },
     ]);
@@ -162,8 +162,8 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("array literal as equality target stays in $expr", () => {
-    // Translating to `{ tags: [1, 2] }` would silently switch to array-element
-    // matching semantics — too surprising. Leave it as $expr.
+    // A translation to `{ tags: [1, 2] }` would silently switch to array-element
+    // match semantics — too much of a surprise. Leave it as $expr.
     expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([{ $match: { $expr: { $eq: ["$tags", [1, 2]] } } }]);
   });
 });
@@ -296,7 +296,7 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
   it("rejects a constant string that cannot be parsed as a date (HR3)", () => {
     // The constant is unparseable and the server would reject the equivalent
     // `{ $toDate }`, so the comparison drops to the $expr residual and codegen
-    // refuses it at compile time rather than emit a bogus filter.
+    // refuses it at compile time, and does not emit a bogus filter.
     expect(() => jsmql('[$match($.createdAt >= Date("not-a-date"))]')).toThrow(
       'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
@@ -444,7 +444,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
 
 describe("$match translation — === undefined / !== undefined → $exists", () => {
   // `undefined` in match position lowers to MongoDB's $exists check —
-  // matches "field present" vs "field missing", which lines up with JS
+  // matches "field present" or "field missing", which lines up with JS
   // `=== undefined` semantics (treats missing-property as undefined).
 
   it("translates `=== undefined` to `$exists: false`", () => {
@@ -472,7 +472,7 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
     expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({ $cond: [{ $eq: [{ $type: "$x" }, "missing"] }, 1, 2] });
   });
 
-  it("still rejects `undefined` used as a VALUE rather than compared", () => {
+  it("still rejects `undefined` used as a VALUE, not compared", () => {
     expect(() => jsmql.expr("$.a + undefined")).toThrow(/'undefined' is only meaningful in a comparison/);
   });
 });

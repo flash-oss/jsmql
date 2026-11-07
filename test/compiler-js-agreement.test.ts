@@ -139,7 +139,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   },
   {
     src: "$.n.v !== 1",
-    why: "JavaScript THROWS when reading `n.v` where `n` is absent, so the document is not selected; a path in this language is a path, and an absent path is absent, which `!==` satisfies.",
+    why: "JavaScript THROWS when it reads `n.v` where `n` is absent, so the document is not selected; a path in this language is a path, and an absent path is absent, which `!==` satisfies.",
   },
   {
     src: "$.n.v === undefined",
@@ -154,7 +154,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_js_agreement").collection("t");

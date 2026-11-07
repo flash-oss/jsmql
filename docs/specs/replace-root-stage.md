@@ -11,18 +11,18 @@ The compiler refuses an ARRAY on the right, whatever its shape: the root
 takes ONE document, and the message names the destination that takes many.
 See [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
-The compiler lowers to `$replaceWith` (the shorter MQL spelling) rather
-than `$replaceRoot: { newRoot: <expr> }` (the legacy spelling). The two are
+The compiler lowers to `$replaceWith` (the shorter MQL spelling), not
+to `$replaceRoot: { newRoot: <expr> }` (the legacy spelling). The two are
 exact runtime equivalents on MongoDB 4.2+, and `$replaceWith: <expr>` uses
 far fewer characters than `$replaceRoot: { newRoot: <expr> }`. The cost is
 the 4.0 / 4.1 line of server versions, which the rest of the language
-already excludes by relying on 4.2+ features (`$function`, `let` on
+already excludes, because it relies on 4.2+ features (`$function`, `let` on
 `$lookup`, and others).
 
 `$ = <expr>` is statement-only: it appears as a top-level pipeline
 statement, either inside `[ ... ]` array form or as a `;`-separated
-implicit-pipeline statement — including inside a comma-separated
-update-filter chain like `$.a = 1, $ = $.profile, $.b = 2`. Using it inside
+implicit-pipeline statement — and inside a comma-separated
+update-filter chain like `$.a = 1, $ = $.profile, $.b = 2`. A use of it inside
 a Filter or `jsmql.expr` goes through the normal pipeline-mode-required
 gate.
 
@@ -73,9 +73,9 @@ the user's first cue to what the statement does to the document.
 | `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = $.x.entries()` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
-The direct-lookup form unwinds the slot instead of reading `$first`:
+The direct-lookup form unwinds the slot, and does not read `$first`:
 `$replaceWith: { $first: … }` fails on the server for every document
-whose match is empty (measured), while `$unwind` drops that document.
+whose match is empty (measured), but `$unwind` drops that document.
 The one document it found becomes the new document, and a document that
 found nothing has nothing to become
 ([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows
@@ -149,7 +149,7 @@ through the value road.
 
 A bare `$` (no `.<field>` suffix, no following identifier for `$op(...)`) is a
 new primary expression. Its AST representation is `FieldRef { path: "" }` —
-this reuses the existing node rather than minting a `RootRef` variant — and
+this reuses the existing node, and mints no `RootRef` variant — and
 codegen lowers any empty-path `FieldRef` to the string `"$$ROOT"` (the MQL
 spelling for the current document). The rule holds everywhere: wherever a
 field path is valid, a bare `$` produces `"$$ROOT"`, for example
@@ -245,22 +245,22 @@ Nothing in that pair depends on position, so the list reads the same
 anywhere in the program: written after other statements, it drops what
 they produced and starts again. The empty list is the first half on its
 own. The element check is the `$documents` row's own rule, applied under
-the name the source wrote. A list holding a `...` spread is not this
+the name the source wrote. A list that holds a `...` spread is not this
 reading, because its elements are not the documents, and neither is an
 array the data decides, which gives one answer per input document.
 
 **A stream holds DOCUMENTS.** When a row states the kind of ONE element of
 what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `.entries()`
 gives `[key, value]` arrays, `$objectToArray` gives `{ k, v }` documents),
-the compiler refuses an element that is not a document here, rather than
-letting the server do it. MEASURED, the server refuses
+the compiler refuses an element that is not a document here. It does not
+let the server do it. MEASURED, the server refuses
 `[{ $set: { s: <the array> } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
 for such an element, because `$replaceWith` takes only a document. A row that
 states nothing — and a field path states nothing by construction — leaves
 the elements unproven, and the fan-out stands.
 
 **Per-document drop is emergent, not a special case.** The default
-`$unwind` emits no document for an empty or missing array, so fanning out
+`$unwind` emits no document for an empty or missing array, so a fan-out
 a possibly-empty array drops exactly the documents whose array came out
 empty, and fans out the rest:
 
@@ -298,7 +298,7 @@ The compiler reads the value's proof, so a value is refused only when it can nev
 - **Trailing `$unset` after a final `$ = …`.** When the pipeline's last
   stage is `$replaceWith` and no later stage uses the namespace, the
   trailing `$unset: "__jsmql"` is harmless but unnecessary — the field
-  does not exist on the post-replace document. Folding it away would be a
+  does not exist on the post-replace document. A fold that removes it would be a
   small win, and the project has not done this work.
 - **`$replaceRoot` as an alternative target.** A user who explicitly wants
   the verbose 4.0-compatible shape can still write

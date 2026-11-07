@@ -155,7 +155,7 @@ The operands of `-` refuse a proven date. A field of unknown kind can hold a dat
 and a date minus a number is a date. `+` has two roads: a string operand makes
 it `$concat`, and `kindsOf` in [prove.ts](../../src/compiler/emit/prove.ts) proves
 that road a string. Its row states the `$add` road, a number or a date, and two
-numbers prove a number. An operator that gives one of its operands, e.g. `??`,
+numbers prove a number. An operator that gives one of its operands, for example `??`,
 states `"unknown"`, and `kindsOf` joins the operands' proofs.
 [test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
 measures each production that states a kind. The compiler writes the operator
@@ -165,7 +165,7 @@ The receiver's family picks the term of a per-family map. For an **unproven**
 receiver the call is on one of the families the row names, or the server raises
 an error; so the result is the row's answers over its field families, joined.
 `.size()` is a number on an array and on an object, so it is a number; a receiver
-that may be several kinds proves several.
+that may be more than one kind proves each of them.
 
 **A callback's answer** (`{ callback: n }`) is the body's proof under the
 parameters the row's `params` bind: `value` is one element of the receiver (or a
@@ -185,7 +185,7 @@ of `[string, value]` tuples, so a destructured pair reads each position, and
 `.fromEntries()` is `recordOf` the pair's second item (`itemOf`). An array
 literal with no spread is a tuple too: `["a", 1]` holds a string at 0 and a
 number at 1. A method that keeps the receiver's own elements — a sub-array such
-as `.take(n)`, a reordering such as `.toSorted()` — answers `same`, so the
+as `.take(n)`, a new order such as `.toSorted()` — answers `same`, so the
 element proof survives it.
 
 **A read at an index or name the proof does not state may be missing.** An
@@ -509,7 +509,7 @@ value as a JavaScript condition. JavaScript has four falsy values JSMQL supports
 so the check is **subtractive**: it keeps only the tests some part of the proof
 can fail.
 
-| Test | Kept while |
+| Test | Kept when |
 |---|---|
 | `{ $gt: [v, null] }` | `absent` is true |
 | `{ $ne: [v, false] }` | `bool` is a possible kind |
@@ -580,7 +580,7 @@ A property read that the proof shows can give no value is a compile error.
 - A value that is always null or missing (`NOTHING`) has no value to read. A method
   call on it is refused with the same message (`alwaysAbsent` in
   [errors.ts](../../src/compiler/emit/errors.ts)).
-- A value of several kinds, an open object, and a value that nothing is proven
+- A value of more than one kind, an open object, and a value that nothing is proven
   about pass. The proof cannot rule the field out there.
 - A read on the stream keeps its own refusal, which names the stream form.
 

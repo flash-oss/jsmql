@@ -14,7 +14,7 @@
 // EXPAND THIS FREELY. The dataset is meant to grow as new queries need realistic
 // data. After any edit you MUST re-insert it into mongod (`npm run fixture:seed`)
 // — the tests query the server, not this file. See test/fixtures/CLAUDE.md
-// § "Growing and changing the data".
+// § "Grow and change the data".
 
 import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
@@ -180,7 +180,7 @@ export const users = [
     visits: 77,
   },
   // Boundary user: `email` is ABSENT (u5's is present-but-null, so the two
-  // missing-vs-null paths are both represented). String methods derive lengths
+  // the missing path and the null path both have a document). String methods derive lengths
   // through `$strLenCP`, which aborts the query on a missing input, so this
   // document is what proves the coercion actually holds on a real server.
   // Deliberately archived + inactive, and with no email at all, so it falls
@@ -595,7 +595,7 @@ function buildOrders() {
       items,
       total,
       // Nested field with a HYPHENATED key — an external-system reference id.
-      // Correlating on `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces
+      // A correlation on `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces
       // the `$lookup.let` var name to be derived from the segment `ext-id`, whose
       // hyphen is illegal in a MongoDB variable name — the regression this exercises
       // end-to-end on a real server. See integration test "hyphenated correlated let".
@@ -794,7 +794,7 @@ const shipSpecs: ShipSpec[] = [
   },
 ];
 
-// Each order's owning user, so a shipment can carry a denormalised `userId`
+// The user who owns each order, so a shipment can carry a denormalised `userId`
 // (the customer who placed the shipped order). This is what lets a nested
 // lookup correlate shipments back to the outer user: `s.userId === $._id`.
 const ORDER_USER = new Map(orderSpecs.map((o) => [o.n, o.user]));
@@ -846,7 +846,7 @@ export const EXPECTED_COUNTS: Record<string, number> = {
   reviews: reviews.length,
 };
 
-// ── content hash (drives idempotent re-seeding) ──────────────────────────────
+// ── content hash (drives the idempotent new seed) ─────────────────────────────
 // Stable canonical serialization: ObjectId -> hex, Date -> ISO, keys sorted.
 function canonical(v: unknown): unknown {
   if (v instanceof ObjectId) return { __oid: v.toHexString() };
@@ -868,7 +868,7 @@ export const DATASET_HASH = createHash("sha1")
   .slice(0, 12);
 
 // ── self-check ────────────────────────────────────────────────────────────────
-// Catches authoring mistakes (mismatched totals, dangling references, dup ids)
+// Catches mistakes in the dataset (mismatched totals, references with no target, dup ids)
 // before they can corrupt expected integration-test values. Runs at seed time.
 export function validateDataset(): void {
   const errs: string[] = [];
@@ -898,7 +898,7 @@ export function validateDataset(): void {
   for (const s of shipments) {
     const orderHex = (s.orderId as ObjectId).toHexString();
     if (!orderIds.has(orderHex)) errs.push(`shipment ${s._id.toHexString()}: dangling orderId`);
-    // The denormalised userId must equal the owning order's user.
+    // The denormalised userId must equal the user of the order that owns it.
     if (orderUserOf.get(orderHex) !== (s.userId as ObjectId).toHexString())
       errs.push(`shipment ${s._id.toHexString()}: userId does not match its order's user`);
   }

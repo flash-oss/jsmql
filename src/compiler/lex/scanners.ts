@@ -75,8 +75,8 @@ export function scanNumber(src: string, start: number): Scan {
   let exponent = false;
   // A `.` after the integer digits always belongs to the number, the same as in
   // JavaScript: `1.e3` is 1000, and `1.foo` is a SyntaxError. So a member access
-  // on a bare integer needs a second dot (`1..toString()`). Reading the dot as
-  // an access gave `1.e3` the wrong meaning: "field e3 of 1".
+  // on a bare integer needs a second dot (`1..toString()`). A read of the dot as
+  // an access gives `1.e3` the wrong meaning: "field e3 of 1".
   if (src[i] === ".") {
     fraction = true;
     i = digits(src, i + 1, isDigit);

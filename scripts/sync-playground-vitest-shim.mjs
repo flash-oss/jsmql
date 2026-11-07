@@ -1,12 +1,12 @@
 // Vitest shim used by `sync-playground.mjs` to enumerate every `describe()` and `it()` in
-// `test/realistic.test.ts` without starting vitest itself. The loader hook (`sync-playground-loader.mjs`)
+// `test/realistic.test.ts`. Vitest itself does not start. The loader hook (`sync-playground-loader.mjs`)
 // resolves the test file's `import { describe, it, expect } from "vitest"` to this module.
 // The recorded tree is exposed through the `tree` export and consumed by the sync script.
 //
 // This code RUNS every `describe(title, fn)` body so nested `describe` and `it` calls register.
 // It does NOT run any `it(title, fn)` body. Instead, `fn.toString()` is captured so the sync
-// script can inspect the source. This keeps the shim honest (no test assertions ever run)
-// while still showing the full test tree.
+// script can inspect the source. This keeps the shim honest (no test assertions ever run),
+// and the full test tree is still visible.
 //
 // `expect`, `vi`, and the lifecycle hooks (`beforeAll`, `afterAll`, `beforeEach`, `afterEach`)
 // are noop'd through a chained-call Proxy. Any stray usage in an executed describe body does not

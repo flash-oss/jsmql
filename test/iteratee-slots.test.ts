@@ -1,6 +1,6 @@
 // `iterateeSlots` says which argument slots stand in for an arrow, on which
-// receiver, and with which spellings. The claim is only worth making if it is
-// checked, so this re-measures every declared form against the arrow it means —
+// receiver, and with which spellings. The claim has value only if something
+// checks it, so this re-measures every declared form against the arrow it means —
 // and every form a slot leaves out, to confirm it is refused.
 //
 // The comparison erases binding names first: two spellings of one meaning differ
@@ -178,7 +178,7 @@ describe("registry — a spelling a slot leaves out is refused", () => {
     // `"k"` here is an ORDER, not `x => x.k`: the same spelling as a property-path
     // shorthand with a different meaning, which is why it is its own state and
     // not a slot form — a form is identified by its spelling.
-    // The one spelling every sort-taking row shares is the key string; which
+    // The one spelling every row that takes a sort shares is the key string; which
     // OTHER forms each takes (an object, an array of keys, no argument) is that
     // row's arity and src/compiler/emit/sort-spec.ts's business. A mutator is a statement, so it is
     // tried where a statement stands.

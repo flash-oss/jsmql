@@ -4,10 +4,10 @@
 // `npm test` stays green for a contributor who has not run `npm run fixture:up`.
 //
 // It may not skip for any other reason. A suite that swallows a wrong password, a
-// missing grant or a refused command keeps running its compile-only half and STILL
+// missing grant or a refused command continues to run its compile-only half and STILL
 // REPORTS GREEN — and the half that catches what a `toEqual` cannot has silently
 // stopped running. That is not hypothetical: four suites sat in exactly that state,
-// each reporting green, because `readWrite` alone cannot drop a database.
+// each one reported green, because `readWrite` alone cannot drop a database.
 //
 // So the rule these helpers enforce is: "could not reach a server at all" → skip;
 // everything else → throw, and let the suite go red.
@@ -36,7 +36,7 @@ export function isUnreachable(e: unknown): boolean {
 function refused(e: unknown): Error {
   return new Error(
     `The project's mongod answered, but refused this suite: ${(e as Error).message}\n` +
-      `This is NOT a reason to skip — a suite that skips here reports GREEN while its\n` +
+      `This is NOT a reason to skip — a suite that skips here reports GREEN when its\n` +
       `server half never runs. Run \`npm run fixture:up\` to apply the current grants,\n` +
       `and add any new scratch database to SCRATCH_DBS in test/fixtures/config.ts.`,
     { cause: e },
@@ -47,7 +47,7 @@ function refused(e: unknown): Error {
  * A connected client for a live suite, or null when the instance is not running.
  *
  * Use it in `beforeAll` and then do the suite's OWN setup outside any try/catch, so a
- * failed drop or insert fails the suite instead of disappearing into a skip:
+ * failed drop or insert fails the suite, and does not disappear into a skip:
  *
  *     client = await liveClient();
  *     if (client) {
@@ -73,7 +73,7 @@ export async function liveClient(timeoutMs = 1500): Promise<MongoClient | null> 
  * Is the instance running? For a suite that gates a whole `describe` on it
  * (`describe.skipIf(!up)`), evaluated once at module load.
  *
- * A refusal throws here too, at import time, which fails the file — the point being
+ * A refusal throws here too, at import time, which fails the file. The point is
  * that it must never quietly turn into `up === false`.
  */
 export async function liveUp(timeoutMs = 700): Promise<boolean> {
@@ -85,8 +85,8 @@ export async function liveUp(timeoutMs = 700): Promise<boolean> {
 /**
  * A connected client where "is it running?" was already settled — inside a
  * `describe.skipIf(!up)` block, or an `it.skipIf(!up)`. It never returns null, so the
- * suite needs no null handling; if the instance disappears between the two, that is a
- * failure worth seeing rather than a silent skip.
+ * suite needs no null check; if the instance disappears between the two, that is a
+ * failure that a person must see, not a silent skip.
  */
 export async function liveClientNow(): Promise<MongoClient> {
   const client = await liveClient();

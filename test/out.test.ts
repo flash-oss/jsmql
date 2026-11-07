@@ -286,7 +286,7 @@ describe("$out — mode gates", () => {
 });
 
 describe("$out — validate() carries meaningful positions", () => {
-  it("a malformed LHS error has a non-zero position pointing at the LHS", () => {
+  it("a malformed LHS error has a non-zero position that points at the LHS", () => {
     const v = jsmql.validate("  $$$.a.b = $$;");
     expect(v.valid).toBe(false);
     expect(v.errors).toHaveLength(1);
@@ -313,7 +313,7 @@ describe("$out RHS accepts chained stage calls", () => {
     expect(jsmql("$$$.archive = $$.$sort({ a: 1 });")).toEqual([{ $sort: { a: 1 } }, { $out: "archive" }]);
   });
 
-  it("chains several, and mixes with .filter", () => {
+  it("chains more than one stage, and mixes with .filter", () => {
     expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 }).$limit(10);')).toEqual([
       { $match: { s: "x" } },
       { $sort: { a: -1 } },
@@ -363,11 +363,11 @@ describe("$out RHS accepts chained stage calls", () => {
 // ── `$merge` — the collection keeps what it already holds ────────────────────
 //
 // `=` REPLACES a collection (a `$out`) and `+=` ADDS to it (a `$merge`), which the
-// server proves: run both over a collection already holding `{ _id: 99 }` and only
+// server proves: run both over a collection that already holds `{ _id: 99 }` and only
 // `$out` drops it. `.concat()` and `.push(...)` are the same write spelled as the
 // JavaScript verbs, so an ARRAY of documents can be written as well as the stream.
 // See docs/specs/out-stage.md.
-describe("$merge — adding to a collection", () => {
+describe("$merge — add to a collection", () => {
   it("'+=' writes the stream with $merge, where '=' writes it with $out", () => {
     expect(jsmql("$$$.metrics += $$;")).toEqual([{ $merge: "metrics" }]);
     expect(jsmql("$$$.metrics = $$;")).toEqual([{ $out: "metrics" }]);

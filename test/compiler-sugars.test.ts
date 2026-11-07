@@ -304,7 +304,7 @@ let db: Db | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   db = c.db("jsmql_compiler_sugars");
@@ -1243,7 +1243,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
   it("a mutator with nothing to write is a VALUE, and the row names the immutable form", () => {
     // A call in the middle makes a fresh array, so there is no field to write back
     // to. Such a chain is an expression, and the value road answers it by name —
-    // it is not a Pipeline, and sending the reader to `jsmql.pipeline()` sent them
+    // it is not a Pipeline, and a message that sends the reader to `jsmql.pipeline()` sends them
     // to an entry that refuses it just as hard.
     expect(() => expr("$.xs.filter(x => x > 1).map(x => x * 2).uniq().sort()")).toThrow(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",

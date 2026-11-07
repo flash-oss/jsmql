@@ -2,7 +2,7 @@
 // for expected values in tests. JS truthy/falsy: false, null (or missing), "", and 0 are
 // falsy; everything else is truthy.
 //
-// This is deliberately a SECOND implementation rather than an import of the real one:
+// This is deliberately a SECOND implementation, not an import of the real one:
 // a test that built its expectation from the code under test would pass no matter what
 // that code emitted. Kept in one module so a change to the rule is one edit here plus
 // the emitter, not a sweep of every suite that asserts a predicate shape.

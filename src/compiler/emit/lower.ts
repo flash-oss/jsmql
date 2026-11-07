@@ -78,8 +78,8 @@ const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlyS
 
 /**
  * The join road, lent by statement.ts at load: a chain on another collection in a
- * value position hoists its `$lookup` ahead of the stage that reads it. Registered rather
- * than imported, because the road needs the statement target's link walker and
+ * value position hoists its `$lookup` ahead of the stage that reads it. Registered, not
+ * imported, because the road needs the statement target's link walker and
  * the statement target imports this file.
  */
 let joinRoad: ((node: Expr, env: Env) => unknown) | null = null;
@@ -365,7 +365,7 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       flush();
       // JavaScript spreads a STRING into its characters. MongoDB has no operator that
       // does, and `$concatArrays` refuses a string outright, so a provable one is
-      // refused here rather than answered wrongly — unguarded, `[..."abc"]` lowers
+      // refused here, and not answered wrongly — unguarded, `[..."abc"]` lowers
       // to the bare string "abc". See docs/DEFERRED.md § B.
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
@@ -573,7 +573,7 @@ function reachable(path: string): unknown {
   return value;
 }
 
-/** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — rather than a field read? */
+/** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — and not a field read? */
 function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
   // A namespace has members, not fields. Elsewhere only a row that is READ (`length`) is a property.
   return sourceFamily(node.object) !== null || !isCallable(node.name);
@@ -682,7 +682,7 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  * is refused before a document is read. For example, `$.o = $$$.c.find({ _id: $.arr[0] })`
  * over an array failed in the string branch. A string receiver failed in the
  * array branch. A `$switch` drops a
- * branch whose case folds to false without optimising it, so every receiver type
+ * branch whose case folds to false, with no optimiser, so every receiver type
  * — array, string, document, number, null, missing — answers as it always did
  * (measured, the two shapes agree on each). It is the flatter document too, and
  * the reading every other runtime family dispatch here already uses.
@@ -1312,7 +1312,7 @@ function orientUndefined(left: Expr, right: Expr): Expr | null {
 
 /**
  * `a && b` / `a || b` as a VALUE keeps JavaScript's operand-preserving rule:
- * `$cond` on the truth of the left, returning the operand. An all-boolean
+ * `$cond` on the truth of the left, which returns the operand. An all-boolean
  * chain is a boolean either way and keeps the flat `$and` / `$or`. A left
  * side that is not a plain reference is bound once, so it is not evaluated twice.
  */
@@ -1367,7 +1367,7 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
  */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
   // Each declarator lowers ONCE. One that breaks its group is already lowered, so
-  // it rides to the next `$let` rather than through `lowerValue` a second time —
+  // it goes to the next `$let`, not through `lowerValue` a second time —
   // a second call would mint a second compiler name for the same value.
   const step = (i: number, e: Env, carried: { value: unknown } | null): unknown => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));

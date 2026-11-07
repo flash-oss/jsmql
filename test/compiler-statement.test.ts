@@ -59,7 +59,7 @@ describe("compiler/emit/statement — the writes", () => {
   });
 
   it("assigns a document WHOLE, as JavaScript does", () => {
-    // `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server, leaving the other
+    // `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server, and leaves the other
     // sub-fields behind; `$mergeObjects` makes the document a value, so the field
     // takes it whole — and an expression inside it still evaluates. Both measured.
     expect(compiled("$.n = { x: 1 };")).toEqual([{ $set: { n: { $mergeObjects: [{ x: 1 }] } } }]);
@@ -78,18 +78,18 @@ describe("compiler/emit/statement — the writes", () => {
     // A later write that READS what an earlier one wrote must read the NEW value.
     expect(compiled("$.x = 1, $.z = $.x;")).toEqual([{ $set: { x: 1 } }, { $set: { z: "$x" } }]);
     expect(compiled("$.a = $.q, $.b = $.a.c;")).toEqual([{ $set: { a: "$q" } }, { $set: { b: "$a.c" } }]);
-    // Writing what an earlier value READ needs no split: one `$set` evaluates
+    // A write of what an earlier value READ needs no split: one `$set` evaluates
     // every value against the document it received.
     expect(compiled("$.a = $.b, $.b = 1;")).toEqual([{ $set: { a: "$b", b: 1 } }]);
     // A `"$a"` in raw MQL IS a read of `a`, so the group ends there too:
-    // one `$set` would have given `b` the value `a` held BEFORE the stage.
+    // one `$set` would give `b` the value `a` held BEFORE the stage.
     expect(compiled('$.a = 1, $.b = $toString("$a");')).toEqual([
       { $set: { a: 1 } },
       { $set: { b: { $toString: "$a" } } },
     ]);
     // On the right side of `=`, a `"$a"` is text (HR6): it reads nothing, so one `$set` holds both.
     expect(compiled('$.a = 1, $.b = "$a";')).toEqual([{ $set: { a: 1, b: { $literal: "$a" } } }]);
-    // The same path twice is the source saying two things.
+    // The same path twice means that the source says two things.
     expect(compiled("$.a = 1, $.a = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
     // A parent beside its own child is refused by the server outright.
     expect(compiled("$.a = 1, $.a.b = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { "a.b": 2 } }]);
@@ -720,7 +720,7 @@ describe("compiler/emit/statement — bindings between stages", () => {
       /'\$\$ = \[ … \]' element 2 takes a document, but got a number/,
     );
     // the reducer wrap is a different road, not built yet
-    // a list holding a fold of the stream is the reducer wrap: one `$group`
+    // a list that holds a fold of the stream is the reducer wrap: one `$group`
     expect(compiled("$$ = [{ n: $$.reduce((acc, d) => acc + 1, 0) }];")).toEqual([
       { $group: { _id: null, n: { $sum: 1 } } },
       { $replaceWith: { n: "$n" } },
@@ -834,7 +834,7 @@ describe("compiler/emit/statement — the stream road", () => {
 });
 
 describe("compiler/emit/statement — the refusals name the way out", () => {
-  it("tells a value what to do instead of standing as a statement", () => {
+  it("tells a value what to do when it stands as a statement", () => {
     expect(() => pipeline("$.a > 1;")).toThrow(/A pipeline statement writes something/);
     expect(() => pipeline("$.s.trim();")).toThrow(/Assign it to a field/);
     // An operator that you call as a statement is your own MQL, so it passes through as a
@@ -1133,7 +1133,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_statement").collection("t");
@@ -1190,7 +1190,7 @@ describe("compiler/emit/statement — a regex literal in MQL that you write is a
 });
 
 describe("compiler/emit/statement — the server accepts every pipeline this file asserts", () => {
-  // An allowance has an effect only while a case in this file asserts its source.
+  // An allowance has an effect only when a case in this file asserts its source.
   it("asserts each allowance in a case above", () => {
     for (const src of [...Object.keys(NEEDS_MORE_THAN_A_SERVER), ...Object.keys(REFUSED_BY_ENVIRONMENT)]) {
       expect(RUNS, src).toContain(src);
@@ -1300,7 +1300,7 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
     // the in-place shape loses the elements under the array `a`
     expect(await ns([{ $unwind: "$a.b" }, { $replaceWith: "$a.b" }])).toEqual([6]);
   });
-  it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
+  it("a binding that holds an array-returning method's value is typed, so a read dispatches at compile time", () => {
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
       // `.uniq()` runs on the empty array when `tags` is missing (HR5), so its value is
       // an array in every document. `$in` refuses a null array (MEASURED), and the proven

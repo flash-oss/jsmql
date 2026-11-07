@@ -55,7 +55,7 @@ function rootName(node: unknown): string | null {
 /**
  * Names that keep their runtime binding whatever their value.
  *
- * Four ways a name's value stops being the one it was bound to. The first two are
+ * Four ways a name's value changes from the one it was bound to. The first two are
  * plain; the last two are the ones that are easy to miss:
  *   a = 2               written to
  *   const a = …         a second time
@@ -80,7 +80,7 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
   }
 
   // A function whose body reads its OWN name, or a name declared only later, is
-  // not settled here: substituting it would never end (recursion) or would carry
+  // not settled here: a substitution of it would never end (recursion) or would carry
   // a name that has no value yet. It stays a binding, inlined where it is called,
   // and the recursion is refused there. A call of an EARLIER function folds.
   const order = declaredIn(stmts);
@@ -148,7 +148,7 @@ function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
 /**
  * Replace any subexpression that is already a constant with the value it holds.
  *
- * Reading a constant at RUN TIME is pure waste — the answer cannot change:
+ * A read of a constant at RUN TIME is pure waste — the answer cannot change:
  *   const o = { a: 1 };  $.x === o.a
  *     without this  → {"$expr":{"$eq":["$x",{"$getField":{"field":"a","input":{"a":1}}}]}}
  *     with it       → {"x": 1}
@@ -159,7 +159,7 @@ function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
 function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY): T {
   // The environment travels down and SHRINKS at every binder. A lambda
   // parameter named the same as a declared function is a different thing
-  // entirely. Folding `f(1)` against the outer `f` inside `map(f => f(1))`
+  // entirely. A fold of `f(1)` against the outer `f` inside `map(f => f(1))`
   // would answer about the wrong one.
   const step = (n: object, key: string, here: Constants): Constants => {
     const names = bindsFor(n, key);
@@ -198,7 +198,7 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
  * Every statement of a list, with its constant parts folded against `known`.
  *
  * ONE STATEMENT at a time, never the list around it. A scope's own declarations
- * are exactly what its statements should see. Descending through the
+ * are exactly what its statements should see. A descent through the
  * `Pipeline` node would make `bindsFor` hide them along with the nested ones.
  */
 function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly PipelineStmt[] {
@@ -209,11 +209,11 @@ function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly
 const EMPTY: Constants = new Map();
 
 /**
- * The node types worth asking about. Every other type either cannot be constant
- * or is one already, and asking anyway would rebuild the tree for nothing.
+ * The node types worth a question. Every other type either cannot be constant
+ * or is one already, and a question anyway would rebuild the tree for nothing.
  *
  * `OperatorCall` is deliberately absent: `$add(1, 2)` is the escape hatch, and
- * raw MQL the developer wrote is emitted as written. Folding it would break the
+ * raw MQL the developer wrote is emitted as written. A fold of it would break the
  * property that a pasted pipeline round-trips.
  */
 const EVALUABLE_TYPES = [
@@ -293,7 +293,7 @@ export function fold(program: Program): Program {
   if (root.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested) as object) as Program;
 
   // The root is folded BELOW, by the pass that also decides whether the program
-  // collapses to one expression. Walking it here as well would do that work
+  // collapses to one expression. A walk of it here as well would do that work
   // first, and would leave the pass below with nothing to report. The collapse
   // — the whole reason `const a = 1; $.x === a` is a Filter — would never happen.
   const stmts = (root.stmts as readonly PipelineStmt[]).map(
@@ -314,7 +314,7 @@ export function fold(program: Program): Program {
   // One EXPRESSION left is a Filter, not a pipeline of one predicate. This is
   // the whole reason `const a = 1; $.x === a` reads as `{ "x": 1 }`. Only an
   // expression collapses this way: a write or a declaration stays a pipeline
-  // either way. Unwrapping one would throw away the `;` the source wrote, and
+  // either way. An unwrap of one would throw away the `;` the source wrote, and
   // gain nothing.
   if (left.length === 1) {
     const only = left[0] as Any;
@@ -358,7 +358,7 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
     }
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
       const result = evaluate(resolved.value, env);
-      // A constant MongoDB cannot write down is worth saying out loud. The
+      // A constant MongoDB cannot write down needs a clear statement. The
       // engine names it and propagates it, so an `Infinity` buried three
       // operators deep reports the same way one at the top does.
       if (!result.ok && result.unspellable !== undefined) throw noLiteralFor(result.unspellable, resolved.pos);

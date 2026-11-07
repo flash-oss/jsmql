@@ -21,8 +21,8 @@
 //
 // The check is SUBTRACTIVE. Each of the four tests belongs to one part of the
 // value's proof, and the check keeps only the tests some part of the proof can
-// fail: `$ne null` only while the value may be absent, `$ne false` only while it
-// may be a boolean, `$ne ""` only while it may be a string, `$ne 0` only while it
+// fail: `$ne null` only when the value may be absent, `$ne false` only when it
+// may be a boolean, `$ne ""` only when it may be a string, `$ne 0` only when it
 // may be a number. An array, an object, a date or an ObjectId owes no test. A
 // value that can only be a boolean or a number is its own truth, because
 // MongoDB already reads 0, false, null and missing as false there (the table).
@@ -31,7 +31,7 @@
 //
 // `Truth` is a brand. The vocabulary declares it, and this module alone mints
 // it. Every slot that reads a boolean is typed to take a `Truth` (see mql.ts).
-// So a value cannot land in `$cond.if` without passing through here.
+// So a value cannot get into `$cond.if` unless it goes through here.
 
 import type { Truth, Type } from "../../registry/vocabulary.ts";
 import { ANY, isNothing, mayBe } from "./type.ts";

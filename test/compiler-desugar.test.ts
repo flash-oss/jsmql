@@ -58,7 +58,7 @@ const EQUIVALENT: [string, string][] = [
   ["$.items.splice(1, 2);", "$.items = $.items.toSpliced(1, 2);"],
   ["$.items.splice(1, 2, 7, 8);", "$.items = $.items.toSpliced(1, 2, 7, 8);"],
   ["$.a.b.sort();", "$.a.b = $.a.b.toSorted();"],
-  // a mutator whose immutable spelling is a shape rather than a name
+  // a mutator whose immutable spelling is a shape, not a name
   ["$.items.push(9);", "$.items = [...$.items, 9];"],
   ["$.items.push(9, 10);", "$.items = [...$.items, 9, 10];"],
   ["$.items.unshift(0);", "$.items = [0, ...$.items];"],
@@ -310,7 +310,7 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
     expect(arg('$.o.mapValues("f")')).toBe("StringLiteral");
     expect(arg("$.items.reduce((a, v) => a + v, 0)")).toBe("Lambda");
     // `Object.groupBy(items, discriminator)` puts the array FIRST, so a
-    // layout keyed by position rather than by receiver would rewrite the wrong slot.
+    // layout keyed by position, not by receiver, would rewrite the wrong slot.
     expect(arg('Object.groupBy($.items, ["a", 1])')).toBe("FieldRef");
     expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");
   });

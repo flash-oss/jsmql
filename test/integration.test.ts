@@ -65,7 +65,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(hexes(rows)).toEqual(ids(ID.product, [1, 3, 5, 7]));
   });
 
-  // `$.email != null` + equality — the null-vs-missing distinction matters here
+  // `$.email != null` + equality — the difference between null and missing is important here
   // (u5 has an explicit null email and must be excluded).
   it("filter: active users with a non-null email", async () => {
     const rows = await find("users", `$.email != null && $.status === "active"`);
@@ -85,15 +85,15 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   });
 
   // Every email is shorter than the 19-char needle, so EVERY document takes the
-  // negative-index path. Matching nothing is the correct answer; aborting the
+  // negative-index path. A match of nothing is the correct answer; an abort of the
   // query is not.
-  it("filter: .endsWith() with a needle longer than every value matches nothing, without aborting", async () => {
+  it("filter: .endsWith() with a needle longer than every value matches nothing, and does not abort", async () => {
     const rows = await find("users", `$.email.endsWith("@flash-payments.com")`);
     expect(rows).toEqual([]);
   });
 
-  // The same hazards through the value-mode string methods, asserting the
-  // returned values rather than just "it ran". Missing and null both read as "".
+  // The same hazards through the value-mode string methods. The test asserts the
+  // returned values, not only "it ran". Missing and null both read as "".
   it("expr: string methods on short / null / missing receivers match JS semantics", async () => {
     const rows = (await aggregate(
       "users",
@@ -133,7 +133,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
       daysLived: 685, // expiresAt − createdAt: the receiver is the LATER date
       quarter: 4,
       isoWeek: 49,
-      sameYear: true, // 2026-12-01 vs 2026-06-10
+      sameYear: true, // 2026-12-01 and 2026-06-10
       sameMonth: false,
       newYearsDay: new Date("2026-01-01T00:00:00.000Z"), // month is 1-based
     });
@@ -300,7 +300,7 @@ $limit(3);`,
 
   // `$$.push(...$$$.<coll>.aggregate(...))` — an uncorrelated foreign sub-pipeline
   // unioned into the stream. The shipment counts per carrier are appended after the
-  // one summary row the outer pipeline produces, proving `$unionWith.pipeline` really
+  // one summary row the outer pipeline produces. This proves `$unionWith.pipeline` really
   // ran the grouped aggregate (not merely that jsmql emitted it).
   it("pipeline: an aggregate sub-pipeline unioned into the stream through $$.push", async () => {
     const rows = await aggregate(
@@ -340,7 +340,7 @@ $sort({ _id: 1 });`,
 
   // Invariant check across the whole collection: the `.map(i => i.price).reduce(...)`
   // subtotal (realistic.test.ts "cart subtotal") must equal each order's stored
-  // `total`. We surface any violating order, expecting none.
+  // `total`. The test shows any order that breaks the rule, and expects none.
   it("expr: items.map(price).reduce(sum) equals every order total", async () => {
     const subtotal = jsmql.expr(`$.items.map(i => i.price).reduce((acc, p) => acc + p, 0)`);
     const violations = await db
@@ -368,7 +368,7 @@ $sort({ _id: 1 });`,
   // each order's shipments. The inner predicate correlates on TWO levels —
   // `s.orderId === o._id` (the order) and `s.userId === $._id` (the outer
   // user) — which only works because jsmql depth-stamps the `$lookup.let`
-  // names ($$v1_id vs $$v0_id) so they do not collide. (realistic.test.ts
+  // names ($$v1_id and $$v0_id) so they do not collide. (realistic.test.ts
   // "user → recent orders → each order's shipments".) This is the deepest
   // pipeline jsmql emits; running it proves the two-level correlation resolves
   // to the right documents on a real server.
@@ -401,7 +401,7 @@ $project({ name: 1, recentOrders: 1 });`,
       };
       return u.recentOrders.map((o) => ({ order: String(o._id), shipments: o.shipments.map((s) => String(s._id)) }));
     };
-    // Ada's 3 orders, newest first, each carrying its single shipment.
+    // Ada's 3 orders, newest first, each with its single shipment.
     expect(orderShipments("Ada Lovelace")).toEqual([
       { order: ID.order(15).toHexString(), shipments: [ID.shipment(12).toHexString()] },
       { order: ID.order(2).toHexString(), shipments: [ID.shipment(2).toHexString()] },
@@ -420,8 +420,8 @@ $project({ name: 1, recentOrders: 1 });`,
   // Correlated $lookup whose outer field has a HYPHENATED path segment
   // (`$.meta["ext-id"]`). The hyphen is legal in a field name but illegal in a
   // MongoDB `$$` variable name, so the emitted `$lookup.let` var is derived from
-  // the sanitized segment (`jsmql_f0_ext_id`) — feeding the raw `ext-id` through
-  // makes mongod reject the whole pipeline with FailedToParse. Running it proves
+  // the sanitized segment (`jsmql_f0_ext_id`) — the raw `ext-id` sent through
+  // makes mongod reject the whole pipeline with FailedToParse. A run of it proves
   // the server accepts the sanitized name AND the correlation still filters
   // correctly. Only order 1 carries ext-id "X-1", so only its row gets its
   // shipment; every other order's `tracked` is empty.
@@ -435,7 +435,7 @@ $project({ name: 1, recentOrders: 1 });`,
     expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
   });
 
-  // Correlated $lookup gating on a TOP-LEVEL bracket-accessed outer field
+  // Correlated $lookup gated on a TOP-LEVEL bracket-accessed outer field
   // (`$["ext-code"]`). The bare root `$` must contribute no path segment, or the
   // emitted field path is `.ext-code` (leading dot) and mongod rejects the whole
   // pipeline (Location15998). Distinct code path from the nested `meta["ext-id"]`
@@ -463,8 +463,8 @@ $project({ name: 1, recentOrders: 1 });`,
   // assert(cond, msg) that FAILS for some document: it lowers to a $match whose
   // $convert names the message as a bson type, so MongoDB aborts the WHOLE
   // aggregate. The server does not know that type name. Its error holds the
-  // message. This is the load-bearing behaviour — proving the server really
-  // rejects, not that we emit a plausible-looking shape.
+  // message. This is the important behaviour — it proves the server really
+  // rejects, not that jsmql emits a shape that looks plausible.
   it("pipeline: a failing assert aborts the whole aggregate with its message", async () => {
     await expect(aggregate("orders", `assert($.total <= 100, "order total exceeds cap");`)).rejects.toThrow(
       "jsmql assertion failed: order total exceeds cap",
@@ -629,8 +629,8 @@ $ = { user: $._id, recent: $.recent };`,
   });
 
   // `.aggregate` at the HEAD with a lodash tail. `.pick` is the case a green
-  // `toEqual` could never have caught: while the head form fell back to value
-  // mode it read `$getField` off the result ARRAY and every row came back `{}`,
+  // `toEqual` could never catch: if the head form falls back to value
+  // mode, it reads `$getField` off the result ARRAY and every row came back `{}`,
   // and the `.omit` sibling made mongod refuse the pipeline outright.
   it("pipeline: .aggregate head with a lodash tail projects real documents", async () => {
     const rows = await aggregate(
@@ -723,7 +723,7 @@ $ = { byLiteral: $.subscription["tier"], byMissing: $.subscription[$.keyField] ?
 
   // A method chained onto a lookup reads jsmql's OWN materialised slot, which it
   // knows holds the `$lookup.as` array — so the emitted MQL has no runtime type
-  // guard. Running it proves the compile-time shortcut picked the right branch.
+  // guard. A run of it proves the compile-time shortcut picked the right branch.
   it("pipeline: methods chained onto a materialised lookup slot return the right values", async () => {
     const rows = await aggregate(
       "users",

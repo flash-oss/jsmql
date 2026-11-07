@@ -1,6 +1,6 @@
 // Phase 4 of src/compiler/ — which document a program becomes.
 //
-// This pass asks the ROW rather than stacking auto-wrap special cases. Each case
+// This pass asks the ROW. It does not stack auto-wrap special cases. Each case
 // below states the shape by hand. The entries of src/index.ts pick their output
 // with this same pass, so a comparison with `jsmql(src)` would check the pass
 // against itself.
@@ -52,7 +52,7 @@ describe("compiler/passes/shape — a statement makes a pipeline", () => {
     expect(shape('$.s.split(",").push(9)')).toBe("filter");
   });
 
-  it("reads a lone declaration as a pipeline, since nothing would read it", () => {
+  it("reads a lone declaration as a pipeline, because nothing would read it", () => {
     expect(shape("let x = $.a;")).toBe("pipeline");
   });
 });

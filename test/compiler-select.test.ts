@@ -124,7 +124,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(select(consult("$abs", "value"), NONE, { kind: "dynamic" }, 1, UNPROVEN).kind).toBe("rule");
   });
 
-  it("refuses a spread on a rule that reads arguments one by one, quoting the signature", () => {
+  it("refuses a spread on a rule that reads arguments one by one, and quotes the signature", () => {
     expect(select(consult("$abs", "value"), NONE, { kind: "spread" }, 1, UNPROVEN)).toMatchObject({
       kind: "spreadRefused",
       sig: "operand",

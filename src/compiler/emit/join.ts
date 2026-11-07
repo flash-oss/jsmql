@@ -18,7 +18,7 @@
 // stage, so a trailing `.take(n)` changes what the join returns and never what
 // it matches.
 //
-// The chain peels: a link goes INTO `$lookup.pipeline` while its row has a
+// The chain peels: a link goes INTO `$lookup.pipeline` when its row has a
 // `stream` cell that accepts it (`filter`, the sorts, `take`, `aggregate`, a
 // stage link, a `.map` to a provable document). The first link that is not such
 // a link ends the sub-pipeline. It and everything after it read the materialised
@@ -227,7 +227,7 @@ function elementsOf(slot: Expr, l: Lookup, env: Env, node: Expr): Expr {
   if (l.one === "find") return pathOn(slot, l.element, l.pos);
   // One document per element, so a COUNT of the elements is the count of the
   // documents. `.length` and `.size()` read the slot itself — `$size: "$slot"`
-  // — instead of picking each element out first.
+  // — and do not pick each element out first.
   if (countsElements(node, l.peeledTo)) return slot;
   // A compiler mint, so the two spellings of one chain (`"items"` / `d => d.items`) name it alike.
   const x = env.fresh("el").as;

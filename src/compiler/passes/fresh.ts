@@ -7,7 +7,7 @@
 // the element. The binding the developer meant becomes unreachable. The MQL is
 // valid, and the answer is wrong. This is the worst shape a bug can take.
 //
-// Shadowing only matters for names the BODY mentions, and a built body
+// A shadow only matters for names the BODY mentions, and a built body
 // mentions exactly what the rewrite splices into it. So this code answers the
 // whole question from the arguments in hand — no scope, no gensym counter, no state.
 

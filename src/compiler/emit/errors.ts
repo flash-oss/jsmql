@@ -130,7 +130,7 @@ export function refusalFor(
       );
     case "wrongReceiver": {
       const accepts = sel.accepts === "any" ? "any value" : sel.accepts.map((f) => `'${f}'`).join(", ");
-      // Several possible kinds arrive joined by " or "; each one takes its own article.
+      // More than one possible kind arrives joined by " or "; each one takes its own article.
       const got =
         sel.got === null
           ? "a receiver whose type JSMQL cannot prove"
@@ -572,14 +572,14 @@ export const bareContextRef = (ref: string, pos: number): CodegenError => {
   return new CodegenError(`${what}. Alone it is not a statement.`, pos);
 };
 
-/** An expression standing where a statement must: it computes a value and writes nothing. */
+/** An expression that stands where a statement must: it computes a value and writes nothing. */
 export const notAStatement = (pos: number): CodegenError =>
   new CodegenError(
     "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",
     pos,
   );
 
-/** A name that is not a stage, standing as a statement. */
+/** A name that is not a stage, and stands as a statement. */
 export const notAStage = (name: string, stages: readonly string[], pos: number): CodegenError =>
   new CodegenError(
     `'${name}' is not an aggregation stage, so it cannot stand as a statement.${didYouMean(name, stages, (s) => s)}`,
@@ -1608,7 +1608,7 @@ export const diagnosticIsNotALink = (name: string, pos: number): CodegenError =>
 /**
  * `$$$$.currentOpp();` — a name called straight on the database or the cluster.
  * Only a diagnostic stage of that scope is spelled there, so an unknown one is a
- * misspelling; on the database, where none is, the message names both scopes.
+ * wrong spelling; on the database, where none is, the message names both scopes.
  */
 export const notAStageOnRef = (
   name: string,

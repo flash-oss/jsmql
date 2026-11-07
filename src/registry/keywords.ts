@@ -2,7 +2,7 @@
 //
 // Keyed by the word. A row exists here only if the LEXER promotes that word to
 // its own token type. A word that stays an identifier gets no row. That test
-// makes the boundary with tokens.ts sharp, and it has a surprising answer:
+// makes the boundary with tokens.ts sharp, and it has an answer that can surprise:
 // `function` is NOT reserved. The lexer reads it as an identifier and the parser
 // recognises it, so it lives in productions.ts.
 //

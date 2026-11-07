@@ -11,7 +11,7 @@
 //   123456789 * 987654321    JavaScript …260                  server …269
 //   (0.5).round()            JavaScript 1                     server 0
 //
-// It skips itself when no mongod is listening, so `npm test` stays green.
+// It skips itself when no mongod listens, so `npm test` stays green.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MongoClient } from "mongodb";
@@ -161,7 +161,7 @@ const EXPRESSIONS: readonly string[] = [
   "(2.1).ceil()",
   "(5).clamp(1, 3)",
   "(2).inRange(1, 3)",
-  // the array aggregate, set, slicing and reshaping families
+  // the array aggregate, set, slice and reshape families
   "[1, 2, 3].sum()",
   "[].sum()",
   "[1, 2, 3, 4].mean()",

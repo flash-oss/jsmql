@@ -61,7 +61,7 @@ const CELL_OF: Readonly<Record<Position, string>> = {
  *
  * `target`, `stageBody` and `stageEntry` are waypoints, not positions: nothing
  * evaluates on the left of `=`, and the inside of a stage body leads to a
- * position rather than being one itself. `CELL_OF` answers this, so every
+ * position, and is not one itself. `CELL_OF` answers this, so every
  * position the registry has is a position here. A hand-written switch would
  * answer only for the positions it lists, and it would silently drop every one
  * added after it.
@@ -96,7 +96,7 @@ export type Verdict =
    */
   | { kind: "perFamily"; name: string; position: Position; branches: Readonly<Record<string, unknown>> }
   /**
-   * The row has no cell for this position, which is not the same as refusing it.
+   * The row has no cell for this position, which is not the same as a refusal of it.
    * Only a MongoDB row has an `updateDoc` cell, because only a MongoDB operator
    * is ever specific to an update document: `$.views++` is a STATEMENT, and
    * whether the program lowers to `{$inc:…}` or to `{$set:…}` is a property of

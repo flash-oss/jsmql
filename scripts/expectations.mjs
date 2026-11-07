@@ -119,7 +119,7 @@ export function openSuite(file) {
   };
 
   /**
-   * Apply the edits (given in any order, never overlapping). Write the file and
+   * Apply the edits (given in any order, never with an overlap). Write the file and
    * format it. The formatter owns the layout, so the difference a reviewer reads holds
    * the answers that changed, with no re-wrapped line that did not change.
    */

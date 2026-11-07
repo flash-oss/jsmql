@@ -196,7 +196,7 @@ function receiverGate(name: string, receiver: Receiver): Selected | null {
     return receiver.kind === "namespace" ? { kind: "wrongReceiver", name, got: receiver.name, accepts: on } : null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== undefined) return { kind: "wrongReceiver", name, got: receiver.proved, accepts: on };
-    // A receiver that can be several families passes when the row takes one of them; one
+    // A receiver that can be more than one family passes when the row takes one of them; one
     // whose every possible family the row refuses is refused, and the message names them all.
     if (receiver.possible !== undefined && !receiver.possible.some((f) => on.includes(f))) {
       return { kind: "wrongReceiver", name, got: receiver.possible.join(" or "), accepts: on };

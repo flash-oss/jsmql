@@ -406,7 +406,7 @@ function callOn(name: string, receiver: Type, family: string | null, args: reado
  * names, or the server raises an error. So the result is the row's answer over
  * the field families it accepts, joined: `.size()` is a number on an array and
  * on an object, so it is a number. It is the one family's answer when there is
- * only one (`.map`). A receiver that may be several kinds proves several.
+ * only one (`.map`). A receiver that may be more than one kind proves each of them.
  */
 function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], env: Env): Type {
   const r = returnsOf(name);

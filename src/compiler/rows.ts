@@ -51,7 +51,7 @@ const FIELD_FAMILIES: readonly Family[] = Object.keys(FIELD_FAMILY_TYPES) as Fie
  *
  * The one question the field-path fold asks. `$.a.b` is the path `a.b`, but
  * `$.a.length` is the size of `a` — and the only thing that separates them is
- * that one of the two names has a row saying it is read rather than called.
+ * that one of the two names has a row that says it is read, not called.
  */
 export function isFieldProperty(name: string): boolean {
   const r = row(name);
@@ -77,7 +77,7 @@ export function isStageName(name: string): boolean {
  * claims something below it.
  *
  * BOTH facts, because a caller needs both: the position is what a leaf under
- * this path holds, and `deeper` says an object under it must keep descending
+ * this path holds, and `deeper` says an object under it must continue to descend
  * before the row can answer for its keys. Without the second, `$setWindowFields`'s
  * body would settle as a value and its `output` keys would never reach the
  * window position; without the first, `$merge("out")` — a body with no keys to
@@ -99,7 +99,7 @@ const segmentsOf = (key: string): readonly string[] => (key === "" ? [] : key.sp
 /**
  * Does `key` cover `path`'s first `key.length` segments?
  *
- * A `*` covers any key, including a computed one. A LITERAL segment never covers
+ * A `*` covers any key, and a computed one too. A LITERAL segment never covers
  * a computed key: `{ [k]: … }` cannot be known to be the key the row names.
  */
 function covers(key: readonly string[], path: BodyPath): boolean {
@@ -113,7 +113,7 @@ const wildcards = (key: readonly string[]): number => key.filter((seg) => seg ==
  * Which position `path` holds inside `stage`'s body — see `bodyPositions` for the
  * path vocabulary. Undefined when `stage` is not a stage at all.
  *
- * The longest covering key wins, and a literal beats a `*` of the same length,
+ * The longest key that covers it wins, and a literal beats a `*` of the same length,
  * so `$group`'s `{ "": "value", "*": "group", _id: "value" }` reads as written:
  * `_id` is an expression and every other key is an accumulator.
  */
@@ -134,7 +134,7 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
     if (best === undefined || cand.seg.length > best.seg.length) best = cand;
     else if (cand.seg.length === best.seg.length && wildcards(cand.seg) < wildcards(best.seg)) best = cand;
   }
-  // Every stage row states the `""` key, so a covering key always exists.
+  // Every stage row states the `""` key, so a key that covers it always exists.
   if (best === undefined) return undefined;
   const stated = layout[best.key];
   return typeof stated === "string"
@@ -157,7 +157,7 @@ export function blockBodyOf(name: string): "javascript" | "stages" {
 }
 
 /**
- * Is `name` CALLED — `filter(…)` — rather than read — `length`?
+ * Is `name` CALLED — `filter(…)` — and not read — `length`?
  *
  * The one fact that separates `"abc".length` from `"abc".length()`. A name with
  * no row is left to its caller: this function refuses only what a row refuses.
@@ -179,7 +179,7 @@ export function namespaceNames(): ReadonlySet<string> {
 }
 
 /**
- * The name that means the same as this mutator without mutating, or undefined.
+ * The name that means the same as this mutator, with no mutation, or undefined.
  * `.sort()` → `"toSorted"`. See `immutableTwin` for what qualifies as a twin.
  */
 export function immutableTwinOf(name: string): string | undefined {
@@ -284,7 +284,7 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
   }
   // A cell that dispatches on the ARGUMENT shape accepts what any of its rules
   // accepts. Read as one rule, so `Date(a, b, c, d, e, f, g, h)` is refused
-  // by the count no rule states rather than accepted because no single rule was
+  // by the count no rule states. It is not accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
   // The refusal keys state no count: a constant call is counted by the rule for its
   // class, and the leftover by none.
@@ -367,7 +367,7 @@ const emitRow = (name: string): EmitRow | undefined =>
 
 /**
  * The ONE document-field family a method's row is spelled on, or null when it is
- * spelled on several (or on none). A receiver the registry cannot type still
+ * spelled on more than one (or on none). A receiver the registry cannot type still
  * has this family when the call is valid at all: `.map` on an unproven field is
  * a call on an array, or a server error — never a call on a string.
  */
@@ -382,7 +382,7 @@ export function soleFieldFamilyOf(name: string): Family | null {
   return fields.length === 1 ? fields[0] : null;
 }
 
-/** Does the row answer this family with a refusal rather than a lowering, in a VALUE position? */
+/** Does the row answer this family with a refusal, not a lowering, in a VALUE position? */
 function refusesFamily(name: string, family: Family): boolean {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr as
     | { perFamily?: Record<string, unknown> }
@@ -528,7 +528,7 @@ export function elementOnlyOf(name: string): { when: "always" | "bare"; why: str
   return (row(name) as { elementOnly?: { when: "always" | "bare"; why: string } } | undefined)?.elementOnly ?? null;
 }
 
-/** Does the row lower this name as a VALUE on the stream itself — `$$.size()`, the document count — rather than as a chain link? */
+/** Does the row lower this name as a VALUE on the stream itself — `$$.size()`, the document count — and not as a chain link? */
 export function hasStreamValueCell(name: string): boolean {
   const expr = (row(name) as { expr?: { perFamily?: Record<string, unknown> } } | undefined)?.expr;
   const cell = expr?.perFamily?.stream;
@@ -712,7 +712,7 @@ export function onlyOf(name: string): readonly string[] {
 
 /** Does the row for `name` exist, of kind `root` or `global` — a name reached without a receiver? */
 /**
- * Every value-constructing global, with the doc its row states — `ObjectId`,
+ * Every global that constructs a value, with the doc its row states — `ObjectId`,
  * `Decimal128`, `MinKey`, `Date`, and their mongosh spellings: a global row that
  * lists the value position.
  *
@@ -835,7 +835,7 @@ export function mutatorFormOf(name: string): MutatorForm | undefined {
 // value methods from these, so the generated `src/globals.ts` cannot drift from
 // the registry: what a row states here is what the editor completes.
 
-/** Is this cell a RULE — something that lowers — rather than a refusal or an in-code marker? */
+/** Is this cell a RULE — something that lowers — and not a refusal or an in-code marker? */
 function isRuleCell(cell: unknown): boolean {
   if (cell === null || typeof cell !== "object") return false;
   const c = cell as Record<string, unknown>;
@@ -866,7 +866,7 @@ function everyMethodRow(): string[] {
 
 /** The methods that chain on a stream (`$.filter(…)`, `$.take(3)`): a stream RULE on the row. */
 export function streamMethodNames(): string[] {
-  // a union link (`.concat(…)` → `$unionWith`) chains too, though the union road lowers it rather than a stream cell
+  // a union link (`.concat(…)` → `$unionWith`) chains too, though the union road lowers it, not a stream cell
   return everyMethodRow().filter(
     (n) => lists(n, "stream") && (isRuleCell((row(n) as { stream?: unknown }).stream) || unionsOf(n)),
   );
@@ -944,7 +944,7 @@ export function acceptsAnyReceiver(name: string): boolean {
   return row(name)?.on === "any";
 }
 
-/** The one receiver family a method needs, or null when it lives on several or on any. */
+/** The one receiver family a method needs, or null when it lives on more than one or on any. */
 export function requiredReceiverFamily(name: string): Family | null {
   const on = families(row(name)?.on);
   if (on === undefined || on === "any" || on.length !== 1) return null;

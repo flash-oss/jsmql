@@ -4,8 +4,8 @@
 //
 // Two things it must never do. It must not cross a binder of the same name — a lambda
 // parameter or a declaration in a nested scope is a DIFFERENT variable. It must also not
-// touch an identifier that NAMES something rather than values it: `a.p = 9` names a place,
-// and `g(1)` names a function. Replacing either with its value produces `1 = 9` or `3(1)`,
+// touch an identifier that NAMES something and does not hold a value: `a.p = 9` names a place,
+// and `g(1)` names a function. Its value in place of either produces `1 = 9` or `3(1)`,
 // and neither is a program.
 
 import { bindsFor, namesSomething } from "./naming.ts";
@@ -14,7 +14,7 @@ import { mapTreeIn } from "./walk.ts";
 
 type Any = { type: string } & Record<string, unknown>;
 
-/** What travels down the tree while substituting. */
+/** What travels down the tree during the substitution. */
 type Scope = { shadowed: ReadonlySet<string>; naming: boolean };
 
 /**

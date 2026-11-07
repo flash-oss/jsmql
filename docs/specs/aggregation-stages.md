@@ -18,7 +18,7 @@ JSMQL accepts two surface forms, and both lower through the statement road in `s
 1. **`;`-separated (canonical)** — the parser returns a `Pipeline` whose `stmts` are the `;`-separated statements. `lowerProgram` lowers each in turn, and it threads the scope: a `let` declared in one statement is a name the next one reads, and a stage that replaced the document takes it away again.
 2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The decision](filter-mode.md)) reads it as a pipeline, whatever it holds, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
 
-The two forms agree on stage shapes, the `$match` body rule, and sub-pipeline lowering. They differ only in coalescing, which falls out of the separator: `,` is in-stage (and groups writes), `;` is a hard stage boundary.
+The two forms agree on stage shapes, the `$match` body rule, and sub-pipeline lowering. They differ only in coalescing, which the separator decides: `,` is in-stage (and groups writes), `;` is a hard stage boundary.
 
 ## Chained stage calls
 
@@ -40,7 +40,7 @@ nesting an `.aggregate((o) => { … })` block.
 
 **Surface.**
 
-- **Receiver** — a stream: `$$`, `$$$.<coll>`, a callback's third parameter, or any chain link off one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md)) interleave freely while the chain is still stream-shaped.
+- **Receiver** — a stream: `$$`, `$$$.<coll>`, a callback's third parameter, or any chain link off one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md)) interleave freely as long as the chain is still stream-shaped.
 - **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. An unknown `$`-name is the developer's own MQL, so it passes through as a stage (`$$.$mtach({ a: 1 })` → `[{ $mtach: { a: 1 } }]`), with no suggestion. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Date.noww(…);` names `Date.now`), or a global (`assertt(…);` names `assert(...)`).
 - **Arity** — one argument, the stage body. A `$`-named link is the developer's own MQL, so any other count takes HR2's plain form: `$$.$limit(5, 6)` → `{ $limit: [5, 6] }`.
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse errors; see [grammar.md](grammar.md).
@@ -131,12 +131,12 @@ The parser accepts `Dollar` + identifier tokens as a static object key in `objec
 
 ## Public API impact
 
-`jsmql()`'s return type is `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array. Expression mode returns the single object. Both runtime values satisfy `object`, so existing code keeps type-checking. This is pre-1.0, and semver tracks it once 1.0 cuts.
+`jsmql()`'s return type is `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array. Expression mode returns the single object. Both runtime values satisfy `object`, so existing code still type-checks. This is pre-1.0, and semver tracks it once 1.0 cuts.
 
 One input shape narrows that union. A **block-bodied arrow** (`({ $ }) => { $match(…); $limit(5); }`) is a run of statements, which is always a Pipeline, and its arrow type returns `void`. So `JsmqlArrowOutput<F>` ([src/index.ts](../../src/index.ts)) resolves it to `object[]`. This is the only shape the input's own type settles. The near-misses are worth stating here, so a future change does not "fix" them by mistake:
 
 - An **expression-bodied arrow** may be either. `({ $ }) => $.age > 18` is a Filter; `({ $ }) => $$.filter(d => d.a).take(5)` is a Pipeline, by the lone-chain sugar. Both are just expressions to TypeScript.
-- **Returning an array** does not settle it either. `[$match(…)]` is a Pipeline, while `[$.a, $.b]` is an array-valued Filter, and both are `any[]`. The stage-candidate test that separates them is an AST check, not a type-level one.
+- **An array return type** does not settle it either. `[$match(…)]` is a Pipeline, but `[$.a, $.b]` is an array-valued Filter, and both are `any[]`. The stage-candidate test that separates them is an AST check, not a type-level one.
 - A **string** and a **template tag** are opaque by construction.
 
 Those keep the full union. A caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`, which are typed to their shape outright.

@@ -9,7 +9,7 @@
 // is the one the Node driver requires, `new X(…)`. MEASURED in mongosh 2.9.2, this
 // same text runs there too and yields the identical value — mongosh exposes the
 // driver's BSON classes as globals on top of its own `ISODate` / `NumberDecimal`
-// helpers. There is therefore ONE spelling per type rather than one per runtime.
+// helpers. There is therefore ONE spelling per type, not one per runtime.
 // The bare-call forms (`ObjectId("…")`, `MinKey()`) run only in mongosh, and the
 // helper names (`ISODate`, `NumberLong`, `BinData`) run only there too, so this
 // module writes neither.
@@ -29,7 +29,7 @@ export type StringifyOptions = {
   width?: number;
 };
 
-/** A value carrying MongoDB's own type tag — every `bson` class sets one. */
+/** A value that carries MongoDB's own type tag — every `bson` class sets one. */
 const tagOf = (v: unknown): string | undefined =>
   typeof v === "object" && v !== null ? ((v as { _bsontype?: string })._bsontype ?? undefined) : undefined;
 
@@ -111,8 +111,8 @@ const num = (n: number): string => (Object.is(n, -0) ? "-0" : String(n));
  *
  * Every case reads its data defensively. A PLAIN OBJECT may wear the tag — the
  * compiler passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is —
- * and calling the class's methods on it would throw, taking the whole document's
- * output down with it. Returning null here lets the caller print the object as
+ * and a call of the class's methods on it would throw, and take the whole document's
+ * output down with it. A null return here lets the caller print the object as
  * what it is.
  */
 function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): string | null {
@@ -207,7 +207,7 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
 /**
  * MQL as pasteable JavaScript source.
  *
- * This function writes a document on ONE line while it fits inside `width`, and
+ * This function writes a document on ONE line when it fits inside `width`, and
  * breaks it one entry per line once it does not — MQL nests deeply and narrowly, so
  * a brace per line would bury the shape it is meant to show.
  */
@@ -231,8 +231,8 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
     // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
     // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
-    // the same text. So this function writes the bytes as themselves, rather than
-    // translating them to a `Binary.createFromBase64(…)` call: what comes back is
+    // the same text. So this function writes the bytes as themselves, and does not
+    // translate them to a `Binary.createFromBase64(…)` call: what comes back is
     // the value the document holds, down to its JavaScript class. Without this, the
     // object branch below walks the byte indices and prints `{ "0": 1, "1": 2 }`,
     // which matches nothing.
@@ -250,8 +250,8 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     if (t === "number") return num(v as number);
     if (t === "undefined") {
       // The language declares `undefined` an existence TEST, never a value, so every
-      // entry point refuses it and it cannot reach a compiled document. Reaching
-      // here means the compiler missed a guard, and printing nothing would hide it.
+      // entry point refuses it and it cannot reach a compiled document. If the code
+      // gets here, the compiler missed a guard, and an empty print would hide it.
       throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
     }
     return null;

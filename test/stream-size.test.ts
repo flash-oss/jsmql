@@ -1,6 +1,6 @@
 // Tests for `$$.size()` — the current stream's document count as a reusable
 // value. Lowers to a `$setWindowFields` `$count` stamped onto `__jsmql.size`,
-// hoisted once and recomputed after a count-changing stage. See
+// hoisted once and recomputed after a stage that changes the count. See
 // docs/specs/stream-size.md and docs/LANGUAGE.md § $$.size().
 
 import { describe, it, expect } from "vitest";
@@ -34,7 +34,7 @@ describe("$$.size() — materialisation", () => {
 });
 
 describe("$$.size() — compute-once / reuse / recompute", () => {
-  it("reuses a single materialisation across uses with no invalidating stage between", () => {
+  it("reuses a single materialisation across uses with no stage between that invalidates it", () => {
     expect(jsmql("$.a = $$.size(); $.b = $$.size() + 1")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $set: { a: "$__jsmql.size" } },
@@ -53,7 +53,7 @@ describe("$$.size() — compute-once / reuse / recompute", () => {
     ]);
   });
 
-  it("recomputes after an invalidating stage ($match)", () => {
+  it("recomputes after a stage that invalidates it ($match)", () => {
     expect(jsmql("$.a = $$.size(); $match($.a > 0); $.b = $$.size()")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $set: { a: "$__jsmql.size" } },
@@ -250,7 +250,7 @@ describe("nested size usage — sub-stream handles + `$$.size()` (root) at every
     ]);
   });
 
-  // Four DISTINCT counts and reads in one `.map`, none colliding — the disambiguation
+  // Four DISTINCT counts and reads in one `.map`, and no collision — the disambiguation
   // matrix: the root STREAM count (`$$.size()`), the root DOC field (`$.length`),
   // an outer-scope `const` derived from that field, and the sub-stream count
   // (`coll.size()`, the 3rd-arg handle). Each lands in its own `$lookup.let` var

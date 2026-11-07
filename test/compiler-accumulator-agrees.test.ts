@@ -1,6 +1,6 @@
 // A `toEqual` cannot establish that an accumulator slot holds a shape mongod
-// accepts. Both group and window slots parse `{ acc: [ … ] }` as an operand list
-// rather than as an array expression, and the two report a second operand
+// accepts. Both group and window slots parse `{ acc: [ … ] }` as an operand list,
+// not as an array expression, and the two report a second operand
 // differently:
 //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}              → refused: the accumulator takes one operand
 //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
@@ -12,7 +12,7 @@
 // it. A `$op(…)` call in the same slot is the developer's own MQL, and HR3 does
 // not apply to it: `$push([$.x, $.y])` stays `{ $push: ["$x", "$y"] }`.
 //
-// This suite skips itself when no mongod is listening, so `npm test` stays green.
+// This suite skips itself when no mongod listens, so `npm test` stays green.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
@@ -93,7 +93,7 @@ describe.skipIf(!up)("emit every JavaScript accumulator spelling in a shape mong
     }
 
     expect(refused).toEqual([]);
-    // A suite that silently stops comparing is worse than none: this check fails
+    // A suite that silently stops its comparison is worse than none: this check fails
     // if the count of accumulator cells of a JavaScript method decreases.
     expect(checked).toBeGreaterThanOrEqual(42);
   });

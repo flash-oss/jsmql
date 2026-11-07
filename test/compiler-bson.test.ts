@@ -134,7 +134,7 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
 describe("compiler — a BSON number is a number to the checker and a value to the fold", () => {
   // The whole reason Decimal128 exists is that the SERVER answers 0.3 where a
   // double answers 0.30000000000000004 — MEASURED. A fold in JavaScript would
-  // destroy exactly the guarantee the source asked for by writing the type.
+  // destroy exactly the guarantee the source asked for when it wrote the type.
   it("never evaluates BSON arithmetic", () => {
     expect(pipeline(`$.a = Decimal128("0.1") + Decimal128("0.2");`)).toEqual([
       { $set: { a: { $add: [Decimal128.fromString("0.1"), Decimal128.fromString("0.2")] } } },

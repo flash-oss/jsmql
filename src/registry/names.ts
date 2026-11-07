@@ -314,7 +314,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   immutableTwin?: T;
   /**
    * The mutation, written as an ARRAY LITERAL. The other way a mutator can have
-   * an immutable spelling — a shape rather than a name, so it cannot go above:
+   * an immutable spelling — a shape, not a name, so it cannot go above:
    *   $.a.push(9);      "receiver, then arguments"   → $.a = [...$.a, 9]
    *   $.a.unshift(9);   "arguments, then receiver"   → $.a = [9, ...$.a]
    * The field spells the two orders out in words, because the two orders are its
@@ -532,7 +532,7 @@ type MongoSpec<
    */
   neverNull?: true | "always";
   /**
-   * A DIAGNOSTIC source stage — it reports on the deployment rather than on the
+   * A DIAGNOSTIC source stage — it reports on the deployment, not on the
    * documents, so it takes no input stream and stands first. `scope` is the sigil
    * that reaches the sugar spelling (`$$.indexStats()` on a collection,
    * `$$$$.currentOp()` on the cluster), and `options` says whether it takes an
@@ -859,7 +859,7 @@ const dateRow = (spelling: string) =>
     doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
     token: "Ident",
     // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
-    // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
+    // JSMQL keeps the syntax, not that meaning (SR2). JSMQL has no `new` (HR8).
     provides: "Date",
     returns: "date",
     neverNull: true,
@@ -1046,7 +1046,7 @@ const sortStages = (ask: StageSortAsk, slot: () => string, reshape: (cb: Expr) =
   return [{ $addFields: { [key]: reshape(ask.key) } }, { $sort: { [key]: ask.dir } }];
 };
 
-/** A literal count, as a stream cell reads it; the row's `args` have refused anything else. */
+/** A literal count, as a stream cell reads it; the row's `args` already refused anything else. */
 const n = (e: Expr): number => (e.type === "NumberLiteral" ? e.value : 1);
 
 /**
@@ -1728,7 +1728,7 @@ export const NAMES = {
   }),
 
   $divide: mongo({
-    doc: "Returns the result of dividing the first number by the second.",
+    doc: "Divides the first number by the second, and returns the result.",
     category: "arithmetic",
     returns: "number",
     neverNull: true,
@@ -1869,7 +1869,7 @@ export const NAMES = {
   }),
 
   $subtract: mongo({
-    doc: "Returns the result of subtracting the second value from the first.",
+    doc: "Subtracts the second value from the first, and returns the result.",
     category: "arithmetic",
     returns: "unknown",
     neverNull: true,
@@ -2278,7 +2278,7 @@ export const NAMES = {
   }),
 
   $switch: mongo({
-    doc: "Evaluates a series of case expressions; executes the matching case's expression and breaks out of the control flow.",
+    doc: "Evaluates a series of case expressions. It executes the expression of the case that matches, and then stops.",
     category: "conditional",
     returns: "unknown",
     where: ["value"],
@@ -2328,7 +2328,7 @@ export const NAMES = {
   }),
 
   $ltrim: mongo({
-    doc: "Removes whitespace or the specified characters from the beginning of a string.",
+    doc: "Removes whitespace or the specified characters from the start of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
@@ -2350,7 +2350,7 @@ export const NAMES = {
   }),
 
   $trim: mongo({
-    doc: "Removes whitespace or the specified characters from the beginning and end of a string.",
+    doc: "Removes whitespace or the specified characters from the start and end of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
@@ -2384,7 +2384,7 @@ export const NAMES = {
   }),
 
   $regexMatch: mongo({
-    doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
+    doc: "Applies a regular expression to a string, and returns a boolean that tells whether it finds a match.",
     category: "string",
     returns: "bool",
     neverNull: "always",
@@ -2479,7 +2479,7 @@ export const NAMES = {
   }),
 
   $substrBytes: mongo({
-    doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
+    doc: "Returns the substring of a string that starts at the specified UTF-8 byte index.",
     category: "string",
     returns: "string",
     neverNull: true,
@@ -2493,7 +2493,7 @@ export const NAMES = {
   }),
 
   $substrCP: mongo({
-    doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
+    doc: "Returns the substring of a string that starts at the specified UTF-8 code point index.",
     category: "string",
     returns: "string",
     neverNull: true,
@@ -2608,7 +2608,7 @@ export const NAMES = {
   }),
 
   $filter: mongo({
-    doc: "Selects a subset of the array, returning only elements that match the filter condition.",
+    doc: "Selects a subset of the array. It returns only the elements that match the filter condition.",
     category: "array",
     // MEASURED: `limit` does not see `$$this` — the server refuses a read of it there.
     binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
@@ -2633,7 +2633,7 @@ export const NAMES = {
   }),
 
   $firstN: mongo({
-    doc: "Returns a specified number of elements from the beginning of an array.",
+    doc: "Returns a specified number of elements from the start of an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
@@ -2646,7 +2646,7 @@ export const NAMES = {
   }),
 
   $in: mongo({
-    doc: "Returns a boolean indicating whether a specified value is in an array.",
+    doc: "Returns a boolean that tells whether a specified value is in an array.",
     category: "array",
     returns: "bool",
     neverNull: true,
@@ -2711,7 +2711,7 @@ export const NAMES = {
   }),
 
   $map: mongo({
-    doc: "Applies a subexpression to each element of an array and returns the array of resulting values.",
+    doc: "Applies a subexpression to each element of an array, and returns the array of the values it gives.",
     category: "array",
     binds: { valueAt: "as", default: "this", visibleIn: ["in"] },
     returns: "array",
@@ -2749,7 +2749,7 @@ export const NAMES = {
   }),
 
   $objectToArray: mongo({
-    doc: "Converts a document to an array of documents representing key-value pairs.",
+    doc: "Converts a document to an array of documents. Each one holds a key-value pair.",
     category: "array",
     returns: { arrayOf: "object" },
     neverNull: true,
@@ -2760,7 +2760,7 @@ export const NAMES = {
   }),
 
   $range: mongo({
-    doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
+    doc: "Outputs an array that holds a sequence of integers, as the inputs specify.",
     category: "array",
     returns: { arrayOf: "number" },
     neverNull: true,
@@ -2929,7 +2929,7 @@ export const NAMES = {
   }),
 
   $getField: mongo({
-    doc: "Returns the value of a specified field from a document, including fields whose names contain periods or start with $.",
+    doc: "Returns the value of a specified field from a document. This includes a field whose name contains a period or starts with $.",
     category: "object",
     returns: "unknown",
     where: ["value"],
@@ -2967,7 +2967,7 @@ export const NAMES = {
   }),
 
   $unsetField: mongo({
-    doc: "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
+    doc: "Removes a specified field from a document. Alias for $setField with $$REMOVE.",
     category: "object",
     returns: "object",
     where: ["value"],
@@ -3042,7 +3042,7 @@ export const NAMES = {
   }),
 
   $dateToParts: mongo({
-    doc: "Returns a document containing the constituent parts of a date.",
+    doc: "Returns a document that holds the constituent parts of a date.",
     category: "date",
     returns: "object",
     where: ["value"],
@@ -3119,7 +3119,7 @@ export const NAMES = {
   }),
 
   $isoDayOfWeek: mongo({
-    doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
+    doc: "Returns the weekday number in ISO 8601 format, from 1 (Monday) to 7 (Sunday).",
     category: "date",
     returns: "number",
     neverNull: true,
@@ -3130,7 +3130,7 @@ export const NAMES = {
   }),
 
   $isoWeek: mongo({
-    doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
+    doc: "Returns the week number in ISO 8601 format, from 1 to 53.",
     category: "date",
     returns: "number",
     neverNull: true,
@@ -3229,7 +3229,7 @@ export const NAMES = {
   }),
 
   $tsIncrement: mongo({
-    doc: "Returns the incrementing ordinal from a timestamp as a long.",
+    doc: "Returns the increment ordinal from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
     neverNull: true,
@@ -3391,7 +3391,7 @@ export const NAMES = {
   }),
 
   $literal: mongo({
-    doc: "Returns a value without parsing. Use to keep values that the pipeline would otherwise interpret as expressions (e.g. strings starting with $).",
+    doc: "Returns a value, and does not parse it. Use it for a value that the pipeline would otherwise interpret as an expression (for example a string that starts with $).",
     category: "literal",
     returns: "unknown",
     where: ["value"],
@@ -3463,7 +3463,7 @@ export const NAMES = {
   }),
 
   $meta: mongo({
-    doc: 'Accesses per-document metadata related to the aggregation operation. Argument is a keyword string (e.g. "textScore"), not an arbitrary expression.',
+    doc: 'Accesses per-document metadata related to the aggregation operation. The argument is a keyword string (for example "textScore"), not an arbitrary expression.',
     category: "text",
     returns: "unknown",
     where: ["value"],
@@ -3527,7 +3527,7 @@ export const NAMES = {
   }),
 
   $toHashedIndexKey: mongo({
-    doc: "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
+    doc: "Computes the hash of the input expression with MongoDB's hashed-index hash function.",
     category: "miscellaneous",
     returns: "number",
     where: ["value"],
@@ -3584,7 +3584,7 @@ export const NAMES = {
   }),
 
   $max: mongo({
-    doc: "Returns the maximum value that results from applying an expression.",
+    doc: "Applies an expression, and returns the maximum value of the results.",
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
@@ -3614,7 +3614,7 @@ export const NAMES = {
   }),
 
   $min: mongo({
-    doc: "Returns the minimum value that results from applying an expression.",
+    doc: "Applies an expression, and returns the minimum value of the results.",
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
@@ -3644,7 +3644,7 @@ export const NAMES = {
   }),
 
   $push: mongo({
-    doc: "Returns an array of values that result from applying an expression.",
+    doc: "Applies an expression, and returns an array of the results.",
     category: "array",
     returns: { arrayOf: { arg: 0 } },
     // MEASURED: over a missing field the accumulated array is `[]`, never null.
@@ -3687,7 +3687,7 @@ export const NAMES = {
   }),
 
   $sum: mongo({
-    doc: "Returns a sum of numerical values, ignoring non-numeric values.",
+    doc: "Returns a sum of numerical values. It ignores non-numeric values.",
     category: "arithmetic",
     returns: "number",
     // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
@@ -3704,7 +3704,7 @@ export const NAMES = {
   }),
 
   $bottom: mongo({
-    doc: "Returns the bottom element within a group according to the specified sort order.",
+    doc: "Returns the bottom element within a group, in the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
@@ -3715,7 +3715,7 @@ export const NAMES = {
   }),
 
   $bottomN: mongo({
-    doc: "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
+    doc: "Returns an aggregation of the bottom n elements within a group, in the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
@@ -3726,7 +3726,7 @@ export const NAMES = {
   }),
 
   $top: mongo({
-    doc: "Returns the top element within a group according to the specified sort order.",
+    doc: "Returns the top element within a group, in the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
@@ -3737,7 +3737,7 @@ export const NAMES = {
   }),
 
   $topN: mongo({
-    doc: "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
+    doc: "Returns an aggregation of the top n fields within a group, in the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
@@ -3822,7 +3822,7 @@ export const NAMES = {
   }),
 
   $linearFill: mongo({
-    doc: "Fills null and missing fields in a window using linear interpolation based on surrounding field values.",
+    doc: "Fills null and missing fields in a window with linear interpolation, from the field values around them.",
     category: "window",
     returns: "number",
     where: ["window"],
@@ -3859,7 +3859,7 @@ export const NAMES = {
   }),
 
   $addFields: mongo({
-    doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    doc: "Adds new fields to documents. Outputs documents that contain all the fields from the input documents and the new fields.",
     valueTwin: "$mergeObjects",
     where: ["stream", "statement"],
     preservesCount: true,
@@ -3874,7 +3874,7 @@ export const NAMES = {
   }),
 
   $bucket: mongo({
-    doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
+    doc: "Categorizes the input documents into groups, called buckets, from a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
@@ -3887,7 +3887,7 @@ export const NAMES = {
   }),
 
   $bucketAuto: mongo({
-    doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
+    doc: "Categorizes the input documents into a specific number of groups, called buckets, from a specified expression. The server sets the bucket boundaries automatically, and tries to put an equal part of the documents into each bucket.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
@@ -3926,7 +3926,7 @@ export const NAMES = {
   }),
 
   $collStats: mongo({
-    doc: "Returns statistics regarding a collection or view.",
+    doc: "Returns statistics about a collection or view.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
@@ -3939,7 +3939,7 @@ export const NAMES = {
   }),
 
   $currentOp: mongo({
-    doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    doc: "Returns information on active or dormant operations, or both, for the MongoDB deployment.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -3975,7 +3975,7 @@ export const NAMES = {
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
     // collection, and refuses it in every other body. jsmql writes that one shape
-    // from `$$.push(…)`, so the refusal names the sugar rather than a stage
+    // from `$$.push(…)`, so the refusal names the sugar, not a stage
     // position the server would refuse in its turn.
     placement: {
       container:
@@ -3995,7 +3995,7 @@ export const NAMES = {
   }),
 
   $facet: mongo({
-    doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    doc: "Processes more than one aggregation pipeline within a single stage, on the same set of input documents. So one stage can give aggregations of the data across more than one dimension.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     document: "fields",
@@ -4061,7 +4061,7 @@ export const NAMES = {
   }),
 
   $indexStats: mongo({
-    doc: "Returns statistics regarding the use of each index for the collection.",
+    doc: "Returns statistics about the use of each index for the collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
@@ -4087,7 +4087,7 @@ export const NAMES = {
   }),
 
   $listLocalSessions: mongo({
-    doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    doc: "Lists all active sessions recently in use on the connected mongos or mongod instance.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -4114,7 +4114,7 @@ export const NAMES = {
   }),
 
   $listSearchIndexes: mongo({
-    doc: "Returns information about existing Atlas Search indexes on a specified collection.",
+    doc: "Returns information about the Atlas Search indexes on a specified collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
@@ -4128,7 +4128,7 @@ export const NAMES = {
   }),
 
   $listSessions: mongo({
-    doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    doc: "Lists all sessions that were active long enough to propagate to the system.sessions collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -4141,7 +4141,7 @@ export const NAMES = {
   }),
 
   $lookup: mongo({
-    doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    doc: "Performs a left outer join to another collection in the same database. It brings in documents from the joined collection for the next stages.",
     pipelineOver: "foreign",
     statementBody: "pipeline",
     where: ["stream", "statement"],
@@ -4157,7 +4157,7 @@ export const NAMES = {
   }),
 
   $match: mongo({
-    doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    doc: "Filters the document stream. Only the documents that match go unmodified into the next pipeline stage.",
     valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → refused: the body must be a document
@@ -4170,7 +4170,7 @@ export const NAMES = {
   }),
 
   $merge: mongo({
-    doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    doc: "Writes the output documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
     // and the server refuses 24 others in an update.
     statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
@@ -4189,7 +4189,7 @@ export const NAMES = {
   }),
 
   $out: mongo({
-    doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    doc: "Writes the output documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → refused: an unknown key; { $out: 1 } → refused: the body must be a string or a document
@@ -4215,7 +4215,7 @@ export const NAMES = {
   }),
 
   $project: mongo({
-    doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    doc: "Reshapes each document in the stream, for example it adds new fields or removes fields. For each input document, outputs one document.",
     valueTwin: "$getField",
     document: "projection",
     evaluates: ["*"],
@@ -4228,7 +4228,7 @@ export const NAMES = {
   }),
 
   $rankFusion: mongo({
-    doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    doc: "Combines more than one pipeline with rank-based fusion, to create hybrid search results.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
@@ -4242,7 +4242,7 @@ export const NAMES = {
   }),
 
   $redact: mongo({
-    doc: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    doc: "Reshapes each document in the stream. It restricts the content of each document from information stored in the documents themselves.",
     valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $redact: "$KEEP" } → accepted
@@ -4256,7 +4256,7 @@ export const NAMES = {
   }),
 
   $replaceRoot: mongo({
-    doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    doc: "Replaces a document with the specified embedded document. The operation replaces all the fields in the input document, and the _id field too.",
     where: ["stream", "statement"],
     document: "value",
     evaluates: ["newRoot"],
@@ -4268,7 +4268,7 @@ export const NAMES = {
   }),
 
   $replaceWith: mongo({
-    doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    doc: "Replaces a document with the specified embedded document. The operation replaces all the fields in the input document, and the _id field too.",
     where: ["stream", "statement"],
     document: "value",
     evaluates: [""],
@@ -4291,7 +4291,7 @@ export const NAMES = {
   }),
 
   $scoreFusion: mongo({
-    doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    doc: "Combines more than one pipeline with relative score fusion, to create hybrid search results.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
@@ -4331,7 +4331,7 @@ export const NAMES = {
   }),
 
   $set: mongo({
-    doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    doc: "Adds new fields to documents. Outputs documents that contain all the fields from the input documents and the new fields.",
     valueTwin: "$mergeObjects",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
@@ -4375,7 +4375,7 @@ export const NAMES = {
   }),
 
   $skip: mongo({
-    doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    doc: "Skips the first n documents, where n is the specified skip number. It passes the other documents unmodified to the pipeline.",
     valueTwin: "$slice",
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → refused: a negative count; { $skip: 1.5 } → refused: a fractional count (the operand rule is in `args`)
@@ -4403,7 +4403,7 @@ export const NAMES = {
   }),
 
   $sortByCount: mongo({
-    doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    doc: "Groups the input documents by the value of a specified expression, then computes the count of documents in each distinct group.",
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
@@ -5967,7 +5967,7 @@ export const NAMES = {
       },
     },
     stream: because(
-      "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
+      "returns ONE element, so the result is a value, not a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
     ),
     statement: unsupported(
       "'.findLast()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findLast();'",
@@ -6194,7 +6194,7 @@ export const NAMES = {
         nullOr(recv, present, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ",")),
     },
     stream: because(
-      "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
+      "joins elements into ONE string, so the result is a value, not a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
     ),
     statement: unsupported(
       "'.join()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.join();'",
@@ -6501,7 +6501,7 @@ export const NAMES = {
     expr: unsupported(
       ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
-    stream: because("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
+    stream: because("appends by mutation. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
     statement: inCode("src/compiler/emit/union.ts"),
     group: unsupported("'.push()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.push()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -8502,7 +8502,7 @@ export const NAMES = {
       },
     },
     stream: because(
-      "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
+      "groups elements into ARRAYS of n, so the result is a stream of arrays, not documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
     ),
     statement: unsupported(
       "'.chunk()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.chunk();'",
@@ -8771,7 +8771,7 @@ export const NAMES = {
       perFamily: {
         array: viaFallback,
         stream: unsupported(
-          "'$$.size()' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+          "'$$.size()' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (for example `({ $ }) => { $.n = $$.size(); … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
         ),
       },
     },
@@ -8826,7 +8826,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
-      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      // a running flag over the sorted stream: 0 when every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy, slot }) => {
         const flag = slot();
         return [
@@ -8881,7 +8881,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
-      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      // a running flag over the sorted stream: 0 when every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy, slot }) => {
         const flag = slot();
         return [
@@ -9085,7 +9085,7 @@ export const NAMES = {
         };
       },
     },
-    stream: because("builds ONE object from keys and values, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from keys and values, so the result is a value, not a stream."),
     statement: unsupported(
       "'.zipObject()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.zipObject();'",
     ),
@@ -9148,7 +9148,7 @@ export const NAMES = {
         };
       },
     },
-    stream: because("transposes into ONE array of arrays, so the result is a value rather than a stream."),
+    stream: because("transposes into ONE array of arrays, so the result is a value, not a stream."),
     statement: unsupported(
       "'.unzip()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.unzip();'",
     ),
@@ -9778,7 +9778,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => pairsToObject(recv) },
-    stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from pairs, so the result is a value, not a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'",
     ),
@@ -10537,14 +10537,14 @@ export const NAMES = {
   }),
 
   $each: mongo({
-    doc: "Adds several values at once instead of one.",
+    doc: "Adds more than one value at once, not only one.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push", "$addToSet"] },
     updateDoc: { args: { sig: "values", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $position: mongo({
-    doc: "The index to insert at, rather than appending.",
+    doc: "The index to insert at. Without it, the value goes at the end.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     updateDoc: { args: { sig: "index", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
@@ -10593,7 +10593,7 @@ export const NAMES = {
   }),
 
   $pull: mongo({
-    doc: "Removes every array element matching a condition.",
+    doc: "Removes every array element that matches a condition.",
     where: ["updateDoc"],
     updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
@@ -10700,7 +10700,7 @@ export const NAMES = {
   }),
 
   $geoWithin: mongo({
-    doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
+    doc: "Selects geometries within a GeoJSON geometry that bounds them. The 2dsphere and 2d indexes support $geoWithin.",
     category: "geospatial",
     where: ["filter"],
     filter: {
@@ -10993,7 +10993,7 @@ export const NAMES = {
   }),
 
   shuffle: name({
-    doc: "'.shuffle()' — random order, by stamping a '$rand' field, sorting on it and dropping it.",
+    doc: "'.shuffle()' — random order. It stamps a '$rand' field, sorts on it and drops it.",
     call: true,
     on: "stream",
     returns: "stream",
@@ -11059,7 +11059,7 @@ export const NAMES = {
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
     expr: unsupported(
-      "'assert(...)' is a pipeline statement, not a value — it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. `({ $ }) => { assert($.qty >= 0, \"qty must be >= 0\"); … }`.",
+      "'assert(...)' is a pipeline statement, not a value — it can't appear inside an expression. Use it as its own statement in a pipeline body, for example `({ $ }) => { assert($.qty >= 0, \"qty must be >= 0\"); … }`.",
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {

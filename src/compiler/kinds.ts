@@ -168,7 +168,7 @@ const concreteKinds = (proof: Proof): readonly Proven[] | null =>
 
 /**
  * The `elements` rule of a row: the receiver must hold only elements of the kind the row
- * names. A tuple proof breaks the rule when ANY position has no fitting kind. A set proof
+ * names. A tuple proof breaks the rule when ANY position has no kind that fits. A set proof
  * breaks it only when NO kind fits, because its one proof stands for every position.
  */
 function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
@@ -186,7 +186,7 @@ function elementsFaultOf(name: string, proofs: Proofs): KindFault | null {
  * the shared kind of the operands, then the elements of the receiver. A value that can
  * have two or more kinds breaks a rule only when NO possible kind fits. The one exception
  * is a tuple proof of the elements. Each of its positions is certain. So ONE position
- * with no fitting kind breaks the `elements` rule. See
+ * with no kind that fits breaks the `elements` rule. See
  * docs/specs/types.md § The kind check.
  */
 export function faultOf(name: string, rule: Arity, proofs: Proofs): KindFault | null {

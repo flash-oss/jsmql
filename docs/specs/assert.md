@@ -68,7 +68,7 @@ the JS meaning, not MongoDB's.
 | string literal `"m"` | `"jsmql assertion failed: m"` (constant) |
 | any other expression `e` | `{ $concat: ["jsmql assertion failed: ", { $toString: <e> }] }` |
 
-The `jsmql assertion failed` prefix is **load-bearing, not cosmetic**. A raw
+The `jsmql assertion failed` prefix is **necessary, not cosmetic**. A raw
 message that happens to be a valid type name (for example `assert($.ok,
 "int")`) would make `$convert` **succeed** and skip the assertion silently.
 The prefix (the spaces and the leading words) guarantees that the
@@ -77,8 +77,8 @@ fires. The server's message also ends with the bad type name, so the user's
 text comes last in that message.
 
 The dynamic branch wraps the message in `$toString`, so a non-string
-expression (`assert($.ok, $.count)`) is coerced instead of crashing
-`$concat`.
+expression (`assert($.ok, $.count)`) is coerced, so `$concat` does not
+fail.
 
 ## Why the gating is robust
 
@@ -87,10 +87,9 @@ runtime `to` value, computed per document. This design does **not** rely on
 `$cond` or `$and` to short-circuit an untaken branch, because MongoDB does
 **not** document or guarantee that behaviour (the `$and`/`$or` reference warns
 that a later operand "may cause an error even if the first expression
-evaluates to false"). Placing the failing-branch *expression* directly in a
-`$cond` branch would also risk the optimiser folding a constant message at
-planning time, which would fire the error unconditionally. Routing it through
-`$convert.to` avoids that risk too.
+evaluates to false"). If the failing-branch *expression* sat directly in a `$cond` branch, the
+optimiser could fold a constant message at planning time. That would fire the
+error unconditionally. A route through `$convert.to` also prevents that risk.
 
 ## Dispatch (call forms)
 

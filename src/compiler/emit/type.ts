@@ -45,7 +45,7 @@ export const tupleOf = (items: readonly Type[], absent = false): Type => ({
   open: false,
 });
 
-/** An object with the named properties; `open` when others may exist, holding `values` when stated. */
+/** An object with the named properties; `open` when others may exist, and it holds `values` when stated. */
 export const objectOf = (
   props: ReadonlyMap<string, Type>,
   open: boolean,
@@ -449,7 +449,7 @@ function expandArgs(n: number, site: Site): Type[] {
 }
 
 /**
- * One level of flattening: an array gives its element, anything else stays —
+ * One flat level: an array gives its element, anything else stays —
  * what `.flatMap` keeps of a callback's answer, and what an object's property
  * values are (`elementOf` on an object).
  */
@@ -468,7 +468,7 @@ export function flattenOnce(t: Type): Type {
   return joinAll(parts);
 }
 
-/** The one family a `Type` belongs to, or null when it shows none or several. */
+/** The one family a `Type` belongs to, or null when it shows none or more than one. */
 export function familyOfType(t: Type): Family | null {
   const k = single(t);
   return k === "unknown" ? null : familyOf(k);

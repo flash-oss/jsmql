@@ -31,7 +31,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-012 — Index-pitfall warning channel via `validate()`
 
-- **What is blocked.** A `let` binding before an indexable `$match` blocks the match from using the index. The compiler could show a warning, but `validate()` has only an error channel, not a warning channel.
+- **What is blocked.** A `let` binding before an indexable `$match` prevents the use of the index by the match. The compiler could show a warning, but `validate()` has only an error channel, not a warning channel.
 - **Target lowering.** No change to the MQL output. `validate()` gains a `warnings` array next to `errors`. Each warning carries `.pos`, `.severity: "warning"`, and a message that names the binding and the index it blocks.
 - **Why blocked.** The `ValidationResult` shape needs a new `warnings` array. The project is pre-1.0, so the API is not fixed, and the change is safe. But the project must also decide which other warnings it needs. Candidates include unused bindings, unreachable stages, and deprecated patterns.
 - **Attempted approaches.** None.
@@ -95,7 +95,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 - **What is blocked.** A reusable function cannot run inside a **bare Filter** (no `;`, for example `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, and that flips the source into Pipeline mode. So a Filter cannot declare or call a function today.
 - **Target lowering.** A function used in a Filter would need **textual inline** into the predicate. The Filter has no pipeline scope and no `$let` stage to host the binding. The compiler would translate the body into the query language, as if the developer wrote it in place.
-- **Why blocked.** A Filter is a single expression with no statement list. Threading a declaration into it needs a separate declaration channel, or a textual-inline pass apart from the pipeline `$let` expansion. The output shape differs from the pipeline form — an inlined body instead of a `$let` — so the design stays separate on purpose.
+- **Why blocked.** A Filter is a single expression with no statement list. To thread a declaration into it, JSMQL needs a separate declaration channel, or a textual-inline pass apart from the pipeline `$let` expansion. The output shape differs from the pipeline form — an inlined body instead of a `$let` — so the design stays separate on purpose.
 - **Attempted approaches.** None. The developer asked to record this as the likely next step for Filters.
 - **Success criteria.** Not yet decided; it depends on the inline design. `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))`, or a Filter-specific syntax, would produce a query document with the body inlined.
 - **Rejection site(s).** None. There is no dedicated throw. The parser's general rule covers it: it refuses a declaration outside a pipeline. Only the top level of a pipeline can declare a reusable function.
@@ -119,7 +119,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 - **What is blocked.** After `$bucket`, `$bucketAuto` or `$sortByCount` the compiler knows nothing about the document: the three rows state `document: "unknown"`. Their output fields — `_id` and the `output` keys of a bucket, `_id` and `count` of `$sortByCount` — are real and typed, but they are not the keys of the stage's body, so `documentAfter` (`src/compiler/emit/prove.ts`) cannot read them the way it reads a `$group` body. A read after one of them takes the runtime dispatch and the null guard it would take on a field nothing wrote.
 - **Target lowering.** A `document` effect that names WHERE the output fields come from, stated on the row: for a bucket, `_id` plus the keys under `output` (each typed by its accumulator, the way `$group` keys are); for `$sortByCount`, `_id` typed by the body expression and `count` as a number. `documentAfter` then builds the closed object from that layout. `$sortByCount($.k); $.n = $.count + 1;` proves `count` a number.
-- **Why blocked.** The `DocumentEffect` vocabulary is a closed set of words. A layout is a small structure, and the right shape — one word per stage, or a `{ fields: … }` object — deserves a decision of its own rather than a special case per name.
+- **Why blocked.** The `DocumentEffect` vocabulary is a closed set of words. A layout is a small structure, and the right shape — one word per stage, or a `{ fields: … }` object — deserves a decision of its own instead of a special case per name.
 - **Attempted approaches.** None.
 - **Success criteria.** The three rows state a layout; `$sortByCount($.k); $.t = $.count ? 1 : 2;` emits `{ $cond: { if: "$count", … } }`; [test/compiler-types.test.ts](../test/compiler-types.test.ts) runs each stage on the fixture and asserts the typed read.
 - **Rejection site(s).** None. The compiler emits valid MQL after each stage. The live `[DEF-038]` tags are on the three rows in [src/registry/names.ts](../src/registry/names.ts), on the `DocumentEffect` comment in [src/registry/vocabulary.ts](../src/registry/vocabulary.ts), and in [docs/specs/types.md](specs/types.md) § The document after a stage.
@@ -152,7 +152,7 @@ This was DEF-007. The idea was to make `.slice()` / `.some()` lower to the *proj
 - `{ $slice: N }` (single argument) fails, because the expression `$slice` needs two or more operands. In an aggregation `$project`, `$slice` is always the expression operator.
 - `{ $elemMatch: { … } }` fails, because the aggregation stage does not accept `$elemMatch`. `$elemMatch` is not an aggregation operator at all. Even where it is valid, in a `find()` projection, it returns the *matched element*, not a boolean, so it would break the JavaScript meaning of `.some()`.
 
-The expression forms that JSMQL already emits run correctly in `$project`: `$.items.slice(0, 3)` becomes `{ $slice: ["$items", 3] }`, and `$.items.some(i => i.x > 5)` becomes `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships as a row in `src/registry/names.ts`. It is a normal aggregation expression, reachable through `$op($meta("textScore"))`. So there was nothing valid left to build. Building it would have made JSMQL knowingly emit invalid MQL, an HR3 violation.
+The expression forms that JSMQL already emits run correctly in `$project`: `$.items.slice(0, 3)` becomes `{ $slice: ["$items", 3] }`, and `$.items.some(i => i.x > 5)` becomes `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships as a row in `src/registry/names.ts`. It is a normal aggregation expression, reachable through `$op($meta("textScore"))`. So nothing valid remained to build. A build of it would make JSMQL knowingly emit invalid MQL, an HR3 violation.
 
 ### "From the end" array methods on a document STREAM (`.takeRight` / `.dropRight` / `.initial` / `.toReversed`)
 
@@ -160,15 +160,15 @@ The developer rejected this. MongoDB has no stage that reverses a stream. `$reve
 
 The only possible design is also the argument against the feature. All four methods would need to reach back and rewrite the **preceding** `$sort`. That rewrite:
 
-- makes the method **position-dependent**, in a way the JavaScript method of the same name never is. `.takeRight(3)` would mean a different thing depending on which stage came before it.
-- **silently orders by `_id`** when no `$sort` comes before it, instead of raising an error. This gives a wrong answer with no diagnostic: `$$.shuffle().takeRight(3)` would return the last 3 documents by `_id` and discard the shuffle entirely.
+- makes the method **position-dependent**, in a way the JavaScript method of the same name never is. `.takeRight(3)` would mean a different thing for each stage that comes before it.
+- **silently orders by `_id`** when no `$sort` comes before it, and raises no error. This gives a wrong answer with no diagnostic: `$$.shuffle().takeRight(3)` would return the last 3 documents by `_id` and discard the shuffle entirely.
 - makes `.toSorted(c).toReversed()` a second, longer spelling for a descending comparator. This is the "which spelling does my codebase use?" problem this section rejects elsewhere (see `feedback_no_silent_output_drift.md` in user memory).
 
 **Not** rejected in value position. `$.items.takeRight(3)` becomes `$slice`, `$.items.toReversed()` becomes `$reverseArray`, and the rest of that family still ships. A stored array carries its own order, so there each method means exactly what it means in JavaScript. The distinction is the receiver, not the method.
 
-The stream rewrite is to state the order and take from the front: `$$.toSorted({ createdAt: -1 }).take(3)`. Each row's own stream refusal in `src/registry/names.ts` names this rewrite. The refusal reaches every chain-assembly site, including a foreign chain, so a developer cannot fall back quietly to value mode and slice the tail of an array whose order came from the foreign scan.
+The stream rewrite is to state the order and take from the front: `$$.toSorted({ createdAt: -1 }).take(3)`. Each row's own stream refusal in `src/registry/names.ts` names this rewrite. The refusal reaches every chain-assembly site, and a foreign chain too, so a developer cannot fall back quietly to value mode and slice the tail of an array whose order came from the foreign scan.
 
-Reconsider this only if MongoDB adds a stream-reversing stage. A new implementation over the existing `$sort` machinery would land back on the same two defects.
+Reconsider this only if MongoDB adds a stage that reverses a stream. A new implementation over the existing `$sort` machinery would land back on the same two defects.
 
 ### CLI `-S` / `--sort-keys`
 
@@ -218,11 +218,11 @@ Two checks stay, because the developer decided so. The first is the place of eac
 
 The developer decided that an unknown `$name` passes through, with no suggestion. `$mtach($.a > 1);` compiles to `[{ $mtach: { $gt: ["$a", 1] } }]`, and the server refuses it, because MongoDB has no `$mtach` stage. A suggestion refuses each new MongoDB name that is near a known name. Many real names are near each other: `$gt` and `$gte`, `$sin` and `$sinh`, `$min` and `$minN`. A JavaScript name such as `.pushh()` or `Numberr(x)` keeps its suggestion, because JSMQL owns that closed set.
 
-### Spreading a STRING into its characters (`[..."abc"]`)
+### A spread of a STRING into its characters (`[..."abc"]`)
 
 JavaScript spreads a string into one element per character. `[..."abc"]` is `["a","b","c"]`, and `{ ..."ab" }` is `{ 0: "a", 1: "b" }`. MongoDB has no operator that does this. `$concatArrays` takes only arrays, and `$mergeObjects` takes only documents, so there is nothing to lower the spread to.
 
-Emitting the string unchanged is worse than a refusal. `[..."abc"]` would silently answer the bare string `"abc"`, with no error at compile time or run time. Where a sibling element follows, the server instead refuses the emitted `{ "$concatArrays": ["abc", ["d"]] }`. This is the same wrong shape, found later.
+An unchanged string in the output is worse than a refusal. `[..."abc"]` would silently answer the bare string `"abc"`, with no error at compile time or run time. Where a sibling element follows, the server instead refuses the emitted `{ "$concatArrays": ["abc", ["d"]] }`. This is the same wrong shape, found later.
 
 So the compiler refuses the spread wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles. The compiler cannot know the type there, so the server answers instead. The refusal names the spelling that does produce the characters: `<string>.length().range().map(i => <string>.charAt(i))`. This reads one code point at a time, so it agrees with JavaScript on a multi-byte character.
 
@@ -244,13 +244,13 @@ The compiler checks the MQL that it makes from JSMQL code, and the place of each
 - read concern
 - Atlas availability of `$search`, `$searchMeta`, `$vectorSearch`, and `$listSearchIndexes`
 
-JSMQL emits the MQL unchanged for all of these, and lets the server decide. Validating them at compile time would need a model of deployment and data state, and would force a throw on a pipeline that is perfectly valid in another context. Rule #1 forbids exactly this: a throw on the *probable*, not the *certain*. Position rules that happen to involve an Atlas-only stage still apply — for example, `$search` must come first. Only the availability check is skipped.
+JSMQL emits the MQL unchanged for all of these, and lets the server decide. A check of them at compile time would need a model of deployment and data state, and would force a throw on a pipeline that is perfectly valid in another context. Rule #1 forbids exactly this: a throw on the *probable*, not the *certain*. Position rules that happen to involve an Atlas-only stage still apply — for example, `$search` must come first. Only the availability check is skipped.
 
 ### `$replaceRoot` verbose-form knob on `$ = …`
 
 The lean `$replaceWith` shape is correct for the `$ = …` sugar. A knob that opts into the verbose, 4.0-compatible `$replaceRoot({ newRoot: … })` form would add API surface for no gain. A user who needs that shape writes the stage call directly.
 
-### Wrapping nested-operator `$`-strings ("Model A")
+### A wrapper for nested-operator `$`-strings ("Model A")
 
 When a stage value is itself an operator call, for example `$project({ t: $concat("$a", "$b") })`, the `$`-string arguments pass through verbatim: `{ $concat: ["$a", "$b"] }`. They are NOT `$literal`-wrapped. The project considered an alternative, "Model A": an operator call wraps its `$`-string arguments, so only *direct* stage-spec values pass through. Rejected: it makes the same `$op("$x")` call mean a different thing at each nesting depth, and it breaks the "paste raw MQL and it round-trips" property. **HR1 (added later) settled this globally**: a source-typed `$`-string passes through in *every* context — pipeline, stage, and `jsmql.expr` alike. So there is no nesting-dependent or surface-dependent wrap at all. Only a runtime-injected value wraps. See [docs/LANG_RULES.md](LANG_RULES.md) (HR1).
 
@@ -258,7 +258,7 @@ When a stage value is itself an operator call, for example `$project({ t: $conca
 
 Value mode covers the lodash array vocabulary that maps cleanly to MQL: the positional, set-op / `By`, transpose, predicate-run, random, and `sortBy` / `orderBy` families. The project **considered and rejected** the methods below (developer-approved 2026-07-18). Each one gets the standard unknown-method error, except `unzipWith`, which carries a tailored hint (see below). `didYouMean` supplies a suggestion when a supported name is close enough, so none of these needs a rejection site or a `[DEF-NNN]` tag:
 
-- **Mutating** — `pull`, `pullAll`, `pullAllBy`, `pullAllWith`, `pullAt`, `remove`. JSMQL values are immutable expressions, so there is no array to mutate in place. `.without(...)`, `.reject(pred)`, and `.difference(other)` express the same intent, in a functional style.
+- **Mutators** — `pull`, `pullAll`, `pullAllBy`, `pullAllWith`, `pullAt`, `remove`. JSMQL values are immutable expressions, so there is no array to mutate in place. `.without(...)`, `.reject(pred)`, and `.difference(other)` express the same intent, in a functional style.
 - **Custom-comparator `*With`** — `differenceWith`, `intersectionWith`, `unionWith`, `uniqWith`, `xorWith`. An arbitrary `(a, b) => bool` comparator has no MQL equivalent, because MongoDB compares by value or key, not by a user callback. The `*By` iteratee variants (`differenceBy`, `uniqBy`, and others) cover the realistic need to compare by a derived key.
 - **Deep / recursive** — `flattenDeep`, `flattenDepth`, `flatMapDeep`, `flatMapDepth`, `zipObjectDeep`. A single aggregation expression cannot express unbounded-depth recursion, and a fixed-depth unroll gives poor DX. `.flatten()` handles the one-level case. A property-path key (`zipObjectDeep`) is a pitfall that MQL cannot honour.
 - **Binary-search sorted-index** — `sortedIndex`, `sortedIndexBy`, `sortedIndexOf`, `sortedLastIndex`, `sortedLastIndexBy`, `sortedLastIndexOf`. MQL has no binary-search primitive. `$indexOfArray` already scans linearly and backs `.indexOf`, so a "sorted" fast path buys nothing.

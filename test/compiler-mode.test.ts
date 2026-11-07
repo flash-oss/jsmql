@@ -2,7 +2,7 @@
 //
 // The truthiness check is SUBTRACTIVE over the value's proof: the four-way shape for a
 // value nothing is known about, fewer tests as the proof grows. This suite measures the
-// truth table the full shape implements on mongod, comparing it to JavaScript's own
+// truth table the full shape implements on mongod, and compares it to JavaScript's own
 // `Boolean(v)` for every value class the language can produce (NaN is not supported),
 // and states what each narrower proof leaves of it.
 
@@ -33,7 +33,7 @@ describe("compiler/emit/mode — the truthiness check", () => {
     expect(truthOf("$a", of("bool"))).toBe("$a");
     expect(truthOf("$a", maybeAbsent(of("bool")))).toBe("$a");
     expect(truthOf("$a", of("number", true))).toBe("$a");
-    // a string owes the "" test, and the null test while it may be absent
+    // a string owes the "" test, and the null test when it may be absent
     expect(truthOf("$a", of("string"))).toEqual({ $ne: ["$a", ""] });
     expect(truthOf("$a", maybeAbsent(of("string")))).toEqual({ $and: [{ $gt: ["$a", null] }, { $ne: ["$a", ""] }] });
     // an array, an object or a date owes nothing but presence

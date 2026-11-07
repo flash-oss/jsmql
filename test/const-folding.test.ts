@@ -116,7 +116,7 @@ describe("const folding — collapse to Filter", () => {
   });
 
   it(".size() and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
-    // Folding evaluates the const's RHS; a `.size()`/index there collapses to a
+    // The fold evaluates the const's RHS; a `.size()`/index there collapses to a
     // literal. (In a query expression like `$.count === items.size()`, `items`
     // inlines but `.size()` stays `$size` — the server computes it.)
     expect(jsmql("const n = [10, 20, 30].size(); $.count === n")).toEqual({ count: 3 });
@@ -194,7 +194,7 @@ describe("const folding — fallback to runtime binding", () => {
 
 describe("const folding — declaration lists", () => {
   it("folds a declarator from the one before it in the same list, and emits no stage", () => {
-    // The motivating shape: a window bounded by a constant date.
+    // The shape that motivates this: a window bounded by a constant date.
     expect(jsmql('const start = Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)')).toEqual({
       t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") },
     });
@@ -330,7 +330,7 @@ describe("const folding — lodash string methods", () => {
   });
 
   it(".words() folds to an array", () => {
-    // the fold settles the array; comparing a field WITH an array is the expression
+    // the fold settles the array; a comparison of a field WITH an array is the expression
     // road, because the query language would read the array as an element match
     expect(jsmql('const w = "fooBar-baz 9".words(); $.tags === w')).toEqual({
       $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },

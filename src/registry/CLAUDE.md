@@ -44,7 +44,7 @@ exists (`FilterOut`). An argument-shape dispatch is a keyed partition with its l
 (`ByArgs`). Each file ends with type-level audits over its own
 cross-references.
 
-A type-level audit earns trust only after it has failed once. It can pass
+A type-level audit earns trust only after it fails once. It can pass
 silently in three ways. A union never matches an object pattern. `never
 extends readonly (infer V)[]` resolves to `unknown`. A field not threaded
 through a `const` generic collapses to its constraint. So every rule stands
@@ -70,7 +70,7 @@ confirm.
   comment that shows the measured case. Add the type that holds its rule, a
   `@ts-expect-error` pair in the contracts fixture, and the rows that state
   the fact. Never add it as a list in the compiler.
-- **A new position** needs changes in several places. Add it to `Position`
+- **A new position** needs changes in more than one place. Add it to `Position`
   and `OutOf` in `src/registry/vocabulary.ts`. Add it to `CELL_OF` in
   `src/compiler/emit/consult.ts`. Add a cell for it on every spec type
   (`names.ts`, `productions.ts`). Add it to the constants and to `edge()` in

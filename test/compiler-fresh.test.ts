@@ -34,7 +34,7 @@ describe("compiler/passes/fresh — the parameter it picks", () => {
     expect(freshParam("n", parseExpression("{ a: n }"))).toBe("n2");
   });
 
-  it("keeps stepping until the name is free", () => {
+  it("steps until the name is free", () => {
     expect(freshParam("x", parseExpression("[x, x2, x3]"))).toBe("x4");
   });
 

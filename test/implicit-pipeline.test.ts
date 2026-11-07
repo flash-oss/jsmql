@@ -106,7 +106,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
 
 describe("implicit pipeline — single-statement update-filter inputs always wrap as pipelines", () => {
   // `jsmql()` always returns an aggregation-pipeline array for update-filter
-  // inputs — including single-statement ones without a trailing `;` — so the
+  // inputs — and single-statement ones without a trailing `;` too — so the
   // output is safe to pass directly to `db.coll.updateOne(filter, update)`.
   // Bare-document form would silently treat RHS expressions as literals; the
   // pipeline form evaluates them as aggregation expressions. Callers who want
@@ -121,8 +121,8 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
   });
 
   it("bare stage call without `;` auto-wraps as a Pipeline", () => {
-    // A top-level `$match(...)` is Pipeline intent. Rather than throwing or
-    // silently producing `{ $expr: { $match: ... } }` (a useless Filter),
+    // A top-level `$match(...)` is Pipeline intent. It does not throw or
+    // silently produce `{ $expr: { $match: ... } }` (a useless Filter);
     // `jsmql()` wraps the stage as a one-element Pipeline. The call site needs no `;`.
     expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
@@ -230,7 +230,7 @@ describe("implicit pipeline — block-body arrow input", () => {
   });
 });
 
-describe("implicit pipeline — error handling", () => {
+describe("implicit pipeline — errors", () => {
   it("non-stage expression between `;`s reports a precise stage error", () => {
     const r = jsmql.validate("1 + 1; $.a = 2");
     expect(r.valid).toBe(false);

@@ -2,12 +2,12 @@
  * A live suite may report green for exactly one reason: the server is not running.
  *
  * Every suite that talks to mongod wraps its setup so that an unreachable instance
- * skips instead of failing — `npm test` has to stay green for a contributor who has
+ * skips and does not fail — `npm test` must stay green for a contributor who has
  * not run `npm run fixture:up`. The danger is what else that wrapper swallows. A
  * wrong password, a missing grant, a refused command: each one lands in the same
- * `catch`, the suite runs its compile-only half, and the run reports GREEN while the
- * half that catches what a `toEqual` cannot has stopped running. Four suites sat in
- * exactly that state — `readWrite` alone cannot drop a database, and four of them
+ * `catch`, the suite runs its compile-only half, and the run reports GREEN when the
+ * half that catches what a `toEqual` cannot does not run. One cause:
+ * `readWrite` alone cannot drop a database, and some suites
  * drop theirs first.
  *
  * So the connection is made in ONE place, `test/fixtures/live.ts`, which skips on
@@ -51,7 +51,7 @@ describe("every live suite connects through test/fixtures/live.ts", () => {
     ).toEqual([]);
   });
 
-  it("none of them turns a failure into a skip by nulling its client", () => {
+  it("none of them turns a failure into a skip with a null client", () => {
     // `catch { client = null }` and friends: the shape that hides a refusal as a skip.
     const nulling = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\b(?:client|coll|db|mainColl)\s*=\s*null/;
     const offenders = live
@@ -100,7 +100,7 @@ describe("every fixture module a suite reaches keeps the skip rule", () => {
     expect(fixtureModules.filter((m) => /new MongoClient\(/.test(m.text)).length).toBeGreaterThan(0);
   });
 
-  it("none of them turns a failure into a skip by nulling its client", () => {
+  it("none of them turns a failure into a skip with a null client", () => {
     const nulling = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\b(?:client|coll|db|mainColl)\s*=\s*null/;
     expect(fixtureModules.filter((m) => nulling.test(m.text)).map((m) => m.name)).toEqual([]);
   });

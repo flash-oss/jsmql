@@ -27,7 +27,7 @@ read, on the ROOT chain, and it answers with the path the Env renders for it.
 { "$setWindowFields": { "output": { "__jsmql.size": { "$count": {} } } } }
 ```
 
-`$setWindowFields` adds a field without collapsing the stream, so the documents
+`$setWindowFields` adds a field and does not collapse the stream, so the documents
 flow on unchanged. This needs **MongoDB 5.0+**. The pipeline lowerers in
 [`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) emit the materialise
 stage and the trailing `{ $unset: "__jsmql" }`.
@@ -50,7 +50,7 @@ The materialiser is hoisted **lazily** and cached:
 (`src/registry/names.ts`): the stage leaves the stream's COUNT and its documents'
 FIELDS both untouched, so a count already stamped into a field is still the
 count afterwards. A stage that states nothing invalidates the count. The rule is
-**conservative**: recomputing is always correct, and reusing a stale count is a
+**conservative**: a recount is always correct, and a reuse of a stale count is a
 bug, so a read reuses a count only where a row proves it safe.
 
 Inside a callback, JSMQL refuses the third parameter altogether in a body that runs
@@ -64,7 +64,7 @@ names the stage.
 
 Detection is a **complete** AST walk (`someExpr` / `containsStreamLength` in
 `pipeline.ts`, and it covers every child-bearing `Expr` node), because a missed node
-would let `$$.size()` slip through un-materialised and emit a dangling
+would let `$$.size()` slip through un-materialised and emit a loose
 `$__jsmql.size`.
 
 ## Worked examples
@@ -81,7 +81,7 @@ $.total = $$.size();
 ]
 ```
 
-**Complex** — reuse, then recompute after an invalidating `$match`:
+**Complex** — reuse, then recompute after a `$match` that invalidates it:
 ```js
 $.before = $$.size();          // materialise
 $match($.keep === true);       // invalidates
@@ -134,7 +134,7 @@ reach the 3rd param). Neither has an HR3-safe lowering.
 
 ## `$$.size()` (ROOT count) inside a `$lookup` — captured into `$lookup.let`
 
-`$$` is **always the ROOT stream**, regardless of nesting depth (mirroring `$` =
+`$$` is **always the ROOT stream**, regardless of nesting depth (as `$` =
 root document). An inner sub-stream count uses the 3rd-arg handle above, never the
 `$$` sigil. So `$$.size()` *inside* a `$lookup` body means the root count: the
 `hoist` service places the stamp on the ROOT chain, and the Env renders the read
@@ -144,7 +144,7 @@ read is carried ([lookup-stage.md § The join road](lookup-stage.md)). Verified 
 mongod (counts correct, no leak).
 
 Distinct paths, no collision: a count read from a SHALLOWER level rides a
-`$$`-**variable** (`jsmql_s<level>_length`), and the count of the body doing the reading
+`$$`-**variable** (`jsmql_s<level>_length`), and the count of the body that reads
 rides the `$__jsmql.size` **field**. So one body can read its own and every ancestor's
 count at once (`totalUsers: $$.size()`, `ordersForUser: ordersColl.size()`, `shipmentsHere:
 shpmntsColl.size()`), each with its own name, each taken from the right documents. The root
@@ -177,10 +177,10 @@ function body. JSMQL rejects it here:
 
 ## Empty stream
 
-`$setWindowFields` over 0 input documents produces 0 output, so a using
+`$setWindowFields` over 0 input documents produces 0 output, so a
 statement on an empty stream yields an empty result (no rows, no count to
 report). Note for the `assert` use: an upper-bound assertion (`<= n`) holds
-vacuously on an empty stream, while a lower-bound one (`>= n`) cannot fire there —
+vacuously on an empty stream, but a lower-bound one (`>= n`) cannot fire there —
 that semantics belongs to the assertion, not to `$$.size()` itself.
 
 ## Cleanup & namespace

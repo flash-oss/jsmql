@@ -10,7 +10,7 @@ runs. After the pass, those shapes are gone.
 
 That property is the point. Every loop that lowers must recognise a sugar
 recognised DURING lowering. JSMQL assembles stages from more than one place, and
-a loop that does not know a form mis-lowers it silently, instead of refusing it.
+a loop that does not know a form mis-lowers it silently, and does not refuse it.
 A pass that removes sugar cannot miss it, because by the time any loop runs there
 is nothing left to miss.
 
@@ -44,7 +44,7 @@ One row per rule, in `RULES` order
 
 ## Position, and why the pass needs it
 
-Several forms mean one thing as a **statement** and are refused everywhere else:
+Some forms mean one thing as a **statement** and are refused everywhere else:
 
 ```
 $.items.sort();        →  [{ "$set": { "items": { "$sortArray": { "input": "$items", "sortBy": 1 } } } }]
@@ -92,7 +92,7 @@ for `.pop()`, and 4.4 times for `.shift()`.
 
 The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)`
 and `$.items.filter(p).sort()` have no destination, and they are not statements
-at all. Declining a non-path receiver also keeps `$$.push(…)` (`$unionWith`) and
+at all. The refusal of a non-path receiver also keeps `$$.push(…)` (`$unionWith`) and
 `$$.sort(…)` (`$sort`) out of a rule meant for fields.
 
 The shape pass asks the same question one phase earlier, where `$.a.b` is still
@@ -136,7 +136,7 @@ $.items.some({ active: true })        →  {"$expr":{"$anyElementTrue":{"$map":�
 ```
 
 Same meaning. On a document whose `items` is a string, the second form fails the
-query outright, while the first form answers it. The second form also cannot
+query outright, but the first form answers it. The second form also cannot
 use an index. The pass rewrites first, so lowering sees one shape, and the
 divergence cannot arise.
 
@@ -150,7 +150,7 @@ different fact with its own name:
   two-parameter callback and refuses `"name"`)
 - **`sortSpec`** (the string, object and array spellings are an ORDER, read by
   `sortSpecOf` in `src/compiler/emit/sort-spec.ts`; the pass accepts them
-  without rewriting them — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`)
+  and does not rewrite them — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`)
 
 An object receiver can state a layout too, as `.findKey()` does. The desugar
 rule writes an arrow with one parameter, so the shorthand reads the value of each entry, never its key:
@@ -252,12 +252,12 @@ and a subtree that a desugar rule still rewrites. The next round asks again.
 ## Order constraints
 
 Some rules overlap, because one input matches more than one rule. The pass
-resolves these in a fixed order, and each constraint below is load-bearing.
+resolves these in a fixed order, and each constraint below is necessary.
 Where two rules cannot collide, the order is declaration order and nothing
 more.
 
 **The write normalisations come first.** Everything downstream reads `op` as
-`"="`, including the sugar dispatch that routes a write by its target, so
+`"="`, and with it the sugar dispatch that routes a write by its target, so
 `compoundAssign` and `incDec` run before anything that reads a write.
 
 **Field-path fold before the mutators.** A mutator writes a PATH. `$.a.b.sort()`
@@ -285,7 +285,7 @@ $.a.indexOf(...$.b)
 The three mutator rules cannot collide with each other: a row carries an
 `immutableTwin`, an `asArrayLiteral` or a `mutatorForm`, never two.
 
-## Adding a sugar form
+## Add a sugar form
 
 1. Declare its trigger shape and the node it rewrites into.
 2. If the trigger overlaps an existing rule, declare the precedence here, and add

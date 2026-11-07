@@ -10,7 +10,7 @@
  *   1. No file in the repository names the default port in a connection string.
  *   2. Every database a suite writes to is listed in SCRATCH_DBS, which IS the grant
  *      the scratch user holds. A suite that writes elsewhere gets an authentication
- *      error, and a self-skipping suite would turn that into a silent green.
+ *      error, and a suite that skips itself would turn that into a silent green.
  *
  * docs/DEVLOG/ is exempt from the first check: it is the historical record, and
  * history says what used to be true.
@@ -31,7 +31,7 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".id
 /**
  * Is this directory a checkout of its own — a nested git worktree?
  *
- * A worktree's root carries `.git` as a FILE pointing at the parent repository.
+ * A worktree's root carries `.git` as a FILE that points at the parent repository.
  * The ones under `.claude/worktrees/` are other branches at other commits, and
  * what they say is true of THEM: a session working on a branch from before this
  * rule existed would fail the rule for every session that ran a suite from here.
@@ -104,7 +104,7 @@ describe("the default mongod port is never used", () => {
  * GREEN. The usual way to reach that state is to add a database to SCRATCH_DBS and
  * forget to re-run `npm run fixture:up`.
  *
- * The check READS the grant rather than exercising it: dropping and rewriting the
+ * The check READS the grant, and does not use it: a drop and a rewrite of the
  * suites' own databases would fight the suites, which vitest runs in parallel.
  * It skips (green) only when the instance is down, like every other live suite.
  */

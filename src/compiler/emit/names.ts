@@ -124,7 +124,7 @@ export type Ref =
   | { readonly kind: "constant"; readonly value: unknown }
   /**
    * A declared function, inlined at each call. `expanding` is true when its body is a
-   * block of STAGES that expands in place, rather than a value.
+   * block of STAGES that expands in place, not a value.
    */
   | { readonly kind: "function"; readonly lambda: Expr; readonly expanding: boolean }
   /**
@@ -137,7 +137,7 @@ export type Ref =
    */
   | { readonly kind: "streamHandle"; readonly source: Expr; readonly chain: Chain }
   /**
-   * A binding a document-replacing stage destroyed. Reading it is the
+   * A binding a document-replacing stage destroyed. A read of it is the
    * developer's error, and `fix` is the row's own advice:
    *   let t = $.a; $group({ _id: $.k }); $.b = t   → refused: $group replaces the document, so t has no value after it
    */

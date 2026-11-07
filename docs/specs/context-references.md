@@ -52,7 +52,7 @@ They carry no payload. The existing `MemberAccess` (for `.name`) and `IndexAcces
 - `$$["foo"]` → `IndexAccess { object: StreamRef, index: StringLiteral "foo" }`
 - `$$$$[db].coll` → `MemberAccess { object: IndexAccess { object: ClusterRef, index: <ParamRef db> }, member: "coll" }`
 
-Why use separate node types instead of one `ContextRef { depth }` node? Each level carries a different surface. A database ref needs a collection after it. A cluster ref needs a database and a collection. `$$` is a stream in its own right. So each node matches on its own, rather than by a depth count.
+Why use separate node types instead of one `ContextRef { depth }` node? Each level carries a different surface. A database ref needs a collection after it. A cluster ref needs a database and a collection. `$$` is a stream in its own right. So each node matches on its own, not by a depth count.
 
 ## Parser
 
@@ -101,7 +101,7 @@ The emitter locates a `FieldRef` through one function, `locate` in `src/compiler
 - Lexer cap (5 or more `$`).
 - The prefix tokens do not change `$.` behaviour.
 
-Tests use the string form rather than the arrow form, but the arrow form also type-checks: `$$` / `$$$` / `$$$$` are declared as ambient globals in [`src/globals.ts`](../../src/globals.ts) (through `import "@koresar/jsmql/globals"`). This declaration gives completion for the diagnostic source stages, and — on `$$` — for the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …). See `globals-generation.md` § Context references.
+Tests use the string form, not the arrow form, but the arrow form also type-checks: `$$` / `$$$` / `$$$$` are declared as ambient globals in [`src/globals.ts`](../../src/globals.ts) (through `import "@koresar/jsmql/globals"`). This declaration gives completion for the diagnostic source stages, and — on `$$` — for the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …). See `globals-generation.md` § Context references.
 
 ## What each reference carries
 

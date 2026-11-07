@@ -43,7 +43,7 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
     expect(root.fresh("arr").as).toBe("jsmqlArr2");
   });
 
-  it("entering a sub-pipeline puts the body in statement position under a new chain", () => {
+  it("a sub-pipeline entry puts the body in statement position under a new chain", () => {
     const outer = new Chain();
     const inner = new Chain();
     const env = Env.root(program, "statement", outer)
@@ -102,7 +102,7 @@ describe("compiler/emit/env — a chain closes in one order", () => {
     ]);
   });
 
-  // A statement that becomes SEVERAL stages drains at each of them: the hoisted
+  // A statement that becomes MORE THAN ONE stage drains at each of them: the hoisted
   // stage reads the documents the stage it was written for reads, so it stands
   // beside it and not at the front of the statement.
   it("hands the hoisted stages back so a road can place them between two of its own", () => {

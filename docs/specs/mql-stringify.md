@@ -27,7 +27,7 @@ failure a query can have.
 | an ObjectId | `"507f1f77bcf86cd799439011"` | compares a string to an `_id` |
 | `/^a/i` | `{}` | matches every document |
 | a `Decimal128`, a `Long`, a `Binary` | its internal byte fields | reads a document, not a number |
-| a key named `__proto__` | `"__proto__": 1` | never gets the field: pasting the text back sets the prototype and creates no own property |
+| a key named `__proto__` | `"__proto__": 1` | never gets the field: a paste of the text back sets the prototype and creates no own property |
 
 ## One spelling, two runtimes
 
@@ -39,7 +39,7 @@ not one per runtime. The bare-call forms (`ObjectId("…")`, `MinKey()`) and the
 helper names (`ISODate`, `NumberLong`, `BinData`) run only in mongosh, so the
 printer writes neither.
 
-Pasting the text into a driver script needs the classes in scope. mongosh has
+To paste the text into a driver script, you need the classes in scope. mongosh has
 them already:
 
 ```js
@@ -52,7 +52,7 @@ compiler itself reads it. A duck check does not work here: a driver `UUID`
 reports `_bsontype: "Binary"` AND carries `toHexString`. So a check for that
 method calls a UUID an ObjectId, and prints text that throws in both runtimes.
 
-The printer picks a few spellings by hand, rather than by a fixed rule:
+The printer picks a few spellings by hand, not by a fixed rule:
 
 - **`new Long("…")`**, with the value as a string. A number argument is the low
   32 bits of `new Long(low, high)`, so a value past 2^31 would wrap. MEASURED: bson
@@ -116,7 +116,7 @@ survives.
 
 ## Layout
 
-The printer writes a document on ONE line while it fits inside `width`, and
+The printer writes a document on ONE line when it fits inside `width`, and
 breaks it to one entry per line once it does not fit. MQL nests deeply and
 narrowly, so a brace on each line would bury the shape the text should show:
 
@@ -140,7 +140,7 @@ line would then look the same as an unbroken one.
 
 ## What it refuses
 
-Three values have no MQL form. Printing something in their place would hide
+Three values have no MQL form. A printed substitute would hide
 the fault, not report it. Each one raises a `TypeError`:
 
 - an **Invalid Date** — the driver stores it as epoch 0, so any spelling would

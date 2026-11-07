@@ -249,7 +249,7 @@ function operatorEntries(e: Expr): ReadonlyArray<{ op: string; value: Expr; pos:
 
 /**
  * Is anything inside this value read at RUN time — a field, a bound name, an
- * access, or a call on one — rather than a constant, a regex, or the
+ * access, or a call on one — and not a constant, a regex, or the
  * developer's own operator?
  *
  * The question DESCENDS. A read gives the field's name as a plain string in a

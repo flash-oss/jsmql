@@ -1,6 +1,6 @@
 /**
  * Unit tests for the structural-merge core of `scripts/merge-devlog.mjs`.
- * The CLI side (reading git index stages, calling `git add`) is covered
+ * The CLI side (it reads git index stages and calls `git add`) is covered
  * indirectly by the script's smoke usage; here we exercise the pure
  * merge function directly so future regressions in the merge logic
  * surface in `npm test`.
@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { mergeDevlog, parse } from "../scripts/merge-devlog.mjs";
 
 const SEP = "\n\n---\n\n";
-const HEADER = "# DEVLOG\n\nA chronological log of decisions, etc.";
+const HEADER = "# DEVLOG\n\nA chronological log of decisions and other changes.";
 const E_OLD_A = "## 2026-04-01 — Old entry A\n\nbody of A";
 const E_OLD_B = "## 2026-03-15 — Old entry B\n\nbody of B";
 const BASE = HEADER + SEP + E_OLD_A + SEP + E_OLD_B;
@@ -79,7 +79,7 @@ describe("merge-devlog: append-friendly merges", () => {
 });
 
 describe("merge-devlog: real conflicts fall back", () => {
-  it("rejects diverging edits to the same existing entry", () => {
+  it("rejects two different edits to the same existing entry", () => {
     const editedOurs = "## 2026-04-01 — Old entry A\n\nbody of A — ours";
     const editedTheirs = "## 2026-04-01 — Old entry A\n\nbody of A — theirs";
     const ours = HEADER + SEP + editedOurs + SEP + E_OLD_B;
@@ -90,7 +90,7 @@ describe("merge-devlog: real conflicts fall back", () => {
     expect(r.reason).toContain("edited differently");
   });
 
-  it("rejects diverging new entries that share a heading", () => {
+  it("rejects two different new entries that share a heading", () => {
     const oursNew = "## 2026-05-10 — Same heading\n\nour body";
     const theirsNew = "## 2026-05-10 — Same heading\n\ntheir body";
     const ours = HEADER + SEP + oursNew + SEP + E_OLD_A + SEP + E_OLD_B;
@@ -101,7 +101,7 @@ describe("merge-devlog: real conflicts fall back", () => {
     expect(r.reason).toContain("same heading");
   });
 
-  it("rejects diverging header edits", () => {
+  it("rejects two different header edits", () => {
     const oursH = "# DEVLOG\n\nOur new prelude.";
     const theirsH = "# DEVLOG\n\nTheir new prelude.";
     const ours = oursH + SEP + E_OLD_A + SEP + E_OLD_B;

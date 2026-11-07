@@ -33,7 +33,7 @@ const DOCUMENTS = "$documents";
  * A value in a written document list that needed a STAGE of its own. `$documents`
  * is the first stage of the `$unionWith` body, so nothing can stand ahead of it
  * to produce the value. The read would then be a path nothing writes — measured,
- * the server answers `{}` for such a document rather than refusing it. Both
+ * the server answers `{}` for such a document, and does not refuse it. Both
  * spellings of the list (`$$.push({ … })` and `$$ = [{ … }]`) call this.
  */
 export function noStageInDocuments(chain: Chain, written: string, pos: number): void {

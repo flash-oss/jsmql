@@ -48,7 +48,7 @@ const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
     typeof (branch as { unsupported?: unknown }).unsupported === "string"
   );
 };
-describe("registry — every callback-taking name states its slot layout", () => {
+describe("registry — every name that takes a callback states its slot layout", () => {
   it("states iterateeSlots for every family in `on`: a layout, arrowOnly, or sortSpec", () => {
     // A row with `params` takes a callback. Without a layout the desugar pass
     // cannot tell `$.o.mapValues("name")` (refused — a two-parameter arrow only)
@@ -96,8 +96,8 @@ describe("registry — `only` and the positions it qualifies", () => {
 
   it("uses every member of the Only vocabulary on at least one row", () => {
     // `afterSort` was declared, documented with an example, and stated by no row
-    // — so `$$ = $$.takeWhile(p)` would have emitted the $setWindowFields mongod
-    // refuses (Location5339901) instead of the refusal that asks for a sort first.
+    // — so `$$ = $$.takeWhile(p)` would emit the $setWindowFields mongod
+    // refuses (Location5339901), and not the refusal that asks for a sort first.
     const unused = ONLY.filter((o) => !rows.some(([, row]) => row.only?.includes(o) === true));
     expect(unused).toEqual([]);
   });
@@ -105,7 +105,7 @@ describe("registry — `only` and the positions it qualifies", () => {
   it("states `only` on a row that can stand as a stage, a chain link, or in a stage's body", () => {
     // Every Only member qualifies a stage or a link — "first stage", "last stage",
     // "an update-pipeline stage", "a link after a sort" — and the placement may
-    // belong to an OPERATOR the stage carries rather than to the stage itself:
+    // belong to an OPERATOR the stage carries, not to the stage itself:
     // MEASURED, the server allows a `$match` with `$text` only as the first stage, so
     // the rule is `$text`'s and the stage it qualifies is whichever `$match` holds it.
     // A row that stands in none of those three positions has nothing to qualify.
@@ -150,10 +150,10 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
   it("every row with one states `statementBody`", () => {
     expect(withStatementSlot.length).toBeGreaterThan(0);
     const silent = withStatementSlot.filter(([, r]) => r.statementBody === undefined).map(([n]) => n);
-    expect(silent, `${silent.length} row(s) file a 'statement' body slot without saying what it holds`).toEqual([]);
+    expect(silent, `${silent.length} row(s) file a 'statement' body slot and do not say what it holds`).toEqual([]);
   });
 
-  it("no row states it without having one", () => {
+  it("no row states it unless it has one", () => {
     const have = new Set(withStatementSlot.map(([n]) => n));
     const spurious = Object.entries(NAMES as Record<string, Row>)
       .filter(([n, r]) => r.statementBody !== undefined && !have.has(n))

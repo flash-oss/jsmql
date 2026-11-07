@@ -99,7 +99,7 @@ describe("compiler/emit/filter — comparisons", () => {
 });
 
 describe("compiler/emit/filter — && and ||", () => {
-  it("merges conjuncts, colliding keys into one $and, residuals into one $expr", () => {
+  it("merges conjuncts, keys that collide into one $and, residuals into one $expr", () => {
     expect(filter("$.a > 1 && $.b <= 2")).toEqual({ a: { $gt: 1 }, b: { $lte: 2 } });
     // Two operator documents on one field that agree wherever they overlap are ONE
     // document: the server reads every operator in it as a conjunction.
@@ -164,7 +164,7 @@ describe("compiler/emit/filter — the truth of a `$op(…)` call is split by sp
 
 describe("compiler/emit/filter — a raw query document", () => {
   it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
-    // Raw MQL passes through, keys as written (HR1) — including a name this build
+    // Raw MQL passes through, keys as written (HR1) — and a name this build
     // does not list in filter position, because a newer query operator must round-trip.
     expect(filter("{ a: 1 }")).toEqual({ a: 1 });
     expect(filter("{ a: { $gt: 1 } }")).toEqual({ a: { $gt: 1 } });

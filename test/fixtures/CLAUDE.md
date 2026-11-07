@@ -17,8 +17,8 @@ the build when a file names that port, so this rule cannot rot back into the cod
 
 This is why the project runs its own instance, and does not use the developer's
 instance. `--auth` applies to a whole instance, and the server-enforced read-only
-role for the integration dataset needs it. Turning `--auth` on for the
-developer's own `mongod` would force credentials onto every other service on
+role for the integration dataset needs it. If `--auth` were on for the
+developer's own `mongod`, it would force credentials onto every other service on
 their machine.
 
 - The instance listens on **port `27018`**, with its dbpath outside the repository.
@@ -64,7 +64,7 @@ The dataset has five collections: `users`, `products`, `orders`, `shipments` and
 `reviews` (`EXPECTED_COUNTS` in `dataset.ts` gives the live count of each). The
 collections carry realistic cross-references: `orders.userId` points to `users`;
 `orders.items[].productId` points to `products`; `shipments.orderId` points to
-`orders`; `shipments.userId` points to `users` too, denormalised from the owning
+`orders`; `shipments.userId` points to `users` too, denormalised from the
 order's user, so that a nested lookup can trace a shipment back to the outer
 user; and `reviews` points to both `users` and `products`.
 
@@ -94,14 +94,14 @@ stale fingerprint or a wrong document count, and the message names the command
 that repairs it. [`test/live-suites.test.ts`](../live-suites.test.ts) keeps
 every fixture module that a suite reaches on this rule.
 
-## Growing and changing the data
+## Grow and change the data
 
 **This dataset is meant to grow.** It is not frozen. Expand it freely whenever a
 new query, operator, stage, or edge case needs realistic data to run against: add
 a document, a field, a new collection, or a deliberately null or boundary value.
 A richer fixture means that more of JSMQL's surface gets *executed*, not just
 *emitted*. When you add a feature whose realistic test would benefit from live
-data, extend this dataset instead of inventing a one-off dataset.
+data, extend this dataset. Do not invent a one-off dataset.
 
 **After any change to the data, re-insert it into `mongod`.** The integration
 tests query the *server*, not `dataset.ts`, so a source edit has no effect until

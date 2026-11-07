@@ -304,7 +304,7 @@ const DRIVER: Record<Exclude<Mode, "auto">, string> = {
 /** What a program IS, for a strict entry that wanted another shape. */
 function received(program: Program): { what: string; hint: string } {
   // A `;` alone does not make a Pipeline. A binding in front of one expression is
-  // still the Filter that expression is. Calling it a Pipeline would send the
+  // still the Filter that expression is. A Pipeline error would send the
   // developer back to the pipeline entry the developer already called.
   if (program.type === "Pipeline" && shapeOf(program) === "pipeline") {
     return { what: "a `;`-separated Pipeline", hint: "jsmql.pipeline() (or jsmql(), which decides from the shape)" };
@@ -356,13 +356,13 @@ function received(program: Program): { what: string; hint: string } {
  * The defect inside a program that is a FILTER, found by lowering it as one.
  *
  * A program is judged for its shape only once it is correct. A value such as
- * `Date("nope")` is wrong under every entry. Telling the developer only to
+ * `Date("nope")` is wrong under every entry. A message that tells the developer only to
  * call a different entry would just send the developer to meet the same error
  * on the next run. This function returns null when the only thing wrong is the
  * shape.
  *
  * The function searches only the filter reading, because that is the shape a
- * program the pipeline entry refuses actually has. Lowering the program as
+ * program the pipeline entry refuses actually has. A lowering of the program as
  * anything else would answer with a position the developer never asked for.
  */
 function defectAsFilter(injected: Program): CodegenError | null {
@@ -384,7 +384,7 @@ function wrongShape(api: string, wanted: Exclude<Mode, "auto">, program: Program
 }
 
 /**
- * The one expression a Filter / expression program is, once the fold has inlined
+ * The one expression a Filter / expression program is, after the fold inlines
  * its `const` prelude. A binding the fold could not settle needs the pipeline form.
  */
 function expressionOf(program: Program): Expr {
@@ -429,7 +429,7 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
   switch (resolved) {
     case "expr":
     case "filter": {
-      // `$.a.assign($.b)` standing alone reads as a write. Asked for an expression, it is
+      // `$.a.assign($.b)` alone reads as a write. Asked for an expression, it is
       // the `$mergeObjects` call it lowers to.
       // An expression entry reads a bracketed literal as an array value, unless it is a stage list.
       const pipelineShaped =
@@ -594,7 +594,7 @@ function validateInput(
 }
 
 /**
- * A parameter's value while `validate()` checks a parameterised arrow. No literal writes
+ * A parameter's value during the `validate()` check of a parameterised arrow. No literal writes
  * this value, so the inject pass gives it an `Injected` node. The proof shows no kind for
  * it, and no literal check or constant check reads it.
  */
@@ -630,7 +630,7 @@ type Jsmql = typeof jsmqlDispatch & {
 };
 
 /**
- * The callable with its properties, assembled by `Object.assign` rather than a
+ * The callable with its properties, assembled by `Object.assign`, not by a
  * `namespace`: `src/` stays in TypeScript's strippable subset. See src/CLAUDE.md.
  */
 export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {

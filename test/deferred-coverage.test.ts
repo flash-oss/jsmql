@@ -23,7 +23,7 @@ import { resolve, relative } from "node:path";
 //                    match at least one phrase in the live surface, so the
 //                    allowlist cannot accumulate stale entries.
 //
-// Live surface = src/**/*.ts (excluding globals.ts), docs/specs/**/*.md,
+// Live surface = src/**/*.ts (not globals.ts), docs/specs/**/*.md,
 // docs/LANGUAGE.md, docs/CLAUDE.md, README.md, test/**/*.ts (except this
 // file and operator-spec-coverage.test.ts's meta-comment).
 //
@@ -44,8 +44,8 @@ const STATUS_RE = /^- \*\*Status\.\*\* (.+)$/m;
 const TAG_CONTEXT = 2;
 
 // Phrases that signal a deferral. Case-insensitive substring match against
-// each line. Tuned to match the phrases already in the codebase. Tightening
-// these (for example dropping "follow-up") needs a manual review of every
+// each line. Tuned to match the phrases already in the codebase. A change that tightens
+// these (for example, it drops "follow-up") needs a manual review of every
 // false positive.
 const PHRASE_RE =
   /(not yet (supported|implemented)|not supported in this release|is deferred|are deferred|deferred to|future work|out of scope|punt to a follow-up|coming in a follow-up|coming soon|planned but not yet|planned future work)/i;
@@ -199,8 +199,8 @@ describe("deferred-tracking drift protection", () => {
 
   it("COUNT GATE: the number of open items and decisions, so no prose has to claim it", () => {
     // A count in prose is stale on the next row, and CLAUDE.md keeps counts out of
-    // prose for exactly that reason. It lives here instead, where changing it is part
-    // of changing the file. Update the two numbers when you add or close a row.
+    // prose for exactly that reason. It lives here instead, where a change to it is part
+    // of a change to the file. Update the two numbers when you add or close a row.
     const { idsInOrder } = parseDeferred();
     const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
     const decisions = text.substring(text.indexOf("## §B.")).match(/^### /gm) ?? [];

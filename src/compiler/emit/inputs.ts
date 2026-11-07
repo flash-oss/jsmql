@@ -311,7 +311,7 @@ function elementsCallback(
  * The record for a call of `name` on `recv` with `args`, under `env`. `keys` is
  * the row's positional key order. `overrides` lets the dispatcher substitute a
  * lowering for one argument — the `$let` arrow whose body is lowered under its
- * variables — without the renderer knowing.
+ * variables — and the renderer does not know.
  */
 export function exprInputs(
   name: string,
@@ -424,7 +424,7 @@ export function exprInputs(
       // ancestor's when the read crosses back out. Either way the stamp lands
       // on that level's own pipeline, ahead of the stage that holds the
       // read, and the read comes back down through each `$lookup.let` on the way —
-      // the same hop an outer field takes. Stamping an ancestor's count on THIS
+      // the same hop an outer field takes. A stamp of an ancestor's count on THIS
       // chain would write this body's count under the same field and answer it
       // instead: two different counts, one field, silently equal.
       const source = (node as { object?: Expr }).object ?? null;
@@ -489,7 +489,7 @@ function streamHandleOf(recv: Expr | null, env: Env): { chain: Chain; level: num
   return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 
-/** Is `recv` the body's OWN stream — a callback's receiver parameter — rather than `$$`, the root stream? */
+/** Is `recv` the body's OWN stream — a callback's receiver parameter — and not `$$`, the root stream? */
 export function onOwnStream(recv: Expr | null, env: Env): boolean {
   return (
     recv !== null &&
@@ -585,7 +585,7 @@ export type StageReader = {
  * The record a STAGE cell receives — a stage's body, never an operand list. Its
  * `value` is the reading the BODY's own position asks for, which is how
  * `$match`'s row makes its body a query document and a sub-pipeline's elements
- * stages, without the cell knowing it asked for anything but a value.
+ * stages, and the cell does not know that it asked for anything but a value.
  */
 export function stageInputs(
   name: string,
@@ -594,7 +594,7 @@ export function stageInputs(
   env: Env,
   node: object,
   read: StageReader,
-  /** The stages the current chain has produced before this link — not yet emitted, but before it in the pipeline. */
+  /** The stages the current chain produced before this link — not yet emitted, but before it in the pipeline. */
   soFar: readonly Stage[] = [],
   /**
    * The method the SOURCE wrote, which is `name` unless the link runs as another

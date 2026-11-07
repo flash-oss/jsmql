@@ -48,7 +48,7 @@ export type Rule = {
  * The pass DERIVES this from the AST's own list of assignment spellings: every
  * compound operator is a binary operator followed by `=`, so the table is the
  * list minus `=` itself and the two increments. A hand-written copy here would
- * make a third table of assignment spellings, and adding `%=` would then need
+ * make a third table of assignment spellings, and a new `%=` would then need
  * all three.
  */
 const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
@@ -56,7 +56,7 @@ const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
 );
 
 /**
- * Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — rather than a field?
+ * Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — and not a field?
  * The parser refuses an arithmetic write on `$` and `$$` before this pass runs,
  * because the rewrite would turn `$ += 1` into the valid-looking `$ = $ + 1`.
  */
@@ -97,7 +97,7 @@ const compoundAssign: Rule = {
  * All four spellings produce the same MQL, because a write at statement
  * position has no value in MQL, so the pass cannot observe prefix versus
  * postfix. The parser records `value` as a placeholder copy of the target.
- * This rule overwrites it instead of reading it.
+ * This rule overwrites it, and does not read it.
  */
 const incDec: Rule = {
   name: "increment",
@@ -145,7 +145,7 @@ const bareReturnBlock: Rule = {
  *
  * MQL spells a nested field one way — `"$a.b"` — so the tree should hold it one
  * way too. Every reader downstream then asks ONE question ("is this a
- * FieldRef?"), instead of walking a chain to find out.
+ * FieldRef?"), and does not walk a chain to find out.
  *
  * A member of a NAMESPACE (`Math.PI`) is the one read that is not a field, and the
  * registry states so (`call: false` on a row whose `on` is the namespace). Every
@@ -314,7 +314,7 @@ const mutatorForm: Rule = {
 /**
  * `$.a.push(9);` → `$.a = [...$.a, 9];`   and the mirror for `.unshift()`.
  *
- * The rule uses spread rather than `.concat()`, because they are not the same
+ * The rule uses spread, not `.concat()`, because they are not the same
  * function: `[1].push([2])` is `[1, [2]]`, and `[1].concat([2])` is `[1, 2]`.
  * Spread keeps push's meaning for an array argument; concat would flatten it.
  */
@@ -365,14 +365,14 @@ const packSpread: Rule = {
 // ── the iteratee shorthands ──────────────────────────────────────────────────
 //
 // A shorthand is a shorter spelling of an arrow, so this is the plainest kind of
-// sugar there is. Doing the rewrite here, rather than inside each lowering,
+// sugar there is. The rewrite here, and not inside each lowering,
 // makes the spellings agree, which they otherwise do not:
 //
 //   $.items.some(x => x.active === true)  → {"items":{"$elemMatch":{"active":true}}}
 //   $.items.some({ active: true })        → {"$expr":{"$anyElementTrue":{"$map":…}}}
 //
 // Both lines mean the same thing, but on a document whose `items` is a string
-// the second FAILS the query while the first answers it. The rewrite runs first
+// the second FAILS the query, but the first answers it. The rewrite runs first
 // and leaves one shape to lower.
 //
 // The row states WHICH slots may be rewritten; the rule never reads this off the
@@ -547,8 +547,8 @@ const iterateeShorthand: Rule = {
     const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
     // A receiver supplies a FAMILY, and a chain rooted in a context reference is
     // the stream family wherever the call stands — as a `$facet` branch, as the
-    // argument of `$$.push(…)`, as the right of `$.o = …`. Reading the call's own
-    // position instead resolves every one of those to the array family.
+    // argument of `$$.push(…)`, as the right of `$.o = …`. A read of the call's own
+    // position resolves every one of those to the array family.
     const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
     if (family === undefined) return node;
 
@@ -562,7 +562,7 @@ const iterateeShorthand: Rule = {
       (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
       (family === "stream" ? iterateeSlotsOf(n.name, "array") : undefined);
     // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and the pass
-    // reads a sort specification as an order rather than rewriting it to a callback.
+    // reads a sort specification as an order, and does not rewrite it to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;
 
     const args = n.args as readonly object[];
@@ -582,17 +582,17 @@ const iterateeShorthand: Rule = {
 };
 
 /**
- * Every rule, in the order the audits established. The order is load-bearing
+ * Every rule, in the order the audits established. The order is important
  * where two rules match one input. Where the rules cannot collide, it is
  * declaration order and nothing more.
  */
 export const RULES: readonly Rule[] = [
   // The write normalisations come first: everything downstream assumes `op` is
-  // `"="`, including the sugar dispatch that routes a write by its target.
+  // `"="`, and with it the sugar dispatch that routes a write by its target.
   compoundAssign,
   incDec,
   bareReturnBlock,
-  // Folding a path is independent of every rule above and below it: no rule
+  // The fold of a path is independent of every rule above and below it: no rule
   // matches on a MemberAccess, and none builds one.
   fieldPath,
   // This runs AFTER fieldPath, which is what makes `$.a.b.sort()` reach a
@@ -610,7 +610,7 @@ export const RULES: readonly Rule[] = [
 ];
 
 /**
- * Run every rule once, in order, over `root` standing at `where`. The same reference comes
+ * Run every rule once, in order, over `root`, which stands at `where`. The same reference comes
  * back when no rule fired.
  */
 export function applyRules<T extends object>(root: T, where: Where): T {

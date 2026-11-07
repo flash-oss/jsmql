@@ -60,8 +60,8 @@ coalesces exactly as the bare form does. See
 ### Chained `=` (right-associative)
 
 `$.a = $.b = 1` writes one value to every target in the chain. It is not a nested
-assignment: the parser reads each target while the lookahead keeps finding one
-followed by an assignment operator, then builds a FLAT list of `AssignExpr` nodes
+assignment: the parser reads each target as long as the lookahead finds one
+with an assignment operator after it, then builds a FLAT list of `AssignExpr` nodes
 that all share the deepest right-hand side.
 
 A compound operator (`+=`, and so on) rejects a chained right-hand side, because a
@@ -83,9 +83,8 @@ For `$.a += rhs`, the parser emits:
 ```
 
 The `<$.a>` node is shared between `target` and `value.left`, because the AST stays
-immutable at codegen time, so sharing is safe. Compound `+`'s string-vs-number
-disambiguation (`$concat` vs `$add`) falls out of the existing `BinaryExpr +` codegen
-for free.
+immutable at codegen time, so the shared node is safe. For a compound `+`, the existing `BinaryExpr +` codegen
+already picks `$concat` for a string or `$add` for a number. It needs no new code.
 
 ### Increment / decrement
 
@@ -99,7 +98,7 @@ statement gives no value, so the difference has no effect there.
 `++` and `--` are rows in [src/registry/tokens.ts](../../src/registry/tokens.ts) like
 every other lexeme, and the lexer derives the punctuator order from key length, so it
 matches `++` before `+=` before `+`. `1--2` (no whitespace) therefore lexes as `1`,
-`--`, `2`, and target validation rejects it, while `1 - -2` lexes as `1`, `-`, `-`,
+`--`, `2`, and target validation rejects it, but `1 - -2` lexes as `1`, `-`, `-`,
 `2` and parses as `1 - (-2)`.
 
 The `increment` and `decrement` rows in
@@ -177,7 +176,7 @@ JavaScript's left-to-right meaning. It walks the run and opens a new group when:
    the same way. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing.
 
 Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "path" }`
-for one path and `{ $unset: ["a", "b"] }` for several — the string form is the shorter
+for one path and `{ $unset: ["a", "b"] }` for more than one — the string form is the shorter
 valid one. The emitter writes an object-literal value as `{ $mergeObjects: [<object>] }`,
 because a literal sub-document in `$set` MERGES into the existing field on the server,
 where a JavaScript assignment replaces it ([emit-pass.md § the write road](emit-pass.md)).
@@ -212,8 +211,8 @@ The lowering refuses a value computed from the document, because the server read
 alternative to name. The message quotes the read as the server would see it, for
 example `'$name'` for `$.name`. A copy of the whole document (`$.a = $`) has no
 `$rename` form, so its refusal names the pipeline form alone. The rename pair above is the one read of the document that a
-document-form update takes, because `$rename` names the source field rather than
-evaluating it. A value the server computes without reading the document (`Date()`
+document-form update takes, because `$rename` names the source field, and does not
+evaluate it. A value the server computes without reading the document (`Date()`
 inside a value, `ObjectId()`, `Date.now()`) is refused by its row's `updateDoc` cell,
 which names the write that does exist (`$.<field> = Date()` is `$currentDate`) and
 the pipeline form. A row without that cell gets the position's general sentence from
@@ -223,7 +222,7 @@ update operator, such as a stage, `assert`, or a stream chain.
 
 ### Mutators
 
-A mutating method at statement position — `$.tags.push(x)`, `$.items.sort()`,
+A mutator method at statement position — `$.tags.push(x)`, `$.items.sort()`,
 `$.s.trimStart()` — is the write it means. The desugar pass
 ([desugar-pass.md](desugar-pass.md)) rewrites a call whose row states a `mutatorForm`
 to the `AssignExpr` of its value form (`$.tags = $.tags.concat([x])`), and the roads

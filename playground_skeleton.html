@@ -424,7 +424,7 @@
         color: var(--muted);
       }
 
-      /* Each legend item is a toggle filter button. Clicking toggles its kind
+      /* Each legend item is a toggle filter button. A click toggles its kind
          in the visible set; an empty visible set means "show all". */
       .legend .legend-item {
         display: inline-flex;
@@ -741,7 +741,7 @@
          right of the "MongoDB call" bar. Collapsed is the default — variables
          are optional, so the call site sits directly above the query until the
          user asks for them. The label carries the panel's name because a bare
-         chevron says "something opens" without saying what. */
+         chevron says "something opens", but does not say what. */
       .vars-toggle {
         display: inline-flex;
         align-items: center;
@@ -772,8 +772,8 @@
         transition: transform 0.15s ease;
       }
 
-      /* Chevron points down while collapsed ("opens downward"), flips up once
-         the panel below is showing. */
+      /* Chevron points down when collapsed ("opens downward"), and flips up when
+         the panel below is open. */
       .vars-toggle[aria-expanded="true"] {
         color: var(--update);
       }
@@ -852,7 +852,7 @@
       /* The input panel stacks two editors that look identical (both are
          JS-highlighted CodeMirror). They are two *different languages*: the
          Variables box is plain JavaScript, evaluated in the user's runtime to
-         build the params object, while the main editor is the JSMQL language
+         build the params object, but the main editor is the JSMQL language
          compiled to MQL. A language tag on each — plus the query header below —
          names which is which right where the eye lands, so the two are never
          confused (the whole reason this exists: everyone mixes them up). */
@@ -969,7 +969,7 @@
       /* Compile-mode toggle: one button per jsmql entry point, styled like
          the kind badges (same mono pill look) but rendered as a segmented
          control where exactly one is active. Buttons share a fixed width so
-         the band reads as a uniform switch rather than ragged chips. */
+         the band reads as a uniform switch, not as chips of different widths. */
       .mode-toggle {
         display: inline-flex;
         gap: 4px;
@@ -1412,7 +1412,7 @@
       </section>
     </main>
 
-    <!-- jsmql-examples:start — sync-playground.mjs injects the realistic-examples manifest here when generating playground.html; this skeleton ships an empty list -->
+    <!-- jsmql-examples:start — sync-playground.mjs injects the realistic-examples manifest here when it generates playground.html; this skeleton ships an empty list -->
     <script type="application/json" id="examples-data">[]</script>
     <!-- jsmql-examples:end -->
 
@@ -1478,7 +1478,7 @@
       });
 
       // The optional Variables editor. Its contents are a JS object literal
-      // (NOT JSON — `new Date(...)`, unquoted keys, etc. are all fine) whose
+      // (NOT JSON — `new Date(...)`, unquoted keys and the like are all fine) whose
       // keys become `jsmql.compile()` bindings. See `parseVars` / `render`.
       const varsCm = CodeMirror.fromTextArea(varsEl, {
         mode: { name: "javascript" },
@@ -1512,7 +1512,7 @@
       // Identifies the example set this page was generated with, injected onto
       // the JSON block by sync-playground.mjs as a hash of the manifest. A
       // saved session records it so a restore can tell whether the examples
-      // have moved on since — see `staleExampleSession`. The skeleton ships an
+      // changed after the save — see `staleExampleSession`. The skeleton ships an
       // empty list and no stamp, so this is "" until generation.
       const EXAMPLES_STAMP = document.getElementById("examples-data").dataset.stamp ?? "";
       let orderedSlugs = []; // render order
@@ -1523,16 +1523,16 @@
       // `change`-triggered `render()` already sees the new value — otherwise
       // every example renders with the PREVIOUS example's compile mode and
       // the MQL OUTPUT panel looks one step behind. After the user freely
-      // edits the input the value stays sticky (so editing an Expression
-      // example keeps producing aggregation-expression output); the editor
-      // going empty resets it.
+      // edits the input the value stays sticky (so an edit of an Expression
+      // example continues to give aggregation-expression output); an empty
+      // editor resets it.
       //
       // Compile mode is the ONLY playground state that influences the
       // generated MQL — the output itself is recomputed from the input on
       // every `change` event and never cached.
       //
       // Each mode maps to a jsmql entry point. "auto" is the plain `jsmql()`
-      // that auto-detects Filter vs Pipeline shape; the other four force a
+      // that auto-detects the Filter or Pipeline shape; the other four force a
       // strict-shape entry point so the user can see exactly what each one
       // emits (and the actionable error when the input lowers to the wrong
       // shape). The compile-mode toggle in the input band drives this.
@@ -1579,7 +1579,7 @@
 
       // Build the "MONGODB CALL" hint for the active compile mode: the exact
       // driver call you'd write to get the MQL shown in the output panel. The
-      // four strict-shape modes have a fixed call site; AUTO picks `find` vs
+      // four strict-shape modes have a fixed call site; AUTO picks `find` or
       // `aggregate` from the actual output shape.
       function usageForMode(mode) {
         const c = currentColl;
@@ -1628,9 +1628,9 @@
 
       // Open the panel when the box actually holds bindings (or fails to
       // parse): both change the MQL output and the call-site hint, so the
-      // source of that change must not be hidden. Derived from the content
-      // rather than persisted, so the panel state can never disagree with the
-      // session it is showing. Called on every restore path — a page refresh,
+      // source of that change must not be hidden. The state comes from the content,
+      // and is not persisted, so the panel state can never disagree with the
+      // session it shows. Every restore path calls this function — a page refresh,
       // and a `#s=` share link (which can carry someone else's variables).
       function syncVarsDisclosure() {
         const v = parseVars(varsCm.getValue());
@@ -1638,9 +1638,9 @@
       }
 
       // Set the active compile mode: update the toggle UI, the call-site hint,
-      // and re-render. When called as part of loading an example
-      // (`rerender: false`) the caller re-renders itself after `setValue`, so
-      // we skip the extra render here.
+      // and re-render. When the load of an example calls it
+      // (`rerender: false`), the caller re-renders itself after `setValue`, so
+      // this function skips the extra render.
       function setMode(mode, { rerender = true } = {}) {
         if (!MODE_FNS[mode]) mode = "auto";
         currentMode = mode;
@@ -1789,7 +1789,7 @@
         inputCm.setValue(ex.query);
         loadingFromList = false;
         // As a safeguard, this explicitly re-renders after every state update
-        // finishes. Assume `setValue` stops firing the change event some day, for example when CM
+        // finishes. Assume that `setValue` no longer fires the change event some day, for example when CM
         // optimises a no-op replaceRange. This still guarantees that the output panel
         // reflects the freshly selected example.
         render();
@@ -1820,14 +1820,14 @@
         currentTitleEl.textContent = "";
         inputPanel.classList.remove("pipeline", "filter", "expression");
         // No example loaded → fall back to the generic collection name so the
-        // (always-visible) call-site hint stays sensible while typing freely.
+        // (always-visible) call-site hint stays sensible during a free edit.
         currentColl = "collection";
         updateUsageBar();
         writeHash(null);
       }
 
-      // Set of currently-selected kind filters (`"filter"`, `"pipeline"`,
-      // `"expression"`). Empty means "show all kinds". Clicking a legend item
+      // Set of the selected kind filters (`"filter"`, `"pipeline"`,
+      // `"expression"`). Empty means "show all kinds". A click on a legend item
       // toggles its kind in the set; the filter is unioned with the text
       // search.
       const selectedKinds = new Set();
@@ -1891,8 +1891,8 @@
           legendBtn.classList.toggle("active", selectedKinds.has(kind));
           legendBtn.setAttribute("aria-pressed", selectedKinds.has(kind) ? "true" : "false");
           filterList(searchEl.value);
-          // Re-focus the search box so the user's ↑/↓ keys keep stepping
-          // through the filtered list without an explicit click.
+          // Re-focus the search box so the user's ↑/↓ keys continue to step
+          // through the filtered list with no explicit click.
           searchEl.focus();
         });
       }
@@ -1929,7 +1929,7 @@
         if (key === "k") {
           e.preventDefault();
           // ⌘K means "go find an example" — auto-reveal the sidebar if it
-          // was collapsed, otherwise focusing a `display: none` input is
+          // was collapsed, otherwise a focus on a `display: none` input is
           // a silent no-op.
           if (mainEl.classList.contains("sidebar-collapsed")) toggleSidebar();
           searchEl.focus();
@@ -1993,8 +1993,8 @@
       // Parse the free-form Variables editor into a params object. Empty (or a
       // bare `{}` with no keys) means "no variables" → the playground uses the
       // plain entry points exactly as before. Otherwise the text is evaluated as
-      // a JS object literal — NOT JSON, so `new Date(...)`, unquoted keys, etc.
-      // all work, mirroring what a developer would pass to jsmql.compile() at a
+      // a JS object literal — NOT JSON, so `new Date(...)`, unquoted keys and the like
+      // all work, as a mirror of what a developer would pass to jsmql.compile() at a
       // real call site. Returns { keys, obj } on success, { error } on failure.
       function parseVars(text) {
         const trimmed = text.trim();
@@ -2004,8 +2004,8 @@
           // The user's own input, evaluated client-side — same trust model as
           // a browser console. Wrapped in parens so `{…}` reads as an object
           // literal, not a block. `ObjectId` is injected so a variable can be
-          // `ObjectId("507f…")` (or `new ObjectId("507f…")`) without importing
-          // the driver — mirroring the `0x…` / `ObjectId("…")` query syntax.
+          // `ObjectId("507f…")` (or `new ObjectId("507f…")`) with no import of
+          // the driver — the same as the `0x…` / `ObjectId("…")` query syntax.
           obj = new Function("ObjectId", "return (" + trimmed + "\n)")(makeObjectId);
         } catch (err) {
           return { error: "Could not evaluate the variables object: " + err.message };
@@ -2032,7 +2032,7 @@
       // plain entry points parse from `<query>` for every shape (bare predicate,
       // `;`-separated pipeline, update-op chain, raw filter doc). `prefixLen`
       // lets `render()` map arrow-relative error offsets back to the query
-      // editor for highlighting.
+      // editor, which highlights them.
       function buildArrow(keys, query) {
         const prefix = `({ ${keys.join(", ")} }) => { `;
         // Close the block on its OWN line. If `query` ends with a `// line
@@ -2060,7 +2060,7 @@
       // pathname, every playground under the same origin, for example
       // jsmql.js.org/playground.html and a dev copy at .../experiment/, would
       // share one session and overwrite each other. The origin also keeps
-      // the key self-documenting as "state depends on the whole URL".
+      // the key states itself: "state depends on the whole URL".
       const STORAGE_KEY =
         "jsmql-playground:session:v1:" + location.origin + location.pathname;
       function saveState() {
@@ -2069,7 +2069,7 @@
             STORAGE_KEY,
             JSON.stringify({
               // Which example set was on the page when this was written, and
-              // which example the editor was holding unmodified (null once the
+              // which example the editor held unmodified (null once the
               // user types anything of their own). `staleExampleSession` reads
               // both to decide whether a restore would show outdated content.
               stamp: EXAMPLES_STAMP,
@@ -2098,17 +2098,17 @@
       }
 
       // Was this session written against a different example set, AND does it
-      // only hold an example rather than the visitor's own work?
+      // only hold an example, not the visitor's own work?
       //
-      // Restoring beats showing the default example (rung 3 below outranks rung
-      // 4), and the very first visit already writes a session — so without this
-      // check a returning visitor never sees a newly shipped example again, and
-      // an edited example keeps rendering its superseded text. Both read as the
-      // page being stale.
+      // A restore beats the default example (rung 3 below outranks rung
+      // 4), and the very first visit already writes a session. So without this
+      // check, a returning visitor never sees a new example, and
+      // an edited example continues to render its superseded text. Both make the
+      // page look stale.
       //
       // A session the visitor actually wrote is never discarded: a new example
       // set is no reason to throw away their query. `slug` is the test — it is
-      // non-null only while the editor holds an example verbatim, and
+      // non-null only when the editor holds an example verbatim, and
       // `clearActiveOnUserEdit` nulls it on the first keystroke that diverges.
       // Sessions saved before the stamp existed carry neither field, so fall
       // back to matching the text against the current set; anything that is not
@@ -2133,7 +2133,7 @@
       // `applySharedSession()` are the top rung of the init restore ladder below
       // and the `hashchange` handler. The payload is UTF-8 → base64url so
       // multi-byte chars and the `+ / =` bytes survive inside a fragment; the
-      // `v` tag lets the format evolve without mis-decoding old links.
+      // `v` tag lets the format change, and old links still decode correctly.
       function toB64Url(str) {
         const bytes = new TextEncoder().encode(str);
         let bin = "";
@@ -2160,8 +2160,8 @@
       }
       // This decodes a `#s=<payload>` share hash into a session, or returns null when the hash
       // is not a share link, or cannot be decoded. A malformed link falls through to
-      // the normal restore ladder, rather than blanking the page. An unknown mode
-      // coerces to `auto`, matching the localStorage-restore path.
+      // the normal restore ladder, and does not blank the page. An unknown mode
+      // coerces to `auto`, as the localStorage-restore path does.
       function parseShareHash() {
         const raw = location.hash.slice(1);
         if (!raw.startsWith("s=")) return null;
@@ -2204,9 +2204,9 @@
         return `${loc} LOC, ${size}`;
       }
 
-      // Write the output panel without losing its scroll offset. CodeMirror's
-      // `setValue` jumps back to the top, which throws the reader off the
-      // region they were inspecting on every keystroke in the query editor.
+      // Write the output panel, and keep its scroll offset. CodeMirror's
+      // `setValue` jumps back to the top. Then the reader loses the
+      // region they read, on every keystroke in the query editor.
       // The offset is the one of the last real MQL render: a message render
       // (an error, an empty panel) is short, so its own offset clamps to zero
       // and must not replace the remembered one. The typo → red error → fix
@@ -2252,8 +2252,8 @@
           outputPanel.classList.remove("error");
           // Empty editor is a fresh start — drop any sticky strict-shape
           // mode back to AUTO so the next thing the user types compiles
-          // through the shape-detecting `jsmql()`. `rerender: false` avoids
-          // recursing into render() (we're already inside it); `setMode`
+          // through `jsmql()`, which detects the shape. `rerender: false` prevents
+          // a recursive call of render() (the code is already inside it); `setMode`
           // still refreshes the (always-on) call-site hint.
           currentColl = "collection";
           lastOutputIsPipeline = false;
@@ -2295,13 +2295,13 @@
           // variables, the script binds the matching `.compile(...)` builder to the
           // params object instead.
           //
-          // `jsmql.validate` checks the source against the shape-detecting
+          // `jsmql.validate` checks the source against the
           // `jsmql()` semantics, so a strict-shape entry point (filter,
           // update or pipeline) can still throw here when the input would
           // lower to the other shape, for example when it forces `pipeline` on a bare
           // predicate. Those throws carry the same actionable wording that the
           // library shows at the call site, so the script surfaces them in the error
-          // panel, rather than letting the exception strand stale output.
+          // panel. The exception does not leave stale output on the page.
           let out;
           try {
             out = varsActive
@@ -2326,7 +2326,7 @@
           outputStatsEl.textContent = statsOf(rendered);
           outputPanel.classList.remove("error");
           // The call-site hint must name the API that produces THIS output —
-          // for AUTO that means `aggregate` for a Pipeline array vs `find`
+          // for AUTO that means `aggregate` for a Pipeline array, or `find`
           // for a Filter document.
           lastOutputIsPipeline = Array.isArray(out);
           updateUsageBar();
@@ -2409,20 +2409,20 @@
       // The Variables editor is independent of which example or query shows, so
       // a saved vars value is restored on every non-share path. This is the priority order:
       //   1. a `#s=` share link. This is an explicit snapshot of a person's session
-      //      (Variables, query, and compile mode), and it wins over everything, including
+      //      (Variables, query, and compile mode), and it wins over everything, and over
       //      a saved localStorage session. `applySharedSession` normalises the
       //      URL afterwards, so the consumed link does not go stale on edit.
       //   2. a URL hash that targets a real example. This is a shared or explicit `#slug`
-      //      link, present only when the visitor views an unmodified example; free editing
+      //      link, present only when the visitor views an unmodified example; a free edit
       //      clears it through clearActiveOnUserEdit.
-      //   2b. the example a superseded session was holding — reached only when
+      //   2b. the example a superseded session held — reached only when
       //      `staleExampleSession` discarded that session, so the visitor lands
-      //      on the same example with its CURRENT text rather than the copy
+      //      on the same example with its CURRENT text, not the copy
       //      saved against an older example set;
       //   3. a saved free-form query — restored with the compile mode it was
       //      last rendered with, so the output matches what the user left;
       //   4. the first example — the default for a first visit.
-      // Either branch ends with `syncVarsDisclosure()` deciding whether the
+      // Either branch ends with `syncVarsDisclosure()`, which decides whether the
       // Variables panel starts open — collapsed unless the restored session
       // actually put variables in play.
       const shared = parseShareHash();
@@ -2432,7 +2432,7 @@
         let saved = loadState();
         // A session that carries only an example, written against an older
         // example set, would restore superseded text over the current examples
-        // at rung 3. Drop it, remembering which example it held so the ladder
+        // at rung 3. Drop it, and remember which example it held so the ladder
         // can land there again with that example's current text.
         let revisit = null;
         if (saved && staleExampleSession(saved)) {
@@ -2440,7 +2440,7 @@
           dropState();
           // Keep the Variables value. It is edited separately from the query, so
           // it can be the visitor's own even when the query was just an example.
-          // Dropping `input` is what stops rung 3 from firing.
+          // Without `input`, rung 3 does not fire.
           saved = { vars: saved.vars };
         }
         if (saved && typeof saved.vars === "string" && saved.vars !== "") {

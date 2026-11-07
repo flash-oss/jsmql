@@ -13,7 +13,7 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 > document or environment state. When the right-hand side is a
 > **compile-time constant**, the declaration instead folds to a value that
 > is inlined at every reference (no stage, and the preamble does not force
-> Pipeline mode). [desugar-pass.md](desugar-pass.md) owns that fold. Folding
+> Pipeline mode). [desugar-pass.md](desugar-pass.md) owns that fold. The fold
 > is a post-parse pre-pass; everything below applies to the runtime fallback.
 
 > **Scope note.** This spec covers `let` / `const` at the **top level of a
@@ -70,7 +70,7 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 | Token | Source | Notes |
 |-------|--------|-------|
 | `Let` | `let`  | A reserved keyword. It is added to `isIdentOrKeyword`, so `$let(...)` (the MongoDB operator) and `{ let: … }` (an object key in `$lookup`, `$graphLookup`, or top-level `aggregate({ let })`) still parse. The parser rejects the shorthand-property form `{ let }` on purpose — it has no useful meaning and it would collide with a `let x = …` statement. |
-| `Const` | `const` | The read-only sibling of `let` (see § `let` vs `const`). It is also added to `isIdentOrKeyword`, so a `$.const` field path and a `{ const: … }` object key keep parsing — `const` is a valid JS property name. The parser rejects shorthand `{ const }`, the same as `{ let }`. |
+| `Const` | `const` | The read-only sibling of `let` (see § `let` and `const`). It is also added to `isIdentOrKeyword`, so a `$.const` field path and a `{ const: … }` object key keep parsing — `const` is a valid JS property name. The parser rejects shorthand `{ const }`, the same as `{ let }`. |
 
 ## Parser
 
@@ -109,7 +109,7 @@ $match(a > b);                         let b = $.q;
 A `$set` stage evaluates every field against the stage's INPUT document, so a
 declarator cannot read a sibling bound beside it. Measured on a running
 mongod over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b":
-{ $add: ["$__jsmql.var.a", 1] } } }]` answers `b: null`, while the split form
+{ $add: ["$__jsmql.var.a", 1] } } }]` answers `b: null`, but the split form
 answers `b: 11`.
 
 So the compiler opens a new stage exactly at a declarator that reads one
@@ -160,7 +160,7 @@ its own.
 
 #### The same rule inside a block
 
-A block-body arrow binds `$let` variables rather than document fields
+A block-body arrow binds `$let` variables, not document fields
 ([emit-pass.md](emit-pass.md#bindings-between-stages)). `$let` evaluates
 every var against the ENCLOSING scope — mongod refuses
 `vars: { a: 5, b: { $add: ["$$a", 1] } }`, because the enclosing scope does not
@@ -240,7 +240,7 @@ raises about the binding (a binding that shadows an outer one in the same
 documents, a dropped-let read after a reshape stage). So a `.validate()`
 caller sees the original keyword in `errors[0].pos`.
 
-### `let` vs `const`
+### `let` and `const`
 
 Both keywords declare a pipeline-scoped binding. They differ in
 **reassignment**, and, as a result, in **static typing**. The statement
@@ -342,7 +342,7 @@ that uses both still emits exactly one `$unset` stage at the end.
   `$addFields` / `$unset`. This would help an index-preserving `$match`;
   the compiler does not do it today.
 - **Index-pitfall warning [DEF-012].** A `let` before an indexable `$match`
-  blocks the match from using the index. The compiler could surface a
+  prevents the use of the index by the match. The compiler could surface a
   warning through `validate()`, but that needs a warning channel the
   project has not built yet. `LANGUAGE.md` documents the pitfall instead.
 
@@ -356,4 +356,4 @@ that uses both still emits exactly one `$unset` stage at the end.
 
 [test/realistic.test.ts](../../test/realistic.test.ts) carries the canonical
 order-pricing example under `pipeline: order pricing with let bindings +
-commentary`, which doubles as the playground example via the post-edit hook.
+commentary`, which is also the playground example, through the post-edit hook.

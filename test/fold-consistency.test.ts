@@ -399,8 +399,8 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
   }
 
-  // A case that early-returns asserts NOTHING and still reads as green. Counting the
-  // ones that actually compared is what stops the suite hollowing out as cases are
+  // A case that early-returns asserts NOTHING and still reads as green. A count of the
+  // ones that actually compared is what stops the suite from an empty result as cases are
   // added — see the floor below.
   let compared = 0;
   const refused: string[] = [];
@@ -446,7 +446,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
     // Some early-returns are legitimate — a method whose fold is deliberately withheld,
     // or an input its lowering rejects. A large share of them is not, and would mean the
-    // gate stopped gating without anything going red.
+    // gate stopped its work, and nothing went red.
     // Every remaining non-fold is withheld ON PURPOSE, and each one names its reason: a
     // read that can find nothing (.at / .head / .last / .nth / .find), a zipWith or a
     // zipObject over lists of unequal length, a fold whose answer is -0 (which has no
@@ -456,8 +456,8 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   });
 
   it("every case the server REFUSES is one this suite already knows about", () => {
-    // A refusal is a document jsmql emitted that mongod will not run. Skipping it
-    // quietly is how the multi-argument `.concat()` defect survived eight cases.
+    // A refusal is a document jsmql emitted that mongod will not run. A quiet skip of it
+    // is how the multi-argument `.concat()` defect survived eight cases.
     if (!db) {
       expect(refused).toEqual([]);
       return;

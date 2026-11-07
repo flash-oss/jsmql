@@ -14,17 +14,17 @@ import {
 //
 //   A `$`-prefixed string literal typed in SOURCE passes through verbatim in
 //   EVERY context — pipeline, stage body, and `jsmql.expr` alike, at any depth
-//   including inside nested operator calls. It IS the MQL field ref `$x`, so
+//   and inside nested operator calls too. It IS the MQL field ref `$x`, so
 //   jsmql adds no `$literal` of its own. This makes pasted raw MQL round-trip.
 //
 //   The only `$literal` auto-wrap is HR1's runtime-injected exception: a `"$x"`
-//   arriving through `jsmql.compile` params or a template-tag `${…}` gets wrapped in
+//   that arrives through `jsmql.compile` params or a template-tag `${…}` gets wrapped in
 //   expression position so untrusted input cannot silently become a field ref —
 //   covered in codegen.test.ts, not here (this file uses source-typed sentinels).
 //   The explicit `$literal("$y")` escape hatch forces a literal anywhere.
 //
 // This file is the comprehensive guard: it loops EVERY operator and EVERY stage
-// so no `$op` can silently regress into emitting (or dropping) a `$literal`.
+// so no `$op` can silently regress so that it emits (or drops) a `$literal`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SENTINEL = "$f"; // a `$`-prefixed string that MUST survive verbatim in a pipeline
@@ -211,12 +211,12 @@ const STAGE_SKIP: Record<string, string> = {
   $changeStream: "source stage; no $-string body",
   $changeStreamSplitLargeEvent: "terminal stage; no $-string body",
   $collStats: "diagnostic source stage (option object, no $-string)",
-  $currentOp: "diagnostic source stage; surfaced via $$$$ sugar",
-  $indexStats: "diagnostic source stage; surfaced via $$ sugar",
-  $listLocalSessions: "diagnostic source stage; surfaced via $$$$ sugar",
-  $listSampledQueries: "diagnostic source stage; surfaced via $$$$ sugar",
-  $listSearchIndexes: "diagnostic source stage; surfaced via $$ sugar",
-  $listSessions: "diagnostic source stage; surfaced via $$$$ sugar",
+  $currentOp: "diagnostic source stage; surfaced through $$$$ sugar",
+  $indexStats: "diagnostic source stage; surfaced through $$ sugar",
+  $listLocalSessions: "diagnostic source stage; surfaced through $$$$ sugar",
+  $listSampledQueries: "diagnostic source stage; surfaced through $$$$ sugar",
+  $listSearchIndexes: "diagnostic source stage; surfaced through $$ sugar",
+  $listSessions: "diagnostic source stage; surfaced through $$$$ sugar",
   $planCacheStats: "diagnostic source stage; no $-string body",
   $rankFusion: "hybrid-search stage; sub-pipeline body, no bare $-string",
   $scoreFusion: "hybrid-search stage; sub-pipeline body, no bare $-string",
@@ -249,7 +249,7 @@ describe("literal pass-through — every stage in the registry", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Server-rejection guards, each shape found by replaying generated MQL against a
+// Server-rejection guards. Each shape came from a replay of generated MQL against a
 // real mongod (see test/CLAUDE.md → "Never assert MQL the MongoDB server would
 // reject"). Each is a shape MongoDB rejects; these lock in the runnable form so a
 // lowering cannot drift back into it.

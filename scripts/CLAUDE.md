@@ -34,7 +34,7 @@ Without this stamp, a returning visitor never sees a newly shipped example. This
 
 The script reads the skeleton and writes only `playground.html`; it never writes the skeleton. So a change to `src/` or to `test/realistic.test.ts` can never destroy playground UI work. This means you can always resolve a `playground.html` merge conflict: re-run the sync against the merged skeleton.
 
-Two sibling scripts make this extraction possible without running any test. `sync-playground-loader.mjs` is a Node module loader that remaps the bare `"vitest"` specifier. `sync-playground-vitest-shim.mjs` is the target of that remap: it records each `describe` call and each `it` call, and it captures the SOURCE of the `it` body instead of running it. So no assertion runs, and no mongod is needed.
+Two sibling scripts make this extraction possible, and no test runs. `sync-playground-loader.mjs` is a Node module loader that remaps the bare `"vitest"` specifier. `sync-playground-vitest-shim.mjs` is the target of that remap: it records each `describe` call and each `it` call, and it captures the SOURCE of the `it` body. It does not run the body. So no assertion runs, and no mongod is needed.
 
 The script runs as `prebuild`, so `npm run build` always refreshes both artifacts. A PostToolUse hook in `.claude/settings.json` also runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, and it stages the updated outputs for the next commit. A `src/` edit does **not** trigger the hook; this is deliberate, because the hook does not watch `src/`. Run `npm run sync:playground` by hand after such an edit. The script is idempotent per file: it writes and stages each artifact only when its contents change.
 
@@ -64,7 +64,7 @@ These two tools help reviewers work on the test suites. You run each one by hand
 
 `regen-expectations.mjs test/<suite>.test.ts` rewrites every `expect(<call>).toEqual(<literal>)` call (and every `toStrictEqual`, `toBe`, or `toThrow(<matcher>)` call) with the answer that the working-tree compiler gives for the same call. It reads and writes through the TypeScript AST. Use it after a deliberate change to the emitted shape, where a hand edit would otherwise touch a hundred identical lines. It lists, but does not touch, any call whose polarity changed — for example, a call that now throws where it once asserted a value, or the reverse.
 
-`convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]` does the mechanical half of that judgment. It flips the polarity of every listed case, except a case whose source matches a KEEP pattern. A KEEP pattern marks a refusal that the suite must keep asserting.
+`convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]` does the mechanical half of that judgment. It flips the polarity of every listed case, except a case whose source matches a KEEP pattern. A KEEP pattern marks a refusal that the suite must continue to assert.
 
 Review both outputs as a diff before you commit them. A wrong answer regenerates just as cleanly as a right one, so the script proves only that the output matches the compiler; it never proves correctness. A running `mongod` proves correctness — see [test/CLAUDE.md](../test/CLAUDE.md).
 

@@ -4,14 +4,14 @@ description: >-
   Add or update an entry in docs/DEVLOG/ — jsmql's single historical record of
   decisions and changes, one file per month (docs/DEVLOG/YYYY-MM.md). Use this
   whenever you make an observable change to jsmql (a feature, fix, refactor,
-  rename, or documentation/naming decision) and are preparing to commit, because
+  rename, or documentation/naming decision) and are about to commit, because
   every such change requires a DEVLOG entry in the same commit. Also use when
   the user says "add a devlog entry", "log this", "record why we did X", "note
   this decision", or when a `git merge` reports a conflict on a file under
   docs/DEVLOG/. Handles the exact heading format (newest-on-top, UTC date,
   conventional-commit-typed title), the what+why body, the "supersede, don't
   delete" rule, and the merge-devlog.mjs conflict resolver. Trigger even when the
-  user doesn't say the word "devlog" but is clearly wrapping up a change to commit.
+  user doesn't say the word "devlog" but clearly finishes a change to commit.
 ---
 
 # devlog
@@ -36,10 +36,10 @@ should explain the reasoning in full. It is not a one-line changelog bullet.
 it:
 
 ```sh
-date -u +%F      # e.g. 2026-07-04
+date -u +%F      # for example 2026-07-04
 ```
 
-**2. Find this month's file, `docs/DEVLOG/YYYY-MM.md`, using the UTC year and
+**2. Find this month's file, `docs/DEVLOG/YYYY-MM.md`, from the UTC year and
 month from step 1.** When it does not exist yet, create it with this header,
 then the entry:
 
@@ -100,15 +100,15 @@ Chose the `0x` spelling over surfacing Extended-JSON `$oid` because [reason];
 (Illustrative only — match the tone and depth of the entries already at the top of
 the file, not this exact wording.)
 
-## Superseding a past decision — never delete it
+## Supersede a past decision — never delete it
 
 When a later change reverses or replaces an earlier decision, **do not edit or
 delete the old entry.** Add a *new* entry at the top of the file. State the new
 decision in it, and link back to the old entry by its heading. The append-only
-history is what makes the DEVLOG trustworthy. Rewriting an old entry destroys
+history is what makes the DEVLOG trustworthy. A rewrite of an old entry destroys
 the record.
 
-## Resolving a merge conflict on a docs/DEVLOG/ file
+## Resolve a merge conflict on a docs/DEVLOG/ file
 
 Parallel branches often each prepend an entry to the same month's file, and
 git cannot merge these automatically. Do **not** resolve the conflict by hand.
@@ -125,7 +125,7 @@ For each file, it reads the three conflict stages, takes the union of the
 entries, removes a duplicate by its `## YYYY-MM-DD — Title` heading, sorts the
 result newest-first, and runs `git add` on it. It reports a file, exits with a
 non-zero status, and leaves that file untouched only when it cannot decide —
-for example, a diverging header edit, or the same past entry edited two
+for example, two different header edits, or the same past entry edited two
 different ways. When this happens, resolve that file's conflict by hand, then
 run `git add` on it.
 

@@ -1,4 +1,4 @@
-# Writing a collection — `$out` and `$merge`
+# Write to a collection — `$out` and `$merge`
 
 ## Overview
 
@@ -51,7 +51,7 @@ The sugar covers the PLAIN merge only. `$merge`'s four settings — `on`,
 `whenMatched`, `whenNotMatched`, `let` — are written as the stage itself, and
 that needs no sugar: `$merge({ into: "metrics", on: "_id", whenMatched: "merge" });`.
 
-The LHS names *where* documents are written, using the existing context-ref
+The LHS names *where* documents are written, with the existing context-ref
 prefixes (`$$$` = same-database, `$$$$` = cross-database / cluster). The RHS
 is a chain rooted at `$$` (the current pipeline). Bare `$$` writes the stream
 unchanged. Chained methods — `.filter(<predicate>)`, any method with a
@@ -59,8 +59,8 @@ unchanged. Chained methods — `.filter(<predicate>)`, any method with a
 (`$$.$sort({ … })`) — contribute their stages before the trailing `$out`.
 
 Statement-only and last-stage-only: nothing may follow the `$out` sugar in a
-pipeline. The compiler FILES the stage as the chain's terminal, rather than
-emitting it, so the `__jsmql` cleanup precedes it, and it is still written
+pipeline. The compiler FILES the stage as the chain's terminal, and does not
+emit it, so the `__jsmql` cleanup precedes it, and it is still written
 last. The compiler refuses a later statement with a position-bearing error,
 and the message names the fix: move the statement above the write.
 
@@ -109,7 +109,7 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 
 - `$$$.<coll>` / `$$$["<coll>"]` — exactly one step: the collection in the current database.
 - `$$$$.<db>.<coll>` (any bracket combination) — exactly two steps: a database and a collection.
-- A name may also be a `jsmql.compile` parameter or template slot holding a string (`$$$[coll] = $$`), because the value is known when the pipeline is built.
+- A name may also be a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll] = $$`), because the value is known when the pipeline is built.
 
 The compiler refuses everything else, each with the form that works:
 
@@ -170,7 +170,7 @@ The stream road lowers the RHS (`streamStages` in [src/compiler/emit/statement.t
 
 So a `$out` chain accepts exactly the links a bare `$$.<chain>;` accepts, and it lowers each to the same MQL: a stage link (`$$.$sort({ … })`) is the stage, `.filter(p)` / `.reject(p)` lower through the filter road with the parameter as the document (`$$$.live = $$.reject(p)` emits the same negated `$match` that `$$.reject(p);` does), and `.take(n)` is `$limit`. The compiler refuses a second write stage in the chain, because the `$out` always follows.
 
-Adding a chain method is not a change specific to `$out`. Give the method's row a `stream` cell ([stream-methods.md § Adding a method](stream-methods.md)), and every head — the bare stream, a join, a `$out` chain — reads it.
+A new chain method is not a change specific to `$out`. Give the method's row a `stream` cell ([stream-methods.md § Add a method](stream-methods.md)), and every head — the bare stream, a join, a `$out` chain — reads it.
 
 ## Mode gates
 

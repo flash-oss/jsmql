@@ -73,7 +73,7 @@ server answered `{}` for, in silence.
 
 ### `$unionWith` has no `let`
 
-`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it rather than silently misreading it. The message names two fixes. One is a statement before the union that filters or reshapes the outer stream. The other is a join (`$.<field> = $$$.<coll>.filter(…)`), whose `$lookup` carries the value. The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
+`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it. It does not silently misread it. The message names two fixes. One is a statement before the union that filters or reshapes the outer stream. The other is a join (`$.<field> = $$$.<coll>.filter(…)`), whose `$lookup` carries the value. The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
 
 ## AST and parser
 
@@ -96,7 +96,7 @@ or `[` after `$$` already accommodates `.push(...)`.
 | `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | a stream holds documents; the message names a document (`$$.push({ … })`) and another collection (`$$.push(...$$$.<coll>)`) |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
-| `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | the value needs a `$lookup` stage, and the list cannot hold one; the message names the append of the other collection's documents, and a constant or a `jsmql.compile` parameter |
+| `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value that needs a stage | the value needs a `$lookup` stage, and the list cannot hold one; the message names the append of the other collection's documents, and a constant or a `jsmql.compile` parameter |
 | `$$.push(...)` inside a `$lookup` body | a body over another collection cannot reach the outer stream; the message names the callback's third parameter and the stage form |
 | `jsmql.filter("$$.push(...)")` | the strict-shape refusal: the push is a stage call; the message names `jsmql.pipeline()` |
 | `jsmql.update("$$.push(...)")` | the update-document refusal: the push is neither a write nor an update operator |

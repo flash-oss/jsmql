@@ -14,8 +14,8 @@
 //
 // The mongod half runs on :27018 (see test/fixtures/config.ts); `npm run fixture:up` starts it.
 //
-// The server half MUST default to on. Gating it behind an unset environment variable
-// made every one of these chains compile-only in a normal `npm test`, so the half that
+// The server half MUST default to on. A gate behind an unset environment variable
+// would make every one of these chains compile-only in a normal `npm test`, so the half that
 // catches server rejections — the half that found the two bugs above — never ran.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -142,8 +142,8 @@ const STREAM_RESHAPERS = [
 // fields before them gives `$arrayToObject` a null key, and mongod refuses that key.
 // stream-mode reshapers over the `orders` lookup (doc-PRESERVING, on real order
 // fields) — so the value-terminals below still see `total`/`userId`. (The doc-
-// reshaping ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
-// matrix; pairing them with a field-referencing terminal is a nonsensical chain,
+// reshape ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
+// matrix; a pair of one of them with a terminal that reads a field is a nonsensical chain,
 // not a lowering to test.)
 const STREAM_LOOKUP_RESHAPERS = [
   "filter(o => o.total > 5)",
@@ -250,7 +250,7 @@ let client: any = null;
 
 beforeAll(async () => {
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   client = await liveClient(2500);
   if (client !== null) {
     const db = client.db("jsmql_permutations");
@@ -397,8 +397,8 @@ describe("lodash chain permutations (chinese wall)", () => {
   });
 
   it("reports whether the server half ran, so a green run cannot hide a skip", () => {
-    // Compiling every chain proves jsmql does not throw. It says nothing about whether
-    // the emitted MQL RUNS, which is the half that has caught the real bugs here. A
+    // A compile of every chain proves jsmql does not throw. It says nothing about whether
+    // the emitted MQL RUNS, which is the half that caught the real bugs here. A
     // suite that silently degrades to compile-only looks identical to one that passed,
     // so state which happened: either every chain reached the server, or none did.
     if (mainColl === null) {

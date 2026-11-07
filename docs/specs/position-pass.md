@@ -2,7 +2,7 @@
 
 ## Overview
 
-MQL reads the same document differently, depending on the slot it sits in. JSMQL
+MQL reads the same document differently in each slot it sits in. JSMQL
 therefore compiles into seven **positions**, and every name in the registry states
 which of them it is legal in (`where`):
 
@@ -31,7 +31,7 @@ answers it on the way DOWN. `edge(node, key, here)` in
 what the position becomes on one parent-to-property step, and `mapTreeIn` carries
 it forward.
 
-The pass cannot use a set of nodes looked up by identity. A rewriting walk rebuilds
+The pass cannot use a set of nodes looked up by identity. A walk that rewrites rebuilds
 a parent as soon as one of its children changes, so by the time a rule runs, the
 object it holds is no longer the object anyone recorded.
 
@@ -49,7 +49,7 @@ Four entry points give four roots, and no program can tell them apart:
 `shapeOf` ([shape.ts](../../src/compiler/passes/shape.ts)) decides between the
 first two; the caller supplies the other two directly. So the root arrives as a
 parameter — `desugar(program, FILTER)` — and `edge` answers for everything below
-it. A wrong root gives a wrong document rather than an error, because both
+it. A wrong root gives a wrong document, not an error, because both
 readings of a predicate are legal MQL.
 
 ## A stage body is laid out by its own row
@@ -64,7 +64,7 @@ states the layout in `bodyPositions`, keyed by dotted path from the body:
 | `"k"` | that one key |
 | `"k.*"` | every key of that key's object |
 
-The longest covering key wins, and a literal key beats a `*` of the same depth. A
+The longest key that covers it wins, and a literal key beats a `*` of the same depth. A
 `*` covers a computed key (`{ [k]: … }`); a literal key never does, because the
 compiler cannot know that a computed key is the one the row names.
 
@@ -131,8 +131,8 @@ $group({ _id: null, r: $push([$.x, $.y]) });     → [{ $group: { _id: null, r: 
 $group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses the two operands
 ```
 
-`$covariancePop` and `$covarianceSamp` are the exception the registry states rather
-than derives: their window slot genuinely takes an array of two, and one operand
+`$covariancePop` and `$covarianceSamp` are the exception that the registry states, and does not
+derive: their window slot genuinely takes an array of two, and one operand
 answers `null`.
 
 A JavaScript aggregate in such a slot (`$.a.sum()`, `.first()`, `.sumBy(fn)`) is
@@ -147,7 +147,7 @@ stream, whatever their last link is and however the collection is spelled. The
 chain walks to its BASE through every access node (`chainBase`). Every link below
 the top is a stream. The top link stands where its parent put it: as the right of
 `$$ = …` it is a stream too, because the row says the right-hand side replaces the
-stream, while as the argument of `$$.push(…)` or the right of `$.o = …` it is a
+stream, but as the argument of `$$.push(…)` or the right of `$.o = …` it is a
 value that the sugar's own lowering hands to the stream lowering. `$$` itself is
 the stream it names; `$$$` and `$$$$` are scopes, never evaluated, and stand at
 `value`.
@@ -191,7 +191,7 @@ An `evaluates` path below the leaf keeps the walk descending, the same as a
 
 - **`target`** — the left of `=`, the operand of `delete`, or the callee of a
   call. JSMQL does not evaluate it: each one names a place to write or a thing to
-  call. Calling it a value would let a rule meant for an expression fire on the
+  call. If the pass called it a value, a rule meant for an expression could fire on the
   destination of a write, or fold `f` away in `f(1)` to give `3(1)`. The fold pass
   and this pass share the one predicate that decides this, `namesSomething` in
   naming.ts.

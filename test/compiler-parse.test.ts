@@ -426,7 +426,7 @@ describe("compiler/parse — the parser decides nothing about meaning", () => {
     expect(only("$.views++;")).toMatchObject({ ops: [{ op: "++" }] });
   });
 
-  it("records a stage-shaped callback block without judging it", () => {
+  it("records a stage-shaped callback block, and does not judge it", () => {
     const t = only("$$ = $$.aggregate(o => { $sort({ a: 1 }); });") as unknown as {
       ops: [{ value: { args: [{ stages?: unknown; body?: unknown }] } }];
     };
@@ -541,13 +541,13 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
 
 describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE", () => {
   it("wraps a lone statement the source ended with `;`", () => {
-    // `$.a.assign($.b)` is a value, and `$.a.assign($.b);` is a statement. Collapsing
-    // the single statement threw that `;` away and the two parsed to the same tree.
+    // `$.a.assign($.b)` is a value, and `$.a.assign($.b);` is a statement. A collapse of
+    // the single statement would throw that `;` away, and the two would parse to the same tree.
     expect(parse("$.a.assign($.b)").type).toBe("MethodCall");
     expect(parse("$.a.assign($.b);").type).toBe("Pipeline");
   });
 
-  it("leaves a statement with no `;` standing on its own", () => {
+  it("leaves a statement with no `;` on its own", () => {
     expect(parse("$.a > 1").type).toBe("BinaryExpr");
     expect(parse("$.a = 1").type).toBe("UpdateFilter");
     expect(parse("$.items.sort()").type).toBe("MethodCall");
@@ -621,7 +621,7 @@ describe("compiler/parse — a reserved word is a legal name", () => {
     expect(() => parseExpression("({ undefined })")).not.toThrow();
   });
 
-  it("divides a field named after a keyword instead of reading a regex", () => {
+  it("divides a field named after a keyword, and does not read a regex", () => {
     const e = parseExpression("$.typeof / 2") as { type: string; op?: string };
     expect(e.type).toBe("BinaryExpr");
     expect(e.op).toBe("/");
@@ -824,7 +824,7 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("refuses an arithmetic write on '$' or '$$', which is not a field", () => {
-    // Without this refusal, `$ += 1` would become the valid-looking `$ = $ + 1`.
+    // Without this refusal, `$ += 1` would become the `$ = $ + 1` that looks valid.
     const WHOLE = (op: string, target: string, what: string, field: string, pos: number): string =>
       `Cannot use '${op}' on '${target}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`;
     const DOC = "'$' is the whole document";
@@ -860,7 +860,7 @@ describe("compiler/parse — a write target is a place, and an optional chain is
     expect(parse("; $.a > 1").type).toBe("Pipeline");
   });
 
-  it("names an operator by its spelling in a mixing refusal, never by its key", () => {
+  it("names an operator by its spelling in a refusal of a mix, never by its key", () => {
     // The negation row's spelling is `-x`; its key, `negation`, must never reach the user.
     expect(() => parseExpression("-2 ** 2")).toThrow(/'-x'/);
     expect(() => parseExpression("-2 ** 2")).not.toThrow(/negation/);

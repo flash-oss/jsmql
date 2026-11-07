@@ -79,7 +79,7 @@ const uri = (user: string, pass: string) =>
   `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${FIXTURE_HOST}:${FIXTURE_PORT}` +
   `/?authSource=admin&serverSelectionTimeoutMS=1500`;
 
-export const ADMIN_URI = uri(ADMIN_USER, ADMIN_PASS); // read-write everywhere: seeding only
+export const ADMIN_URI = uri(ADMIN_USER, ADMIN_PASS); // read-write everywhere: only for the seed
 export const READONLY_URI = uri(READONLY_USER, READONLY_PASS); // read-only: integration tests
 export const SCRATCH_URI = uri(SCRATCH_USER, SCRATCH_PASS); // read-write on SCRATCH_DBS: every other live suite
 
@@ -89,6 +89,6 @@ export const SCRATCH_URI = uri(SCRATCH_USER, SCRATCH_PASS); // read-write on SCR
 export const BOOTSTRAP_URI = `mongodb://${FIXTURE_HOST}:${FIXTURE_PORT}/?serverSelectionTimeoutMS=1500`;
 
 // Collections seeded into FIXTURE_DB, plus the metadata collection that records
-// which dataset version is now injected (drives idempotent re-seeding).
+// which dataset version is now injected (drives the idempotent new seed).
 export const COLLECTIONS = ["users", "products", "orders", "shipments", "reviews"] as const;
 export const META_COLLECTION = "__fixture_meta";

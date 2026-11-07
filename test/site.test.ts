@@ -60,7 +60,7 @@ function readExamples(): Example[] {
   const out: Example[] = [];
   // `class="example[^"]*"` so a presentational modifier (`class="example tall"`)
   // cannot drop an example out of the extraction — that failure is silent, and
-  // silently reviewing fewer examples than the page shows is the one outcome
+  // a silent review of fewer examples than the page shows is the one outcome
   // this file exists to prevent. `countMarkupExamples()` is the backstop.
   const article = /<article class="example[^"]*" data-example data-mode="([a-z]+)">([\s\S]*?)<\/article>/g;
   for (const [, mode, body] of INDEX.matchAll(article)) {
@@ -78,7 +78,7 @@ function countMarkupExamples(): number {
 }
 
 /**
- * The SQL-vs-JSMQL rows: one `<div class="vs">` per idea, a `data-mode`, and
+ * The SQL-and-JSMQL rows: one `<div class="vs">` per idea, a `data-mode`, and
  * the JSMQL cell in `pre.src > code`. They show no MQL on the page — the page
  * compiles each to prove the cell and links the playground for the output — so
  * the guard here is that every cell compiles through the entry it names.
@@ -88,7 +88,7 @@ function readVersus(): Example[] {
   const row = /<div class="vs" data-vs data-mode="([a-z]+)">([\s\S]*?)<a class="play"/g;
   for (const [, mode, body] of INDEX.matchAll(row)) {
     const source = /<pre\s+class="src"\s*><code>([\s\S]*?)<\/code><\/pre>/.exec(body);
-    if (!source) throw new Error(`index.html SQL-vs-JSMQL row (mode ${mode}) lost its JSMQL cell`);
+    if (!source) throw new Error(`index.html SQL-and-JSMQL row (mode ${mode}) lost its JSMQL cell`);
     out.push({ mode: mode as Mode, chip: mode, source: decodeEntities(source[1]).trim() });
   }
   return out;
@@ -103,20 +103,20 @@ const VERSUS = readVersus();
 
 describe("site: landing-page examples", () => {
   it("extracts every example the markup declares", () => {
-    // Counted two ways on purpose. A lower bound alone passes while an example
-    // slips out of the parse, which leaves the cases below reviewing a page
+    // Counted two ways on purpose. A lower bound alone passes when an example
+    // falls out of the parse, and then the cases below review a page
     // that is not the published one.
     expect(EXAMPLES.length).toBe(countMarkupExamples());
     expect(EXAMPLES.length).toBeGreaterThanOrEqual(6);
   });
 
-  it("extracts every SQL-vs-JSMQL row the markup declares", () => {
+  it("extracts every SQL-and-JSMQL row the markup declares", () => {
     expect(VERSUS.length).toBe(countMarkupVersus());
     expect(VERSUS.length).toBeGreaterThanOrEqual(6);
   });
 
   it.each(VERSUS.map((e, i) => [i, e.source.split("\n")[0]] as const))(
-    "SQL-vs-JSMQL row %i: `%s` compiles to the shape its mode names",
+    "SQL-and-JSMQL row %i: `%s` compiles to the shape its mode names",
     (i) => {
       const { mode, source } = VERSUS[i];
       expect(Array.isArray(ENTRIES[mode](source))).toBe(CHIP_IS_ARRAY[mode]);
@@ -138,7 +138,7 @@ describe("site: landing-page examples", () => {
 
   it("labels each example with the entry point that compiles it", () => {
     // `auto` is the exception: the polymorphic entry decides the shape itself,
-    // so the chip states which shape it lands on rather than which entry runs.
+    // so the chip states which shape it gives, not which entry runs.
     for (const { mode, chip } of EXAMPLES) {
       if (mode !== "auto") expect(chip).toBe(mode);
     }
@@ -155,8 +155,8 @@ describe("site: GitHub Pages invariants", () => {
 
   it("binds the site to the domain package.json advertises, whenever CNAME is present", () => {
     // GitHub Pages redirects the github.io URL to whatever CNAME names, so the
-    // file has to be absent while the domain does not resolve yet — otherwise
-    // there is nowhere to review the site. Hold the binding when the file is
+    // file must be absent until the domain resolves — otherwise
+    // no URL shows the site for review. Hold the binding when the file is
     // there, and stay quiet when it is deliberately not.
     const cnamePath = resolve(ROOT, "CNAME");
     if (!existsSync(cnamePath)) return;

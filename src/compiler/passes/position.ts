@@ -1,6 +1,6 @@
 // Phase 4 — POSITION. Which of the seven positions does a node sit in?
 //
-// Phase 3 needs the answer before it can run, because several sugars mean one
+// Phase 3 needs the answer before it can run, because some sugars mean one
 // thing as a STATEMENT and are refused everywhere else:
 //   $.items.sort();          → [{ "$set": { "items": { "$sortArray": … } } }]
 //   $.a = $.items.sort()     → refused: a mutator as a value; write `.toSorted()`
@@ -8,7 +8,7 @@
 // the second into a nested assignment and drop the message the row carries.
 //
 // The answer travels DOWN the tree, one parent-to-property step at a time, so
-// a pass that rewrites while it descends always has it. See `mapTreeIn`.
+// a pass that rewrites as it descends always has it. See `mapTreeIn`.
 
 import type { Position } from "../../registry/vocabulary.ts";
 import type { BodyPath, BodySlot } from "../rows.ts";
@@ -19,7 +19,7 @@ import { chainBase, isContextRef, namedRow, namesSomething, readsAContextRef, st
  * Where a node stands: one of the seven positions, or one of the three answers
  * that are not positions at all.
  *
- * This uses `{ at: Position }` rather than nine spelled-out members. So a new
+ * This uses `{ at: Position }`, not nine spelled-out members. So a new
  * position in the registry's `Position` becomes a position here on the same day.
  */
 export type Where =
@@ -50,8 +50,8 @@ export const UPDATE_DOC: Where = { at: "updateDoc" };
 /**
  * The left of `=`, the operand of `delete`, or the callee of `f(…)`. This is
  * named apart from `value` because none of them is evaluated: each one names a
- * place to write or a thing to call. Calling it a value would let a rule meant
- * for expressions fire on the destination of a write, or fold `f` away in
+ * place to write or a thing to call. If the pass called it a value, a rule meant
+ * for expressions could fire on the destination of a write, or fold `f` away in
  * `f(1)` to give `3(1)`.
  */
 export const TARGET: Where = { at: "target" };
@@ -62,8 +62,8 @@ type Any = { type: string } & Record<string, unknown>;
 const stageMayStand = (here: Where): boolean => here.at === "statement" || here.at === "stream";
 
 /**
- * The position for a node under a stage body path. An OBJECT keeps descending
- * while a longer key still claims something below. Anything else — a string, a
+ * The position for a node under a stage body path. An OBJECT continues to descend
+ * when a longer key still claims something below. Anything else — a string, a
  * number, an array, a computed spelling — takes the path's own position,
  * because it has no keys for a deeper rule to reach.
  */

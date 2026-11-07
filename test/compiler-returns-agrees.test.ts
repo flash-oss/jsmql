@@ -1,7 +1,7 @@
 // The proof behind every `returns` in the registry: ask mongod.
 //
-// The `returns` field holds measured data. Only a re-measurement catches it from
-// becoming stale. A `toEqual` cannot, and neither can the vendored spec. For example,
+// The `returns` field holds measured data. Only a new measurement finds it when
+// it goes stale. A `toEqual` cannot, and neither can the vendored spec. For example,
 // the spec's `type:` field for `$trunc` says `resolvesToString`, but three sources
 // disagree. This divergence is the reason the process is written down in
 // `MongoSpec.returns`.
@@ -10,10 +10,10 @@
 // `arguments[].type` (what each operand must resolve to) and the registry's own
 // `shape` (how the operands are written). A new operator gains coverage the day its
 // row lands. Only the calls a generator cannot express are listed here. The suite
-// measures an operator PRODUCTION, e.g. `*`, through its own lowering: the compiler
+// measures an operator PRODUCTION, for example `*`, through its own lowering: the compiler
 // writes its lexeme between operands of each kind.
 //
-// This suite skips itself when no mongod is listening, so `npm test` stays green.
+// This suite skips itself when no mongod listens, so `npm test` stays green.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -217,7 +217,7 @@ const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
 
 /**
  * The two differently-typed calls that PROVE a `"unknown"` row is right to say
- * so. A row claiming to vary must be shown to vary, or the claim is a shrug.
+ * so. A row that claims to vary must show that it varies, or the claim is a shrug.
  */
 const VARIES_BY_OPERAND: Readonly<Record<string, { slot: Slot; a: unknown; b: unknown }>> = {
   $add: { slot: "value", a: { $add: ["$int", 1] }, b: { $add: ["$date", 1000] } },
@@ -443,7 +443,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     }
 
     expect(wrong).toEqual([]);
-    // A suite that quietly stops measuring is worse than none. Anything it could
+    // A suite that quietly stops its measurements is worse than none. Anything it could
     // not ask about must be a NAMED environment limitation, never a surprise.
     expect(unmeasured).toEqual([]);
     // 149 of the 159 invariant rows are measurable on a mongod at FCV 8.0; the
@@ -458,7 +458,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("states `unknown` exactly where the kind follows the operands", async () => {
-    // Checked from the PAIRS, not from the rows: asking "does every `unknown` row
+    // Checked from the PAIRS, not from the rows: the question "does every `unknown` row
     // vary" leaves the other direction open, and a row that quietly claims to be
     // invariant is the more dangerous of the two — it makes the type check reject
     // valid code. So each pair decides what its row must say.
@@ -492,8 +492,8 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("proves or names every `unknown` row", async () => {
-    // `"unknown"` is a measured fact, so each row claiming it owes either a pair
-    // above that shows it varying, or a named reason the server cannot be asked.
+    // `"unknown"` is a measured fact, so each row that claims it owes either a pair
+    // above that shows it varies, or a named reason the server cannot be asked.
     const unproven: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" || row.returns === undefined || stated(row) !== "unknown") continue;

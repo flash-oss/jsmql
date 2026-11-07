@@ -23,8 +23,8 @@ function run(args: string[], input?: string) {
 
 /**
  * The CLI writes JAVASCRIPT, so the output is read the way a developer reads it —
- * by pasting it somewhere that has the driver's BSON classes in scope. Evaluating
- * rather than parsing is itself the assertion the printer exists for: text the driver
+ * by a paste into a place that has the driver's BSON classes in scope. An evaluation,
+ * not a parse, is itself the assertion the printer exists for: text the driver
  * would refuse fails here first.
  */
 const BSON_GLOBALS: Record<string, unknown> = {
@@ -102,8 +102,8 @@ describe("cli: output shapes", () => {
 
 describe("cli: formatting", () => {
   // The output is JAVASCRIPT, not JSON — a Date, an ObjectId, a Decimal128 and a regular
-  // expression have no JSON spelling, and stringifying one is WRONG rather than lossy.
-  // A document is written on one line while it fits in 80 columns and broken once it
+  // expression have no JSON spelling, and a JSON string of one is WRONG, not lossy.
+  // A document is written on one line when it fits in 80 columns and broken once it
   // does not, because MQL nests deeply and narrowly.
   it("writes a short document on one line", () => {
     expect(run(["$.age > 18"]).stdout).toBe("{ age: { $gt: 18 } }\n");

@@ -14,8 +14,8 @@
 // form preserves input order through `$reduce`, the stream form uses `$group` and does not.
 //
 // Connects to a local mongod and SKIPS ITSELF (green) when none is reachable, matching
-// fold-consistency.test.ts. A coverage floor below keeps a self-skip from hollowing the
-// suite out silently.
+// fold-consistency.test.ts. A coverage floor below prevents a self-skip that silently
+// empties the suite.
 
 import { afterAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
@@ -88,8 +88,8 @@ describe("value and stream lowerings agree on membership", () => {
 
 describe("parity coverage", () => {
   // A dual-declared method with no case here is a lowering nobody compares. The floor
-  // fails when the shared set grows without a case joining it, so the suite cannot be
-  // hollowed out by adding methods.
+  // fails when the shared set grows and no case joins it, so new methods cannot
+  // empty the suite.
   it("every case names a genuinely dual-declared method", () => {
     const shared = new Set(streamMethodNames().filter((n) => valueMethodNames().includes(n)));
     for (const c of CASES) expect(shared.has(c.method)).toBe(true);

@@ -1084,7 +1084,7 @@ export const PRODUCTIONS = {
   }),
 
   unappliedReference: production({
-    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Number)`.",
+    doc: "A callable given to a higher-order name, but not applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
     // A bare name that the developer does not apply is still only a name. The
@@ -1418,7 +1418,7 @@ export const PRODUCTIONS = {
     doc: "`({ a, b }, { $ }) => …` binds each named parameter. The ONLY parameter form: a plain name is refused, one level deep, renaming allowed, no defaults, no rest.",
     tokens: ["{", "}", ",", "(", ")", "identifier", ":", "$", "$$", "$$$", "$$$$"],
     spelling: "({ $ }) => …",
-    becomes: { notANode: "produces ParamBinding[], which the parser holds beside the tree rather than in it" },
+    becomes: { notANode: "produces ParamBinding[], which the parser holds beside the tree, not in it" },
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -1678,7 +1678,7 @@ const _afterResolves: [DanglingAfter] extends [never] ? true : DanglingAfter = t
  *
  * Without it, a cell can name an owner that never touches it. An example is
  * `methodCall` and `operatorCall`, which both point at `strictEquality`. That rule
- * consumes neither of them, and both render natively on their own. A dangling
+ * consumes neither of them, and both render natively on their own. A loose
  * pointer reads as "another row handles this", and it hides two whole native query
  * forms.
  */

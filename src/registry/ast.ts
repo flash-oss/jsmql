@@ -65,7 +65,7 @@ export const BINARY_OPS = [
 ] as const;
 export type BinaryOp = (typeof BINARY_OPS)[number];
 
-/** `typeof` is here rather than in its own node: it is a prefix operator. */
+/** `typeof` is here, not in its own node: it is a prefix operator. */
 export const UNARY_OPS = ["!", "-", "~", "typeof"] as const;
 export type UnaryOp = (typeof UNARY_OPS)[number];
 

@@ -28,7 +28,7 @@ Two optional slots, each an **object destructure**. The parser classifies each b
 | Destructure with only `$`-prefixed keys (`{ $ }`, `{ $, $match }`, incl. the context refs `$$` / `$$$` / `$$$$`) | Toolbox slot — the document root `$`, context refs, and operators; keys are discarded after parsing. See note below. |
 | Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
-> The toolbox slot is types-only convenience. The **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which surfaces every stage and operator as an ambient global, with no need to list them per call site. Listing `$` (and any operator) in the toolbox lets the arrow type-check even without that import.
+> The toolbox slot is types-only convenience. The **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which surfaces every stage and operator as an ambient global, with no need to list them per call site. When you list `$` (and any operator) in the toolbox, the arrow type-checks even without that import.
 > The toolbox type `JsmqlToolbox` is `any`, so an arrow declared separately from the call also type-checks. That arrow has its own toolbox type, with a required member for each name. An index signature cannot give a required member.
 
 When both slots appear, the only legal order is `(params, { $, … })`. A shorter combination also works: `(params)`, `({ $, … })`, and `()`. Anything else, such as a third slot, a bare-identifier or bare-`$` slot, or the toolbox before params, throws `FunctionInputError` and states the actual and expected shape.
@@ -63,7 +63,7 @@ The team considered and rejected two alternatives:
 - **Allow only a literal default** (`{ a = 1 }`, but not `{ a = config.x }`). The surface looks like normal JS, but silently fails on any non-literal default. The failure mode looks arbitrary to a user, because a destructure default usually accepts any expression. A user who writes `{ minAge = 18 }` and later refactors to `{ minAge = config.defaults.minAge }` would then hit `FunctionInputError` with no warning. CLAUDE.md priority #1 forbids that kind of "subset surprise".
 - **Evaluate a default by stringify-then-`Function`-eval.** This lets an arbitrary expression through, but brings eval-style meaning back into a compile-time API, and forces JSMQL to take a position on how an unrelated closure reference resolves.
 
-Rejecting a default entirely keeps the rule simple and the surface honest: **the only way a value reaches a compiled query is through the params object at call time.** For a runtime fallback the user writes `q({ minAge: input ?? 18 })`; for a hardcoded value the template tag already inlines a literal (`` jsmql`$.age > ${18}` ``).
+The refusal of every default keeps the rule simple and the surface honest: **the only way a value reaches a compiled query is through the params object at call time.** For a runtime fallback the user writes `q({ minAge: input ?? 18 })`; for a hardcoded value the template tag already inlines a literal (`` jsmql`$.age > ${18}` ``).
 
 ## Lowering
 

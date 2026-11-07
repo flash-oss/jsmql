@@ -111,7 +111,7 @@ const DIAGNOSTIC_OPTION_SHAPES = {
 // Context-ref prefixes, in scope order. Each becomes an ambient declaration
 // (`var $$` (reassignable through `$$ = …`) plus `const $$$` and `const $$$$`). The named
 // members are the scope's diagnostic stages (derived from the STAGES `diagnostic` field).
-// The `[key: string]: any` tail keeps the rest of the reference's syntax type-checking
+// The `[key: string]: any` tail lets the rest of the reference's syntax type-check
 // (`$$.push(...)`, `$$$.coll.find(...)`, member access, stream methods). Trade-off: TypeScript
 // will not flag a typo in a non-diagnostic method. The jsmql parser still does. See
 // docs/specs/context-references.md.
@@ -129,7 +129,7 @@ const CONTEXT_REFS = {
       "jsmql current-database context reference (`$$$`, run on `db.aggregate()`). " +
       "Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and " +
       "`$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — " +
-      "`$currentOp` & friends run on the admin database, reached via `$$$$`.",
+      "`$currentOp` and the other cluster diagnostics run on the admin database, reached through `$$$$`.",
   },
   cluster: {
     name: "$$$$",
@@ -267,7 +267,7 @@ const STREAM_METHOD_SIGNATURES = {
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 
-// Stream methods listed by hand rather than taken from `streamMethodNames()`:
+// Stream methods listed by hand, not taken from `streamMethodNames()`:
 // `.filter` and `.reject` are special-case chain heads (their predicate reading is shared
 // with `$unionWith` and `$facet`). `.push` is the statement-level `$unionWith`. `.push` belongs
 // to the current stream alone. The other two are valid on a foreign collection too.
@@ -276,8 +276,8 @@ const ROOT_STREAM_ONLY_METHODS = ["push"];
 
 // Emission order for the chainable stream methods (registry order, then the non-registry entries).
 // Drift-protected in BOTH directions: every registered stream method must have a signature, and
-// every signature must be a live registry name. The second check stops a method that jsmql has
-// dropped from lingering here as a phantom completion.
+// every signature must be a live registry name. The second check removes a method that jsmql
+// dropped, so it does not stay here as a false completion.
 function streamMethodMembers(returnType, names) {
   const registry = streamMethodNames();
   const missing = registry.filter((n) => STREAM_METHOD_SIGNATURES[n] === undefined);
@@ -307,8 +307,8 @@ function streamMethodMembers(returnType, names) {
 // `.$<stage>(body)` chain links. Every stage in the registry is a legal link
 // EXCEPT the diagnostic source stages: those are source stages, so a link form
 // can never be first, and they already appear under their own non-`$` spelling
-// (`$$.indexStats()`) with a different arity. The body is typed `any` rather than
-// the stage's args object: several stages accept a bare string as well
+// (`$$.indexStats()`) with a different arity. The body is typed `any`, not
+// the stage's args object: some stages accept a bare string as well
 // (`.$unwind("$items")`, `.$merge("coll")`), and a named member has no `any`
 // escape hatch, so a narrower type would reject valid JSMQL. Argument-key
 // completion lives on the statement form (`$group({ … })`), which is generated
@@ -324,7 +324,7 @@ function stageLinkMembers(spec, returnType) {
 }
 
 // The value terminals — `.head()`, `.sum()`, `.size()`, … — end a chain with a
-// value rather than a stream. Names come from `valueTerminalMethodNames()`
+// value, not a stream. Names come from `valueTerminalMethodNames()`
 // (src/compiler/rows.ts, over the rows in src/registry/names.ts); the return types
 // are `any` because the result is a document or a field of one, except the
 // numeric aggregates.
@@ -473,8 +473,8 @@ const VALUE_METHOD_SKIP = {
 // jsmql validates the real argument at compile time; the TS type only needs to
 // not *reject* valid jsmql (so optional/loose beats strict).
 const ITER = "iteratee: string | number | ((value: T) => any)";
-// Optional-iteratee form for the identity-defaulting collapse methods
-// (`keyBy`/`groupBy`/`countBy` — omitting the iteratee counts/groups by identity).
+// Optional-iteratee form for the collapse methods whose default is the identity
+// (`keyBy`/`groupBy`/`countBy` — without the iteratee, they count or group by identity).
 const OPT_ITER = "iteratee?: string | number | ((value: T) => any)";
 const PRED = "predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)";
 /** The interfaces of the values that a `$to…` conversion reads. */
@@ -593,7 +593,7 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Does this array hold every element of `other`.",
   },
   isDisjointFrom: { recv: "Array", sig: "(other: any[]): boolean", doc: "Do the two arrays share no element." },
-  // ── Array<T> — reshaping returns ────────────────────────────────────────────
+  // ── Array<T> — returns of a new shape ────────────────────────────────────────────
   chunk: { recv: "Array", sig: "(size: number): T[][]", doc: "Split into groups of `size` — `_.chunk`." },
   partition: { recv: "Array", sig: `(${PRED}): [T[], T[]]`, doc: "Split into `[matching, rest]` — `_.partition`." },
   zip: { recv: "Array", sig: "(...arrays: any[][]): any[][]", doc: "Group by index across arrays — `_.zip`." },
@@ -755,7 +755,7 @@ const VALUE_METHOD_SIGNATURES = {
   // ── Date → Date / number / string / boolean ─────────────────────────────────
   // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter list
   // mirrors the `args` that the method's row states (src/registry/names.ts). Every `unit`
-  // is the MQL timeUnit union rather than `string`, so a typo is caught in the editor by the
+  // is the MQL timeUnit union, not `string`, so a typo is caught in the editor by the
   // same closed set that the row's `slotEnums` enforces at compile time (src/compiler/emit/check.ts).
   plus: {
     recv: "Date",
@@ -822,7 +822,7 @@ const VALUE_METHOD_SIGNATURES = {
   },
 };
 
-/** The receiver interfaces one signature entry augments (one, or several). */
+/** The receiver interfaces one signature entry augments (one, or more than one). */
 function recvsOf(entry) {
   return Array.isArray(entry.recv) ? entry.recv : [entry.recv];
 }
@@ -846,7 +846,7 @@ const VALUE_METHOD_INTERFACES = {
 // Emit the `interface Array<T> { … } interface String { … } interface Number { … }`
 // augmentation blocks. Drift-protected against the `METHODS` registry: every
 // non-skipped registry method must have a signature, and every signature must be
-// a real, non-skipped registry method — so adding a value method to jsmql without
+// a real, non-skipped registry method — so a new value method in jsmql without
 // a signature (or a skip-set entry) fails the build here, exactly like
 // `streamMethodMembers()` does for the stream vocabulary.
 function valueMethodAugmentationBlock() {
@@ -886,8 +886,8 @@ function valueMethodAugmentationBlock() {
   // Return-category drift guard. Where the METHODS registry declares an invariant result category
   // (`returns`), the augmentation's TypeScript return type must stay in that category. A registry change
   // (for example, a method's result becomes an object) that is not mirrored in the ambient signature fails
-  // the build instead of silently drifting. Methods with no registry `returns` (result depends on the
-  // receiver and arguments: `.head` → element `T`, `.groupBy` value-vs-stream) are skipped. There is no
+  // the build, and does not silently drift. Methods with no registry `returns` (result depends on the
+  // receiver and arguments: `.head` → element `T`, `.groupBy` value or stream) are skipped. There is no
   // invariant to enforce.
   const registryReturns = valueMethodReturns();
   // keyed by the Kind the registry states. Each tests the ambient signature's TypeScript return type.
@@ -900,7 +900,7 @@ function valueMethodAugmentationBlock() {
     array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
   };
   // Receiver drift guard. The METHODS registry already declares which receiver family a
-  // single-receiver method needs. That is what gates the chain type-check at runtime. Hanging a
+  // single-receiver method needs. That is what gates the chain type-check at runtime. A
   // signature on a different interface here would advertise a method on a type jsmql itself rejects.
   // Methods with no declared family (`requiredReceiverFamily` → null) are the documented dual
   // and universal ones (`.clamp`, `.nth`, `.size`). They choose their own receivers, which is
@@ -925,7 +925,7 @@ function valueMethodAugmentationBlock() {
   // are unprotected here by construction, not by omission. `MethodReturn` has no `"date"`
   // member. These methods return "same as the receiver", so the registry deliberately leaves
   // `returns` unset and they fall through the `undefined` skip below. Do not add `returns: "date"`
-  // to the registry without also adding a `date` row to `inCategory`.
+  // to the registry without a new `date` row in `inCategory` too.
   const drift = [];
   for (const name of augmentable) {
     const category = registryReturns[name];
@@ -953,7 +953,7 @@ function valueMethodAugmentationBlock() {
     const entry = VALUE_METHOD_SIGNATURES[name];
     for (const recv of recvsOf(entry)) {
       // Method syntax, never property syntax: same-named methods merge as
-      // overloads and can never collide, while a property would hit TS2717
+      // overloads and can never collide, but a property would hit TS2717
       // against anyone else's augmentation of the same built-in.
       byRecv[recv].push(`/** ${entry.doc} */`, `${name}${sigFor(entry, recv)};`);
     }
@@ -962,17 +962,17 @@ function valueMethodAugmentationBlock() {
 }
 
 // ---------------------------------------------------------------------------
-// Spec loading. This mirrors the strategy in test/operator-spec-coverage.test.ts:
+// Spec load. This mirrors the strategy in test/operator-spec-coverage.test.ts:
 // strip the `tests:` block before js-yaml reads it. The test fixtures use custom
-// BSON tags (!bson_int64, etc.) that the default schema rejects.
+// BSON tags (!bson_int64 and others) that the default schema rejects.
 // ---------------------------------------------------------------------------
 
 const SPEC_FOLDERS = ["expression", "accumulator", "stage"];
 
 /**
- * Load the vendored YAML specs into per-folder maps. A few names (currently just `$count`)
- * appear in multiple folders with different meanings: stage versus accumulator. Flattening
- * them into a single map would lose information.
+ * Load the vendored YAML specs into per-folder maps. A few names (now only `$count`)
+ * appear in more than one folder with different meanings: stage or accumulator. A flat
+ * single map would lose information.
  *
  * @returns {{ stage: Map<string, any>, expression: Map<string, any>, accumulator: Map<string, any> }}
  */
@@ -1038,7 +1038,7 @@ function mapType(t) {
     // `query` and `object` could narrow to `Record<string, any>` in principle,
     // but jsmql accepts richer inputs than the MQL spec shows. `$match` takes a
     // boolean expression that jsmql wraps in `$expr` when it compiles, not just a
-    // query-document literal. Tightening the type would reject the most common usage
+    // query-document literal. A tighter type would reject the most common usage
     // (`$match($.age >= 18)`). Stay permissive.
     if (only === "query") return "any";
     if (only === "object") return "any";
@@ -1102,7 +1102,7 @@ function jsdocFor(name, spec, registryDef) {
 
 // Every key is optional in the type, because the types never refuse a `$` call (see
 // CATCH_ALL). An incomplete object literal must still match this documented signature,
-// or TypeScript picks the catch-all while the developer types, and the key completion
+// or TypeScript picks the catch-all as the developer types, and the key completion
 // is lost. The field's doc names a key that the server requires.
 function argsObjectForSpec(spec, registryKeys) {
   const specArgs = spec?.arguments ?? [];
@@ -1158,7 +1158,7 @@ const TS_RESERVED_KEYS = new Set([
 ]);
 function quoteKeyIfNeeded(k) {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)) return JSON.stringify(k);
-  // Reserved keys are valid as object-type keys in TypeScript without quoting.
+  // Reserved keys are valid as object-type keys in TypeScript with no quotes.
   // This code quotes them for clarity and to satisfy stricter parsers.
   if (TS_RESERVED_KEYS.has(k)) return JSON.stringify(k);
   return k;
@@ -1313,8 +1313,8 @@ function contextRefBlock(spec) {
     "[Symbol.iterator](): Iterator<any>;",
     // The permissive tail. The references carry more syntax than the named members:
     // `$$ = …` replace-stream, `$$$.coll = …` (the `$out` operator), member access on a
-    // materialised result. Typing all of it needs the schema threading tracked by DEF-013.
-    // The index signature keeps every such form as `any` rather than an error. A named member
+    // materialised result. A type for all of it needs the schema threading that DEF-013 tracks.
+    // The index signature keeps every such form as `any`, not an error. A named member
     // has no escape hatch, so a missing name here would reject valid JSMQL. That costs more
     // than a missed typo.
     "[key: string]: any;",
@@ -1344,7 +1344,7 @@ function contextRefBlock(spec) {
     // reassign it wholesale. `const` would reject that valid jsmql (TS2588).
     `${refJsdoc("collection")}\nvar ${CONTEXT_REFS.collection.name}: ${STREAM_REF_TYPE};`,
     // `$$$` and `$$$$` stay `const`. They only take *property* writes (`$$$.coll = …` → the
-    // `$out` operator). `const` permits that, while `const` still flags the invalid
+    // `$out` operator). `const` permits that, and `const` still flags the invalid
     // `$$$ = …` whole-reassignment. `$$$` indexes to the foreign reference, which gives
     // `$$$.orders.filter(…)` completion. The key stays a plain string because a collection
     // name is arbitrary.
@@ -1357,10 +1357,10 @@ function contextRefBlock(spec) {
   return blocks.join("\n");
 }
 
-// The BSON value constructors. Each has a JavaScript-shaped name rather than a
+// The BSON value constructors. Each has a JavaScript-shaped name, not a
 // `$`-prefixed operator. The arrow form needs an ambient declaration to type-check.
 // These are DERIVED from the global rows that list the value position. A new constructor
-// is one row in src/registry/names.ts and nothing needs editing here.
+// is one row in src/registry/names.ts, and nothing here needs an edit.
 //
 // Each is emitted as an interface with a call signature only, because JSMQL has no
 // `new` keyword (HR8): `Decimal128("1.50")` is the one spelling.
@@ -1386,7 +1386,7 @@ function constructionFormsBlock() {
 // The statement-form built-ins that are not `$`-prefixed operators or stages and so
 // have no registry entry, but still need an ambient declaration for the arrow form to
 // type-check. `assert(condition[, message])` is a pipeline-statement guard with no value.
-// It lowers to a `$match`, so it is typed as returning `void`. Using it in expression
+// It lowers to a `$match`, so its return type is `void`. A use of it in expression
 // position is a compile error in jsmql too. See the `assert` row in src/registry/names.ts
 // and docs/specs/assert.md.
 function statementFormsBlock() {
@@ -1411,7 +1411,7 @@ export function generateGlobalsSource() {
 
   // Categorise every name by which map it appears in. `$count` is the only name today
   // that is both a stage and an accumulator. It is emitted once with overloaded call
-  // signatures spanning both meanings.
+  // signatures that span both meanings.
   const allNames = new Set([...Object.keys(STAGES), ...Object.keys(OPERATORS)]);
 
   // For section ordering: a name appears in the Stages section if it is in STAGES,
@@ -1450,7 +1450,7 @@ export function generateGlobalsSource() {
   const header = [
     "// AUTO-GENERATED by scripts/generate-globals.mjs from src/registry/names.ts",
     "// and vendor/mql-specifications. DO NOT EDIT — re-run",
-    "// `npm run generate:globals` (or `npm run build`) after pulling new specs.",
+    "// `npm run generate:globals` (or `npm run build`) after you pull new specs.",
     "//",
     "// User-facing import shape:",
     "//",

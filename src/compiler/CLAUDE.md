@@ -12,7 +12,7 @@ registry file that owns its facts. It invents nothing a row could have stated.
    keywords.ts                        + position       + productions    + productions
 ```
 
-**Phase 4 runs inside phase 3, and also after it.** Several sugars mean one
+**Phase 4 runs inside phase 3, and also after it.** Some sugars mean one
 thing as a statement, and are refused everywhere else. So a rewrite must know
 where it stands. The answer cannot come from identity, because the walk rebuilds
 a parent as soon as a child changes. `passes/position.ts` states the position at
@@ -86,7 +86,7 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
                JavaScript name stands for, and which names a mint must avoid.
   env.ts       the one record a lowering runs under: scope, site, chain. Only
                another Env makes one. No field is optional, no literal, no spread.
-  mode.ts      value or truth: `truthOf`, the JavaScript truthiness check, and/or/not.
+  mode.ts      value or truth: `truthOf`, the JavaScript truthiness check, and the and, or and not rules.
                The only minter of `Truth`.
   mql.ts       the MQL shapes that READ a condition ($cond, $filter, $switch, …),
                each typed to take a Truth. This module builds them, and nothing else does.
@@ -114,7 +114,7 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
                stage per source, JavaScript's spread rule kept.
   join.ts      the join road: `$$$.<coll>.<chain>` as `$lookup` in every position
                — the peel, the slot, the four destinations. Lent to lower.ts at
-               load (`provideJoin`), since it needs the statement target's link
+               load (`provideJoin`), because it needs the statement target's link
                walker and the statement target imports lower.ts.
   update.ts    the update-document target: the object form of an update from writes and
                update operators, constants only — a document read is refused with the pipeline

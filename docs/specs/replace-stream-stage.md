@@ -2,7 +2,7 @@
 
 ## Overview
 
-`$$ = <expr>` is the JSMQL surface for replacing the pipeline's document
+`$$ = <expr>` is the JSMQL surface that replaces the pipeline's document
 stream. The LHS is the bare `$$` token — the root stream,
 the same role MQL's `$$ROOT` plays for a single document. It is the sister
 shape to `$ = <expr>` (which replaces *one* doc → `$replaceWith`); `$$ = <expr>`
@@ -11,7 +11,7 @@ replaces the *stream* and lowers to either a `$match` (narrow) or
 
 Statement-only: `$$ = <expr>` appears as a top-level pipeline statement —
 either inside `[ ... ]` array form, or as a `;`-separated implicit-pipeline
-statement (including inside a comma-separated update-filter chain). Using
+statement (and inside a comma-separated update-filter chain too). A use of
 it inside a Filter / `jsmql.expr` goes through the normal
 pipeline-mode-required gate.
 
@@ -69,7 +69,7 @@ JSMQL refuses an unsupported RHS and names the forms that work:
 
 | Trigger | The refusal |
 |---|---|
-| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | refused, for the reason in § Not supported (by design); the message names the right sides that work |
+| `TernaryExpr` RHS (for example `$$ = a ? b : c`) | refused, for the reason in § Not supported (by design); the message names the right sides that work |
 | Anything else | refused; the message names the right sides that work |
 
 The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time: the token
@@ -93,7 +93,7 @@ The update buffer flushes before `$$ = …`, so
 [{ $set: { a: 1 } }, { $match: { x: { $gt: 0 } } }, { $set: { b: 2 } }]
 ```
 
-— never one merged `$set` straddling the assignment.
+— never one merged `$set` across the assignment.
 
 For the source-switch form, later `$.x = …` ops operate on the *new*
 docs (from the foreign collection), not the pre-switch docs. Any prior
@@ -112,8 +112,8 @@ they are not planned:
   is no single condition that swaps the *whole* stream for A or B, so "replace the
   stream with A or B" has no JS meaning. Narrow the stream with `$$.filter(p)`, or
   switch source with `$$$.<coll>.filter(p)`.
-- **`$$.find(<predicate>)`** (self-lookup on the current collection). Finding one
-  document within the very stream of documents produces a value with nothing to do
+- **`$$.find(<predicate>)`** (self-lookup on the current collection). One
+  document found in the same stream of documents is a value with nothing to do
   in JS expression semantics; JSMQL also compiles statelessly (it does not know the
   current collection's name). Use an explicit `$$$.<coll>.find(...)` lookup against
   a named collection instead.

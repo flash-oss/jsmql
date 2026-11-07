@@ -73,9 +73,9 @@ A `$name` with no row passes through by its argument count, in every position. S
 
 A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands. For example, `$add` gives a number or a date, and `$first` gives whatever the array holds. The chain type-check reads this fact. It refuses `$.s.trim().foo()` when `foo` is not a string method. The compiler measures `returns` on a running `mongod` (`{ $type: { <op>: <args> } }`). It never reads the vendored YAML's `type:` field, which is wrong for `$trunc`.
 
-## Adding an operator
+## Add an operator
 
-The recipe lives in [CLAUDE.md § Adding a new MongoDB operator](../../CLAUDE.md): a row in `names.ts`, a test on `mongod`, the reference.
+The recipe lives in [CLAUDE.md § Add a new MongoDB operator](../../CLAUDE.md): a row in `names.ts`, a test on `mongod`, the reference.
 
 ## Spec drift protection
 

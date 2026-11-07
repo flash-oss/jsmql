@@ -79,7 +79,7 @@ On the query road, a plain object in `&&`, `||` or `!` is a query document. The
 walk carries a `query` flag. The flag is true at the root of a Filter program and
 at the argument of a stage whose whole body is a filter. It stays true through
 `&&`, `||` and `!` only. A plain `ObjectLiteral` that is a direct operand of one
-of them, while the flag is true, is the error:
+of them, when the flag is true, is the error:
 
 ```
 { status: "A" } && $.qty > 5        (Filter)

@@ -15,7 +15,7 @@ type Slot = unknown;
 const isNode = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
-/** A plain object that is part of the tree without being a node — an ObjectKey. */
+/** A plain object that is part of the tree, but is not a node — an ObjectKey. */
 const isCarrier = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) && !isNode(v);
 
@@ -34,7 +34,7 @@ function mapSlot(slot: Slot, fn: (n: object) => object): { value: Slot; changed:
     return { value: r.value, changed: r.changed };
   }
   if (isCarrier(slot)) {
-    // A carrier holds nodes without being one, for example `{ kind: "computed", expr }`.
+    // A carrier holds nodes, but is not one, for example `{ kind: "computed", expr }`.
     let changed = false;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(slot)) {
@@ -71,7 +71,7 @@ export function mapTree<T extends object>(root: T, fn: (n: object) => object): T
   return transform(root as Record<string, unknown>, fn).value as T;
 }
 
-// ── the same walk, carrying an inherited value down ──────────────────────────
+// ── the same walk, with an inherited value that goes down ──────────────────────────
 //
 // A rule that must know WHERE a node sits cannot look the node up in a
 // recorded set. This walk rebuilds a parent as soon as one of its children

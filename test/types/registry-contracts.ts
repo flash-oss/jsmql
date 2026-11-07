@@ -4,7 +4,7 @@
 // matches no row passes forever. So every rule the vocabulary states as a type
 // stands here twice — once as a value that must compile, once under a
 // `@ts-expect-error` that must NOT. tsc refuses an unused `@ts-expect-error`
-// (TS2578), so a rule that stops firing fails this file in either direction.
+// (TS2578), so a rule that no longer fires fails this file in either direction.
 // test/registry-contracts.test.ts runs it.
 
 import type { Arity, Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
@@ -125,7 +125,7 @@ export const siteIsTotal: Eq<Site, Required<Site>> = true;
 const env = Env.root({ type: "Program", stmts: [] }, "value", new Chain());
 // @ts-expect-error — an Env is made from an Env; there is no literal for one
 export const literalEnv: Env = { scope: env.scope, site: env.site, chain: env.chain };
-// @ts-expect-error — spreading drops the nominal mark; a copy is not an Env
+// @ts-expect-error — a spread drops the nominal mark; a copy is not an Env
 export const spreadEnv: Env = { ...env };
 export const derived: Env = env.at({ at: "filter" }).literal();
 

@@ -2,7 +2,7 @@
 //
 // THE INVARIANT: a fold must not change the answer. Whatever it computes must
 // equal what the same expression computes on the server when it is left alone,
-// or folding stops being an optimisation and becomes a second semantics.
+// or the fold is no longer an optimisation and becomes a second semantics.
 // test/fold-consistency.test.ts holds that guarantee on a live mongod; the tests
 // here say what the pass is FOR.
 
@@ -42,13 +42,13 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
   });
 
   it("folds a constant subexpression with no declaration in sight", () => {
-    // Folding is not limited to a declaration's value: `$.x === 1 + 2` computes
-    // the 3 once here rather than on every document the server reads.
+    // The fold is not limited to a declaration's value: `$.x === 1 + 2` computes
+    // the 3 once here, not on every document the server reads.
     expect(shape("$.x === 1 + 2")).toBe(shape("$.x === 3"));
     expect(shape("$.x === (1 in [1, 2])")).toBe(shape("$.x === true"));
   });
 
-  it("reads a constant structure rather than reading it at run time", () => {
+  it("reads a constant structure at compile time, not at run time", () => {
     // `{"$getField":{"field":"minAge","input":{"minAge":18}}}` cannot use an
     // index; `{"age":{"$gt":18}}` can.
     expect(shape("const CONFIG = { minAge: 18 }; $.age > CONFIG.minAge")).toBe(shape("$.age > 18"));
@@ -58,7 +58,7 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
 
   it("feeds the desugar rules, which feed it back", () => {
     // The fold runs before the shorthand check, so the constant reaches the slot
-    // and the shorthand reads as if it had been written literally.
+    // and the shorthand reads as if the source wrote it literally.
     expect(shape('const k = "name"; $.f = $.items.map(k);')).toBe(shape("$.f = $.items.map(x => x.name);"));
     expect(shape("const spec = { active: true }; $.f = $.items.filter(spec);")).toBe(
       shape("$.f = $.items.filter(x => x.active === true);"),
@@ -91,7 +91,7 @@ describe("compiler/passes/fold — a name that cannot be folded keeps its bindin
   });
 
   it("does not substitute where a lambda parameter shadows the name", () => {
-    // `x` inside is the ELEMENT. Substituting the constant there would answer
+    // `x` inside is the ELEMENT. The constant in its place would answer
     // with 100 where the source meant each item.
     expect(shape("const x = 100; $.f = $.items.map(x => x + 1);")).toBe(shape("$.f = $.items.map(x => x + 1);"));
     // …but an unshadowed reference in the same position does fold.
@@ -124,7 +124,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   });
 
   it("refuses a call whose argument count is wrong, so the error still happens", () => {
-    // Folding it away would lose the arity error, so the fold declines it.
+    // A fold would lose the arity error, so the fold declines it.
     expect(valueOf('"abc".toUpper(1)')).toBe("(not constant)");
     expect(valueOf('"hello".charAt()')).toBe("(not constant)");
   });
@@ -136,14 +136,14 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
 
   it("reads a predicate's answer the way the emitted condition does", () => {
     // The array lowering writes JavaScript's truthiness out as four `$ne`s, so a
-    // predicate answering a plain value folds — measured against the server, both ways.
+    // predicate that answers a plain value folds — measured against the server, both ways.
     expect(valueOf("[1, 2].some(x => 1)")).toBe(true);
     expect(valueOf('[1, 2].filter(x => "yes")')).toEqual([1, 2]);
     expect(valueOf('[0, 1, "", "a", null].filter(x => x)')).toEqual([1, "a"]);
   });
 
   it("rounds in DECIMAL, the way $round does", () => {
-    // Scaling by `10 ** places` makes the rounding decision on a perturbed number:
+    // A scale by `10 ** places` makes the decision to round on a perturbed number:
     // `(2.675).round(2)` is 2.68 that way and 2.67 on the server, because 2.675 is
     // really 2.67499999999999982. Each of these is measured against mongod.
     expect(valueOf("(2.675).round(2)")).toBe(2.67);
@@ -178,7 +178,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
 
   it("folds `&&` and `||` the way the LOWERING does, which is JavaScript's truthiness", () => {
     // Measured on the server: `0 || 5` is 5 there and `1 && 2` is 2, so the
-    // boolean-only rule this once had refused the shape people actually write.
+    // boolean-only rule would refuse the shape people actually write.
     expect(valueOf("0 || 5")).toBe(5);
     expect(valueOf('"" || "x"')).toBe("x");
     expect(valueOf("1 && 2")).toBe(2);
@@ -294,7 +294,7 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
   });
 
   it("does not fold a name the language does not have", () => {
-    // Folding one would ADD it: `.lastIndexOf()` on a string is refused because
+    // A fold of one would ADD it: `.lastIndexOf()` on a string is refused because
     // `$indexOfCP` only searches forward.
     expect(valueOf('"hello".lastIndexOf("l")')).toBe("(not constant)");
     expect(valueOf("Number.isFinite(4)")).toBe("(not constant)");
@@ -313,8 +313,8 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
   const ident = (name: string) => ({ type: "Ident", name });
 
   it("does not push a constant through a nested statement scope", () => {
-    // The inner `const a = 2` is a DIFFERENT variable. Reading the outer one
-    // there answers 1 and leaves the inner declaration standing, unread.
+    // The inner `const a = 2` is a DIFFERENT variable. A read of the outer one
+    // there answers 1 and leaves the inner declaration in place, unread.
     const t = JSON.stringify(desugar(parse("const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })")));
     expect(t).toContain('"value":2');
     expect(t).not.toContain('"value":1');
@@ -347,8 +347,8 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
   });
 
   it("sees a write THROUGH a path, and never rewrites the place written to", () => {
-    // `a.p = 9` changes `a`. Folding it would answer with the old value, and
-    // substituting the target would produce `1 = 9`, which is not a program.
+    // `a.p = 9` changes `a`. A fold of it would answer with the old value, and
+    // a substitute for the target would produce `1 = 9`, which is not a program.
     for (const src of [
       "let a = { p: 1 }; a.p = 9; $.x === a.p",
       "let a = [1, 2]; a[0] = 9; $.x === a",
@@ -367,7 +367,7 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
   });
 
   it("does not answer a name read before it is declared", () => {
-    // JavaScript throws a ReferenceError; answering with the later value would
+    // JavaScript throws a ReferenceError; an answer with the later value would
     // invent a meaning the language does not have.
     expect(keepsABinding("$.x === a; const a = 1")).toBe(true);
   });
@@ -395,7 +395,7 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
   });
 
   it("routes a receiver by what the LANGUAGE allows, not by its JavaScript type", () => {
-    // A RegExp and a BSON value are objects to JavaScript. Reading one with the
+    // A RegExp and a BSON value are objects to JavaScript. A read of one with the
     // object rules answers about the wrong thing: `/ab/.size()` would be
     // `Object.keys(regex).length`, which is 0 and means nothing.
     expect(valueOf("/ab/.size()")).toBe("(not constant)");
@@ -409,7 +409,7 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
   it("answers in UTC and in JavaScript's numbering", () => {
     // A JavaScript spelling gets JavaScript's behaviour: `getMonth()` counts from
     // 0 and `getDay()` says 4 for a Thursday, as the runtime cells do over
-    // `$month` and `$dayOfWeek`. The LOCAL-sounding getters read UTC, because
+    // `$month` and `$dayOfWeek`. The getters whose names say LOCAL read UTC, because
     // `$hour` does — one that read local time would answer differently on every machine.
     const d = 'Date("2020-03-05T20:30:40.123Z")';
     expect(valueOf(`${d}.getMonth()`)).toBe(2);
@@ -565,8 +565,8 @@ describe("compiler/passes/fold — a declared function called with constants", (
     expect(useSite("function f(x) { return x * 2 } $.x === f($.n)")).toContain("CallExpression");
   });
 
-  it("does not substitute into a CALLEE, which names a function rather than valuing one", () => {
-    // `const g = 3; g(1)` is a TypeError in JavaScript. Replacing `g` with 3
+  it("does not substitute into a CALLEE, which names a function and holds no value", () => {
+    // `const g = 3; g(1)` is a TypeError in JavaScript. The value 3 in place of `g`
     // would leave `3(1)` in the tree, which is not a program — the name stays so
     // a later phase can say what is actually wrong.
     expect(useSite("const g = 3; $.x === g(1)")).toContain('"name":"g"');
@@ -582,7 +582,7 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
   it("reads one number in Date.UTC as a YEAR, as JavaScript and $dateFromParts do", () => {
     // `Date.UTC(2020)` is 1577836800000: one number is a YEAR, not a millisecond
     // count. `$toLong($dateFromParts{year:2020})` is what mongod answers, and the
-    // fold has to match it rather than pass the 2020 through.
+    // fold must match it, and not pass the 2020 through.
     const r = evaluate(parseExpression("Date.UTC(2020)"), new Map());
     expect(r).toEqual({ ok: true, value: Date.UTC(2020, 0) });
   });
@@ -596,7 +596,7 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
     expect(evaluate(parseExpression('Number("12.5")'), new Map())).toEqual({ ok: false });
   });
 
-  it("keeps a constant that evaluates to -0 as a runtime binding rather than throwing", () => {
+  it("keeps a constant that evaluates to -0 as a runtime binding, and does not throw", () => {
     // -0 is a value the server computes (`$ceil: -0.5`), but one the driver would
     // send as a double where the same arithmetic gives an int 0 — so it is not
     // written, and not an error either.

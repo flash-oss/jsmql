@@ -1,8 +1,8 @@
 ---
 name: verify-mql
 description: >-
-  Verify that jsmql's emitted MQL actually runs on a real MongoDB before trusting
-  or asserting it. Use this whenever you are about to (a) assert an expected MQL
+  Verify that jsmql's emitted MQL actually runs on a real MongoDB before you trust
+  or assert it. Use this whenever you are about to (a) assert an expected MQL
   output in a test, (b) add or change an operator, stage, method alias, or a
   stage-lowering, or (c) claim a shape is valid — and whenever there is the
   slightest doubt that an emitted document would run. This enforces language rule
@@ -42,7 +42,7 @@ shape, `test/probe` prints the rejection word for word and exits with a
 non-zero status. **That refusal is the signal you probe for.**
 
 It composes directly with the `jsmql` CLI. Pick the CLI flag that matches the
-shape you are producing, and pass matching `--doc` seed data:
+shape that you make, and pass the matching `--doc` seed data:
 
 ```sh
 # Filter (no top-level ';')  — find(filter)
@@ -106,7 +106,7 @@ connected. The same warnings apply:
   a connection string, and never connect to any other server.**
 - `search-knowledge` needs no connection. It is a *reference* cross-check for
   an operator's field table, a valid enum, or a version difference. It is
-  secondary to the vendored spec YAML, and it never substitutes for running
+  secondary to the vendored spec YAML, and it never replaces a run of
   the shape.
 
 The MCP is a convenience layer, not a dependency. `test/probe` is always the
@@ -124,7 +124,7 @@ port.
   through a **server-enforced read-only** identity that cannot change it (see
   [test/fixtures/CLAUDE.md](test/fixtures/CLAUDE.md)). When a feature's
   realistic test would benefit from *live data and asserted results*, add a
-  case there instead of trusting a green `toEqual`. Derive each expected value
+  case there. Do not trust a green `toEqual`. Derive each expected value
   from a real run; never guess a value by hand (HR3).
 
 ## Known server-rejection traps
@@ -136,7 +136,7 @@ when you audit a new shape. In brief: a `$$` variable name must start with a
 lowercase ASCII letter; `$limit` and `$skip` need a positive constant integer,
 never `0` and never a field path; a regex `options` value may carry only
 `imxs` (the server rejects a JS `g` or `y` flag); a literal array where an
-operator wants a *single* array argument gets counted as several arguments by
+operator wants a *single* array argument counts as more than one argument by
 mistake; and a constant-required slot (`$bucket.boundaries`, `$sample.size`,
 `$lookup.pipeline`, a date-typed input, and others) rejects a field path or an
 expression.
@@ -147,4 +147,4 @@ Lock in the fix so the bug cannot come back. Add the offending shape to
 [test/literal-passthrough.test.ts](test/literal-passthrough.test.ts), or to
 the matching topic suite, as a guard. When the fix confirms a shape that was
 in doubt before, also consider an assertion in `test/integration.test.ts`, so
-the *server* keeps proving the shape, not only a `toEqual`.
+the *server* continues to prove the shape, not only a `toEqual`.

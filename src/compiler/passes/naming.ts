@@ -86,7 +86,7 @@ export function readsAContextRef(node: object): boolean {
  * of its own. A block binds its declarations for the later declarations, as
  * well as for the result. Missing either case lets an outer constant push
  * through an inner declaration of the same name. That answers with the wrong
- * value, and leaves the inner declaration standing, unread, one line above.
+ * value, and leaves the inner declaration in place, unread, one line above.
  */
 export function bindsFor(node: object, key: string): readonly string[] {
   const n = node as Any;
@@ -117,8 +117,8 @@ export function introducedNames(node: object): readonly string[] {
 }
 
 /**
- * Two places where an identifier NAMES something instead of holding a value:
- * the left of a write, and the callee of a call. Replacing either with a value
+ * Two places where an identifier NAMES something, and holds no value:
+ * the left of a write, and the callee of a call. A value in place of either
  * produces something that is not a program — `1 = 9`, or `3(1)` — and neither
  * is a position a row can be legal in.
  */
@@ -138,7 +138,7 @@ export type AstNode = { type: string; pos: number } & Record<string, unknown>;
  *
  * This is a field PATH and nothing else. MQL writes a path, so
  * `$.items[0].push(1)` and `$.items.filter(p).sort()` have no destination.
- * `$$` lands here too, and declining it keeps `$$.push(…)` ($unionWith) and
+ * `$$` lands here too, and the refusal of it keeps `$$.push(…)` ($unionWith) and
  * `$$.sort(…)` ($sort) out of a rule meant for fields.
  *
  * Read this AFTER the field-path fold. That fold is what makes `$.a.b.sort()`
@@ -165,7 +165,7 @@ export function writtenField(node: object): AstNode | null {
  * This answers yes wherever the fold MIGHT reach a path, which is wider than
  * the set the fold really reaches. That direction is the safe one: the
  * statement road refuses by name a receiver that is admitted here and
- * declined there, while the reverse would read a whole program as the wrong document.
+ * declined there, but the reverse would read a whole program as the wrong document.
  */
 export function couldWriteItsReceiver(node: object): boolean {
   const start = (node as Any).object;

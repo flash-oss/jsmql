@@ -140,7 +140,7 @@ function attempt<T>(build: () => T): T | null {
  * malformed constant, or one the type cannot hold.
  *
  * Null is not an error: the caller is the FOLD, and a fold that cannot answer
- * leaves the call standing so the name's row refuses it at its source position,
+ * leaves the call in place so the name's row refuses it at its source position,
  * with the row's own message. See docs/specs/bson-types.md.
  */
 export function bsonConstant(name: string, value: unknown): object | null {
@@ -157,7 +157,7 @@ export function bsonConstant(name: string, value: unknown): object | null {
     }
     case "Long": {
       const n = exactInteger(value);
-      // `fromString` rather than `fromBigInt`: it is present in every supported major.
+      // `fromString`, not `fromBigInt`: it is present in every supported major.
       return n === null || n < INT64_MIN || n > INT64_MAX ? null : attempt(() => LongClass.fromString(n.toString()));
     }
     case "Int32": {
@@ -198,10 +198,10 @@ export function canonicalBsonName(spelling: string): string {
 /**
  * The `Long` a JavaScript BigInt names, or null when it does not fit in 64 bits.
  *
- * A BigInt literal IS an int64 in MQL, and building it here rather than emitting
- * `{ $toLong: "<digits>" }` means the server parses no string per document — and the
+ * A BigInt literal IS an int64 in MQL. Because this code builds it here, and does not emit
+ * `{ $toLong: "<digits>" }`, the server parses no string per document — and the
  * value lands on the query road, where a comparison matches an ELEMENT of an array
- * field rather than the whole array.
+ * field, not the whole array.
  */
 export function bigIntToLong(v: bigint): object | null {
   return bsonConstant("Long", v);

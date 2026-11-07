@@ -123,12 +123,12 @@ const SAME_QUERY: readonly string[] = [
 /**
  * The query road emits the document a MongoDB developer writes by hand, so the
  * server reads an ARRAY value element-wise there. The expression road compares the
- * value itself. Every row below carrying this reason is that one difference.
+ * value itself. Every row below that carries this reason is that one difference.
  */
 const ARRAY_ELEMENT_WISE =
   "The query road emits the plain query document, and MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. The expression road compares the whole value, so an array document is selected by one road and not the other.";
 
-/** Sources the language DOCUMENTS as selecting different documents, and why. */
+/** Sources that, as the language DOCUMENTS, select different documents, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a === 1", why: ARRAY_ELEMENT_WISE },
   { src: 'typeof $.a === "object"', why: ARRAY_ELEMENT_WISE },
@@ -157,7 +157,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_query_expr_agreement").collection("t");

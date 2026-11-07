@@ -41,7 +41,7 @@ export type Boundary = {
    * For a body over ANOTHER collection: the stage's `let`, which the reads
    * inside the body fill. It is null when the stage has no `let` (`$unionWith`),
    * so the compiler refuses a read of the outer document there instead of
-   * silently misreading it.
+   * a silent misread of it.
    */
   readonly capture?: Capture | null;
   /** The chain the body was entered FROM — the enclosing pipeline. */
@@ -130,7 +130,7 @@ export class Chain {
   dirty = false;
   /**
    * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
-   * rather than emitting it, so nothing can land after it, and the cleanup
+   * and does not emit it, so nothing can land after it, and the cleanup
    * always precedes it. `spelled` is how the source wrote it — `$out`, or the
    * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
    */
@@ -187,7 +187,7 @@ export class Chain {
    * reuses a field the discarded stage would have written.
    *
    * The scratch counter goes back too. Only the stages that went with a slot
-   * name it, so keeping the discarded attempt's number would leave a gap — and
+   * name it, so if the compiler kept the discarded attempt's number, it would leave a gap — and
    * the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
    * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
    * `__jsmql.tmp.0`. One lowering, one output.
@@ -196,7 +196,7 @@ export class Chain {
     return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
   }
 
-  /** Undo everything hoisted, stamped and minted since `mark`. */
+  /** Undo everything hoisted, stamped and minted after `mark`. */
   rewind(m: { hoisted: number; stamped: ReadonlySet<string>; slots: number }): void {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
@@ -237,8 +237,8 @@ export class Chain {
    * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
    * joined on the SOURCE document's `_id`, and `$sortByCount` then replaced the
    * document and dropped the slot — so every row came back without its joined
-   * field, and the server reported nothing wrong. A road that makes several
-   * stages out of one statement therefore drains at each of them. See
+   * field, and the server reported nothing wrong. A road that makes more than one
+   * stage out of one statement therefore drains at each of them. See
    * docs/specs/lookup-stage.md § Where a hoisted stage lands.
    */
   ahead(): Stage[] {

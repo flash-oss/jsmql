@@ -37,7 +37,7 @@ export type Constants = ReadonlyMap<string, unknown>;
  * A declared function, held so a CALL to it can be evaluated.
  *
  * The wrapper exists so this is never mistaken for a value: a function has no
- * MongoDB literal, and substituting one into the tree would put a lambda where
+ * MongoDB literal, and a substitution of one into the tree would put a lambda where
  * an expression belongs. For this reason, `fold` keeps these in the
  * environment and out of the substitution map.
  */
@@ -55,7 +55,7 @@ const isDeclaredFunction = (v: unknown): v is DeclaredFunction =>
  * and "this IS a constant that MongoDB cannot write down" need different
  * outcomes. It PROPAGATES: an `Infinity` that reaches an operator poisons
  * everything built from it, so `1 / 0 > 0` does not quietly become `true`
- * while the server refuses the division outright.
+ * when the server refuses the division outright.
  */
 export type Evaluation = { ok: true; value: unknown } | { ok: false; unspellable?: string };
 
@@ -110,7 +110,7 @@ export function settled(node: Expr): Expr {
 
 // ── limits ───────────────────────────────────────────────────────────────────
 
-/** How deep a subtree may nest before the engine stops asking. */
+/** How deep a subtree may nest before the engine stops its questions. */
 const MAX_DEPTH = 400;
 
 /** A folded string or array may not exceed this. See `withinSize`. */

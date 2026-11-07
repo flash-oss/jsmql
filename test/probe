@@ -16,12 +16,12 @@
 //   --pipeline   db.coll.aggregate(<array>)
 //   --filter     db.coll.find(<object>)
 //   --expr       db.coll.aggregate([{ $addFields: { __v: <object> } }])  — a bare jsmql.expr fragment
-//   --update     db.coll.updateMany({}, <object>) then show the resulting docs
+//   --update     db.coll.updateMany({}, <object>) then show the docs it gives
 // Auto: array → --pipeline; object whose top-level keys ALL start with '$' → --expr
 //       (so an update doc like {$set:…} must pass --update explicitly); otherwise → --filter.
 //
 // Other options:
-//   --doc <json>   seed doc(s) before running — object or JSON array, repeatable. Default: {}
+//   --doc <json>   seed doc(s) before the run — object or JSON array, repeatable. Default: {}
 //   --uri <uri>    mongod connection string. Default: the project's :27018 instance
 //   -o <file>      write output to <file> instead of stdout
 //   -h, --help     show this help
@@ -30,12 +30,12 @@
 // `new ObjectId(…)`, `/re/i`. It is evaluated with the driver's own BSON classes in
 // scope, so probe refuses exactly what a driver script would refuse: that is the point
 // of it. Plain JSON still works, because JSON is JavaScript. An Extended JSON WRAPPER
-// (`{"$oid": "…"}`) is refused rather than converted — as JavaScript it is a plain
+// (`{"$oid": "…"}`) is refused, not converted — as JavaScript it is a plain
 // subdocument that would silently match nothing.
 //
 // Output goes to stdout (or -o <file>) in the same JavaScript form, so a result can be
 // pasted back into --doc. The server's own rejection message is printed verbatim when
-// mongod refuses the shape — that refusal IS the signal you're probing for.
+// mongod refuses the shape — that refusal IS the signal that you probe for.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import * as mongodb from "mongodb";
@@ -52,7 +52,7 @@ const BSON_GLOBALS = {
 };
 
 // Every Extended JSON wrapper. As JavaScript each is an ordinary subdocument, so a
-// document holding one runs and matches nothing — the exact failure probe exists to catch.
+// document that holds one runs and matches nothing — the exact failure probe exists to catch.
 const WRAPPERS = ["$oid", "$date", "$numberDecimal", "$numberLong", "$numberInt", "$numberDouble",
   "$binary", "$timestamp", "$minKey", "$maxKey", "$code", "$symbol", "$regularExpression", "$uuid", "$ref"];
 
@@ -64,7 +64,7 @@ const refuseWrappers = (v, path, what) => {
       fail(
         `${what}${path} holds the Extended JSON wrapper '${k}', which probe does not convert — ` +
           `as JavaScript it is a plain subdocument and would not match. ` +
-          `Write the value itself instead, e.g. new ObjectId("…") or new Date("…").`,
+          `Write the value itself instead, for example new ObjectId("…") or new Date("…").`,
       );
     }
     refuseWrappers(x, `${path}.${k}`, what);
@@ -185,7 +185,7 @@ try {
     };
   }
 } catch (e) {
-  // The server rejecting the shape is a real probe result — report it, don't crash silently.
+  // A server refusal of the shape is a real probe result — report it, don't crash silently.
   fail(`mongod rejected the ${mode}: ${e.message}`);
 } finally {
   await client.close();

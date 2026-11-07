@@ -7,7 +7,7 @@
 // suite in test/smoke.test.ts spawns tsc against it; mongoose is pinned at
 // `"*"` in devDependencies so every `npm install` pulls the latest, which
 // turns this case into the canary that catches the augmentation when it
-// drifts against mongoose's evolving generics.
+// drifts against mongoose's generics as they change.
 
 import mongoose from "mongoose";
 import "../../src/mongoose.ts";
@@ -33,8 +33,8 @@ const userSchema = new mongoose.Schema<User>({
 
 const UserModel = mongoose.model<User>("User", userSchema);
 
-// All four call-shape inputs must pass type-checking at each slot. The
-// regular MQL forms (plain object / array) must keep working untouched —
+// All four call-shape inputs must pass the type check at each slot. The
+// regular MQL forms (plain object / array) must continue to work untouched —
 // that is the pass-through path — and the JSMQL forms (string / arrow) must
 // type-check through the augmentation.
 

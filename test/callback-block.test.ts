@@ -71,7 +71,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   });
 
   it("says which of the three it is: a stage with a return, a stage without one, a declaration", () => {
-    // A block that also RETURNS cannot become a stage block by moving it: the
+    // A block that also RETURNS cannot become a stage block if the reader moves it: the
     // reader has to drop one of the two, and the message names both positions.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });`)).toThrow(
       /is a pipeline stage\. The 'return' at position \d+ makes this block a value callback/,
@@ -81,7 +81,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     ]);
     // No return: the block can BE a stage block, and the message says where.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`)).toThrow(/is a pipeline stage/);
-    // A declaration belongs at the top level, and moving it out compiles.
+    // A declaration belongs at the top level, and it compiles when moved out.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { const g = z => z; return g(x.a) > 1; });`)).toThrow(
       /declares a reusable function\. A pipeline declares a reusable function at its top level/,
     );
@@ -110,7 +110,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   });
 });
 
-// A stage-free block IS the JavaScript value form, so it keeps working and means
+// A stage-free block IS the JavaScript value form, so it continues to work and means
 // exactly what the expression spelling means.
 describe("a stage-free callback block is the JavaScript value form", () => {
   it("`{ return <pred> }` is the predicate — same MQL as the expression body", () => {

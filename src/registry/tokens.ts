@@ -176,7 +176,7 @@ export const TOKENS = {
   string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
   regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
   "`": token({
-    doc: "Opens and closes a template literal. The lexer classifies it by position — the opening backtick is TemplateStart, the closing one TemplateEnd — so it pairs with itself rather than with a separate closer.",
+    doc: "Opens and closes a template literal. The lexer classifies it by position — the opening backtick is TemplateStart, the closing one TemplateEnd — so it pairs with itself, not with a separate closer.",
     token: ["TemplateStart", "TemplateEnd"],
     role: "delimiter",
   }),
@@ -198,7 +198,7 @@ export const TOKENS = {
     variable: true,
   }),
   endOfInput: token({
-    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
+    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input', and does not read past the last token.",
     token: "EOF",
     role: "delimiter",
     variable: true,
@@ -208,7 +208,7 @@ export const TOKENS = {
 export type TokenKey = keyof typeof TOKENS;
 
 /**
- * The token types after which a `/` is DIVISION rather than the start of a regex.
+ * The token types after which a `/` is DIVISION, not the start of a regex.
  *
  * `chooseBy` on the `/` row states the rule: the preceding token decides. It does
  * not say which tokens count as a value, and that list is the other half of the

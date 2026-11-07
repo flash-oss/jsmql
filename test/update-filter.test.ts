@@ -472,7 +472,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
     ]);
   });
 
-  it("comma-chained parens mixing assignment and postfix inc/dec", () => {
+  it("comma-chained parens that mix assignment and postfix inc/dec", () => {
     expect(jsmql("($.a = 1), ($.cnt++)")).toEqual([{ $set: { a: 1, cnt: { $add: ["$cnt", 1] } } }]);
   });
 });
@@ -545,10 +545,10 @@ describe("update filters: validation errors", () => {
 });
 
 describe("update filters: lex regression checks", () => {
-  // Make sure adding `=`, `+=`, etc. did not break existing operators. The
+  // Make sure that `=`, `+=` and the other new operators did not break existing operators. The
   // expectations are the aggregation-expression shape that the lexer +
   // expression codegen produce, surfaced through `jsmql.expr()` so the top-level
-  // Filter dispatch does not add a wrapping layer the lex test does not care
+  // Filter dispatch does not add an outer layer the lex test does not care
   // about.
   it("== null still parses (loose null check)", () => {
     expect(jsmql.expr("$.a == null")).toEqual({ $lte: ["$a", null] });

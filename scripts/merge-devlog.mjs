@@ -55,7 +55,7 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   const ours = parse(oursText);
   const theirs = parse(theirsText);
 
-  // Header: accept any one-sided edit. Reject diverging edits.
+  // Header: accept any one-sided edit. Reject two edits that differ.
   let header;
   if (ours.header === theirs.header) header = ours.header;
   else if (ours.header === base.header) header = theirs.header;

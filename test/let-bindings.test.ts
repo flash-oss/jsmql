@@ -147,7 +147,7 @@ describe("let bindings — declaration lists", () => {
       { $unset: "__jsmql" },
     ]);
     // The break is only at the dependency: `c` reads neither `a` nor `b`, so it
-    // joins `b` rather than opening a third stage.
+    // joins `b`, and does not open a third stage.
     expect(jsmql("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
@@ -347,7 +347,7 @@ describe("let bindings — scope-reshaping stages clear the binding", () => {
     );
   });
 
-  it("allows rebinding after the reshape stage", () => {
+  it("allows a new binding after the reshape stage", () => {
     expect(
       jsmql("let v = $.x; $group({ _id: $.cat, sum: $sum($.amount) }); let v2 = $.sum * 2; $project({ v2 })"),
     ).toEqual([
@@ -361,7 +361,7 @@ describe("let bindings — scope-reshaping stages clear the binding", () => {
 });
 
 describe("let bindings — duplicate declaration", () => {
-  it("errors on re-declaring the same name in the same scope", () => {
+  it("errors on a second declaration of the same name in the same scope", () => {
     expect(refusal("let x = 1; let x = 2; $project({ x })")).toEqual({ message: DECLARED_AGAIN("let x", 11), pos: 11 });
   });
 });
@@ -511,7 +511,7 @@ describe("let bindings — parser errors", () => {
 
 describe("let bindings — RHS expression coverage", () => {
   // A pure-literal RHS is a compile-time constant, so it folds and inlines
-  // (no `$set`/`$unset`) instead of materialising a runtime binding. See the
+  // (no `$set`/`$unset`), and does not materialise a runtime binding. See the
   // const-folding suite for the full surface.
   it("number literal RHS folds and inlines", () => {
     expect(jsmql("let n = 42; $project({ n })")).toEqual([{ $project: { n: 42 } }]);
@@ -680,14 +680,14 @@ describe("let bindings — interaction with update ops", () => {
 // ── Re-declaration across scope boundaries ────────────────────────────────────
 
 describe("let bindings — re-declaration across boundaries", () => {
-  it("re-declaring the same name after $group is refused, as in JavaScript: the name stays declared", () => {
+  it("a second declaration of the same name after $group is refused, as in JavaScript: the name stays declared", () => {
     expect(refusal("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })")).toEqual({
       message: DECLARED_AGAIN("let v", 51),
       pos: 51,
     });
   });
 
-  it("re-declaring after $sort (NOT a reshape stage) is still rejected", () => {
+  it("a second declaration after $sort (NOT a reshape stage) is still rejected", () => {
     expect(refusal("let v = $.x; $sort({ x: 1 }); let v = $.y;")).toEqual({
       message: DECLARED_AGAIN("let v", 30),
       pos: 30,
@@ -877,7 +877,7 @@ describe("let bindings — `let` is still usable as a field name and operator na
     });
   });
 
-  it("`{ let: ... }` is a valid object key (e.g. inside $lookup body)", () => {
+  it("`{ let: ... }` is a valid object key (for example inside $lookup body)", () => {
     expect(jsmql('[$lookup({ from: "x", let: { uid: $._id }, pipeline: [], as: "y" })]')).toEqual([
       { $lookup: { from: "x", let: { uid: "$_id" }, pipeline: [], as: "y" } },
     ]);
@@ -946,7 +946,7 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
 
 describe("let bindings — $project in inclusion mode clears the let scope", () => {
   it("an inclusion-mode $project clears the let scope, so a later read is refused", () => {
-    // Naming the fields to keep drops `__jsmql` with the rest, so the binding is
+    // A list of the fields to keep drops `__jsmql` with the rest, so the binding is
     // gone at runtime. The compiler refuses the read at compile time, as it does
     // after `$group` (docs/specs/let-bindings.md § Stages that replace the document).
     expect(() => jsmql("let x = $.a; $project({ x: 1 }); $match(x > 0)")).toThrow(
@@ -1091,7 +1091,7 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
   });
 
   it("`const` is still usable as a field name and object key", () => {
-    // Adding the keyword token must not regress `const` as a plain identifier in
+    // The keyword token must not regress `const` as a plain identifier in
     // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
@@ -1104,7 +1104,7 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 
 describe("a let tombstone survives every lambda depth", () => {
   // A lambda body is inside everything its surroundings are inside, so the scope
-  // travels with the Env rather than being re-listed field by field: a binding
+  // travels with the Env, and is not listed again field by field: a binding
   // declared before the switch is captured at every nesting depth, not only the
   // first, and the actionable message holds just as deep.
   const SWITCH = /replaces the stream with a different collection/;

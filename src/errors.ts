@@ -6,7 +6,7 @@
 // module it depends on, so a name can fall silently out of the registry with no error
 // anywhere.
 //
-// Throwing is not a compiler service. It belongs where anything can reach it.
+// A throw is not a compiler service. It belongs where anything can reach it.
 //
 // See docs/specs/architecture.md § Error types.
 
@@ -30,9 +30,9 @@ export class UnknownIdentifierError extends CodegenError {
 
 /**
  * Throw a `CodegenError` flagged as a jsmql bug. Use for invariants the parser is supposed
- * to uphold — if a user ever sees one of these messages, something has slipped past the
- * parser's validation and we want them to report it. Keeps the wording consistent across
- * every internal-only throw site so they are trivially greppable.
+ * to uphold. If a user ever sees one of these messages, an error got past the
+ * parser's validation, and the user must report it. The helper keeps the wording consistent across
+ * every internal-only throw site, so a search finds them easily.
  */
 export function internalError(detail: string, pos: number = 0): never {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);

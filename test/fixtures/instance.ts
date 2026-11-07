@@ -120,16 +120,16 @@ async function ensureReadonlyUser(admin: MongoClient): Promise<void> {
  * Its roles are `readWrite` on the scratch databases and nothing else, so the
  * integration dataset stays unwritable through it.
  *
- * An existing user is UPDATED rather than left alone: the roles follow SCRATCH_DBS,
- * so adding a database to that list and re-running `fixture:up` grants it.
+ * An existing user is UPDATED, not left alone: the roles follow SCRATCH_DBS,
+ * so when you add a database to that list and run `fixture:up` again, it grants it.
  */
 async function ensureScratchUser(admin: MongoClient): Promise<void> {
   // What a suite actually does to its own database, and nothing more:
   //  - readWrite  insert the documents it asserts against, and read them back.
   //  - dbAdmin    DROP the database first. `readWrite` alone cannot, and without it
   //               the drop throws, each suite's own try/catch reads that as "no
-  //               server", and the suite degrades to compile-only while still
-  //               reporting GREEN — the silent pass this instance exists to prevent.
+  //               server", and the suite degrades to compile-only and still
+  //               reports GREEN — the silent pass this instance exists to prevent.
   //  - indexStats the `$indexStats` stage, which `compiler-sugars` runs. No built-in
   //               role carries it per-database, so it is named as a privilege.
   const roles = SCRATCH_DBS.flatMap((db) => [
@@ -199,7 +199,7 @@ function logTail(lines: number): string {
   }
 }
 
-// Start the instance if it is not already listening, then bootstrap users.
+// Start the instance if it does not already listen, then bootstrap users.
 async function ensureUp(): Promise<void> {
   if (!(await pingNoAuth())) {
     startMongod();

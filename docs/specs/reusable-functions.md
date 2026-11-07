@@ -10,10 +10,10 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Reusable functions.
 
 ## The one-line idea
 
-A reusable function is a **named [IIFE](emit-pass.md)**. Calling it is sugar for
+A reusable function is a **named [IIFE](emit-pass.md)**. A call of it is sugar for
 `((params) => body)(args)`, and JSMQL already lowers that to `$let`. So the feature
-reuses the whole IIFE → `$let` machinery. The only new parts are *naming* a lambda
-and *resolving a call* back to it.
+reuses the whole IIFE → `$let` machinery. The only new parts are the *name* of a lambda
+and the *resolution of a call* back to it.
 
 This gives the feature three properties:
 
@@ -35,7 +35,7 @@ $ = { a: double($.price), b: double($.cost) };
     "b": { "$let": { "vars": { "x": "$cost" },  "in": { "$multiply": ["$$x", 2] } } } } }]
 ```
 
-## The fork rule (declaration vs `let` binding)
+## The fork rule (a declaration or a `let` binding)
 
 `const`/`let` already declares a [pipeline-scoped value binding](let-bindings.md)
 (`const total = $.amount * 1.1` → a `$set` stage). The initialiser alone
@@ -47,8 +47,8 @@ distinguishes the two:
 | anything else (`$.x`, `5`, `$op(…)`, …) | `LetDecl` | a `$set { __jsmql.var.<name>: … }` stage |
 
 The fork is syntactic. There is no data dependence and no heuristic, so a JS
-developer's mental model — "a `const` holding a function" against "a `const`
-holding a value" — maps directly. Both keywords (`const`/`let`) work. `kind` is
+developer's mental model — "a `const` that holds a function" against "a `const`
+that holds a value" — maps directly. Both keywords (`const`/`let`) work. `kind` is
 recorded on the node but has no behavioural effect for a function, because a
 function is not reassignable and is not a value.
 
@@ -75,7 +75,7 @@ function expression.
 ## Lexer
 
 No new tokens. `function` is **not** a keyword; it lexes as an ordinary identifier,
-so a `{ function: … }` object key and a `$.function` field path keep working. The
+so a `{ function: … }` object key and a `$.function` field path continue to work. The
 parser intercepts it *by value* only where a function expression or declaration can
 start. See § The `function` keyword.
 
@@ -123,7 +123,7 @@ site cannot.
 dispatches on the callee: a name bound to a function expands it; JSMQL refuses a
 name bound to anything else, with a `didYouMean` over the declared names
 and every global that a program calls by its bare name (`bareCallableNames` in
-[src/compiler/rows.ts](../../src/compiler/rows.ts), e.g. `Numberr(x)` names `Number(...)`);
+[src/compiler/rows.ts](../../src/compiler/rows.ts), for example `Numberr(x)` names `Number(...)`);
 a lambda takes the IIFE path. Both expansions run `applyLambda`. The lowering lowers
 each argument in the CALLER's Env, binds each parameter once by `$let` so a
 multiply-read argument is not computed twice, and lowers the body under them. A call
@@ -142,7 +142,7 @@ capture of `$` and a `let` is a natural bonus, not a separate mechanism.
 ### Function-as-value
 
 A reusable function used where a **value** is expected is refused with guidance
-toward calling it, because MQL has no first-class function ([DEF-032]). Two sites:
+toward a call of it, because MQL has no first-class function ([DEF-032]). Two sites:
 
 - **bare value position** (`$ = { fn: double }`, `double + 1`): the identifier
   resolves to a `function` binding, and a function is not a value. The message
@@ -198,7 +198,7 @@ intercepts it **by value**:
 **Body grammar.** A `function` body reuses `parseExprBlockBody` — `{ (const|let
 …;)* return <expr>; }`. A body whose only statement is `return E` is normalised to
 a plain expression-body `Lambda` (`body: E`), so it is byte-identical to `(x) => E`
-in **every** position, including the query-translation predicate positions
+in **every** position, and in the query-translation predicate positions too
 (`$$$.coll.find/filter`, `$$.filter`, stream `.filter`), which translate a `body`
 expression. A body with leading `const`/`let` keeps the `exprBlock` (→ nested
 `$let`); a query-predicate position rejects such a body, and the fix is to inline
@@ -208,7 +208,7 @@ the bindings.
 so the next statement may follow with **no `;`** — `function f(x){ return x*2 } $ =
 { … }`. `form: "function"` drives this in the statement loops (`parse`,
 `parseBlockBody`, `parseCallbackBlock`); an array element still needs a
-`,`-separator. A `function` declaration forces Pipeline mode, since it cannot be a
+`,`-separator. A `function` declaration forces Pipeline mode, because it cannot be a
 Filter, the same as `$ = …` and an arrow `FuncDecl`.
 
 **Entry block-body reconciliation.** At the entry, a brace body that opens with
@@ -224,7 +224,7 @@ and a default, rest or destructured parameter.
 ## Deferred
 
 - **Function-aware Filters through textual inline** ([DEF-031]) — a function in a
-  bare Filter (no `;`) would inline into the predicate rather than bind through
+  bare Filter (no `;`) would inline into the predicate, and not bind through
   `$let`.
 - **Higher-order functions** ([DEF-032]) — passing a function as a value.
 

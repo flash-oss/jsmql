@@ -7,7 +7,7 @@
  *      no transpiler — type stripping was unflagged in Node 22.18.0 LTS and
  *      in 24.3.0, and marked stable in 25.2.0) — required for Deno/Bun
  *      parity. Vitest transforms TS through Vite's loader, which happily
- *      compiles `enum`, `namespace`, parameter properties, decorators, etc.
+ *      compiles `enum`, `namespace`, parameter properties, decorators and the like
  *      — exactly the constructs the strippable subset bans. The only honest
  *      test is to invoke the real Node stripper.
  *
@@ -21,8 +21,8 @@
  *   3. The built `dist/cjs/index.cjs` loads through `require()` and produces the
  *      same MQL across all three call shapes. This is the `require` half of
  *      the dual ESM/CJS package — Node 14+ CJS consumers depend on it, and
- *      the bundling step in `scripts/build-cjs.mjs` is easy to break without
- *      tsc noticing. Same skip rule as the ESM case.
+ *      the bundle step in `scripts/build-cjs.mjs` is easy to break, and
+ *      tsc does not see it. Same skip rule as the ESM case.
  */
 
 import { describe, it, expect } from "vitest";
@@ -146,7 +146,7 @@ describe("smoke: built dist", () => {
       // Mirrors the ESM case above but exercises the CommonJS bundle that
       // ships under the `require` condition of `package.json#exports`.
       // This targets `node14`. The script stays syntax-conservative (no
-      // template literals besides the wrapping one, no optional chaining),
+      // template literals besides the outer one, no optional chaining),
       // so the same script can also run on the lowest engine this project
       // supports.
       const script = `
@@ -180,12 +180,12 @@ describe("smoke: built dist", () => {
     () => {
       // Exercises the built executable end-to-end: the esbuild bundle, the
       // preserved shebang, and the version `define`. spawnSync drives `node
-      // dist/cjs/cli.cjs` (rather than the bare path) so the test is independent
+      // dist/cjs/cli.cjs` (not the bare path) so the test is independent
       // of the file's exec bit.
       const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
       expect(compiled.status, compiled.stderr).toBe(0);
       // The bin writes JAVASCRIPT, so the output is read the way a developer reads it —
-      // by evaluating it. Parsing it as JSON is what the printer exists to stop.
+      // by an evaluation of it. The printer exists to stop a parse of it as JSON.
       expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
 
       const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
@@ -203,7 +203,7 @@ describe("smoke: built dist", () => {
   it.skipIf(!existsSync(mongoosePkg))(
     "mongoose module augmentation in src/mongoose.ts compiles against real mongoose types",
     () => {
-      // Type-only validation: ensure the `declare module "mongoose"` block at
+      // Type-only validation: make sure that the `declare module "mongoose"` block at
       // the bottom of src/mongoose.ts merges with mongoose's real `Model<...>`
       // interface and accepts a JSMQL string / arrow at every patched slot.
       // mongoose is pinned at `"*"` in devDependencies, so every fresh

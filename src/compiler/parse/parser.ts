@@ -1,7 +1,7 @@
 // Phase 2 — PARSE. This phase reads src/registry/productions.ts.
 //
 // One Pratt loop reads `precedence`, `associativity` and `fixity` off the rows. So
-// adding an operator adds a row, and never adds a method.
+// a new operator adds a row, and never adds a method.
 //
 // This file enforces three rules that a precedence number alone cannot express.
 // Each rule is stated on the row that owns it:
@@ -65,7 +65,7 @@ const OBJECT_ID_DIGITS = 24;
 
 type Parsed = {
   expr: Expr;
-  /** The rule that produced this node. The mixing rules need it. */ rule: ProductionKey | null;
+  /** The rule that produced this node. The rules that mix operators need it. */ rule: ProductionKey | null;
 };
 
 /** The refusal of an unexpected token, or of the end of the input when the token is the end token. */
@@ -169,7 +169,7 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
     return `\`${wrote}\` at position ${pos} declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
   }
   // '.aggregate' is the one method whose block IS a list of stages, so every way
-  // out names it. Deleting only the 'return' leaves the same block on the same
+  // out names it. A delete of only the 'return' leaves the same block on the same
   // method, and the parser refuses it again. The stages must MOVE.
   const stages = `'.aggregate((o) => { ${wrote}; … })'`;
   const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
@@ -372,7 +372,7 @@ class Parser {
   private readonly c: Cursor;
   /**
    * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
-   * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
+   * pipeline STAGES, minus the ones that a callee which takes stages claimed. Whatever
    * is left when the parse ends is a JavaScript block that forgot its `return`,
    * and the parser refuses it with the callee-independent wording. This is a set,
    * not a flag threaded through every expression method, because the parser
@@ -711,8 +711,8 @@ class Parser {
    * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
    * wherever `;` separates statements. Each declarator becomes its own
    * declaration, and reads the ones before it. The KEYWORD's offset marks them as
-   * ONE declaration. This lets the emit phase give them one stage, and stops a
-   * folded-away neighbour from bridging a `;` that the developer wrote.
+   * ONE declaration. This lets the emit phase give them one stage, and prevents a
+   * folded-away neighbour from a bridge over a `;` that the developer wrote.
    * See docs/specs/let-bindings.md.
    */
   private bindings(): (LetDecl | FuncDecl)[] {
@@ -981,7 +981,7 @@ class Parser {
    * A write target must be a place, and the rule that built it must allow a
    * write. `a?.b = 1` is a JavaScript SyntaxError, wherever the `?.` sits in the
    * chain, and the `optionalMemberAccess` row states this with `neverAWriteTarget`.
-   * This method reads the row rather than testing `.optional`. So the next rule
+   * This method reads the row, and does not test `.optional`. So the next rule
    * that says so needs no branch here.
    */
   private requireWriteTarget(target: Parsed, pos: number, op: string, wrote: string): void {
@@ -1067,7 +1067,7 @@ class Parser {
         continue;
       }
 
-      // `none` means NOT chainable. The parser refuses `a < b < c` rather than grouping it.
+      // `none` means NOT chainable. The parser refuses `a < b < c`, and does not group it.
       if (rule.assoc === "none") {
         const right = this.pratt(rule.prec + 1);
         const next = INFIX.get(this.c.type);
@@ -1299,7 +1299,7 @@ class Parser {
 
   /**
    * `0x` with exactly 24 hex digits is an ObjectId. Any other hex run is an
-   * integer, and the parser accepts it only while it fits a double exactly. A
+   * integer, and the parser accepts it only when it fits a double exactly. A
    * longer run would lose precision silently, and is neither an id nor a number
    * that JavaScript can hold. The parser refuses it, and names the two spellings
    * that work.
@@ -1678,7 +1678,7 @@ class Parser {
     if (this.c.is("Let") || this.c.is("Const")) throw declarationAsElement(this.c.peek(), this.c.peek(1));
     // `[ function double(x) { … }, $set(…) ]`: a declaration, not a function
     // VALUE. Without this check it parsed as a lambda, and the lambda made the
-    // literal look like an array of values rather than a pipeline.
+    // literal look like an array of values, not a pipeline.
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writeRun();
     return this.expression();
@@ -1697,7 +1697,7 @@ class Parser {
     } else if (t.type === "Number") {
       // A field name is a string, so a numeric key uses its own spelling. A
       // 24-hex `0x…` is an ObjectId, and an ObjectId is not a field name.
-      // JavaScript would read it as a precision-losing number, so neither reading
+      // JavaScript would read it as a number that loses precision, so neither reading
       // is useful.
       const literal = this.number();
       if (literal.type === "ObjectIdLiteral") {

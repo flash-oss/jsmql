@@ -501,7 +501,7 @@ export function checkSlots(
   for (const i of args.constant ?? []) {
     const e = operands[i];
     // An object literal is exempt, as it is for `slotType`: for a body that may be
-    // a name OR a document, the row's `body` rule describes its keys, and several
+    // a name OR a document, the row's `body` rule describes its keys, and some
     // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
     // A run-time value is a constant too: the call supplies it before the compile.

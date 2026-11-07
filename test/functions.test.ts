@@ -236,13 +236,13 @@ describe("reusable functions — rejections (actionable errors)", () => {
     ]);
   });
 
-  it("re-declaring a function in the same pipeline is rejected", () => {
+  it("a second declaration of a function in the same pipeline is rejected", () => {
     expect(() => jsmql("const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };")).toThrow(
       "`const f` at position 20 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
   });
 
-  it("a function name colliding with a `let` binding is rejected", () => {
+  it("a function name that collides with a `let` binding is rejected", () => {
     expect(() => jsmql("let total = $.amount; const total = (x) => x; $ = { a: total($.n) };")).toThrow(
       "`const total` at position 22 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
@@ -276,7 +276,7 @@ describe("reusable functions — validate() carries a meaningful .pos", () => {
   });
 });
 
-describe("reusable functions — review-driven hardening", () => {
+describe("reusable functions — edge cases", () => {
   it("a function declared in an .aggregate block lambda closes over the foreign param", () => {
     // `u.age` inside the function body must hoist to "$age" in the $lookup
     // sub-pipeline, exactly like a `let` would (the function is a named IIFE).
@@ -438,7 +438,7 @@ describe("`function` keyword — parity with the arrow form", () => {
   // positional shape — a bare `$`, a bare doc identifier, the two-slot
   // `($, { $op })`, and the three-slot `(params, $, { $op })` — is rejected.
   // (String inputs route through the same `parseFunctionInput` path as live
-  // arrows without tripping the toolbox param type in this .ts file.)
+  // arrows, and do not trip the toolbox param type in this .ts file.)
   it("rejects the bare-`$` arrow entry form `($) => …`", () => {
     expect(() => jsmql.compile("($) => $.age > 18")).toThrow(/object destructure pattern/);
   });
@@ -463,7 +463,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(jsmql.compile("({ $, $$, $$$, $$$$ }) => $.age > 18")()).toEqual({ age: { $gt: 18 } });
   });
 
-  it("rejects mixing params and toolbox keys in one destructure", () => {
+  it("rejects a mix of params and toolbox keys in one destructure", () => {
     expect(() => jsmql.compile("({ minAge, $ }) => $.age > minAge")).toThrow(
       "A destructure holds either query parameters or the '$'-prefixed toolbox, never both. Split them into two: '(params, { $, … }) => …' at position 3",
     );
@@ -490,7 +490,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(jsmql("let async = 1; $.a = async;")).toEqual([{ $set: { a: 1 } }]);
   });
 
-  it("`function` is not a reserved keyword — object keys and field paths keep working", () => {
+  it("`function` is not a reserved keyword — object keys and field paths continue to work", () => {
     // It lexes as an ordinary identifier and is intercepted only where a function
     // expression/declaration can actually start, so `{ function: … }` (object
     // key) and `$.function` (field path) are unaffected.

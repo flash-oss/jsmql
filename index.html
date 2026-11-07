@@ -36,7 +36,7 @@
     <!-- This is the playground's highlighter, in read-only form. It uses the same pinned CodeMirror release,
          the same JavaScript mode, and the same `neo` theme, so a block here and the same block in the editor
          carry identical colours. `runmode-standalone` is that tokeniser without the editor around it. It is a
-         thirtieth of the core's weight, and this page shows code rather than editing it. The page works without
+         thirtieth of the core's weight, and this page shows code, but does not edit it. The page works without
          all three files: when the CDN does not answer, the module script below leaves every block as plain text. -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/neo.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/runmode/runmode-standalone.min.js"></script>
@@ -192,7 +192,7 @@
         padding: 0 20px;
       }
 
-      /* The example cards are the one thing on the page that reads at the code measure rather than the page
+      /* The example cards are the one thing on the page that reads at the code measure, not the page
          measure. This measure adds two side-by-side panels of `--code-panel`, their 14px gap, the 38px
          that the card spends on padding and border, and the wrap's own 20px gutters. On a wide screen the
          cards reach past the prose column on both sides and show an 80-column line whole. On a narrow
@@ -566,7 +566,7 @@
         font-size: 15px;
       }
 
-      /* ── SQL vs JSMQL ────────────────────────────────────────────────────── */
+      /* ── SQL and JSMQL ───────────────────────────────────────────────────── */
       /* Each row holds one idea: what it is, how SQL says it, and how JSMQL says it. These rows hold no MQL
          on purpose. This is a comparison of the two languages that people write, and a third column of what
          the machine runs would only show the length of both. Where the SQL dialects disagree, each one gets
@@ -935,7 +935,7 @@
 
     <section>
       <div class="wrap">
-        <h2>SQL vs JSMQL</h2>
+        <h2>SQL and JSMQL</h2>
       </div>
 
       <!-- The rows take the code measure, as the example cards do. So a SQL line and its JSMQL line each sit
@@ -1111,7 +1111,7 @@ $.status = "done";</code></pre>
         </article>
 
         <article class="example" data-example data-mode="auto">
-          <h3><span class="chip pipeline">Pipeline</span> Joins without hand-writing <code>$lookup</code></h3>
+          <h3><span class="chip pipeline">Pipeline</span> Joins with no hand-written <code>$lookup</code></h3>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
@@ -1152,7 +1152,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
             </p>
           </div>
           <div class="card">
-            <h3>Existing MQL keeps working</h3>
+            <h3>Existing MQL still works</h3>
             <p>Any MQL that you paste into JSMQL comes out unchanged. Existing MQL code works immediately.</p>
           </div>
           <div class="card">
@@ -1173,7 +1173,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
             </p>
           </div>
           <div class="card">
-            <h3>Indexes keep working</h3>
+            <h3>Indexes still work</h3>
             <p>JSMQL makes sure that queries use collection indexes as much as possible.</p>
           </div>
           <div class="card">
@@ -1210,9 +1210,9 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
             </p>
           </div>
           <div class="card">
-            <h3>SQL over MongoDB keeps failing</h3>
+            <h3>SQL over MongoDB failed three times</h3>
             <p>
-              MongoDB offered analysts SQL three times since 2015: a BI connector built on PostgreSQL, then its Atlas
+              MongoDB gave analysts SQL three times after 2015: a BI connector built on PostgreSQL, then its Atlas
               successor, now deprecated, and a read-only SQL-92 interface. Each attempt assumed that people who need
               data speak SQL. JSMQL assumes they speak JavaScript.
             </p>
@@ -1275,7 +1275,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
               </li>
               <li>
                 <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANG_RULES.md">Language rules</a> — the
-                promises the compiler keeps, including that the server never gets MQL that cannot run.
+                promises the compiler keeps. One of them: the server never gets MQL that cannot run.
               </li>
             </ul>
           </div>
@@ -1307,7 +1307,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
       // mode keys that the playground uses, so one value drives both the compile below and the share link
       // that opens the example in the playground.
       const examples = document.querySelectorAll("[data-example]");
-      // Each SQL-vs-JSMQL row carries a JSMQL cell and no MQL pane. The script compiles each one too: a
+      // Each SQL-and-JSMQL row carries a JSMQL cell and no MQL pane. The script compiles each one too: a
       // cell that fails to compile marks itself. Its link opens the playground, which is where the MQL
       // shows.
       const versus = document.querySelectorAll("[data-vs]");
@@ -1333,7 +1333,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
       // without an editor. Its callback form reports one token at a time, with the style that the mode
       // gives it. These are the same `cm-*` names that the playground's editors carry, and that the `neo`
       // stylesheet colours. The callback form makes the line split safe: one run tokenises the whole text,
-      // so a construct that spans lines still reads correctly, while each line lands in its own element
+      // so a construct that spans lines still reads correctly, and each line goes into its own element
       // for the CSS counter to number. When the page has no CodeMirror, because the CDN is blocked, the
       // lines still land, just without colour.
       function paint(codeEl, mode, text = codeEl.textContent) {
@@ -1348,7 +1348,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
         let line = openLine();
         const emit = (chunk, style) => {
           // A token can carry newlines; a run of blank lines arrives as one chunk. So this splits every
-          // chunk, rather than only the ones that look like line breaks.
+          // chunk, not only the ones that look like line breaks.
           chunk.split("\n").forEach((part, i) => {
             if (i > 0) line = openLine();
             if (!part) return;
@@ -1421,7 +1421,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
 
         const out = el.querySelector(".out");
         if (!out) {
-          // This is a SQL-vs-JSMQL row. The script compiles it to prove the cell, and shows only a failure.
+          // This is a SQL-and-JSMQL row. The script compiles it to prove the cell, and shows only a failure.
           try {
             entries[mode](source);
           } catch (err) {

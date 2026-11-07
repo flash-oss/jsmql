@@ -152,7 +152,7 @@ is a number: MEASURED, the server aborts the query for a string key.
 
 The second branch runs only when the test passed, so the guarded path IS
 there inside it. `Env.proving(path)` records that fact, and `isPresent` reads
-it. This is what keeps the cell from putting its own `$ifNull` back on the
+it. So the cell does not put its own `$ifNull` back on the
 same field. `Env.dropFields` does not carry the set: a stage that replaced the
 document invalidates every path a test proved.
 
@@ -316,7 +316,7 @@ $.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"
 $abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}           a `$op(…)` call keeps MongoDB's truthiness
 ```
 
-Wrapping the whole `||` in `$expr` as soon as one branch needs it changes what
+An `$expr` around the whole `||`, as soon as one branch needs it, changes what
 the other branches mean: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
 `tags: ["red", "blue"]`, where `{ tags: "red" }` does. So a leaf's answer would
 depend on its sibling. Per branch, each branch means what the same predicate
@@ -353,7 +353,7 @@ counts as one), and answers null otherwise, so `$gt($.a, $.b)` takes the
 expression road. A query-only operator whose arguments do not fit the clause
 takes HR2's plain form, because the call is the developer's own MQL:
 `$exists(1)` → `{"$exists":1}`, and the server refuses it. The raw spelling keeps MongoDB's own reading — the compiler adds no
-own-value clause — while an `$elemMatch` ARROW is a JavaScript spelling over
+own-value clause — but an `$elemMatch` ARROW is a JavaScript spelling over
 the element and reads it as one. `$and` / `$or` / `$nor` list their
 predicates, each a filter of its own, as a call and as a key of a raw
 document. `$not` negates one raw clause on one field, and otherwise takes the
@@ -432,16 +432,16 @@ does neither. Two suites measure the gap and name every source it separates:
 `!p` is the COMPLEMENT of p's own clause — `{ $nor: [<p>] }` — whenever p has a
 clause with no `$expr` inside. That is not a size choice: `$expr` orders
 across BSON types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]`
-and for `v: "x"`, where JavaScript answers true for both. So
-`$.v > 1 || !($.v > 1)` stopped being a tautology. Measured, it is one again.
+and for `v: "x"`, where JavaScript answers true for both. So with
+`$not` over `$expr`, `$.v > 1 || !($.v > 1)` is not a tautology. With the complement, it is one (measured).
 A predicate with an `$expr` inside keeps the truth road, whose own `$not` over
 one expression is already JavaScript's answer.
 
 Two measured facts hold the shape in place. First, the exclusion costs no
 index: `{ a: { $eq: 1 } }` plans an IXSCAN over the bounds `[1, 1]`, exactly as
-`{ a: 1 }` does — while a `$not` wrapped around the whole positive clause
+`{ a: 1 }` does — but a `$not` around the whole positive clause
 drops to a collection scan. This is why a negation is an `$or`. Second, the
-project compares the answer with JavaScript's own, by evaluating the source in
+project compares the answer with JavaScript's own. It evaluates the source in
 node over the same documents (`test/compiler-js-agreement.test.ts`). Two
 families of source still differ there, and neither is an array: JavaScript
 COERCES under a relational operator (`[2] > 1` is true), and it THROWS when a
@@ -566,12 +566,12 @@ same way, unless the row files its slot as a sub-pipeline — a stage there is
 first where IT stands, because its own `place` call already said so. Which
 slots those are is the row's `statementBody` fact, not the slot's `statement`
 kind. The two are different things: `$lookup.pipeline` and a `$facet` branch
-start a pipeline, while `$merge.whenMatched` is an UPDATE spec with no first
-position at all and a closed set of stages the server runs there. Reading the
-slot kind alone conflated them, and one line then did two wrong things at
-once: it refused `$geoNear` first-in-a-`$lookup`-body because a statement
-preceded the `$lookup` (the server runs that), and it caught a banned stage
-in `whenMatched` only when a statement happened to precede the `$merge` (the
+start a pipeline, but `$merge.whenMatched` is an UPDATE spec with no first
+position at all and a closed set of stages the server runs there. A check of the
+slot kind alone conflates them, and one line then does two wrong things at
+once: it refuses `$geoNear` first-in-a-`$lookup`-body when a statement
+precedes the `$lookup` (the server runs that), and it catches a banned stage
+in `whenMatched` only when a statement precedes the `$merge` (the
 server never runs that). The row states which kind it is. A row that files a
 `statement` slot and states nothing fails the build. The `stageLast` mirror
 is the same fact read backwards: the cleanup that drops the scratch fields is
@@ -587,7 +587,7 @@ $.a = 1, $.b = $toString("$a")  // → two $sets, because `"$a"` in raw MQL IS a
 
 `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server — measured, `y`
 survived — where a JavaScript assignment replaces the field. `$mergeObjects`
-makes the document the value of an expression rather than a nested field
+makes the document the value of an expression, not a nested field
 spec, and unlike `$literal` an expression inside it still evaluates. A `"$a"`
 in raw MQL is the field `a` (HR1), so it ends a write group exactly as `$.a`
 does. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing. Without that, one `$set` would give `b` the value `a` held
@@ -669,8 +669,8 @@ once, in the order of the stages. A group is a chain link, a write of a `,` run
 or a stage call. See docs/specs/types.md § The document after a stage. A stage whose `document` effect replaces the document (see docs/specs/types.md) takes
 every field-carried binding with it — `true` for `$group`, `$replaceWith`,
 `$count` and their kind, `"inclusion"` for a `$project` whose body names
-fields to keep — and the compiler refuses a read after that, naming the
-stage, rather than emitting a read of a field the stage took away. The way
+fields to keep — and the compiler refuses a read after that. The message names the
+stage. The compiler does not emit a read of a field that the stage took away. The way
 back is the one JavaScript allows: `x = …` on a dropped `let` writes its slot
 again, and the next statement reads it. A dropped `const` can only be carried
 as a field of the new document. Every name that has no value here — a
@@ -759,7 +759,7 @@ $.n = $$$.orders.filter(o => o.userId === $._id).size();
 // → the $lookup HOISTED into "__jsmql.tmp.0", { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }
 ```
 
-**The chain peels.** A link goes into `$lookup.pipeline` while its row has a
+**The chain peels.** A link goes into `$lookup.pipeline` when its row has a
 `stream` cell that accepts it — `filter`/`reject`, the sort spellings,
 `take`, `aggregate`, a stage link, a `.map` whose body is a provable document
 (the row states `streamBody: "document"`). The first link that is not such a
@@ -767,7 +767,7 @@ link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
 a value `.map` — read the materialised array as a VALUE. A method after a field read or an index read
 (`.find(p).name.trim()`) is part of that value too, never a link of the body. A row that states
 `elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
-link only while the body's element is an unwound field; on a stream of whole
+link only when the body's element is an unwound field; on a stream of whole
 documents it ends the body the same way. `.find` is the one special head
 (the row states `picksOne`): `filter` plus `{ $limit: 1 }`, with the slot
 unwrapped by `$first`. The compiler also unwraps a link that folds the
@@ -778,7 +778,7 @@ with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
 no later stage replaced), the value is the elements and not their carriers:
 the compiler rebases the rest of the chain onto `<slot>.map(x => x.<element>)`
 (or onto the slot itself when the whole value is a COUNT — `.size()` /
-`.size()` — since one document holds one element; or `<slot>.<element>`
+`.size()` — because one document holds one element; or `<slot>.<element>`
 after `.find`). The `$ =` road replaces with `$<slot>.<element>`, and the
 direct-to-`as` shortcut declines so the value road runs.
 
@@ -1105,7 +1105,7 @@ root), and names the pipeline form as the way to compute.
 | `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path on both sides) |
 | `$.t = Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
-| `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |
+| `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for more than one value and `$position: 0` for unshift |
 | `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |
 | `$inc({ n: 2 })`, `{ $inc: { n: 2 } }` | the row's `updateDoc` cell, as written |
 

@@ -16,14 +16,14 @@ Source: [src/cli.ts](../../src/cli.ts). Bin name: `jsmql`
 
 1. the positional `[source]` argument, if present;
 2. `--file <path>` (read with `readFileSync(path, "utf8")`);
-3. stdin, read synchronously via `readFileSync(0, "utf8")` (fd 0).
+3. stdin, read synchronously through `readFileSync(0, "utf8")` (fd 0).
 
 If none of these is available, and `process.stdin.isTTY` is true (an
 interactive terminal with nothing piped), this is a **usage error** (exit 2).
-The CLI must not hang while it waits on a TTY. The CLI applies `trimEnd()` to
+The CLI must not wait forever on a TTY. The CLI applies `trimEnd()` to
 the resolved source. Trailing whitespace, notably the newline a shell `echo`
-or heredoc appends, has no meaning in the language. Trimming keeps an
-end-of-input error's caret on the source line, instead of a dangling blank one.
+or heredoc appends, has no meaning in the language. The trim keeps the caret
+of an end-of-input error on the source line, not on an empty line after it.
 
 ## Output shape
 
@@ -42,7 +42,7 @@ For example, a bare expression under `--pipeline` gives the same message as the
 JS `jsmql.pipeline()`, and that message names the `$match(...)` wrapper. The CLI
 invents no new wording.
 
-## Formatting
+## Output format
 
 The output is what `jsmql.stringify(result, { indent, width })` writes. This
 is the library's own printer; the CLI holds no copy of it. It writes the
@@ -149,7 +149,7 @@ name `jsmql` to that file.
 
 ## Deferred work and non-goals
 
-A `-S` / `--sort-keys` flag is a deliberate **non-goal**. Reordering object
+A `-S` / `--sort-keys` flag is a deliberate **non-goal**. A new order of object
 keys can change MQL semantics — for example, `$project` computed-field order.
 So the project records this as a will not-implement decision in
 [DEFERRED.md](../DEFERRED.md) §B, instead of a TODO.

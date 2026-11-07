@@ -2,7 +2,7 @@
 //
 // Constant folding computes values. A value must go back into the tree before
 // any later phase can see it. This code puts it back as a LITERAL, not as a
-// built carrier node. This keeps every later phase working on a tree the
+// built carrier node. So every later phase works on a tree the
 // surface could have produced, and it lets a folded constant reach a rule
 // that matches on literals:
 //
@@ -14,7 +14,7 @@
 // slot uses. So a constant date is inlined exactly as a constant number is,
 // and a `$match` on it stays a query the index can serve. A value with no node
 // at all (`undefined`, a non-finite number) gets the answer null, and the
-// declaration KEEPS ITS BINDING. See `fold.ts` for why inlining the source
+// declaration KEEPS ITS BINDING. See `fold.ts` for why an inline of the source
 // expression instead would carry its free names to every use site.
 
 import type { Expr } from "../../registry/ast.ts";
@@ -29,8 +29,8 @@ import { OrderedDocument } from "../interpret/values.ts";
  *
  * This is ONE boundary for the whole pass. When three places check it —
  * arithmetic, a number method, `.sum()` — the three answers drift apart. Then
- * `[1e308, 1e308].sum()` reaches the driver as `Infinity`, while `1e308 * 10`
- * is refused. Asking once removes the question of which policy applies where.
+ * `[1e308, 1e308].sum()` reaches the driver as `Infinity`, but `1e308 * 10`
+ * is refused. One question removes the question of which policy applies where.
  */
 export function isSpellable(value: unknown): boolean {
   return asLiteral(value, 0) !== null;
@@ -44,7 +44,7 @@ const NOT_CONSTANT: Reading = { ok: false };
 /**
  * The value a LITERAL node holds, or `{ ok: false }` for anything else.
  *
- * This reads leaves only. Reading `1 + 2` is the evaluator's job. This reads the `1`.
+ * This reads leaves only. A read of `1 + 2` is the evaluator's job. This reads the `1`.
  */
 export function readLiteral(node: Expr): Reading {
   switch (node.type) {
@@ -170,7 +170,7 @@ export function nodeOf(value: unknown, pos: number, text = false): Expr {
  * An element of an injected structure: its literal where it has one, otherwise
  * the value itself as an `Injected` node. A Date inside `{ startDate, endDate }`
  * keeps the object's keys readable (`$dateDiff(${parts})` is the body it
- * spells), while the Date stays the value it is. `undefined` has no spelling
+ * spells), and the Date stays the value it is. `undefined` has no spelling
  * and stops the structure. So does a nested structure that `asLiteral` itself refused.
  */
 function leafOf(value: unknown, pos: number, text: boolean): Expr | null {

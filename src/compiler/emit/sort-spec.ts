@@ -8,7 +8,7 @@
 // argument (`KindOf`). Five spellings, one meaning each:
 //
 //   "age"                      one key, ascending
-//   ["age", "name"]            several keys, all ascending
+//   ["age", "name"]            more than one key, all ascending
 //   { age: -1, name: "asc" }   keys with directions — 1 / -1 / "asc" / "desc"
 //   x => x.age   x => -x.age   a key function; the minus sign gives the direction
 //   (a, b) => a.age - b.age    a comparator; `b.k - a.k` sorts descending, and
@@ -215,7 +215,7 @@ const wholeElementDir = (body: Expr, a: string, b: string): 1 | -1 | null => {
 
 /**
  * `(a, b) => a.k - b.k` as a spec: the parameter that stands FIRST in the
- * subtraction gives the ascending one. `||` joins several keys, most significant first.
+ * subtraction gives the ascending one. `||` joins more than one key, most significant first.
  * `(a, b) => a - b` names no field, so the elements themselves become the key.
  */
 function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {

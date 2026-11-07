@@ -653,7 +653,7 @@ describe("kinds — a literal array is judged by each position, a computed array
     });
   });
 
-  it("the dispatcher refuses a tuple when ANY position has no fitting kind, a set only when NO kind fits", () => {
+  it("the dispatcher refuses a tuple when ANY position has no kind that fits, a set only when NO kind fits", () => {
     const run = (proofs: object) =>
       select(consult("max", "value"), { kind: "value", family: "array", lowered: null }, { kind: "none" }, 0, {
         args: [],

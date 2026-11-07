@@ -1694,7 +1694,7 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: { $ifNull: ["$n", ""] } });
     expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
     expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
-    // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's own
+    // `$ifNull` wraps the reduce so an EMPTY array answers "", not the reduce's own
     // `null` seed; that guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
     // The seed is `null` so a leading "" element keeps its separator.
     expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toEqual({
@@ -3041,7 +3041,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_methods").collection("t");

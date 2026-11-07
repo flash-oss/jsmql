@@ -3,8 +3,8 @@
 // A predicate can reach MQL by two different roads. In Filter position (or a `$match` body)
 // it becomes the QUERY language: `{ age: { $gt: 18 } }`. Anywhere else it becomes the
 // aggregation-EXPRESSION language: `{ $gt: ["$age", 18] }`. Those are two lowerings of one
-// source, written in two files, sharing no code — which is precisely the shape that lets
-// them drift apart without anyone noticing.
+// source, written in two files, with no shared code — which is precisely the shape that lets
+// them drift apart, and nobody sees it.
 //
 // They already had: `typeof $.a === "boolean"` selected documents as a filter and matched
 // NOTHING as an expression, for months, because the query side carried a BSON alias table
@@ -21,7 +21,7 @@
 // divergence without a row fails the suite.
 //
 // Self-skips (green) when no mongod is reachable, like the other server-backed suites, and
-// carries the coverage guard that goes with that: a suite that quietly stops comparing is
+// carries the coverage guard that goes with that: a suite that quietly stops its comparisons is
 // worse than no suite.
 
 import { MongoClient, type Collection } from "mongodb";
@@ -73,15 +73,15 @@ const AGREE: readonly string[] = [
   '$.s.endsWith("lo")',
   '$.s.startsWith("H")',
   '$.s.endsWith("o")',
-  // A needle carrying regex metacharacters must be escaped, not interpreted.
+  // A needle that carries regex metacharacters must be escaped, not interpreted.
   '$.s.startsWith("h.")',
   // RegexMatch — a `$regex` clause as a query, `$regexMatch` as an expression.
   "$.s.match(/^he/)",
   "$.s.match(/HE/i)",
   // JS-only regex flags. The expression side strips them (`mongoRegexOptions`); the query
   // side hands the pattern to `new RegExp` and lets the driver serialise it. MongoDB itself
-  // refuses a `g`, so this pair asserts the driver normalises rather than forwarding it —
-  // if that ever changed, the query side would start being rejected and this would catch it.
+  // refuses a `g`, so this pair asserts the driver normalises it, and does not forward it.
+  // If that changes, the server starts to reject the query side, and this test catches it.
   "$.s.match(/^he/g)",
   "$.s.match(/^HE/gi)",
   // Membership
@@ -126,7 +126,7 @@ const SAME_QUERY: readonly string[] = [
 /**
  * A predicate whose two lowerings legitimately differ, with the reason. Each is a
  * MongoDB-semantics fact, not a jsmql choice — but jsmql picks which one the user gets, so
- * the difference is contracted here rather than discovered.
+ * the difference is stated here, not discovered later.
  */
 const DIVERGE: readonly { src: string; why: string }[] = [
   {
@@ -145,7 +145,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_query_expr_agreement").collection("t");

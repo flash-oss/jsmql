@@ -24,7 +24,7 @@ A value JSMQL emits is then the same class the driver builds. It passes the call
 `dependencies` entry would let npm nest a second copy beside the application's copy. A
 value from the wrong copy then fails both checks, and this contract removes that defect.
 
-Two build rules follow. Breaking either one brings the defect back.
+Two build rules follow. A break of either one brings the defect back.
 
 | artifact | rule | why |
 |---|---|---|
@@ -55,10 +55,10 @@ identity with JSMQL's CJS build. An ESM consumer that reaches the driver's class
 through CJS interop does not, and never did, with or without jsmql. The value still
 serialises, because the version symbol is what the serializer reads.
 
-This is the concrete reason recognition duck-types: a valid value can arrive wearing a
+This is the concrete reason recognition duck-types: a valid value can arrive with a
 prototype JSMQL has never seen, through no fault of anyone's dependency graph.
 
-## Construction vs recognition
+## Construction and recognition
 
 `src/bson.ts` is the one module that names `bson`. It draws the line:
 
@@ -81,7 +81,7 @@ readings.
 
 Every read of a recognised value goes through a **defensive** reader (`objectIdHex`).
 The compiler may pass an injected `{ _bsontype: "ObjectId", id: "xyz" }` through as a
-plain object, since a plain object may wear the tag, and calling the class's method on
+plain object, because a plain object may wear the tag, and a call of the class's method on
 it throws. The reader returns null instead, and the caller treats the value as what it
 is.
 
@@ -213,8 +213,8 @@ Once built, a BSON value is a VALUE and nothing else:
 
 ## A BigInt literal is a `Long`
 
-`5n` is an int64 in MQL, so `src/compiler/emit/lower.ts` builds the value instead of
-emitting `{ $toLong: "5" }`. Three things follow. The server parses no string per
+`5n` is an int64 in MQL, so `src/compiler/emit/lower.ts` builds the value, and does not
+emit `{ $toLong: "5" }`. Three things follow. The server parses no string per
 document. The comparison stays on the query road, so `$.xs === 1n` matches an ELEMENT
 of `xs` where the `$expr` form compared the whole array. And a BigInt past 64 bits is
 refused at its source position, where it used to compile and fail on the server —
@@ -239,7 +239,7 @@ siblings either: `true + 1`, `[1,2] + 1` and `0x507f… + 1` all emit `$add` tod
 general operand gate over every kind would be its own change; a MinKey-only gate would
 be an inconsistency, not a fix.
 
-## Running against both majors
+## Run against both majors
 
 The peer range is `^6.10.0 || ^7.0.0`, and a range JSMQL never runs against is a claim
 with nothing behind it. `test/bson-majors.test.ts` is the second lane: `bson6` is an

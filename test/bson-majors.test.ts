@@ -3,8 +3,8 @@
 // for the 6.x line installed beside the 7.x one, so both majors are in the tree at once.
 //
 // It covers the two things that can actually vary. First, the ASSUMPTIONS src/bson.ts
-// makes about the classes — which throw, which silently wrap — since jsmql's refusals
-// are built on exactly those. Second, a value from the OTHER copy flowing through the
+// makes about the classes — which throw, which silently wrap — because jsmql's refusals
+// are built on exactly those. Second, a value from the OTHER copy that flows through the
 // compiler, which is the case the `instanceof || tag` recognition exists for.
 //
 // The compiler itself is bson-agnostic: it constructs nine values and reads a
@@ -33,7 +33,7 @@ describe("bson majors — both are installed, and they are different copies", ()
     expect((new bson7.ObjectId(HEX) as unknown as Record<symbol, number>)[BSON_VERSION]).toBe(7);
   });
 
-  // This is WHY `bson` is a peer dependency rather than a plain one. A plain
+  // This is WHY `bson` is a peer dependency, not a plain one. A plain
   // dependency lets npm nest jsmql's own copy beside the application's, and a value
   // from the wrong copy does not merely fail `instanceof` — the serializer refuses it
   // outright, so the query never reaches the server at all.
@@ -44,8 +44,8 @@ describe("bson majors — both are installed, and they are different copies", ()
 
 describe("bson majors — what the peer dependency does and does not buy", () => {
   it("re-exports the very classes the resolved `bson` holds", () => {
-    // A caller who imports from jsmql provably gets the copy jsmql resolved, rather
-    // than reaching a second one through their own dependency graph.
+    // A caller who imports from jsmql provably gets the copy jsmql resolved. The caller
+    // does not get a second one through their own dependency graph.
     for (const name of ["Decimal128", "Double", "Int32", "Long", "MaxKey", "MinKey", "ObjectId", "UUID"] as const) {
       expect(jsmqlExports[name], name).toBe(bson7[name]);
     }
@@ -54,7 +54,7 @@ describe("bson majors — what the peer dependency does and does not buy", () =>
   // `bson` ships a dual build — its exports map sends `import` to lib/bson.node.mjs
   // and `require` to lib/bson.cjs — so those are two class objects, and `instanceof`
   // across that line fails for ANY pair of modules, jsmql or not. MEASURED, and it is
-  // why recognition reads the `_bsontype` tag rather than trusting a prototype.
+  // why recognition reads the `_bsontype` tag, and does not trust a prototype.
   //
   // What survives the split is the thing that matters: the BSON version symbol agrees,
   // so a driver on either side serializes the value.
@@ -69,8 +69,8 @@ describe("bson majors — what the peer dependency does and does not buy", () =>
 });
 
 describe.each(MAJORS)("%s — the behaviour src/bson.ts is built on", (_label, B) => {
-  // jsmql's refusals exist BECAUSE these wrap rather than throw. If a major ever
-  // started throwing, the refusal would still be correct — but if one started
+  // jsmql's refusals exist BECAUSE these wrap and do not throw. If a major ever
+  // started to throw, the refusal would still be correct — but if one started
   // ACCEPTING a wider range, jsmql would refuse a value that major can hold.
   it("silently wraps what it cannot hold", () => {
     expect(new B.Int32(3.7).valueOf()).toBe(3);
@@ -91,7 +91,7 @@ describe.each(MAJORS)("%s — the behaviour src/bson.ts is built on", (_label, B
 
   it("offers the constructors src/bson.ts calls", () => {
     expect(typeof B.Decimal128.fromString).toBe("function");
-    // `fromString` rather than `fromBigInt`: present in every supported major.
+    // `fromString`, not `fromBigInt`: present in every supported major.
     expect(typeof B.Long.fromString).toBe("function");
     expect(B.Long.fromString("9223372036854775807").toString()).toBe("9223372036854775807");
     expect(new B.ObjectId(HEX).toHexString()).toBe(HEX);

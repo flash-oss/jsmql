@@ -654,7 +654,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   // stage, not ahead of the statement. MEASURED with the `$lookup` at the front
   // instead: the server refused `$size` of a slot that `$sortByCount` dropped earlier,
   // because a missing field is not an array.
-  it("joins on the group key a reshaping stage made, not on the source document", () => {
+  it("joins on the group key a reshape stage made, not on the source document", () => {
     expect(
       compiled(
         "$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() })); $$.toSorted({ n: -1, _id: 1 });",
@@ -689,9 +689,9 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   });
 
   // `$unwind` keeps the slot, so this one answered no error at all: both rows read
-  // the `$lookup` that had matched the WHOLE `ids` array before the unwind, and
+  // the `$lookup` that matched the WHOLE `ids` array before the unwind, and
   // came back with the same order's total. MEASURED: `t: 10` twice.
-  it("joins on the element an unwinding stage made, not on the array it came from", () => {
+  it("joins on the element an unwind stage made, not on the array it came from", () => {
     expect(
       compiled(
         '$$.$unwind("$ids").map(u => ({ _id: u.ids, t: $$$.orders.find(o => o._id === u.ids).total })); $$.toSorted({ _id: 1 });',
@@ -853,7 +853,7 @@ describe("compiler/emit/join — a correlated key the server holds as a constant
   // not apply and the pipeline is refused before a document is read — MEASURED:
   // an array key does not convert to a string, and a string key fails `$arrayElemAt`,
   // which needs an array. A `$switch`
-  // drops a branch whose case folds to false without optimising it.
+  // drops a branch whose case folds to false, with no optimiser.
   it("reads a bracket index in a join key without folding the branch that does not apply", () => {
     expect(
       compiled("$.found = $$$.orders.find({ _id: $.ids[0] }).status;", [
@@ -910,7 +910,7 @@ let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
   // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal rather than letting this suite skip itself green.
+  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   db = c.db("jsmql_compiler_join");

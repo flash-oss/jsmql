@@ -2,7 +2,7 @@
 //
 // The punctuator order comes from the key lengths, and the keywords table
 // promotes a reserved word. So nothing here is ordered or branched by hand,
-// and adding a token means adding a row.
+// and a new token is a new row.
 //
 // A longest-match table cannot state five decisions. The rows that own them
 // state each one, and this file reads them below:
@@ -72,8 +72,8 @@ const PUNCTUATORS: readonly Punct[] = Object.entries(TOKENS)
 
 /**
  * The scanner named by each `chooseBy.otherwise` type. This is a table, so a
- * third position-classified spelling can state its own scanner here, instead
- * of being read as a regex only because that was the one branch available.
+ * third position-classified spelling can state its own scanner here. Then
+ * the lexer does not read it as a regex only because that was the one branch available.
  */
 const OTHERWISE_SCANNERS: Readonly<Partial<Record<TokenName, (src: string, i: number) => RegexScan>>> = {
   RegexLiteral: scanRegex,

@@ -7,7 +7,7 @@
  * in `package.json#exports`.
  *
  * Method: esbuild bundles each entry into a single `.cjs` file for `node16`.
- * Bundling (rather than per-file emit) sidesteps the dual-package hazard: two copies
+ * One bundle (not a per-file emit) prevents the dual-package hazard: two copies
  * of the parser and codegen on disk with distinct singleton state. It keeps the CJS
  * surface a self-contained drop-in.
  *
@@ -73,7 +73,7 @@ for (const name of ["index", "globals", "mongoose"]) {
 // `require("@koresar/jsmql/mongoose")(mongoose)` expects the module itself to be
 // a function. esbuild's CJS output for a default export normally lands at `module.exports.default`.
 // Without this fixup, users would have to write `require(...).default(mongoose)`. This code
-// appends a one-liner that promotes the default export to be the module value while keeping
+// appends a one-liner that promotes the default export to be the module value, and keeps
 // `.default` set. Both call shapes stay interoperable: ESM/TypeScript `import jsmqlMongoose from "…/mongoose"`
 // and CJS `require(...)`. Index and globals have no default export, so you leave them alone.
 const mongooseCjs = path.join(OUT_DIR, "mongoose.cjs");

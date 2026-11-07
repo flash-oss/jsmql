@@ -492,7 +492,7 @@ var dateRow = (spelling) => global_({
   doc: `A date. \`${spelling}()\` is now; a constant is a literal.`,
   token: "Ident",
   // `Date(…)` means a date here. JavaScript's bare `Date()` returns a STRING, and
-  // JSMQL keeps the syntax rather than that meaning (SR2). JSMQL has no `new` (HR8).
+  // JSMQL keeps the syntax, not that meaning (SR2). JSMQL has no `new` (HR8).
   provides: "Date",
   returns: "date",
   neverNull: true,
@@ -942,7 +942,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $divide: mongo({
-    doc: "Returns the result of dividing the first number by the second.",
+    doc: "Divides the first number by the second, and returns the result.",
     category: "arithmetic",
     returns: "number",
     neverNull: true,
@@ -1071,7 +1071,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $subtract: mongo({
-    doc: "Returns the result of subtracting the second value from the first.",
+    doc: "Subtracts the second value from the first, and returns the result.",
     category: "arithmetic",
     returns: "unknown",
     neverNull: true,
@@ -1447,7 +1447,7 @@ var NAMES = {
     }
   }),
   $switch: mongo({
-    doc: "Evaluates a series of case expressions; executes the matching case's expression and breaks out of the control flow.",
+    doc: "Evaluates a series of case expressions. It executes the expression of the case that matches, and then stops.",
     category: "conditional",
     returns: "unknown",
     where: ["value"],
@@ -1493,7 +1493,7 @@ var NAMES = {
     }
   }),
   $ltrim: mongo({
-    doc: "Removes whitespace or the specified characters from the beginning of a string.",
+    doc: "Removes whitespace or the specified characters from the start of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
@@ -1513,7 +1513,7 @@ var NAMES = {
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody }
   }),
   $trim: mongo({
-    doc: "Removes whitespace or the specified characters from the beginning and end of a string.",
+    doc: "Removes whitespace or the specified characters from the start and end of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
@@ -1544,7 +1544,7 @@ var NAMES = {
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $regexMatch: mongo({
-    doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
+    doc: "Applies a regular expression to a string, and returns a boolean that tells whether it finds a match.",
     category: "string",
     returns: "bool",
     neverNull: "always",
@@ -1631,7 +1631,7 @@ var NAMES = {
     }
   }),
   $substrBytes: mongo({
-    doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
+    doc: "Returns the substring of a string that starts at the specified UTF-8 byte index.",
     category: "string",
     returns: "string",
     neverNull: true,
@@ -1644,7 +1644,7 @@ var NAMES = {
     }
   }),
   $substrCP: mongo({
-    doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
+    doc: "Returns the substring of a string that starts at the specified UTF-8 code point index.",
     category: "string",
     returns: "string",
     neverNull: true,
@@ -1749,7 +1749,7 @@ var NAMES = {
     window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $filter: mongo({
-    doc: "Selects a subset of the array, returning only elements that match the filter condition.",
+    doc: "Selects a subset of the array. It returns only the elements that match the filter condition.",
     category: "array",
     // MEASURED: `limit` does not see `$$this` — the server refuses a read of it there.
     binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
@@ -1772,7 +1772,7 @@ var NAMES = {
     window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $firstN: mongo({
-    doc: "Returns a specified number of elements from the beginning of an array.",
+    doc: "Returns a specified number of elements from the start of an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
@@ -1784,7 +1784,7 @@ var NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $in: mongo({
-    doc: "Returns a boolean indicating whether a specified value is in an array.",
+    doc: "Returns a boolean that tells whether a specified value is in an array.",
     category: "array",
     returns: "bool",
     neverNull: true,
@@ -1844,7 +1844,7 @@ var NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $map: mongo({
-    doc: "Applies a subexpression to each element of an array and returns the array of resulting values.",
+    doc: "Applies a subexpression to each element of an array, and returns the array of the values it gives.",
     category: "array",
     binds: { valueAt: "as", default: "this", visibleIn: ["in"] },
     returns: "array",
@@ -1879,7 +1879,7 @@ var NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $objectToArray: mongo({
-    doc: "Converts a document to an array of documents representing key-value pairs.",
+    doc: "Converts a document to an array of documents. Each one holds a key-value pair.",
     category: "array",
     returns: { arrayOf: "object" },
     neverNull: true,
@@ -1889,7 +1889,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $range: mongo({
-    doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
+    doc: "Outputs an array that holds a sequence of integers, as the inputs specify.",
     category: "array",
     returns: { arrayOf: "number" },
     neverNull: true,
@@ -2044,7 +2044,7 @@ var NAMES = {
     window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $getField: mongo({
-    doc: "Returns the value of a specified field from a document, including fields whose names contain periods or start with $.",
+    doc: "Returns the value of a specified field from a document. This includes a field whose name contains a period or starts with $.",
     category: "object",
     returns: "unknown",
     where: ["value"],
@@ -2079,7 +2079,7 @@ var NAMES = {
     expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $unsetField: mongo({
-    doc: "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
+    doc: "Removes a specified field from a document. Alias for $setField with $$REMOVE.",
     category: "object",
     returns: "object",
     where: ["value"],
@@ -2148,7 +2148,7 @@ var NAMES = {
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $dateToParts: mongo({
-    doc: "Returns a document containing the constituent parts of a date.",
+    doc: "Returns a document that holds the constituent parts of a date.",
     category: "date",
     returns: "object",
     where: ["value"],
@@ -2218,7 +2218,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $isoDayOfWeek: mongo({
-    doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
+    doc: "Returns the weekday number in ISO 8601 format, from 1 (Monday) to 7 (Sunday).",
     category: "date",
     returns: "number",
     neverNull: true,
@@ -2228,7 +2228,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $isoWeek: mongo({
-    doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
+    doc: "Returns the week number in ISO 8601 format, from 1 to 53.",
     category: "date",
     returns: "number",
     neverNull: true,
@@ -2318,7 +2318,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $tsIncrement: mongo({
-    doc: "Returns the incrementing ordinal from a timestamp as a long.",
+    doc: "Returns the increment ordinal from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
     neverNull: true,
@@ -2465,7 +2465,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $literal: mongo({
-    doc: "Returns a value without parsing. Use to keep values that the pipeline would otherwise interpret as expressions (e.g. strings starting with $).",
+    doc: "Returns a value, and does not parse it. Use it for a value that the pipeline would otherwise interpret as an expression (for example a string that starts with $).",
     category: "literal",
     returns: "unknown",
     where: ["value"],
@@ -2531,7 +2531,7 @@ var NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $meta: mongo({
-    doc: 'Accesses per-document metadata related to the aggregation operation. Argument is a keyword string (e.g. "textScore"), not an arbitrary expression.',
+    doc: 'Accesses per-document metadata related to the aggregation operation. The argument is a keyword string (for example "textScore"), not an arbitrary expression.',
     category: "text",
     returns: "unknown",
     where: ["value"],
@@ -2589,7 +2589,7 @@ var NAMES = {
     filter: { args: { sig: "rate", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $toHashedIndexKey: mongo({
-    doc: "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
+    doc: "Computes the hash of the input expression with MongoDB's hashed-index hash function.",
     category: "miscellaneous",
     returns: "number",
     where: ["value"],
@@ -2642,7 +2642,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $max: mongo({
-    doc: "Returns the maximum value that results from applying an expression.",
+    doc: "Applies an expression, and returns the maximum value of the results.",
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
@@ -2670,7 +2670,7 @@ var NAMES = {
     window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody }
   }),
   $min: mongo({
-    doc: "Returns the minimum value that results from applying an expression.",
+    doc: "Applies an expression, and returns the minimum value of the results.",
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
@@ -2698,7 +2698,7 @@ var NAMES = {
     window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $push: mongo({
-    doc: "Returns an array of values that result from applying an expression.",
+    doc: "Applies an expression, and returns an array of the results.",
     category: "array",
     returns: { arrayOf: { arg: 0 } },
     // MEASURED: over a missing field the accumulated array is `[]`, never null.
@@ -2738,7 +2738,7 @@ var NAMES = {
     window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $sum: mongo({
-    doc: "Returns a sum of numerical values, ignoring non-numeric values.",
+    doc: "Returns a sum of numerical values. It ignores non-numeric values.",
     category: "arithmetic",
     returns: "number",
     // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
@@ -2754,7 +2754,7 @@ var NAMES = {
     window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $bottom: mongo({
-    doc: "Returns the bottom element within a group according to the specified sort order.",
+    doc: "Returns the bottom element within a group, in the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
@@ -2764,7 +2764,7 @@ var NAMES = {
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody }
   }),
   $bottomN: mongo({
-    doc: "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
+    doc: "Returns an aggregation of the bottom n elements within a group, in the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
@@ -2774,7 +2774,7 @@ var NAMES = {
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $top: mongo({
-    doc: "Returns the top element within a group according to the specified sort order.",
+    doc: "Returns the top element within a group, in the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
@@ -2784,7 +2784,7 @@ var NAMES = {
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody }
   }),
   $topN: mongo({
-    doc: "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
+    doc: "Returns an aggregation of the top n fields within a group, in the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
@@ -2861,7 +2861,7 @@ var NAMES = {
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody }
   }),
   $linearFill: mongo({
-    doc: "Fills null and missing fields in a window using linear interpolation based on surrounding field values.",
+    doc: "Fills null and missing fields in a window with linear interpolation, from the field values around them.",
     category: "window",
     returns: "number",
     where: ["window"],
@@ -2894,7 +2894,7 @@ var NAMES = {
     window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $addFields: mongo({
-    doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    doc: "Adds new fields to documents. Outputs documents that contain all the fields from the input documents and the new fields.",
     valueTwin: "$mergeObjects",
     where: ["stream", "statement"],
     preservesCount: true,
@@ -2908,7 +2908,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucket: mongo({
-    doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
+    doc: "Categorizes the input documents into groups, called buckets, from a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
@@ -2920,7 +2920,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucketAuto: mongo({
-    doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
+    doc: "Categorizes the input documents into a specific number of groups, called buckets, from a specified expression. The server sets the bucket boundaries automatically, and tries to put an equal part of the documents into each bucket.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
@@ -2956,7 +2956,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $collStats: mongo({
-    doc: "Returns statistics regarding a collection or view.",
+    doc: "Returns statistics about a collection or view.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
@@ -2968,7 +2968,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $currentOp: mongo({
-    doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
+    doc: "Returns information on active or dormant operations, or both, for the MongoDB deployment.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -3002,7 +3002,7 @@ var NAMES = {
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
     // collection, and refuses it in every other body. jsmql writes that one shape
-    // from `$$.push(…)`, so the refusal names the sugar rather than a stage
+    // from `$$.push(…)`, so the refusal names the sugar, not a stage
     // position the server would refuse in its turn.
     placement: {
       container: "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];')."
@@ -3020,7 +3020,7 @@ var NAMES = {
     }
   }),
   $facet: mongo({
-    doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    doc: "Processes more than one aggregation pipeline within a single stage, on the same set of input documents. So one stage can give aggregations of the data across more than one dimension.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     document: "fields",
@@ -3081,7 +3081,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $indexStats: mongo({
-    doc: "Returns statistics regarding the use of each index for the collection.",
+    doc: "Returns statistics about the use of each index for the collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
@@ -3105,7 +3105,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listLocalSessions: mongo({
-    doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
+    doc: "Lists all active sessions recently in use on the connected mongos or mongod instance.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -3130,7 +3130,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSearchIndexes: mongo({
-    doc: "Returns information about existing Atlas Search indexes on a specified collection.",
+    doc: "Returns information about the Atlas Search indexes on a specified collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
@@ -3143,7 +3143,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSessions: mongo({
-    doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
+    doc: "Lists all sessions that were active long enough to propagate to the system.sessions collection.",
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
@@ -3155,7 +3155,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $lookup: mongo({
-    doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    doc: "Performs a left outer join to another collection in the same database. It brings in documents from the joined collection for the next stages.",
     pipelineOver: "foreign",
     statementBody: "pipeline",
     where: ["stream", "statement"],
@@ -3170,7 +3170,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $match: mongo({
-    doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    doc: "Filters the document stream. Only the documents that match go unmodified into the next pipeline stage.",
     valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → refused: the body must be a document
@@ -3182,7 +3182,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $merge: mongo({
-    doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    doc: "Writes the output documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
     // and the server refuses 24 others in an update.
     statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
@@ -3200,7 +3200,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $out: mongo({
-    doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    doc: "Writes the output documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → refused: an unknown key; { $out: 1 } → refused: the body must be a string or a document
@@ -3224,7 +3224,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $project: mongo({
-    doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    doc: "Reshapes each document in the stream, for example it adds new fields or removes fields. For each input document, outputs one document.",
     valueTwin: "$getField",
     document: "projection",
     evaluates: ["*"],
@@ -3236,7 +3236,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $rankFusion: mongo({
-    doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    doc: "Combines more than one pipeline with rank-based fusion, to create hybrid search results.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
@@ -3249,7 +3249,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $redact: mongo({
-    doc: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    doc: "Reshapes each document in the stream. It restricts the content of each document from information stored in the documents themselves.",
     valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $redact: "$KEEP" } → accepted
@@ -3262,7 +3262,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $replaceRoot: mongo({
-    doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    doc: "Replaces a document with the specified embedded document. The operation replaces all the fields in the input document, and the _id field too.",
     where: ["stream", "statement"],
     document: "value",
     evaluates: ["newRoot"],
@@ -3273,7 +3273,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $replaceWith: mongo({
-    doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
+    doc: "Replaces a document with the specified embedded document. The operation replaces all the fields in the input document, and the _id field too.",
     where: ["stream", "statement"],
     document: "value",
     evaluates: [""],
@@ -3294,7 +3294,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $scoreFusion: mongo({
-    doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    doc: "Combines more than one pipeline with relative score fusion, to create hybrid search results.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
@@ -3331,7 +3331,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $set: mongo({
-    doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    doc: "Adds new fields to documents. Outputs documents that contain all the fields from the input documents and the new fields.",
     valueTwin: "$mergeObjects",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
@@ -3372,7 +3372,7 @@ var NAMES = {
     statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $skip: mongo({
-    doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    doc: "Skips the first n documents, where n is the specified skip number. It passes the other documents unmodified to the pipeline.",
     valueTwin: "$slice",
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → refused: a negative count; { $skip: 1.5 } → refused: a fractional count (the operand rule is in `args`)
@@ -3398,7 +3398,7 @@ var NAMES = {
     updateDoc: { args: { sig: "spec", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $sortByCount: mongo({
-    doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    doc: "Groups the input documents by the value of a specified expression, then computes the count of documents in each distinct group.",
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
@@ -4858,7 +4858,7 @@ var NAMES = {
       }
     },
     stream: because(
-      "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'."
+      "returns ONE element, so the result is a value, not a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'."
     ),
     statement: unsupported(
       "'.findLast()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findLast();'"
@@ -5065,7 +5065,7 @@ var NAMES = {
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
-      `joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(", ")'.`
+      `joins elements into ONE string, so the result is a value, not a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(", ")'.`
     ),
     statement: unsupported(
       "'.join()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.join();'"
@@ -5359,7 +5359,7 @@ var NAMES = {
     expr: unsupported(
       ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
-    stream: because("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
+    stream: because("appends by mutation. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
     statement: inCode("src/compiler/emit/union.ts"),
     group: unsupported("'.push()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.push()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
@@ -7290,7 +7290,7 @@ var NAMES = {
       }
     },
     stream: because(
-      "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'."
+      "groups elements into ARRAYS of n, so the result is a stream of arrays, not documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'."
     ),
     statement: unsupported(
       "'.chunk()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.chunk();'"
@@ -7548,7 +7548,7 @@ var NAMES = {
       perFamily: {
         array: viaFallback,
         stream: unsupported(
-          "'$$.size()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
+          "'$$.size()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (for example `({ $ }) => { $.n = $$.size(); \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
         )
       }
     },
@@ -7602,7 +7602,7 @@ var NAMES = {
     },
     stream: {
       args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
-      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      // a running flag over the sorted stream: 0 when every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy: sortedBy2, slot }) => {
         const flag = slot();
         return [
@@ -7656,7 +7656,7 @@ var NAMES = {
     },
     stream: {
       args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
-      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      // a running flag over the sorted stream: 0 when every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy: sortedBy2, slot }) => {
         const flag = slot();
         return [
@@ -7855,7 +7855,7 @@ var NAMES = {
         };
       }
     },
-    stream: because("builds ONE object from keys and values, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from keys and values, so the result is a value, not a stream."),
     statement: unsupported(
       "'.zipObject()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.zipObject();'"
     ),
@@ -7916,7 +7916,7 @@ var NAMES = {
         };
       }
     },
-    stream: because("transposes into ONE array of arrays, so the result is a value rather than a stream."),
+    stream: because("transposes into ONE array of arrays, so the result is a value, not a stream."),
     statement: unsupported(
       "'.unzip()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.unzip();'"
     ),
@@ -8516,7 +8516,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => pairsToObject(recv) },
-    stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from pairs, so the result is a value, not a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'"
     ),
@@ -9229,13 +9229,13 @@ var NAMES = {
     filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $each: mongo({
-    doc: "Adds several values at once instead of one.",
+    doc: "Adds more than one value at once, not only one.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push", "$addToSet"] },
     updateDoc: { args: { sig: "values", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $position: mongo({
-    doc: "The index to insert at, rather than appending.",
+    doc: "The index to insert at. Without it, the value goes at the end.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     updateDoc: { args: { sig: "index", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
@@ -9277,7 +9277,7 @@ var NAMES = {
     updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pull: mongo({
-    doc: "Removes every array element matching a condition.",
+    doc: "Removes every array element that matches a condition.",
     where: ["updateDoc"],
     updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
@@ -9371,7 +9371,7 @@ var NAMES = {
     }
   }),
   $geoWithin: mongo({
-    doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
+    doc: "Selects geometries within a GeoJSON geometry that bounds them. The 2dsphere and 2d indexes support $geoWithin.",
     category: "geospatial",
     where: ["filter"],
     filter: {
@@ -9643,7 +9643,7 @@ var NAMES = {
     window: unsupported("'shardedDataDistribution()' is a source stage, not a window function.")
   }),
   shuffle: name({
-    doc: "'.shuffle()' \u2014 random order, by stamping a '$rand' field, sorting on it and dropping it.",
+    doc: "'.shuffle()' \u2014 random order. It stamps a '$rand' field, sorts on it and drops it.",
     call: true,
     on: "stream",
     returns: "stream",
@@ -9706,7 +9706,7 @@ var NAMES = {
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
     expr: unsupported(
-      "'assert(...)' is a pipeline statement, not a value \u2014 it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. `({ $ }) => { assert($.qty >= 0, \"qty must be >= 0\"); \u2026 }`."
+      "'assert(...)' is a pipeline statement, not a value \u2014 it can't appear inside an expression. Use it as its own statement in a pipeline body, for example `({ $ }) => { assert($.qty >= 0, \"qty must be >= 0\"); \u2026 }`."
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
@@ -11755,7 +11755,7 @@ var PRODUCTIONS = {
     statement: unsupported("'Number(x)' is not a statement \u2014 see its 'where'.")
   }),
   unappliedReference: production({
-    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Number)`.",
+    doc: "A callable given to a higher-order name, but not applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
     // A bare name that the developer does not apply is still only a name. The
@@ -12068,7 +12068,7 @@ var PRODUCTIONS = {
     doc: "`({ a, b }, { $ }) => \u2026` binds each named parameter. The ONLY parameter form: a plain name is refused, one level deep, renaming allowed, no defaults, no rest.",
     tokens: ["{", "}", ",", "(", ")", "identifier", ":", "$", "$$", "$$$", "$$$$"],
     spelling: "({ $ }) => \u2026",
-    becomes: { notANode: "produces ParamBinding[], which the parser holds beside the tree rather than in it" },
+    becomes: { notANode: "produces ParamBinding[], which the parser holds beside the tree, not in it" },
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -12737,7 +12737,7 @@ var TOKENS = {
   string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
   regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
   "`": token({
-    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself rather than with a separate closer.",
+    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself, not with a separate closer.",
     token: ["TemplateStart", "TemplateEnd"],
     role: "delimiter"
   }),
@@ -12759,7 +12759,7 @@ var TOKENS = {
     variable: true
   }),
   endOfInput: token({
-    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
+    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input', and does not read past the last token.",
     token: "EOF",
     role: "delimiter",
     variable: true
@@ -13886,7 +13886,7 @@ var Binary = class _Binary extends BSONValue {
     if (!(buffer2 == null) && typeof buffer2 === "string" && !ArrayBuffer.isView(buffer2) && !isAnyArrayBuffer(buffer2) && !Array.isArray(buffer2)) {
       throw new BSONError("Binary can only be constructed from Uint8Array or number[]");
     }
-    this.sub_type = (subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT) & 255;
+    this.sub_type = subType ?? _Binary.BSON_BINARY_SUBTYPE_DEFAULT;
     if (buffer2 == null) {
       this.buffer = ByteUtils.allocate(_Binary.BUFFER_SIZE);
       this.position = 0;
@@ -13981,7 +13981,7 @@ var Binary = class _Binary extends BSONValue {
     if (this.sub_type === _Binary.SUBTYPE_UUID) {
       return new UUID(this.buffer.subarray(0, this.position));
     }
-    throw new BSONError(`Binary sub_type "${this.sub_type}" (${typeof this.sub_type}) is not supported for converting to UUID. Only 0x${_Binary.SUBTYPE_UUID.toString(16).padStart(2, "0")} is currently supported.`);
+    throw new BSONError(`Binary sub_type "${this.sub_type}" is not supported for converting to UUID. Only "${_Binary.SUBTYPE_UUID}" is currently supported.`);
   }
   static createFromHexString(hex, subType) {
     return new _Binary(ByteUtils.fromHex(hex), subType);
@@ -15727,67 +15727,19 @@ var MinKey = class _MinKey extends BSONValue {
     return "new MinKey()";
   }
 };
+var PROCESS_UNIQUE = null;
 var __idCache = /* @__PURE__ */ new WeakMap();
-var byteToHex = [];
-for (let n2 = 0; n2 < 256; n2++)
-  byteToHex.push(n2.toString(16).padStart(2, "0"));
-var hexCharCodeToNibble = new Int8Array(103);
-for (let c = 48; c <= 57; c++)
-  hexCharCodeToNibble[c] = c - 48;
-for (let c = 65; c <= 70; c++)
-  hexCharCodeToNibble[c] = c - 55;
-for (let c = 97; c <= 102; c++)
-  hexCharCodeToNibble[c] = c - 87;
 var ObjectId = class _ObjectId extends BSONValue {
   get _bsontype() {
     return "ObjectId";
   }
-  static index = 0;
-  static PROCESS_UNIQUE = null;
-  static resetState = () => {
-    this.index = Math.floor(Math.random() * 16777216);
-    this.PROCESS_UNIQUE = null;
-  };
-  static {
-    this.resetState();
-    const { startupSnapshot } = globalThis?.process?.getBuiltinModule?.("v8") ?? {};
-    if (startupSnapshot?.isBuildingSnapshot?.()) {
-      startupSnapshot?.addDeserializeCallback?.(this.resetState);
-    }
-  }
+  static index = Math.floor(Math.random() * 16777215);
   static cacheHexString;
-  i0;
-  i1;
-  i2;
-  i3;
-  setFromBytes(b, offset = 0) {
-    this.i0 = b[offset] << 16 | b[offset + 1] << 8 | b[offset + 2];
-    this.i1 = b[offset + 3] << 16 | b[offset + 4] << 8 | b[offset + 5];
-    this.i2 = b[offset + 6] << 16 | b[offset + 7] << 8 | b[offset + 8];
-    this.i3 = b[offset + 9] << 16 | b[offset + 10] << 8 | b[offset + 11];
-  }
-  setFromHex(s) {
-    const t = hexCharCodeToNibble;
-    this.i0 = t[s.charCodeAt(0)] << 20 | t[s.charCodeAt(1)] << 16 | t[s.charCodeAt(2)] << 12 | t[s.charCodeAt(3)] << 8 | t[s.charCodeAt(4)] << 4 | t[s.charCodeAt(5)];
-    this.i1 = t[s.charCodeAt(6)] << 20 | t[s.charCodeAt(7)] << 16 | t[s.charCodeAt(8)] << 12 | t[s.charCodeAt(9)] << 8 | t[s.charCodeAt(10)] << 4 | t[s.charCodeAt(11)];
-    this.i2 = t[s.charCodeAt(12)] << 20 | t[s.charCodeAt(13)] << 16 | t[s.charCodeAt(14)] << 12 | t[s.charCodeAt(15)] << 8 | t[s.charCodeAt(16)] << 4 | t[s.charCodeAt(17)];
-    this.i3 = t[s.charCodeAt(18)] << 20 | t[s.charCodeAt(19)] << 16 | t[s.charCodeAt(20)] << 12 | t[s.charCodeAt(21)] << 8 | t[s.charCodeAt(22)] << 4 | t[s.charCodeAt(23)];
-  }
-  constructor(inputId, offset) {
+  buffer;
+  constructor(inputId) {
     super();
-    if (typeof offset === "number") {
-      this.setFromBytes(inputId, offset);
-      return;
-    }
     let workingId;
     if (typeof inputId === "object" && inputId && "id" in inputId) {
-      if (_ObjectId.is(inputId) && typeof inputId.i0 === "number" && typeof inputId.i1 === "number" && typeof inputId.i2 === "number" && typeof inputId.i3 === "number") {
-        this.i0 = inputId.i0;
-        this.i1 = inputId.i1;
-        this.i2 = inputId.i2;
-        this.i3 = inputId.i3;
-        return;
-      }
       if (typeof inputId.id !== "string" && !ArrayBuffer.isView(inputId.id)) {
         throw new BSONError("Argument passed in must have an id that is of type string or Buffer");
       }
@@ -15800,18 +15752,12 @@ var ObjectId = class _ObjectId extends BSONValue {
       workingId = inputId;
     }
     if (workingId == null) {
-      const time = Math.floor(Date.now() / 1e3);
-      const inc = _ObjectId.getInc();
-      const pu = _ObjectId.PROCESS_UNIQUE ??= ByteUtils.randomBytes(5);
-      this.i0 = time >>> 8 & 16777215;
-      this.i1 = (time & 255) << 16 | pu[0] << 8 | pu[1];
-      this.i2 = pu[2] << 16 | pu[3] << 8 | pu[4];
-      this.i3 = inc & 16777215;
+      this.buffer = _ObjectId.generate();
     } else if (ArrayBuffer.isView(workingId) && workingId.byteLength === 12) {
-      this.setFromBytes(workingId instanceof Uint8Array ? workingId : ByteUtils.toLocalBufferType(workingId));
+      this.buffer = ByteUtils.toLocalBufferType(workingId);
     } else if (typeof workingId === "string") {
       if (_ObjectId.validateHexString(workingId)) {
-        this.setFromHex(workingId);
+        this.buffer = ByteUtils.fromHex(workingId);
         if (_ObjectId.cacheHexString) {
           __idCache.set(this, workingId);
         }
@@ -15823,26 +15769,12 @@ var ObjectId = class _ObjectId extends BSONValue {
     }
   }
   get id() {
-    const b = ByteUtils.allocateUnsafe(12);
-    b[0] = this.i0 >>> 16 & 255;
-    b[1] = this.i0 >>> 8 & 255;
-    b[2] = this.i0 & 255;
-    b[3] = this.i1 >>> 16 & 255;
-    b[4] = this.i1 >>> 8 & 255;
-    b[5] = this.i1 & 255;
-    b[6] = this.i2 >>> 16 & 255;
-    b[7] = this.i2 >>> 8 & 255;
-    b[8] = this.i2 & 255;
-    b[9] = this.i3 >>> 16 & 255;
-    b[10] = this.i3 >>> 8 & 255;
-    b[11] = this.i3 & 255;
-    return b;
+    return this.buffer;
   }
   set id(value) {
-    const bytes = value instanceof Uint8Array ? value : ByteUtils.toLocalBufferType(value);
-    this.setFromBytes(bytes);
+    this.buffer = value;
     if (_ObjectId.cacheHexString) {
-      __idCache.set(this, ByteUtils.toHex(bytes));
+      __idCache.set(this, ByteUtils.toHex(value));
     }
   }
   static validateHexString(string) {
@@ -15863,18 +15795,14 @@ var ObjectId = class _ObjectId extends BSONValue {
       if (__id)
         return __id;
     }
-    const i0 = this.i0;
-    const i1 = this.i1;
-    const i2 = this.i2;
-    const i3 = this.i3;
-    const hexString = byteToHex[i0 >>> 16 & 255] + byteToHex[i0 >>> 8 & 255] + byteToHex[i0 & 255] + byteToHex[i1 >>> 16 & 255] + byteToHex[i1 >>> 8 & 255] + byteToHex[i1 & 255] + byteToHex[i2 >>> 16 & 255] + byteToHex[i2 >>> 8 & 255] + byteToHex[i2 & 255] + byteToHex[i3 >>> 16 & 255] + byteToHex[i3 >>> 8 & 255] + byteToHex[i3 & 255];
+    const hexString = ByteUtils.toHex(this.id);
     if (_ObjectId.cacheHexString) {
       __idCache.set(this, hexString);
     }
     return hexString;
   }
   static getInc() {
-    return _ObjectId.index = (_ObjectId.index + 1) % 16777216;
+    return _ObjectId.index = (_ObjectId.index + 1) % 16777215;
   }
   static generate(time) {
     if ("number" !== typeof time) {
@@ -15883,15 +15811,17 @@ var ObjectId = class _ObjectId extends BSONValue {
     const inc = _ObjectId.getInc();
     const buffer2 = ByteUtils.allocateUnsafe(12);
     NumberUtils.setInt32BE(buffer2, 0, time);
-    const PROCESS_UNIQUE = this.PROCESS_UNIQUE ??= ByteUtils.randomBytes(5);
+    if (PROCESS_UNIQUE === null) {
+      PROCESS_UNIQUE = ByteUtils.randomBytes(5);
+    }
     buffer2[4] = PROCESS_UNIQUE[0];
     buffer2[5] = PROCESS_UNIQUE[1];
     buffer2[6] = PROCESS_UNIQUE[2];
     buffer2[7] = PROCESS_UNIQUE[3];
     buffer2[8] = PROCESS_UNIQUE[4];
     buffer2[11] = inc & 255;
-    buffer2[10] = inc >>> 8 & 255;
-    buffer2[9] = inc >>> 16 & 255;
+    buffer2[10] = inc >> 8 & 255;
+    buffer2[9] = inc >> 16 & 255;
     return buffer2;
   }
   toString(encoding) {
@@ -15911,8 +15841,8 @@ var ObjectId = class _ObjectId extends BSONValue {
     if (otherId === void 0 || otherId === null) {
       return false;
     }
-    if (_ObjectId.is(otherId) && typeof otherId.i0 === "number" && typeof otherId.i1 === "number" && typeof otherId.i2 === "number" && typeof otherId.i3 === "number") {
-      return this.i3 === otherId.i3 && this.i0 === otherId.i0 && this.i1 === otherId.i1 && this.i2 === otherId.i2;
+    if (_ObjectId.is(otherId)) {
+      return this.buffer[11] === otherId.buffer[11] && ByteUtils.equals(this.buffer, otherId.buffer);
     }
     if (typeof otherId === "string") {
       return otherId.toLowerCase() === this.toHexString();
@@ -15926,26 +15856,26 @@ var ObjectId = class _ObjectId extends BSONValue {
   }
   getTimestamp() {
     const timestamp = /* @__PURE__ */ new Date();
-    const time = this.i0 * 256 + (this.i1 >>> 16);
-    timestamp.setTime(time * 1e3);
+    const time = NumberUtils.getUint32BE(this.buffer, 0);
+    timestamp.setTime(Math.floor(time) * 1e3);
     return timestamp;
   }
   static createPk() {
     return new _ObjectId();
   }
   serializeInto(uint8array, index) {
-    uint8array[index] = this.i0 >>> 16 & 255;
-    uint8array[index + 1] = this.i0 >>> 8 & 255;
-    uint8array[index + 2] = this.i0 & 255;
-    uint8array[index + 3] = this.i1 >>> 16 & 255;
-    uint8array[index + 4] = this.i1 >>> 8 & 255;
-    uint8array[index + 5] = this.i1 & 255;
-    uint8array[index + 6] = this.i2 >>> 16 & 255;
-    uint8array[index + 7] = this.i2 >>> 8 & 255;
-    uint8array[index + 8] = this.i2 & 255;
-    uint8array[index + 9] = this.i3 >>> 16 & 255;
-    uint8array[index + 10] = this.i3 >>> 8 & 255;
-    uint8array[index + 11] = this.i3 & 255;
+    uint8array[index] = this.buffer[0];
+    uint8array[index + 1] = this.buffer[1];
+    uint8array[index + 2] = this.buffer[2];
+    uint8array[index + 3] = this.buffer[3];
+    uint8array[index + 4] = this.buffer[4];
+    uint8array[index + 5] = this.buffer[5];
+    uint8array[index + 6] = this.buffer[6];
+    uint8array[index + 7] = this.buffer[7];
+    uint8array[index + 8] = this.buffer[8];
+    uint8array[index + 9] = this.buffer[9];
+    uint8array[index + 10] = this.buffer[10];
+    uint8array[index + 11] = this.buffer[11];
     return 12;
   }
   static createFromTime(time) {
@@ -16306,7 +16236,7 @@ function serializeValue(value, options) {
   if (value === void 0)
     return options.ignoreUndefined ? void 0 : null;
   if (value instanceof Date || isDate2(value)) {
-    const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023008e5;
+    const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023188e5;
     if (options.legacy) {
       return options.relaxed && inRange ? { $date: value.getTime() } : { $date: getISOString(value) };
     }
@@ -16418,20 +16348,21 @@ function parse(text, options) {
     return deserializeValue(value, ejsonOptions);
   });
 }
-function stringify(value, replacerOrOptions, spaceOrOptions, options) {
-  if (spaceOrOptions != null && typeof spaceOrOptions === "object") {
-    options = spaceOrOptions;
-    spaceOrOptions = void 0;
+function stringify(value, replacer, space, options) {
+  if (space != null && typeof space === "object") {
+    options = space;
+    space = 0;
   }
-  if (replacerOrOptions != null && typeof replacerOrOptions === "object" && !Array.isArray(replacerOrOptions)) {
-    options = replacerOrOptions;
-    replacerOrOptions = void 0;
+  if (replacer != null && typeof replacer === "object" && !Array.isArray(replacer)) {
+    options = replacer;
+    replacer = void 0;
+    space = 0;
   }
   const serializeOptions = Object.assign({ relaxed: true, legacy: false }, options, {
     seenObjects: [{ propertyName: "(root)", obj: null }]
   });
   const doc = serializeValue(value, serializeOptions);
-  return JSON.stringify(doc, replacerOrOptions, spaceOrOptions);
+  return JSON.stringify(doc, replacer, space);
 }
 function EJSONserialize(value, options) {
   options = options || {};
@@ -17412,7 +17343,7 @@ var Parser = class _Parser {
   constructor(toks, src) {
     /**
      * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
-     * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
+     * pipeline STAGES, minus the ones that a callee which takes stages claimed. Whatever
      * is left when the parse ends is a JavaScript block that forgot its `return`,
      * and the parser refuses it with the callee-independent wording. This is a set,
      * not a flag threaded through every expression method, because the parser
@@ -17707,8 +17638,8 @@ var Parser = class _Parser {
    * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
    * wherever `;` separates statements. Each declarator becomes its own
    * declaration, and reads the ones before it. The KEYWORD's offset marks them as
-   * ONE declaration. This lets the emit phase give them one stage, and stops a
-   * folded-away neighbour from bridging a `;` that the developer wrote.
+   * ONE declaration. This lets the emit phase give them one stage, and prevents a
+   * folded-away neighbour from a bridge over a `;` that the developer wrote.
    * See docs/specs/let-bindings.md.
    */
   bindings() {
@@ -17937,7 +17868,7 @@ var Parser = class _Parser {
    * A write target must be a place, and the rule that built it must allow a
    * write. `a?.b = 1` is a JavaScript SyntaxError, wherever the `?.` sits in the
    * chain, and the `optionalMemberAccess` row states this with `neverAWriteTarget`.
-   * This method reads the row rather than testing `.optional`. So the next rule
+   * This method reads the row, and does not test `.optional`. So the next rule
    * that says so needs no branch here.
    */
   requireWriteTarget(target2, pos, op, wrote) {
@@ -18216,7 +18147,7 @@ var Parser = class _Parser {
   }
   /**
    * `0x` with exactly 24 hex digits is an ObjectId. Any other hex run is an
-   * integer, and the parser accepts it only while it fits a double exactly. A
+   * integer, and the parser accepts it only when it fits a double exactly. A
    * longer run would lose precision silently, and is neither an id nor a number
    * that JavaScript can hold. The parser refuses it, and names the two spellings
    * that work.
@@ -20855,11 +20786,11 @@ var iterateeShorthand = {
 };
 var RULES2 = [
   // The write normalisations come first: everything downstream assumes `op` is
-  // `"="`, including the sugar dispatch that routes a write by its target.
+  // `"="`, and with it the sugar dispatch that routes a write by its target.
   compoundAssign,
   incDec,
   bareReturnBlock,
-  // Folding a path is independent of every rule above and below it: no rule
+  // The fold of a path is independent of every rule above and below it: no rule
   // matches on a MemberAccess, and none builds one.
   fieldPath,
   // This runs AFTER fieldPath, which is what makes `$.a.b.sort()` reach a
@@ -21305,7 +21236,7 @@ function desugarVerbose(program, root2 = STATEMENT) {
     const print2 = fingerprint(next);
     if (seen.has(print2)) {
       throw new Error(
-        `jsmql internal error (please report): the desugar pass cycled after ${round} rounds \u2014 two rules are rewriting each other's output.`
+        `jsmql internal error (please report): the desugar pass cycled after ${round} rounds \u2014 two rules rewrite each other's output.`
       );
     }
     seen.add(print2);
@@ -23820,7 +23751,7 @@ var Chain = class {
     this.dirty = false;
     /**
      * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
-     * rather than emitting it, so nothing can land after it, and the cleanup
+     * and does not emit it, so nothing can land after it, and the cleanup
      * always precedes it. `spelled` is how the source wrote it — `$out`, or the
      * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
      */
@@ -23875,7 +23806,7 @@ var Chain = class {
    * reuses a field the discarded stage would have written.
    *
    * The scratch counter goes back too. Only the stages that went with a slot
-   * name it, so keeping the discarded attempt's number would leave a gap — and
+   * name it, so if the compiler kept the discarded attempt's number, it would leave a gap — and
    * the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
    * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
    * `__jsmql.tmp.0`. One lowering, one output.
@@ -23883,7 +23814,7 @@ var Chain = class {
   mark() {
     return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
   }
-  /** Undo everything hoisted, stamped and minted since `mark`. */
+  /** Undo everything hoisted, stamped and minted after `mark`. */
   rewind(m) {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
@@ -23921,8 +23852,8 @@ var Chain = class {
    * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
    * joined on the SOURCE document's `_id`, and `$sortByCount` then replaced the
    * document and dropped the slot — so every row came back without its joined
-   * field, and the server reported nothing wrong. A road that makes several
-   * stages out of one statement therefore drains at each of them. See
+   * field, and the server reported nothing wrong. A road that makes more than one
+   * stage out of one statement therefore drains at each of them. See
    * docs/specs/lookup-stage.md § Where a hoisted stage lands.
    */
   ahead() {

@@ -37,11 +37,11 @@ browser, at load time — the same bundle npm ships and the playground
 imports. The page holds JSMQL inputs and nothing else, so it cannot show output
 that the compiler no longer produces. This is the site's application of the
 single-source-of-truth rule: the compiler owns its output, and the page quotes
-it rather than copies it.
+it, and does not copy it.
 
-Each example is one `<article>` carrying:
+Each example is one `<article>` that carries:
 
-- `data-mode` — the entry point to compile with, using the mode keys the
+- `data-mode` — the entry point to compile with, in the mode keys the
   playground already defines (`auto`, `filter`, `pipeline`, `expression`,
   `update`). `auto` is `jsmql()` itself, which picks the shape.
 - a chip (`<span class="chip …">`) naming the output shape for the reader.
@@ -55,15 +55,15 @@ Each example is one `<article>` carrying:
 The MQL pane sits inside a `<details class="fold">`. The script leaves every
 fold open on a wide screen, where the two panes sit side by side, and it closes
 them under 760px, where the panes stack: a phone then shows each example as its
-title, its JSMQL and one line stating how many lines of MQL that made, and a
+title, its JSMQL and one line that states how many lines of MQL that made, and a
 tap opens the pane. The prose and the JSMQL never fold.
 
-The "SQL vs JSMQL" section holds a second kind of example: one
+The "SQL and JSMQL" section holds a second kind of example: one
 `<div class="vs" data-vs data-mode="…">` per idea, with the SQL in `pre.sql`
 cells (one per dialect where the dialects disagree) and the JSMQL in
 `pre.src > code`. These rows show **no MQL on the page**, on purpose — they
 compare the two languages people write. The script still compiles each JSMQL
-cell (a cell that stops compiling marks itself red with the error) and builds a
+cell (a cell that no longer compiles marks itself red with the error) and builds a
 playground link for it, which is where its MQL is shown.
 
 The script writes output with **`jsmql.stringify`**, the library's own printer,
@@ -75,8 +75,8 @@ alike.
 Two consequences follow for the page's layout. The output is JavaScript, not
 JSON, so the MQL pane is highlighted with CodeMirror's JavaScript mode and not
 its JSON mode. And the printer breaks a line at 80 columns, which is where the
-panel width below comes from: a node stays on one line while it fits, so a
-reader sees one stage per line rather than one brace per line. A pane is
+panel width below comes from: a node stays on one line when it fits, so a
+reader sees one stage per line, not one brace per line. A pane is
 narrower than 80 columns at the page's 1080px column, so the widest lines
 scroll inside their own `pre`.
 
@@ -86,7 +86,7 @@ format `playground_skeleton.html` defines and consumes — so the example opens
 in the playground with its source and mode intact.
 
 When the bundle fails to load (the page opened over `file://`, say), the script
-reveals a notice instead of leaving empty output blocks. The prose, the JSMQL
+shows a notice, and does not leave empty output blocks. The prose, the JSMQL
 inputs and every link stay readable with JavaScript off.
 
 ## The page paints both languages with the playground's highlighter
@@ -110,7 +110,7 @@ it.
 
 Two cases stay plain text. Where the CDN does not answer, `paint` writes the
 text and returns, so the page loses the colours and nothing else. Where an
-example fails to compile, the message is prose rather than JavaScript, and the
+example fails to compile, the message is prose, not JavaScript, and the
 red `pre.out.failed` styling already carries it.
 
 ## Drift guards
@@ -119,20 +119,20 @@ red `pre.out.failed` styling already carries it.
 entry its `data-mode` names, and asserts:
 
 - the extraction found as many examples as the markup declares, counted a
-  second way — a lower bound alone stays green while an example slips out of the
-  parse, which would review a page that is not the published one;
-- every example compiles — a syntax change that breaks one fails the suite
-  rather than putting an error message on the page;
+  second way — a lower bound alone stays green when an example falls out of the
+  parse, and the suite then checks a page that is not the published one;
+- every example compiles — a syntax change that breaks one fails the suite,
+  and does not put an error message on the page;
 - the output shape matches the chip (array for `pipeline` / `update`, object
   for `filter` / `expression`);
 - the chip matches `data-mode`, except under `auto`, where the entry chooses
   the shape and the chip reports it;
-- every SQL-vs-JSMQL row's JSMQL cell compiles to the shape its `data-mode`
+- the JSMQL cell of every SQL-and-JSMQL row compiles to the shape its `data-mode`
   names, and the extraction found as many rows as the markup declares;
 - `CNAME` matches the host in `package.json#homepage` **when the file is
-  present**. The file has to be absent while the domain does not resolve yet,
-  because Pages redirects the github.io URL to whatever `CNAME` names, leaving
-  nowhere to review the site;
+  present**. The file must be absent until the domain resolves,
+  because Pages redirects the github.io URL to the host that `CNAME` names.
+  Without the domain, no URL shows the site for review;
 - `_config.yml` publishes both pages, and the page imports the bundle.
 
 These guards can see only what the compiler emits, never what the server

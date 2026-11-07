@@ -109,7 +109,7 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(census("{ $match: { a: 1 } };")).toContain("filter ObjectLiteral");
   });
 
-  it("reads the array form of a stages-taking callee as statements", () => {
+  it("reads the array form of a callee that takes stages as statements", () => {
     // `$$.aggregate([$match(…)])` — the row says the callback is a block of
     // stages, and an array of them is the same list.
     expect(positionOfNode("$$.aggregate([$match($.x > 1)]);", "$match(…)")).toBe("statement");
@@ -132,7 +132,7 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(positionOfNode("$group({_id: null, n: $count()});", "$count(…)")).toBe("group");
   });
 
-  it("positions a non-object body using the default position, not the layout", () => {
+  it("positions a non-object body with the default position, not the layout", () => {
     // `$merge`'s layout names `whenMatched`, so its body is `deeper` — but a string
     // has nothing to descend into, and takes the body's own position.
     expect(positionOfNode('$merge("out");', "StringLiteral")).toBe("value");
@@ -143,15 +143,15 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     // can never claim it — but `$group`'s `"*": "group"` covers any key at all.
     expect(positionOfNode("let k = 1; $group({_id: null, [k]: $sum($.x)});", "$sum(…)")).toBe("group");
     // $lookup names `pipeline` literally, so a computed key falls back to the
-    // body's own default rather than being read as a sub-pipeline.
+    // body's own default, and is not read as a sub-pipeline.
     expect(positionOfNode('let k = 1; $lookup({from: "t", [k]: [$.a]});', "ArrayLiteral")).toBe("value");
   });
 });
 
 describe("compiler/passes/position — what is named, and what is a stream", () => {
   it("puts the callee of a call at target, never at value", () => {
-    // Folding `f` away in `f(1)` gives `3(1)`; the fold and this pass share the
-    // one predicate (naming.ts) that says a callee names rather than values.
+    // A fold of `f` in `f(1)` gives `3(1)`; the fold and this pass share the
+    // one predicate (naming.ts) that says a callee names something and holds no value.
     expect(positionOfNode("f($.a);", "Ident")).toBe("target");
   });
 
@@ -160,7 +160,7 @@ describe("compiler/passes/position — what is named, and what is a stream", () 
     // through `.` but not `[…]` gave the two different documents.
     expect(positionOfNode('$$$["archive"].find(o => o.id === 1);', "IndexAccess")).toBe("stream");
     // The chain's top link stands where its parent put it — an argument of `push`
-    // is a value — while the links below it are streams and `$$$` is a scope.
+    // is a value — but the links below it are streams and `$$$` is a scope.
     const lines = census("$$.push($$$.other.filter(x => x.a));");
     expect(lines).toContain("stream MemberAccess");
     expect(lines).toContain("value DatabaseRef");
@@ -199,7 +199,7 @@ describe("compiler/passes/position — the root position is the caller's fact", 
 describe("compiler/rows — the body-layout resolver", () => {
   it("says `deeper` until the path is a leaf, and the position at every depth", () => {
     // Both facts at once: the position a leaf here would hold, and whether an
-    // object here must keep descending. `$merge("out")` needs the first with the
+    // object here must continue to descend. `$merge("out")` needs the first with the
     // second true — a string body under a layout that names `whenMatched` has no
     // keys to descend into, and must still get a position.
     expect(bodySlotAt("$setWindowFields", [])).toEqual({

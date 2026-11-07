@@ -1,6 +1,6 @@
 // Single source of truth for the `__jsmql` document namespace — the one
 // top-level object where jsmql stashes compiler-generated temporaries, so
-// values can move between stages without flooding the developer's output.
+// values can move between stages, and the developer's output stays clean.
 // A single trailing `{ $unset: "__jsmql" }` removes everything here before
 // output. The Env appends this `$unset` when a stage writes under the
 // namespace (src/compiler/emit/env.ts). See src/CLAUDE.md § Invariants.

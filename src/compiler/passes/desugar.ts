@@ -95,9 +95,9 @@ export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): D
   const seen = new Set<string>([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let next = applyRules(current, root);
-    // Folding runs AFTER the rules in each round, and the two feed each other.
+    // The fold runs AFTER the rules in each round, and the two feed each other.
     // A mutator statement has by now become a plain assignment, so "was this
-    // name written to" is one question rather than a list of method names. A
+    // name written to" is one question, not a list of method names. A
     // constant the fold inlines becomes a literal the rules can match next round:
     //   const k = "name"; $.items.map(k)   →   map("name")   →   map(x => x.name)
     next = fold(next);
@@ -107,7 +107,7 @@ export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): D
     const print = fingerprint(next);
     if (seen.has(print)) {
       throw new Error(
-        `jsmql internal error (please report): the desugar pass cycled after ${round} rounds — two rules are rewriting each other's output.`,
+        `jsmql internal error (please report): the desugar pass cycled after ${round} rounds — two rules rewrite each other's output.`,
       );
     }
     seen.add(print);

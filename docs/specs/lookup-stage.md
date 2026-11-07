@@ -116,7 +116,7 @@ back missing, and the server says nothing about it.
 
 Every stage that reshapes the document (`$group`, `$replaceWith` / `$replaceRoot`,
 `$project`, `$unwind`, `$bucket`, …) puts the two documents further apart. So the
-drain runs per STAGE, not per statement, on every road that makes several stages
+drain runs per STAGE, not per statement, on every road that makes more than one stage
 out of one source statement: the stream chain (one drain per link), a
 `,`-joined run of writes (one per op, so `$.k = $.pid, $.name = $$$.c.find({ _id:
 $.k }).name` joins on the `k` the first write made), the array reducer, a
@@ -140,7 +140,7 @@ bound on, and a read of one from a deeper level is the refusal.
 
 **A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let`
 against the outer document, then it optimises the sub-pipeline with the result
-substituted in. So a type-dispatching expression there folds against that one
+substituted in. So an expression that dispatches on type there folds against that one
 value, branch by branch.
 
 A nested `$cond` folds the branch that does not apply, and the server refuses the
@@ -149,7 +149,7 @@ $$$.products.find({ _id: $.arr[0] })` for an array key, and again for a string k
 Each time, the refusal came from the branch for the other type.
 
 So every runtime type dispatch JSMQL writes is a `$switch`. A `$switch` drops a
-branch whose case folds to false, without optimising it (`indexAccess` in
+branch whose case folds to false, and needs no optimiser for it (`indexAccess` in
 [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts), and the family dispatch
 `select.ts` builds). The same hazard reaches a plain expression through any value the
 server holds as a constant — a `jsmql.compile` parameter inside `$literal` — so the

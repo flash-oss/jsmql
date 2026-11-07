@@ -21,8 +21,8 @@ import { stringify } from "./stringify.ts";
 import { readFileSync } from "node:fs";
 
 // esbuild's `define` step (scripts/build-cjs.mjs) replaces this at build time with
-// the package.json version. The `typeof` guard stops an un-bundled `node
-// src/cli.ts` run, where the identifier is genuinely undefined, from throwing.
+// the package.json version. The `typeof` guard prevents a throw in an un-bundled `node
+// src/cli.ts` run, where the identifier is genuinely undefined.
 declare const __JSMQL_VERSION__: string;
 const VERSION: string = typeof __JSMQL_VERSION__ === "string" ? __JSMQL_VERSION__ : "0.0.0-dev";
 
@@ -45,7 +45,7 @@ Output shape (default: polymorphic):
   --validate      report {valid, errors} as JSON; exit 1 if invalid
   --check         alias for --validate
 
-Formatting (default: pretty, 2-space):
+Output format (default: pretty, 2-space):
   -c, --compact   the whole document on one line
       --tab       indent with tabs
       --indent N  indent with N spaces (0-10)
@@ -53,7 +53,7 @@ Formatting (default: pretty, 2-space):
 Input:
   -f, --file PATH read source from PATH instead of stdin/positional
 
-Parameters (the source must be a parameterised arrow, e.g.
+Parameters (the source must be a parameterised arrow, for example
 '({ minAge }, { $ }) => $.age > minAge'; combine with any output-shape flag above):
       --arg NAME VALUE      bind NAME to the string VALUE
       --argjson NAME VALUE  bind NAME to the JSON-parsed VALUE
@@ -89,7 +89,7 @@ type Options = {
   file?: string;
 };
 
-// Thrown for command-line mistakes (unknown/conflicting flags, a missing value,
+// Thrown for command-line mistakes (unknown flags, flags that conflict, a missing value,
 // no input on a TTY). Distinct from a compile error so main() can map it to
 // exit code 2 instead of 1.
 class UsageError extends Error {}
@@ -189,7 +189,7 @@ function resolveSource(opts: Options): string {
 // is a parameterised arrow, so each shape routes through its `*.compile()`
 // builder (`jsmql.compile` for the default polymorphic shape); without params
 // it goes through the one-shot entry. `main()` handles `--validate` separately
-// (it produces a structured result rather than throwing).
+// (it produces a structured result, and does not throw).
 function compile(mode: Mode, source: string, params: Record<string, unknown> | undefined): unknown {
   if (params) {
     if (mode === "filter") return jsmql.filter.compile(source)(params);
@@ -205,7 +205,7 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
   return jsmql(source);
 }
 
-// Compiler-style error output: the message, then the offending source line with
+// Compiler-style error output: the message, then the source line at fault with
 // a caret under the column derived from the error's `.pos`. Every jsmql compile
 // error (LexError / ParseError / CodegenError / UnknownIdentifierError /
 // FunctionInputError) carries `pos: number`; when it is absent we print the
@@ -253,7 +253,7 @@ function main(): number {
   try {
     // Trailing whitespace (notably the newline a shell `echo`/heredoc appends)
     // has no meaning in the language. This trim keeps an end-of-input error's
-    // caret on the source line, instead of on a dangling blank line.
+    // caret on the source line, not on an empty line after it.
     source = resolveSource(opts).trimEnd();
   } catch (err) {
     if (err instanceof UsageError) return usageExit(err.message);

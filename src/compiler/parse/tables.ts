@@ -12,7 +12,7 @@ import type { TokenName } from "../../registry/vocabulary.ts";
 
 /**
  * What a trigger means at parse time. This holds one entry per TRIGGER, not per
- * rule. A lexeme can head several rules, and the parser tells them apart by
+ * rule. A lexeme can head more than one rule, and the parser tells them apart by
  * lookahead. `.` heads `memberAccess`, `methodCall` and `namespacedCall`, and only
  * a following `(` says which one applies. All of these rules must agree on the
  * level, and the code checks this when it builds the table.
@@ -156,7 +156,7 @@ export const STATEMENT_PREFIX: ReadonlySet<TokenName> = new Set(
     .filter((t): t is TokenName => t !== null),
 );
 
-/** Is this lexeme an OPERATOR token, such as `=` or `++`, rather than a bracket or a name? */
+/** Is this lexeme an OPERATOR token, such as `=` or `++`, and not a bracket or a name? */
 function isOperatorLexeme(lexeme: string): boolean {
   const tok = (TOKENS as Record<string, { role?: string } | undefined>)[lexeme];
   return tok?.role === "operator";
@@ -178,8 +178,8 @@ export const ASSIGN_TRIGGERS: ReadonlySet<TokenName> = new Set(
 /**
  * Production to its spelling, for every rule whose node can never be the left of
  * `=` or the operand of `delete`. The parser's write check reads this map. So the
- * `optionalMemberAccess` row enforces its own `neverAWriteTarget` field, rather
- * than a hand-coded `.optional` test enforcing it.
+ * `optionalMemberAccess` row enforces its own `neverAWriteTarget` field. No hand-coded
+ * `.optional` test enforces it.
  */
 export const NEVER_A_WRITE_TARGET: ReadonlyMap<ProductionKey, { spelling: string; hint: string }> = new Map(
   rows

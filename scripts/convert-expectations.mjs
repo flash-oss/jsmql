@@ -4,9 +4,9 @@
 //   expect(X).toEqual(…)        →  expect(() => X).toThrow(msg)  when X now throws
 //
 // A KEEP pattern (a regex over the call's source) protects a refusal the suite must
-// keep asserting. The conversion then leaves that `toThrow` alone, so the run
+// continue to assert. The conversion then leaves that `toThrow` alone, so the run
 // fails and names the input the compiler now accepts. Review the result as a
-// difference. An accepted input that should have stayed refused is a compiler bug,
+// difference. An accepted input that the compiler must refuse is a compiler bug,
 // not a test to convert.
 //
 // Run by hand:  node scripts/convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]

@@ -389,7 +389,7 @@ export function bsonTagOf(v: unknown): string | undefined {
 }
 
 /**
- * What a value IS, read from its internal slot rather than its prototype.
+ * What a value IS, read from its internal slot, not its prototype.
  *
  * `instanceof Date` is false for a real Date from another realm — a `vm` context,
  * the sandbox of a test runner, a worker — because each realm has its own `Date`. A
@@ -479,17 +479,17 @@ export type Kind =
  * ONE POSITION, ONE CELL. No two positions share a cell, because each such pair
  * holds opposite answers.
  *
- *   `stream` vs `statement`
+ *   `stream` and `statement`
  *     `$$.push(...$$$.archive);`     → [{ $unionWith: "archive" }]   a legal statement
  *     `$$ = $$.take(1).push(...);`   → refused: in a chain, write `.concat(...)`
  *     One cell must take one of the two answers. If it takes the refusal, the
  *     registry denies the form that the language uses most.
  *
- *   `group` vs `window`, proven both ways on mongod:
+ *   `group` and `window`, proven both ways on mongod:
  *     $rank         in $group → refused, not an accumulator ; in a window → accepted
  *     $mergeObjects in $group → accepted                    ; in a window → refused, not a window function
  *
- *   `group` vs `value` on ONE name — an accumulator is unary in a $group slot and
+ *   `group` and `value` on ONE name — an accumulator is unary in a $group slot and
  *   variadic in a window slot:
  *     {$group:{v:{$avg:"$a"}}}                            → accepted
  *     {$group:{v:{$avg:["$a","$b"]}}}                     → refused: one operand only
@@ -1463,7 +1463,7 @@ export type Cell<
    * The owners that a `composedInto` cell can name. The type goes through the
    * generic, so the literal stays in the stored entry. Without it, the cell erases
    * to `{ composedInto: readonly string[] }`, and an audit over the owners passes
-   * but tests nothing. A dangling owner then stays invisible.
+   * but tests nothing. An owner with no target then stays invisible.
    */
   C extends readonly string[] = readonly never[],
 > = Listed extends true ? Emitter<F, In, Out> | InCode : NonEmitter<F, C>;

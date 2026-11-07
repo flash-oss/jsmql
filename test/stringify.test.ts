@@ -3,7 +3,7 @@
  *
  * Two assertions run over almost every case. The first is the TEXT, which is what a
  * reader sees. The second is the ROUND TRIP: the text is evaluated with the driver's
- * BSON classes in scope — the way a developer uses it, by pasting it where those
+ * BSON classes in scope — the way a developer uses it, with a paste into a place where those
  * classes live — and the rebuilt value is serialised to BSON and compared byte for
  * byte with the original. Equal bytes are what "the text rebuilds the document"
  * means; a printer that wrote a plausible but different value fails there.
@@ -274,7 +274,7 @@ describe("stringify: keys", () => {
 describe("stringify: layout", () => {
   const wide = { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 }, first: { $min: "$at" } } };
 
-  it("keeps a document on one line while it fits", () => {
+  it("keeps a document on one line when it fits", () => {
     expect(stringify({ age: { $gt: 18 } })).toBe("{ age: { $gt: 18 } }");
   });
 
@@ -358,7 +358,7 @@ describe("stringify: what it refuses", () => {
 });
 
 describe("stringify: the compiler's own documents", () => {
-  it("prints a filter holding every literal kind the language folds", () => {
+  it("prints a filter that holds every literal kind the language folds", () => {
     const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > Date("2026-01-01")');
     expect(stringify(filter)).toBe(
       [

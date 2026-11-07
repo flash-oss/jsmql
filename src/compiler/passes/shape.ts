@@ -18,20 +18,20 @@ export type Shape = "filter" | "pipeline";
 type Any = { type: string } & Record<string, unknown>;
 
 /**
- * Is this node a statement rather than a value?
+ * Is this node a statement, and not a value?
  *
  * Three clauses apply. A write, a declaration and a `;`-separated run are
  * statements by their node type. A chain whose base is one of the three
  * context references is a STREAM, and a stream is a pipeline wherever it
  * stands. Everything else asks its row. The test is that the row has NO value
- * form: `$match` is a stage and has none, while `.filter()` lists one and is
- * an expression standing alone.
+ * form: `$match` is a stage and has none, but `.filter()` lists one and is
+ * an expression that stands alone.
  *
  * A mutator is the one row the name alone cannot answer for. `.sort()` has no
  * value form, so the row reads as a statement. But a statement WRITES, and
  * `$.items.filter(p).sort()` has nothing to write to. Asked for its
  * destination, such a call is an expression, so the value road refuses it by
- * name, instead of the pipeline road refusing a Pipeline just as hard.
+ * name, and the pipeline road does not refuse a Pipeline just as hard.
  */
 function statementShaped(node: Any): boolean {
   if (node.type === "Pipeline" || node.type === "UpdateFilter") return true;
@@ -39,11 +39,11 @@ function statementShaped(node: Any): boolean {
   if (readsAContextRef(node)) return true;
   const name = namedRow(node);
   if (name === null) return false;
-  // `$.a.assign($.b)` standing alone reads as lodash's `_.assign`, which WRITES `a`.
+  // `$.a.assign($.b)` alone reads as lodash's `_.assign`, which WRITES `a`.
   // JSMQL's `.assign()` writes nothing, so the statement cell refuses it and names the write.
   if (name === "assign" && writesItsReceiver(node)) return true;
   // The `;` decides a row with a VALUE form, not this check. `.filter()`
-  // lists one, so `$.items.filter(p)` standing alone is an expression.
+  // lists one, so `$.items.filter(p)` alone is an expression.
   if (lists(name, "value")) return false;
   if (node.type === "MethodCall" && isMutator(name) && !couldWriteItsReceiver(node)) return false;
   // Any other method on a value is a value too. A statement form belongs to the
@@ -72,7 +72,7 @@ function writesItsReceiver(node: Any): boolean {
  * The document this program becomes.
  *
  * A bracketed literal is a pipeline, whatever it holds, as a raw MQL pipeline is:
- * `[]` is the empty pipeline, and `[1, $match(…)]` refuses element 0 for not being
+ * `[]` is the empty pipeline, and `[1, $match(…)]` refuses element 0, because it is not
  * a stage. `jsmql.expr` reads a list as an array value instead; see `isStageList`.
  */
 export function shapeOf(program: Program): Shape {

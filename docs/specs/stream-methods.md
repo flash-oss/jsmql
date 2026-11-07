@@ -19,7 +19,7 @@ sister specs that handle individual statement-level sugars
 ([replace-stream-stage.md](./replace-stream-stage.md),
 [union-stage.md](./union-stage.md), [lookup-stage.md](./lookup-stage.md))
 predate this registry and stay where they are. The registry
-governs only **chained** methods, after one of those sugars has identified
+governs only **chained** methods, after one of those sugars identifies
 the receiver.
 
 ## Where a chain runs
@@ -57,7 +57,7 @@ The shorthands are one desugar rule. `iterateeShorthand` in [src/compiler/passes
 
 Where the object spelling is already claimed, it keeps its richer meaning: `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction specs. On `.groupBy`, an object is a matcher, as on an array. The `$group` stage has one spelling on a stream: the stage link `$$.$group({ … })`.
 
-**A collapsing terminal collapses for every key spelling.** `.groupBy`, `.countBy` and `.keyBy` state `collapses: true` on their rows. So a field name, an arrow, a matcher object and a pair each give one document.
+**A terminal that collapses does so for every key spelling.** `.groupBy`, `.countBy` and `.keyBy` state `collapses: true` on their rows. So a field name, an arrow, a matcher object and a pair each give one document.
 
 ## Registered methods
 
@@ -79,8 +79,8 @@ A sort argument that can never be a name, a list or a document has the wrong kin
 | `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | One predicate — the same spellings `.filter` takes (arrow, matches-object, field name, `["field", value]`), a `{ return <expr>; }` block among them (the callback-block rule folds it; JSMQL rejects a stage inside it). **Requires a preceding `$sort`** in the chain, from any sort spelling; with none, rejects (never defaults to `_id`) | the cell reads `sortedBy()` — the chain's last `$sort` — for `$setWindowFields.sortBy`; the predicate lowers through `condition` and becomes a running `$max` of `{ $cond: [<pred>, 0, 1] }` over an unbounded-preceding window. The two differ only in `$match` polarity, so they are exact complements | `$setWindowFields` (flag into a `__jsmql.tmp` slot) + `$match: { <slot>: 0 }` for `takeWhile` / `1` for `dropWhile`; slot cleared at chain end |
 | `.tail()` | Zero args | — | `$skip: 1` (the stream `.drop(1)`) |
 | `.shuffle()` | Zero args | `slot()` for a `__jsmql.tmp.<N>` key; the trailing `$unset: "__jsmql"` clears the residue | `[{ $addFields: { <slot>: { $rand: {} } } }, { $sort: { <slot>: 1 } }, { $unset: <slot> }]` — non-deterministic |
-| `.aggregate((o[, i[, stream]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, read as a zero-param block). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.size()` (the row's `args` rule and its callback-parameter check, one for every head). Foreign fields via `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. **This is the only method whose `{ … }` body keeps its stages** — see [lookup-stage.md](lookup-stage.md) § Grammar. On the CURRENT stream (`$$.aggregate(...)`) the block's statements are simply the chain's stages, in every container a `$$` chain reaches — a `$facet` branch (where a branch IS a sub-pipeline, so there is no "write them directly" alternative), the `$$ =` stream, an `$out` RHS, and the bare-statement form. An **uncorrelated** aggregate may be a `$$.push`/`.concat` union source; JSMQL rejects a correlated one (`$unionWith` has no `let` slot) | The same block lowering `.map` uses, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup`, a cross-level `$.field` read captures into that stage's `let`; on a flat `$$` chain (no `let` slot to correlate into) a `$.field` ref is rejected in favour of the lambda param, naming `.aggregate` | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain), `$unionWith.pipeline` (source-switch), `$facet` branch, or the outer pipeline. Clears the let scope |
-| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, including the `{ return d.<path>; }` block; the callback-block rule folds it, and JSMQL rejects a stage inside it) | `fieldPath(cb)` resolves either spelling to the dotted path; the cell then calls `unwound(path)` so the chain's element moves to that field — see [The element after `.flatMap`](#the-element-after-flatmap) | One `{ $unwind: "$<path>" }` stage. The stage preserves surrounding fields (MQL-natural); every later callback receives the ELEMENT. For "the elements as the documents", chain `.map(item => item)` after |
+| `.aggregate((o[, i[, stream]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, read as a zero-param block). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.size()` (the row's `args` rule and its callback-parameter check, one for every head). Foreign fields through `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. **This is the only method whose `{ … }` body keeps its stages** — see [lookup-stage.md](lookup-stage.md) § Grammar. On the CURRENT stream (`$$.aggregate(...)`) the block's statements are simply the chain's stages, in every container a `$$` chain reaches — a `$facet` branch (where a branch IS a sub-pipeline, so there is no "write them directly" alternative), the `$$ =` stream, an `$out` RHS, and the bare-statement form. An **uncorrelated** aggregate may be a `$$.push`/`.concat` union source; JSMQL rejects a correlated one (`$unionWith` has no `let` slot) | The same block lowering `.map` uses, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup`, a cross-level `$.field` read captures into that stage's `let`; on a flat `$$` chain (no `let` slot to correlate into) a `$.field` ref is rejected in favour of the lambda param, naming `.aggregate` | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain), `$unionWith.pipeline` (source-switch), `$facet` branch, or the outer pipeline. Clears the let scope |
+| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, and the `{ return d.<path>; }` block too; the callback-block rule folds it, and JSMQL rejects a stage inside it) | `fieldPath(cb)` resolves either spelling to the dotted path; the cell then calls `unwound(path)` so the chain's element moves to that field — see [The element after `.flatMap`](#the-element-after-flatmap) | One `{ $unwind: "$<path>" }` stage. The stage preserves surrounding fields (MQL-natural); every later callback receives the ELEMENT. For "the elements as the documents", chain `.map(item => item)` after |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `take` → `$limit` (`take(0)` → an always-false `$match`, because `$limit: 0` is invalid MQL); `drop` → `$skip` (`drop(0)` emits nothing — identity) | One `{ $limit: n }` / `{ $skip: n }` |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample` | One `{ $sample: { size: n } }` |
 | `.sample()` | Zero args | `$sample` with size 1 (lodash `_.sample`; a pipeline stays a stream, so this is `.sampleSize(1)`) | One `{ $sample: { size: 1 } }` |
@@ -89,14 +89,14 @@ A sort argument that can never be a name, a list or a document has the wrong kin
 | `.keyBy(<key>)` | One field key, or none (the identity key, as `.countBy`) | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
 | `.uniqBy(<key>)` | One field key | `keepFirstPer(<key>)`: a `$group` that keeps `$first` per key in the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. The identity key `d => d` takes the `.uniq()` pair. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope: the row states `restoresDocuments` |
 | `.uniq()` / `.sortedUniq()` | Zero args | `keepFirstPer(element().ref)`. On whole documents the group key IS the kept document, so the `$group` holds no second copy of it. After `.flatMap` the key is the element, and `$first` keeps the document. MEASURED: of documents that compare equal, the key keeps the first one, as `$first` does | `{ $group: { _id: "$$ROOT" } }` + `{ $replaceWith: "$_id" }`. After `.flatMap("<f>")`, the `.uniqBy` pair keyed on `"$<f>"`. Keeps the let scope and the element: the row states `restoresDocuments` |
-| `.difference(list)` / `.without(...values)` | One list (or the values) — the row states `elementOnly: { when: "always" }`: a stream link only while the chain's element is an unwound field | The predicate `x => ![...(list ?? [])].includes(x)` built as SOURCE (`listOf` makes the argument an array that is there: a missing list becomes `[]`) and handed to `predicate`, so the filter road picks the query form or `$expr` exactly as the `.filter` spelling would | One `$match` — `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` otherwise |
+| `.difference(list)` / `.without(...values)` | One list (or the values) — the row states `elementOnly: { when: "always" }`: a stream link only when the chain's element is an unwound field | The predicate `x => ![...(list ?? [])].includes(x)` built as SOURCE (`listOf` makes the argument an array that is there: a missing list becomes `[]`) and handed to `predicate`, so the filter road picks the query form or `$expr` exactly as the `.filter` spelling would | One `$match` — `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` otherwise |
 | `.intersection(list)` | One list — `elementOnly` | The predicate `x => [...(list ?? [])].has(x)` through `predicate`, then `keepFirstPer(element().ref)` — the result holds each value once | `$match` + `{ $group: { _id: "$<el>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope and the element: the row states `restoresDocuments` |
 | `.differenceBy(list, iteratee)` / `.intersectionBy(list, iteratee)` | A list and an iteratee (the stream slot takes a property path, a matcher object, a pair — no bare callable) — `elementOnly` | `reshape(iteratee)` is the element's key (the parameter bound as the element); `value([...(list ?? [])].map(iteratee))` the list's keys | `{ $match: { $expr: { $not: { $in: [<key>, <keys>] } } } }`; intersection: `$in` then `keepFirstPer(<key>)`, and the row states `restoresDocuments` |
 | `.compact()` | Zero args — `elementOnly` | JavaScript's falsy values as a `$nin` list (no NaN — JSMQL has none); MEASURED, `null` in `$nin` drops a missing field too | `{ $match: { <el>: { $nin: [null, 0, false, ""] } } }` |
 | `.flat()` | Zero args — `elementOnly` | The element is itself an array: one more unwind, in place; the element's path does not change | `{ $unwind: "$<el>" }` |
 | `.sortBy()` / `.sort()` / `.toSorted()` with no argument | Zero args — `elementOnly: { when: "bare" }`: the keyed call is a stream link on any stream, the bare call only after `.flatMap` | The natural order of the values | `{ $sort: { <el>: 1 } }` |
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — the stage drops `_id` unless the list names it, as the value-mode `.pick` does | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (this also drops the `__jsmql` scratch). An empty list is `{ $replaceWith: {} }`. After `.flatMap`, the empty document stands at the element's path (`{ items: {} }`). An inclusion needs a field, and `{ $project: { _id: 0 } }` alone keeps every other field (measured) |
-| `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else including `_id` | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope. An empty list drops nothing and emits no stage: the server refuses `{ $project: {} }` (measured) |
+| `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else, and `_id` too | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope. An empty list drops nothing and emits no stage: the server refuses `{ $project: {} }` (measured) |
 
 `$ = $.pick([…])` and `$ = $.omit([…])` — the same methods on the document itself — reach these
 two cells too, and emit the same stage: see [replace-root-stage.md § Element-wise object methods on the root](replace-root-stage.md#element-wise-object-methods-on-the-root).
@@ -107,8 +107,8 @@ shorthand `.map("<field>")` (≡ `.map(d => d.<field>)`). It lowers to
 
 Note: `.keyBy` / `.groupBy` / `.countBy` build their object keys through the shared
 `stringKeyExpr` helper (`src/compiler/emit/lower.ts`) — `{ $ifNull: [{ $toString: <key> }, "null"] }`.
-A missing or null grouping field then coerces to the string `"null"` (matching
-JavaScript's `String(null)`), instead of giving `$arrayToObject` a null key, which the server
+A missing or null grouping field then coerces to the string `"null"` (as
+JavaScript's `String(null)` does). So `$arrayToObject` gets no null key, which the server
 rejects. The value-mode forms use the identical helper, so both modes agree.
 `$toString` still errors on an object or array key — a separate, documented pitfall.
 Because the key is a string, code that reads it back (`.keys()`) and joins
@@ -133,7 +133,7 @@ A chain link may also be a **pipeline stage** (`$$.$match({…}).$limit(5)`). St
 with `$unionWith`/`$facet`). It takes any predicate spelling (see § Callback
 spellings) and may appear **anywhere** in the chain — as the head, or after a
 reshaping method (`.flatMap(...).filter(...)`), not only first. `.filter({ userId: $._id })`
-lowers to exactly what `.filter(o => o.userId === $._id)` does, including the indexed basic-form
+lowers to exactly what `.filter(o => o.userId === $._id)` does, and to the indexed basic-form
 `$lookup`.
 
 Future methods extend this table — see
@@ -143,7 +143,7 @@ Future methods extend this table — see
 
 In JavaScript, `orders.flatMap(o => o.items)` returns a list of items, and every method
 after it works on an item. `$unwind` keeps the whole document, with the unwound
-field holding one element. So the stream has two things to track, and the
+field that holds one element. So the stream has two things to track, and the
 compiler keeps them apart:
 
 - **The documents** are MongoDB's — one carrier per element, with every other field
@@ -200,7 +200,7 @@ $$$.orders.filter({ userId: $._id }).flatMap("productIds").filter(p => !$.owned.
 ### `.reduce` is intentionally NOT in the registry
 
 In JS, `arr.reduce(...)` returns a single value — a scalar, an object, or an array,
-depending on the reducer. So `.reduce` is rejected as a chain method, with an
+and that depends on the reducer. So `.reduce` is rejected as a chain method, with an
 actionable wrap-pattern hint. What the reducer
 returns decides how the result is assigned:
 
@@ -209,7 +209,7 @@ returns decides how the result is assigned:
   `$replaceWith` pair, through `lowerReduceWrap`.
 - **array-returning reducer** (`acc.concat(...)`, seed `[]`) — this is already an
   array, that is, a stream, so the code assigns it **directly** (unbracketed); see the
-  next section. Wrapping it in `[ ]` is rejected.
+  next section. The compiler rejects it inside `[ ]`.
 
 **Scalar wrap** — one `$$.reduce(...)` per named field:
 
@@ -353,14 +353,14 @@ answers with its reason. For the single-element methods (`.find`, `.findLast`, `
 the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 `$$$.<coll>` it names the join form `$ = $$$.<coll>.find(<pred>)`.
 
-## Adding a method
+## Add a method
 
 1. Add the `stream` cell to the method's row in [src/registry/names.ts](../../src/registry/names.ts). State the stages it emits (`// MEASURED:` where a shape's validity was proved on `mongod`), or state `unsupported(reason)` with the spelling that works.
 2. Add a row to the table above with the args and lowering.
 3. Add a case to [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) (the root stream) and [test/compiler-join.test.ts](../../test/compiler-join.test.ts) (a `$$$.<coll>` head). Run each case on `mongod` and compare it with JavaScript's answer.
 4. Document the method in [docs/LANGUAGE.md](../LANGUAGE.md) and add an entry to the current month's file in [docs/DEVLOG/](../DEVLOG).
 
-A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it), and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which could work only by rewriting the preceding stage AND falling back to `_id` when it is absent — a wrong answer with no diagnostic. Read; do not rewrite. Refuse; do not guess.
+A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it), and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which could work only if it rewrote the preceding stage AND fell back to `_id` when that stage is absent — a wrong answer with no diagnostic. Read; do not rewrite. Refuse; do not guess.
 
 ## Bare-statement stream chains
 
@@ -380,7 +380,7 @@ the diagnostic sources (`$$.indexStats()`) are statement cells of their own rows
 they keep their meaning. The compiler refuses a bare `$$$.<coll>.<chain>;` — a read of another
 collection is a value, and the statement gives it no destination.
 
-**The composition guarantee.** Splitting a chain across statements produces the
+**The composition guarantee.** A chain split across statements produces the
 same MQL as chaining it, which in turn matches the assignment form:
 
 ```js
@@ -400,12 +400,12 @@ methods. MongoDB has no stage that reverses a stream (`$reverseArray` is an
 expression, for an array inside a document), and a stream has no order except the one a
 `$sort` gives it. So "the last n" has nothing to count back from. The only way to fake
 them is to rewrite the preceding `$sort`. This makes them position-dependent in a way
-the JS methods are not, and, with no `$sort` in front, it silently orders by `_id` rather
-than raising an error. `.toSorted(c).toReversed()` is in any case a longer spelling of writing
-the comparator descending.
+the JS methods are not, and, with no `$sort` in front, it silently orders by `_id` and
+raises no error. `.toSorted(c).toReversed()` is in any case a longer spelling of
+a descending comparator.
 
 Each of the four rows states an `unsupported` stream cell, which every head reads — the root stream, a `$$$.<coll>` chain, and a callback's third parameter. So
-a foreign chain cannot quietly fall back to slicing the tail of the materialised array, whose
+a foreign chain cannot quietly fall back to a slice of the tail of the materialised array, whose
 order is whatever the foreign scan produced. The reason names the take-from-the-front
 rewrite (`.toSorted({ <field>: -1 }).take(n)`).
 

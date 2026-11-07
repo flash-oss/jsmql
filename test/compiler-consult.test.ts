@@ -1,7 +1,7 @@
 // Phase 5 of src/compiler/ — what a row says about one name in one position.
 //
-// The value of asking the registry is that the answer covers EVERY name and
-// EVERY position at once, so the tests here cover the whole table rather than
+// A question to the registry has this value: the answer covers EVERY name and
+// EVERY position at once, so the tests here cover the whole table, not
 // examples. An example test proves one row; a table test proves the rule.
 
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,7 @@ import { PRODUCTIONS } from "../src/registry/productions.ts";
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
 const EVERY_ROW: readonly string[] = [...Object.keys(NAMES), ...Object.keys(PRODUCTIONS)];
 
-/** Every (row, position) pair, which is the whole surface being asserted over. */
+/** Every (row, position) pair, which is the whole surface that the tests assert over. */
 const pairs = (): [string, Position][] => EVERY_ROW.flatMap((n) => POSITIONS.map((p): [string, Position] => [n, p]));
 
 describe("compiler/emit/consult — `where` and the cells cannot disagree", () => {
@@ -53,8 +53,8 @@ describe("compiler/emit/consult — EVERY refusal is usable", () => {
   });
 
   it("either names the CONSTRUCT itself or says the caller supplies it", () => {
-    // The alternative to the flag is reading the first letter of the message and
-    // guessing whether a subject is missing — a coupling nothing declares.
+    // The alternative to the flag is to read the first letter of the message and
+    // guess whether a subject is missing — a coupling nothing declares.
     //
     // Apply this to names only. A production is keyed descriptively — `remainder`,
     // never `"%"` — so its key is not what a user typed and naming it would be
@@ -149,7 +149,7 @@ describe("compiler/emit/consult — a waypoint is not a position", () => {
     expect(positionOf({ at: "stream" })).toBe("stream");
     expect(positionOf({ at: "statement" })).toBe("statement");
     // Nothing is evaluated on the left of `=`, and a stage body is on the way to
-    // a position rather than being one.
+    // a position, and is not one.
     expect(positionOf({ at: "target" })).toBeNull();
     expect(positionOf({ at: "stageBody", stage: "$lookup" })).toBeNull();
   });
@@ -254,12 +254,12 @@ describe("registry — a stage is one construct with two spellings", () => {
     for (const [name] of stageRows()) {
       const stream = consult(name, "stream");
       const statement = consult(name, "statement");
-      if (stream.kind !== statement.kind) differ.push(`${name}: ${stream.kind} vs ${statement.kind}`);
+      if (stream.kind !== statement.kind) differ.push(`${name}: ${stream.kind} and ${statement.kind}`);
       else if (stream.kind === "lower" && statement.kind === "lower") {
         const a = BODIES.map((b) => render(name, (stream.cell as { emit: Emit }).emit, b));
         const b = BODIES.map((b) => render(name, (statement.cell as { emit: Emit }).emit, b));
         if (a.some((x) => !x.startsWith("refused:"))) rendered += 1;
-        if (JSON.stringify(a) !== JSON.stringify(b)) differ.push(`${name}: ${a[0]} vs ${b[0]}`);
+        if (JSON.stringify(a) !== JSON.stringify(b)) differ.push(`${name}: ${a[0]} and ${b[0]}`);
       }
     }
     expect(differ).toEqual([]);
@@ -279,7 +279,7 @@ describe("registry — an operator cannot accept more operands than it renders",
    *
    * `stream` and `statement` are not among them: a stage renders its BODY, and
    * `$count` proves the two are different renderings of one row — `$count("total")`
-   * is a stage taking one argument, while `$count()` as an accumulator takes none.
+   * is a stage that takes one argument, but `$count()` as an accumulator takes none.
    * `filter` renders a query document, which is not this shape either.
    */
   const SHAPED: readonly Position[] = ["value", "group", "window", "updateDoc"];
@@ -330,7 +330,7 @@ describe("registry — an operator cannot accept more operands than it renders",
     // expression, and the two report a second operand differently:
     //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}          → refused: the accumulator takes one operand
     //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
-    // The second is the reason `atLeast` is banned here rather than merely
+    // The second is the reason `atLeast` is banned here, not only
     // discouraged: nothing reports it, so only the registry can.
     const unbounded: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
@@ -379,8 +379,8 @@ describe("registry — exactly the value-producing rows state a return type", ()
   it("states one on every value-producing row and on no other", () => {
     // A missing `returns` and a `returns: "unknown"` mean the same thing to a
     // type check and different things to a reader: absent is "produces no value
-    // at all", `"unknown"` is "a value whose type follows the operands". Tying
-    // presence to `where` is what keeps the two from being read as one.
+    // at all", `"unknown"` is "a value whose type follows the operands". Because
+    // presence ties to `where`, a reader does not read the two as one.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" && row.kind !== "root") continue;

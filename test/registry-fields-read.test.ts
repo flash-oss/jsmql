@@ -2,7 +2,7 @@
 //
 // EVERY STATED RULE HAS A READER: a field on `Arity` or `BodyRule` that no line of
 // the compiler reads is decoration a row author trusts and nothing enforces —
-// `Arity.constant` and `BodyRule.constantKeys` were exactly that for a while.
+// a field like that gives a false sense of safety.
 // The check is a source grep over the emit phase and its readers, the same
 // discipline fold-rows uses.
 

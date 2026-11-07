@@ -18,7 +18,7 @@ import "../src/globals.ts";
 
 // Teach TS about the playground-metadata keys (`kind`, `usage`, `features`)
 // we pass as the 2nd arg to describe()/it(). Vitest already ignores unknown
-// options at runtime — this declaration just stops editors from flagging.
+// options at runtime — this declaration only stops editor warnings.
 // prettier-ignore
 declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?: string; features?: string[] } }
 
@@ -479,8 +479,8 @@ describe(
       { kind: "expression", usage: "db.feedback.aggregate([{ $addFields: { histogram: jsmql.expr(...) } }])" },
       () => {
         // Each feedback doc carries a scalar array of star ratings, for example
-        // `ratings: [5, 4, 5, 3, 5]`. Omitting the iteratee makes `.countBy()`
-        // tally by the element itself — lodash `_.countBy([5,4,5,3,5])` gives
+        // `ratings: [5, 4, 5, 3, 5]`. Without an iteratee, `.countBy()`
+        // tallies by the element itself — lodash `_.countBy([5,4,5,3,5])` gives
         // `{ "5": 3, "4": 1, "3": 1 }` — a one-liner histogram over the array.
         // A live mongod confirms this shape.
         expect(jsmql.expr(`$.ratings.countBy()`)).toEqual({
@@ -574,7 +574,7 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
     // by date and client id. `$$ = $$$.<coll>.filter(...)` lowers to a
     // `$limit: 0` (drops the current stream) followed by `$unionWith` (brings
     // in matching foreign docs). The result is the same as if the aggregation
-    // had been run on `transactions` from the start, but the call site keeps
+    // ran on `transactions` from the start, but the call site keeps
     // its original collection.
     expect(jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { $expr: false } },
@@ -592,14 +592,14 @@ describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
     // The source stays on `transactions` and the chain narrows the stream. The
     // assignment spelling, `$$ = $$.filter(...)`, exists for symmetry with the
-    // source-switch case above, so the two can be swapped without changing the
-    // surrounding shape of the pipeline; the bare chain is the usual one.
+    // source-switch case above, so the two can be swapped, and the
+    // surrounding shape of the pipeline does not change; the bare chain is the usual one.
     //
-    // Narrowing has three spellings and they emit the identical `$match`:
+    // A narrow has three spellings, and they emit the identical `$match`:
     // `$match(<expr>)`, the bare statement chain `$$.filter(<pred>)`, and this
     // assignment form. Elsewhere in this file a plain equality narrow is written
     // `$$.filter({ field: value })` — it says the same thing without the `$.`
-    // and `===` — while a predicate with a range or null test stays on
+    // and `===` — but a predicate with a range or null test stays on
     // `$match(<expr>)`, which reads better than a lambda for that.
     expect(jsmql`$$.filter(t => t.createdAt >= Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") }, client: 156 } },
@@ -618,8 +618,8 @@ describe("paginate + project a leaderboard through a bare stream chain", { featu
       //   .filter(p => …)   → $match    (narrow to this season's real scores)
       //   .slice(40, 60)    → $skip + $limit  (page 3, 20 per page)
       //   .map(p => ({…}))  → $replaceWith     (project a compact card)
-      // Splitting the chain across separate `$$.filter(...); $$.slice(...); …`
-      // statements — or writing it with an explicit `$$ =` head — produces the
+      // A split of the chain across separate `$$.filter(...); $$.slice(...); …`
+      // statements — or an explicit `$$ =` head — produces the
       // exact same MQL; the chained form is just the most concise spelling.
       expect(
         jsmql`
@@ -642,7 +642,7 @@ describe("lift the embedded profile to the top level (`$ = …`)", { features: [
     // After a $match, replace each user doc with its `profile` sub-doc and then
     // tag on a derived score. `$ = <expr>` lowers to `$replaceWith` — MQL's
     // shorthand for `$replaceRoot: { newRoot: <expr> }`. The bare `$` inside
-    // the spread refers to the document being replaced ($$ROOT in MQL).
+    // the spread refers to the document that the stage replaces ($$ROOT in MQL).
     expect(
       jsmql`
 $match($.profile != null);
@@ -1040,7 +1040,7 @@ $limit(12);
 
 describe("explode order line-items into per-item documents (`$$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
-    // Flatten each paid order into one document per line item, carrying the
+    // Flatten each paid order into one document per line item, with the
     // order id and a computed revenue. When the `$ = <expr>` RHS is provably an
     // array (here `.map(...)`), jsmql fans it out: materialise into a slot,
     // `$unwind`, then `$replaceWith` each element as the new root — one input
@@ -1072,7 +1072,7 @@ $$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.
 describe("fan out per-party risk bands (block-body arrow → nested `$let`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
     // For each transaction leg, derive intermediate values with local `const`s
-    // and emit one document per qualifying leg. A block-body arrow
+    // and emit one document per leg that qualifies. A block-body arrow
     // `party => { const … ; return … }` lowers to a right-folded nest of `$let`
     // (one binding per `const`, in source order — so `score` can read `leg`).
     // The `? … : null` + `.compact()` drops legs with no risk score, and
@@ -1184,7 +1184,7 @@ describe("keep the user's last 10 events in chronological order", { features: ["
       // truncate to the most recent 10. Each `;`-separated statement reads
       // a field its predecessor just wrote, so the coalescer splits into
       // three $set stages — matching the dataflow the user would write by
-      // hand. Demonstrates `.push` / `.sort("field")` mutating the field in
+      // hand. Demonstrates how `.push` / `.sort("field")` mutate the field in
       // place, then a plain `=` reassignment for the final truncate.
       expect(
         jsmql`
@@ -1262,7 +1262,7 @@ $project({ sku: 1, subtotal, withTax, final: withShip });
 describe("derive a price with a reassignable `let` helper", { features: ["Let bindings"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Snapshot the order's base price into a `let`, then apply a 10% discount by
-    // reassigning it — a `let` binding re-`$set`s its slot, just like
+    // a new assignment to it — a `let` binding re-`$set`s its slot, just like
     // `let p = …; p = p * 0.9` in JavaScript. Each reassignment is its own
     // `$set` stage (read-after-write needs separate stages).
     expect(
@@ -1360,7 +1360,7 @@ describe("users with a non-null email", { features: ["Filters"] }, () => {
 describe("payments since a cutoff (Date folded into query doc)", { features: ["Filters"] }, () => {
   // `Date(<literal>)` is folded to a real JS Date at compile time, so the
   // `createdAt` index is still usable — the comparison stays at the top level
-  // instead of being trapped inside an `$expr`.
+  // and is not trapped inside an `$expr`.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
     expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= Date("2026-01-01")`)).toEqual({
       method: "postalDelivery",
@@ -2303,7 +2303,7 @@ describe("event fell within UTC business hours (.getUTCHours)", { features: ["Da
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { inBusinessHours: jsmql.expr(...) } }])" },
     () => {
-      // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
+      // Was the event logged between 09:00 and 17:00 UTC? The hour in UTC
       // (not the server's local zone) keeps the window stable across deployments.
       expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
         $and: [
@@ -2409,7 +2409,7 @@ describe(
   { features: ["Reusable functions"] },
   () => {
     // The `function` keyword is a second spelling of the reusable-function form —
-    // paste JS as you would write it. The declaration is self-terminating (no `;`
+    // paste JS as you would write it. The declaration terminates itself (no `;`
     // after the `}`), and it lowers to byte-identical MQL to the arrow form above.
     it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
       expect(
@@ -2572,7 +2572,7 @@ $project({ name: 1, recentOrders: 1 });
 
 // `$$.push(...)` — merge active users from the live collection with deleted
 // users from an archive collection and a couple of synthetic placeholder
-// docs, then page the unified result. Demonstrates inline-doc batching,
+// docs, then page the unified result. Demonstrates inline-doc batches,
 // `.filter` spread, and source-order preservation across mixed args. Each
 // real-world dashboard that paginates across "current + archived" data uses
 // the same shape; this is the canonical jsmql idiom.
@@ -2697,8 +2697,8 @@ describe("quarantine invalid orders through $out (`.reject`)", { features: ["Pip
     { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
       // Sweep the bad rows into a quarantine collection for a human to look at.
-      // Saying "not valid" with `.reject({ valid: true })` beats spelling the
-      // negation by hand; it lowers to the negated `$expr` form (jsmql never
+      // "Not valid" as `.reject({ valid: true })` is better than the
+      // negation written by hand; it lowers to the negated `$expr` form (jsmql never
       // emits a query-form De Morgan). Verified on a live mongod — only the
       // `valid: false` order lands in `quarantine.bad_orders`.
       expect(jsmql(`$$$$.quarantine.bad_orders = $$.reject({ valid: true });`)).toEqual([
@@ -2741,7 +2741,7 @@ describe("jsmql rejects a second write stage in a $out chain", { features: ["Pip
     "the `$out` the LHS already implies must be the last stage — nothing may follow it",
     { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
-      // Easy slip when fanning one pipeline out to two destinations: the LHS
+      // An easy mistake when one pipeline fans out to two destinations: the LHS
       // assignment IS the write, so a `.$out(...)` link inside the chain would be
       // a second one. jsmql catches it where the server would.
       expect(() => jsmql(`$$$.archive = $$.$out("other");`)).toThrow(
@@ -2768,7 +2768,7 @@ describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { feat
     "compiles a sort+page chain into $sort + $skip + $limit",
     { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
-      // After narrowing to shipped orders, page-25 (offsets 25..50) sorted
+      // After the narrow to shipped orders, page-25 (offsets 25..50) sorted
       // newest-first. The descending sort comes from `b.placedAt - a.placedAt`;
       // `.slice(25, 50)` lowers to `$skip: 25` + `$limit: 25` (end - start).
       // This is the deliberate home of the comparator-arrow sort and the
@@ -2790,8 +2790,8 @@ describe("guard against corrupt data before aggregating (`assert`)", { features:
     "asserts an invariant mid-pipeline, then computes — a bad document aborts the whole aggregate",
     { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
-      // Before rolling up revenue we refuse to silently ingest corrupt rows: a
-      // negative quantity should fail the whole aggregate loudly rather than
+      // Before the revenue roll-up, the pipeline refuses to silently ingest corrupt rows: a
+      // negative quantity must fail the whole aggregate loudly, and not
       // skew the totals. `assert(cond, msg)` lowers to a `$match` whose
       // When the condition fails, `$convert` throws an error, and its message
       // contains `msg`. This needs no deprecated server-side JavaScript. When
@@ -2830,12 +2830,12 @@ describe(
       "reuses one stream-count materialisation across two fields and an assert guard",
       { kind: "pipeline", usage: "db.products.aggregate(jsmql(...))" },
       () => {
-        // Category page: after narrowing to in-stock products, every doc carries
-        // the total in-stock count (a "showing N products" header) and its share
+        // Category page: after the narrow to in-stock products, every doc carries
+        // the total in-stock count (a "N products" header) and its share
         // of the total, and the whole aggregate aborts if the category is too big
         // to render in one page. `$$.size()` materialises ONE `$setWindowFields`
         // `$count`; both `$set`s and the `assert` reuse it (no extra count stages,
-        // since `$set` is freshness-preserving). The trailing `$unset` keeps the
+        // because `$set` is freshness-preserving). The trailing `$unset` keeps the
         // scratch field out of the result.
         expect(
           jsmql`
@@ -2958,7 +2958,7 @@ describe("merge live transactions with the archive stream (`.concat`)", { featur
     () => {
       // `.concat(...$$$.<coll>)` is the chain-form alias for `$$.push(...)`
       // — same `$unionWith` lowering, expressed where the next chain method
-      // would naturally go. Useful when querying a partitioned dataset where
+      // would naturally go. Useful for a query of a partitioned dataset where
       // recent docs live in one collection and older docs in another.
       expect(
         jsmql`
@@ -3088,7 +3088,7 @@ describe(
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
         // An array-returning reducer (seed `[]`) is the JS-faithful shape for
-        // "build a flat array by conditionally appending one projection per
+        // "build a flat array: conditionally append one projection per
         // doc". Because it already yields an array — a stream — it is assigned
         // directly to `$$`, no surrounding `[ ]`. Lowers to `$match` (the
         // ternary condition) + `$replaceWith` (the field path concatenated).
@@ -3132,18 +3132,18 @@ $$$$.exports.email_contacts = $$;
 );
 
 // 🌟 The flagship combination: source-switch on a foreign collection, filter,
-// and *enrich each surviving doc with a lookup from yet another collection*
+// and *enrich each remaining doc with a lookup from yet another collection*
 // — all in one chain. The outer `$$ = $$$.<coll>.<chain>` lowers to
-// `$limit: 0` + `$unionWith` with the chain stages making up the union's
+// `$limit: 0` + `$unionWith` with the chain stages that make up the union's
 // sub-pipeline. The embedded `$$$.<other>.find(...)` inside `.map`'s body
 // materialises as a nested `$lookup` (basic-form `localField` / `foreignField`
 // when the predicate is a single `===`) followed by a `$set { $first }` so
-// the slot holds the matched doc (or null) rather than an array. The final
+// the slot holds the matched doc (or null), not an array. The final
 // `$replaceWith` projects each user-side doc to the call-site-friendly shape.
 //
 // One JS expression compiles to a 6-stage pipeline that touches three
 // collections and would otherwise require careful by-hand `$lookup` /
-// `$unionWith` plumbing.
+// `$unionWith` connections.
 describe(
   "daily active-user engagement digest (source-switch + filter + map-with-embedded-lookup)",
   { features: ["Pipelines"] },
@@ -3210,8 +3210,8 @@ describe("invalid reduce on $$ — validate() catches the wrap-pattern omission"
     "jsmql rejects the bare chain form at compile time with an actionable wrap-pattern hint",
     { kind: "validate" },
     () => {
-      // A user might reach for `$$.reduce(...)` expecting it to "just
-      // work" the way `arr.reduce(...)` does in JS — but assigning the
+      // A user might reach for `$$.reduce(...)` and expect it to "just
+      // work" the way `arr.reduce(...)` does in JS — but an assignment of the
       // scalar result to `$$` would break the "stream is always an array of
       // docs" invariant. `validate()` surfaces the rejection with a real
       // `.pos` (the '.' of `.reduce`) and an actionable message that names the
@@ -3274,7 +3274,7 @@ $.recentOrders = $$$.orders
 
 // 🌟 The crown jewel of stream-method composition: pivot the stream onto a
 // foreign collection *per outer doc*. When the predicate of
-// `$$ = $$$.<coll>.filter(<pred>)` references the current document (via
+// `$$ = $$$.<coll>.filter(<pred>)` references the current document (through
 // `$.<field>`), jsmql cannot use `$unionWith` — that MongoDB stage has no
 // `let:` slot to thread outer-doc context into its sub-pipeline. So jsmql
 // auto-rewrites the chain to `$lookup` (basic-form when the predicate is a
@@ -3297,7 +3297,7 @@ describe(
         // the filter is what flips the lowering from $unionWith to $lookup
         // — every output row is correlated to the user it came from. The
         // trailing `.toSorted` and `.take` extend the lookup's pipeline
-        // body, so the top-5-most-recent shaping runs *inside* the lookup
+        // body, so the top-5-most-recent shape runs *inside* the lookup
         // (no need to sort the unwound flat stream afterward).
         expect(
           jsmql`
@@ -3373,7 +3373,7 @@ $$ = $$$.orders
 describe("invalid stage placement — validate() catches a misplaced $merge", { features: ["Pipelines"] }, () => {
   it("jsmql rejects a materialised-view pipeline that sorts after $merge at compile time", { kind: "validate" }, () => {
     // Real-world slip: roll daily orders into a summary, write it to a
-    // reporting collection, then "sort the result" — but $merge must be the
+    // report collection, then "sort the result" — but $merge must be the
     // pipeline's last stage, so MongoDB would reject this at run time.
     // jsmql catches it as you compile, with a real `.pos`.
     const r = jsmql.validate(`
@@ -3503,8 +3503,8 @@ describe("Best sellers: rank by order count, then name each product", { features
     // The top 10 products by line-item count, each with its name from `products`.
     // `$sortByCount` REPLACES the document with `{ _id, count }`, so `g._id` inside
     // the `.map` is the product id it grouped on — and the `$lookup` the join
-    // materialises runs directly ahead of the `$replaceWith` that reads it, joining
-    // on that group key rather than on the line item the pipeline started from.
+    // materialises runs directly ahead of the `$replaceWith` that reads it, and joins
+    // on that group key, not on the line item the pipeline started from.
     // Verified on a live mongod: each row carries its product name.
     expect(
       jsmql(`
@@ -3703,7 +3703,7 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
     () => {
       // Named constants read like config, but each folds at compile time and
       // inlines — no `$set`, no `__jsmql` scratch. The array `.map(...).snakeCase`
-      // etc. run once during compilation, the arithmetic collapses to a number,
+      // and the like run once during compilation, the arithmetic collapses to a number,
       // and `Date("…")` becomes a real BSON date, so the whole thing lowers to
       // the index-friendly query document you would write by hand.
       expect(
@@ -3725,7 +3725,7 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
 // A device's uptime run: from a sensor's readings in time order, keep the leading
 // stretch before the first bad reading, and report how long it lasted. `.takeWhile`
 // is the whole point here — `.filter({ status: "ok" })` would silently include
-// every later good reading after the fault, inflating the run.
+// every later good reading after the fault, and inflates the run.
 // Verified against a live mongod.
 describe("sensor uptime run before the first fault", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.readings.aggregate(jsmql(...))" }, () => {

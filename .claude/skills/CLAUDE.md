@@ -4,7 +4,7 @@ This folder holds checked-in [Agent Skills](https://github.com/anthropics/skills
 Each skill encodes one recurring workflow of JSMQL, so the agent applies the
 workflow every time, not only when it remembers the prose. Each skill is a
 directory with a `SKILL.md` file. The file has YAML frontmatter — the `name` and
-`description` fields drive triggering — then gives imperative instructions. The
+`description` fields decide when the skill triggers — then gives imperative instructions. The
 repo shares each skill with the whole team.
 
 A path inside a `SKILL.md` file is **repo-root-relative** (`test/probe`,
@@ -15,8 +15,8 @@ root. A `../`-relative link from the skill file would point outside the repo.
 
 | Skill | Triggers on | Encodes |
 |---|---|---|
-| [verify-mql](verify-mql/SKILL.md) | About to assert/trust emitted MQL; adding an operator/stage/method; "does this run?" | The HR3 "run it on a real `mongod` before trusting it" ritual — `jsmql` CLI → `test/probe` (or the MongoDB MCP). Canonical authority: [test/CLAUDE.md](../../test/CLAUDE.md). |
-| [devlog](devlog/SKILL.md) | Wrapping up any observable change to commit; DEVLOG merge conflicts | The `docs/DEVLOG/YYYY-MM.md` entry format + the `scripts/merge-devlog.mjs` resolver. Canonical authority: [docs/DEVLOG/CLAUDE.md](../../docs/DEVLOG/CLAUDE.md). |
+| [verify-mql](verify-mql/SKILL.md) | You are about to assert or trust emitted MQL; you add an operator, a stage or a method; "does this run?" | The HR3 "run it on a real `mongod` before you trust it" procedure — `jsmql` CLI → `test/probe` (or the MongoDB MCP). Canonical authority: [test/CLAUDE.md](../../test/CLAUDE.md). |
+| [devlog](devlog/SKILL.md) | You finish an observable change and commit it; DEVLOG merge conflicts | The `docs/DEVLOG/YYYY-MM.md` entry format + the `scripts/merge-devlog.mjs` resolver. Canonical authority: [docs/DEVLOG/CLAUDE.md](../../docs/DEVLOG/CLAUDE.md). |
 
 ## Conventions
 
@@ -24,7 +24,7 @@ root. A `../`-relative link from the skill file would point outside the repo.
   authoritative rules in their canonical home (a spec, a `CLAUDE.md` file).
   Make the skill link to that home, to match the repo's
   single-source-of-truth rule. Follow the "describe the invariant, not the
-  current inventory" rule here too. Do not list an evolving set, such as
+  current inventory" rule here too. Do not list a set that changes, such as
   operators or stages, inside a skill.
 - To add or refine a skill, use the `skill-creator` skill.
 - The deferred-coverage drift test skips this directory

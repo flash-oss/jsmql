@@ -208,7 +208,7 @@ describe("assert — rejections", () => {
   });
 
   it("yields to a user-declared `const assert` (no shadowing surprise)", () => {
-    // A reusable function named `assert` takes precedence; calling it as a bare
+    // A reusable function named `assert` takes precedence; a call of it as a bare
     // statement is not a stage, so the generic not-a-stage error fires.
     expect(() => jsmql("const assert = (x) => x; assert($.y)")).toThrow(
       "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",

@@ -15,9 +15,9 @@
  * This plugin treats an argument as jsmql input when it is a **string** or a
  * **function**. Plain objects and arrays pass through to the original
  * mongoose method unchanged, so existing MQL-JSON call sites (`Model.find({
- * age: { $gt: 18 } })`, `Model.aggregate([{ $match: ... }])`) keep working
+ * age: { $gt: 18 } })`, `Model.aggregate([{ $match: ... }])`) continue to work
  * exactly as before. A user who wants the template-tag form calls `jsmql\`…\``
- * directly — the resulting object/array then takes the pass-through path.
+ * directly — the object or array it gives then takes the pass-through path.
  *
  * Modern mongoose (7+) returns Promises and no longer accepts callback
  * arguments, so the heuristic does not collide with `(err, result) => …` in
@@ -61,9 +61,9 @@ function isJsmql(value: unknown): value is JsmqlInput {
  * depend on mongoose at compile time (no peer/dev dep, no `import "mongoose"`),
  * so the real `Mongoose` type is not in scope here; the plugin treats the argument as
  * a duck-typed `{ Model: { find, …pre-patched statics… } }` and the per-
- * method wrappers below pass the rest through. Annotating each captured
- * original and wrapper parameter individually would add noise without
- * tightening the contract — every value just passes through to mongoose
+ * method wrappers below pass the rest through. An annotation on each captured
+ * original and wrapper parameter would add noise without
+ * a tighter contract — every value just passes through to mongoose
  * untouched.
  */
 export default function jsmqlMongoose(mongoose: any): void {
@@ -99,7 +99,7 @@ export default function jsmqlMongoose(mongoose: any): void {
   //      subclass receiver and any extra trailing args (projection, options)
   //      reach mongoose unchanged.
   //
-  // The captured original is named `_<method>` rather than `<method>` to
+  // The captured original is named `_<method>`, not `<method>`, to
   // avoid the named-function-expression shadowing pitfall: inside
   // `function find(...) { ... }` the bare name `find` resolves to the wrapper
   // itself (not to an outer `const find`), so without the underscore prefix
@@ -202,14 +202,14 @@ export default function jsmqlMongoose(mongoose: any): void {
 // TypeScript module augmentation. Adds JSMQL-shaped overloads to every
 // mongoose `Model` static the plugin patches at runtime, so call sites like
 // `User.find("$.age > 18")` and `User.aggregate(({ $ }) => { $match(...) })`
-// type-check after `import "@koresar/jsmql/mongoose"` (or after calling the
+// type-check after `import "@koresar/jsmql/mongoose"` (or after a call of the
 // default export — the augmentation rides along with the value import).
 //
 // Each overload is positioned AFTER the methods' existing mongoose
 // signatures in resolution order, with `string | function` parameter types
 // that do not overlap any normal mongoose call shape — so the augmentation
 // cannot accidentally win for a call the user meant to type-check against
-// mongoose's own overloads. Return types use `any` because re-declaring
+// mongoose's own overloads. Return types use `any` because a new declaration of
 // mongoose's schema-aware query/aggregate return-type machinery here would
 // be brittle and would drift on every mongoose minor release; users who want
 // the precise return type either pass a typed `FilterQuery`/`PipelineStage[]`
@@ -218,7 +218,7 @@ export default function jsmqlMongoose(mongoose: any): void {
 // The augmentation merges into mongoose's `Model<TRawDocType, …>` interface,
 // so it activates only when the user actually has mongoose installed. If
 // mongoose is not on the resolution path, this block has no effect on
-// downstream type-checking — no spurious errors about a missing mongoose from
+// downstream type checks — no spurious errors about a missing mongoose from
 // projects that import this file purely for the runtime plugin.
 
 // Type-only side-effect import: brings mongoose into the program so the

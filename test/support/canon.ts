@@ -1,7 +1,7 @@
 // Two spellings of one meaning differ only in the names the compiler chose for
 // its own bindings. To compare them, rename every binding to the order it is
 // introduced — structure-identical trees introduce bindings in the same order,
-// so the numbering is stable while a sort by name is not.
+// so the numbers are stable, but a sort by name is not.
 //
 // A structural walk, not a string substitution: `$$value` is MongoDB's own and
 // must survive, and a `{k, v}` pair inside `$arrayToObject` is data, not a scope.

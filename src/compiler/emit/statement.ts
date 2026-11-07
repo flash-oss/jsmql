@@ -279,7 +279,7 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
 
 /**
  * The declarators of ONE declaration, read at `i`, or null where the
- * statement is not a declaration holding more than one. Membership is
+ * statement is not a declaration that holds more than one. Membership is
  * the keyword's offset. So a declarator the fold removed cannot let a
  * later one bridge a `;` the developer wrote. In `let a = $.x; let b = 5,
  * c = $.y;` the folded `b` leaves `a` and `c` in different declarations,
@@ -468,7 +468,7 @@ const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
  * `db.coll.aggregate`. So the list
  * arrives the way the source switch already arrives: every document
  * dropped, then the new ones unioned in. The empty list is that first
- * half on its own. A list holding a `$$.reduce` is the reducer WRAP, a
+ * half on its own. A list that holds a `$$.reduce` is the reducer WRAP, a
  * different road.
  */
 function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, written = "$$ = [ … ]"): Stage[] {
@@ -558,7 +558,7 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   for (const [held, nested] of [[name, false] as const, ...namesWithin(name, stage[name])]) {
     // The containers a name may not stand in: every sub-pipeline boundary
     // crossed to get here, and — for a name the BODY holds — the stage
-    // carrying it. MEASURED: `$where` runs in a `find` filter, and the
+    // that carries it. MEASURED: `$where` runs in a `find` filter, and the
     // compiler refuses it in an aggregation `$match` at any depth of the
     // body. This is a fact about the pair, and about nothing else.
     const containers =
@@ -718,7 +718,7 @@ function becomeStream(
   if (cannotBe(t, "array")) throw E.notAStreamChain(value.pos, E.nounOfKinds(t), lead, how);
   // A stream holds DOCUMENTS. Where the registry shows what ONE element
   // is, the compiler refuses an element that is not a document here,
-  // rather than leaving it to the server. MEASURED: the server refuses a
+  // and does not leave it to the server. MEASURED: the server refuses a
   // `$replaceWith` of a string, because a string is not an object.
   const element = elementOf(t);
   if (cannotBe(element, "object")) throw E.streamElementsNotDocuments(E.pluralNounOfKinds(element), written, value.pos);
@@ -913,9 +913,9 @@ function pathsRead(node: unknown, into: Set<string>): Set<string> {
  * document MERGES into it. MEASURED: `{ $set: { n: { x: 1 } } }` over
  * `n: { x: 11, y: 22 }` leaves `y` behind, where `$.n = { x: 1 }` says it
  * is gone. The compiler wraps the document in `$mergeObjects`, which
- * makes it the value of an expression rather than a nested field spec.
+ * makes it the value of an expression, not a nested field spec.
  * So the field takes it whole. Unlike `$literal`, an expression inside
- * it still evaluates (`$.n = { x: $.a }` keeps reading `a`). Both facts
+ * it still evaluates (`$.n = { x: $.a }` still reads `a`). Both facts
  * are MEASURED.
  *
  * The raw stage form `$set({ n: { x: 1 } })` is the developer's own MQL,
@@ -972,7 +972,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     unsets = null;
   };
   /**
-   * One op's stages, with whatever its lowering hoisted standing
+   * One op's stages, with whatever its lowering hoisted placed
    * directly ahead of them. So the ops already emitted run first, and a
    * `$lookup` a value wrote reads the document its own `$set` reads.
    * The caller passes nothing when the op joins the group `flush`
@@ -1017,7 +1017,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (op.type === "DeleteStmt") throw E.cannotDeleteRoot("$$", op.pos);
       flush();
       // A bracketed list of literal DOCUMENTS names the stream's
-      // documents. A list holding anything else — a spread, a value — is
+      // documents. A list that holds anything else — a spread, a value — is
       // an array like any other. Its ELEMENTS become the documents, the
       // same as `$$ = $.items;`.
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
@@ -1087,7 +1087,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       }
     }
     const value = readIn(op.value, childEnv(inner, op, "value"));
-    // The root is not a field: replacing it is its own stage, and nothing groups with it.
+    // The root is not a field: a replacement of it is its own stage, and nothing groups with it.
     if (path === "") {
       const root = rootAsWritten(op.target);
       // `null` is not a kind the registry can prove, and the server refuses it here.
@@ -1238,7 +1238,7 @@ function linkStages(links: readonly Link[], env: Env, first: boolean): Step {
   const out: Stage[] = [];
   let here = env;
   for (const link of links) {
-    // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
+    // `$$?.filter(…)` — the stream is never null; the `?.` is a wrong reading of `$$`.
     if (link.optional) throw E.optionalOnStream(link.pos);
     const stages = streamLink(link, here, first && out.length === 0, undefined, out);
     if (stages === null) {

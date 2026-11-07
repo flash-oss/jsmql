@@ -9,7 +9,7 @@ import mongoose from "mongoose";
 const OWN = (v: unknown) => ({ $eq: v });
 
 describe("jsmql template-tag interpolation guards", () => {
-  it("rejects undefined with a slot-pointing error", () => {
+  it("rejects undefined with an error that points at the slot", () => {
     expect(() => jsmql`$.x === ${undefined}`).toThrow(JsmqlInterpolationError);
     expect(() => jsmql`$.x === ${undefined}`).toThrow(/slot 1.*undefined/);
   });
@@ -98,10 +98,10 @@ describe("jsmql.validate() error contract", () => {
 // ── a field name JavaScript refuses to store the ordinary way ────────────────
 //
 // MongoDB reserves no field names, so `__proto__` is ordinary data — and it is the
-// one name `out[name] = value` sends to the PROTOTYPE slot, creating no own property.
+// one name `out[name] = value` sends to the PROTOTYPE slot, and creates no own property.
 // Three more names read back a method that was never stored (`constructor`,
 // `toString`, `valueOf`), and `name in out` answers true for all of them. Each of the
-// four goes wrong differently, so each is asserted here rather than assumed.
+// four goes wrong differently, so each is asserted here, not assumed.
 // See the `setKey` header in src/registry/mql.ts.
 describe("a developer-authored field name survives to the output", () => {
   const HOSTILE = ["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"];

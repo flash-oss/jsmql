@@ -12,8 +12,8 @@
  *
  *   2. `playground.html`: generated from `playground_skeleton.html` (the
  *      hand-authored UI source: markup, CSS, behaviour) with one region injected.
- *      The realistic-examples manifest is extracted by enumerating every top-level
- *      `describe()` and first-`it()` pair in `test/realistic.test.ts` and reading
+ *      The script extracts the realistic-examples manifest. It lists every top-level
+ *      `describe()` and first-`it()` pair in `test/realistic.test.ts`, and reads
  *      the first `jsmql(...)` or `jsmql.expr(...)` call inside. It is embedded
  *      as a JSON-script tag between the `<!-- jsmql-examples:start … -->` and
  *      `<!-- jsmql-examples:end -->` markers.
@@ -28,7 +28,7 @@
  * This code then dynamically `import()` the test file. `describe` bodies run (so
  * the full tree registers), but `it` bodies do not execute. Their source is
  * captured through `Function.prototype.toString`. Compared to the prior pure-AST
- * approach, this catches every test exactly as vitest sees it, including
+ * approach, this catches every test exactly as vitest sees it, and
  * dynamically generated `describe()` blocks if we ever add them. It stays robust
  * to new entry-point names (`jsmql.expr`, future `jsmql.update`).
  *
@@ -39,7 +39,7 @@
  * whenever Claude Code edits `test/realistic.test.ts` or `playground_skeleton.html`.
  * Both artefacts stay current within a single commit. This script also runs as `prebuild`,
  * so `npm run build` always refreshes them. `src/` edits do NOT trigger the hook.
- * Run manually after editing src/:
+ * Run it manually after an edit of src/:
  *
  *   npm run sync:playground
  *
@@ -60,7 +60,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
 const ENTRY = path.join(ROOT, "src/index.ts");
 // The hand-authored UI source. Everything in `playground.html` except the two
-// injected regions lives here, so editing src/ or realistic.test.ts (which only
+// injected regions lives here, so an edit of src/ or realistic.test.ts (which only
 // drive those two regions) can never clobber playground UI work. UI development
 // edits the skeleton; `playground.html` is a pure build artifact.
 const SKELETON = path.join(ROOT, "playground_skeleton.html");
@@ -257,7 +257,7 @@ function dedent(text) {
   const min = measure(lines);
   // Pipeline-style templates like `jsmql\`[\n  $match(...)\n]\`` start with
   // a lone `[` (or `{`, `(`) at column 0, which drags the global minimum
-  // down to zero and prevents `dedent` from stripping the body's
+  // down to zero, so `dedent` cannot strip the body's
   // test-file indent. When that happens, treat the first line as the
   // outer anchor and dedent the body lines against their own minimum so
   // the playground shows a canonical 2-space pipeline shape instead of
@@ -359,8 +359,8 @@ function extractUsage(itSource) {
 // the previous schema.
 
 async function extractExamples() {
-  // Importing the test file triggers the loader → vitest shim → tree
-  // population. We discard the import result and read the shim's `tree`.
+  // The import of the test file triggers the loader → vitest shim → tree
+  // population. This code discards the import result and reads the shim's `tree`.
   await import(pathToFileURL(TEST_FILE).href);
   const { tree } = await import(SHIM_URL);
 
@@ -460,7 +460,7 @@ function buildExamplesRegion(describes) {
   const json = JSON.stringify(describes);
   // Identifies this exact example set. The playground stores it alongside a
   // saved session and drops the session when the two disagree, so a visitor
-  // who has been here before still sees a newly shipped example instead of a
+  // who came here before still sees a new example, and not a
   // restored copy of the old one. Derived from the manifest, so it changes
   // when — and only when — an example's slug, title, query or metadata does.
   const stamp = createHash("sha256").update(json).digest("hex").slice(0, 12);

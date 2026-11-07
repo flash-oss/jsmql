@@ -96,7 +96,7 @@ describe("$$.push — inline document(s)", () => {
     ]);
   });
 
-  it("inline batch is split by an intervening collection arg (order preserved)", () => {
+  it("inline batch is split by a collection arg between (order preserved)", () => {
     expect(jsmql("$$.push({a:1}, {a:2}, ...$$$.coll, {b:3})")).toEqual([
       { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } },
       { $unionWith: "coll" },
@@ -165,7 +165,7 @@ describe("$$.push — auto-Pipeline-wrap for single-statement input", () => {
 });
 
 describe("$$.push — mixed args (real-world chain)", () => {
-  it("inline + find + filter all together preserve source order with proper batching", () => {
+  it("inline + find + filter all together preserve source order with proper batches", () => {
     expect(
       jsmql("$$.push({ a: 1 }, $$$.coll.find(p => p._id === 'X'), ...$$$.other.filter(o => o.tier === 'gold'))"),
     ).toEqual([
@@ -282,7 +282,7 @@ describe("$$.push — error positions", () => {
 });
 
 // An error must never recommend syntax that does not work at the position the
-// user is writing in. Two ways a `$$` chain can get that wrong.
+// user writes in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
   // A chain on the stream takes '.push' (the union road), so a near-miss of it names '.push'.
   it("names '.push()' for a near-miss of it on the stream", () => {
@@ -324,7 +324,7 @@ describe("chain errors only ever name syntax that works here", () => {
 
 describe("$$.push detection reaches every lambda body form", () => {
   // The gate walks the whole tree, so a `$$.push(...)` buried in any callback
-  // body shape gets the purpose-built rejection rather than a downstream one.
+  // body shape gets the purpose-built rejection, not a downstream one.
   const cases: [string, string][] = [
     ["expression body", "$.x = $.a.map(d => $$.push({n:d}));"],
     ["block body with a const", "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });"],
