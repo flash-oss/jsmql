@@ -1124,6 +1124,78 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 });
 
+/** The whole document without the compiler's namespace, as a lowering reads it while `__jsmql` holds a field. */
+const CLEAR_ROOT = { $unsetField: { field: "__jsmql", input: "$$ROOT" } };
+
+/** These sources give documents with no `__jsmql` field at any depth. */
+const NAMESPACE_FREE: string[] = [];
+const clear = (src: string): unknown[] => {
+  NAMESPACE_FREE.push(src);
+  return compiled(src);
+};
+
+describe("compiler/emit/statement — a read of the whole document never carries `__jsmql`", () => {
+  it("leaves the namespace out of the document after a binding wrote under it", () => {
+    const t = { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } };
+    // The replace takes the namespace away with the old document, so no cleanup follows.
+    expect(clear("let t = $.a + 1; $ = { ...$, y: t };")).toEqual([
+      t,
+      { $replaceWith: { $mergeObjects: [CLEAR_ROOT, { y: "$__jsmql.var.t" }] } },
+    ]);
+    // The trailing `$unset` removes the top-level field only, never a copy inside `copy`.
+    expect(clear("let t = $.a + 1; $.copy = $; $.y = t;")).toEqual([
+      t,
+      { $set: { copy: CLEAR_ROOT } },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(clear("let t = $.a + 1; $.y = t; $group({ _id: null, all: $push($) });")).toEqual([
+      t,
+      { $set: { y: "$__jsmql.var.t" } },
+      { $group: { _id: null, all: { $push: CLEAR_ROOT } } },
+    ]);
+    expect(clear("let t = $.a + 1; $.y = t; $$ = $$.map(d => ({ d }));")).toEqual([
+      t,
+      { $set: { y: "$__jsmql.var.t" } },
+      { $replaceWith: { d: CLEAR_ROOT } },
+    ]);
+  });
+
+  it("leaves it out of the documents that `.groupBy()` and `.keyBy()` collect", () => {
+    const [groupBy] = clear("let t = $.a + 1; $.y = t; $$ = $$.groupBy(d => d.a);").slice(2);
+    expect(groupBy).toEqual({ $group: { _id: "$a", __jsmqlTmp: { $push: CLEAR_ROOT } } });
+    const [keyBy] = clear("let t = $.a + 1; $.y = t; $$ = $$.keyBy(d => d._id);").slice(2);
+    expect(keyBy).toEqual({ $group: { _id: "$_id", __jsmqlTmp: { $last: CLEAR_ROOT } } });
+  });
+
+  it("leaves it out when a stage of the same statement writes it after the compiler lowers the read", () => {
+    // `$` lowers before `$$.size()` hoists the count ahead of the `$set`, so the statement lowers again.
+    expect(clear("$.copy = { d: $, n: $$.size() };")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { copy: { $mergeObjects: [{ d: CLEAR_ROOT, n: "$__jsmql.size" }] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // A `$facet` branch reads the documents of the pipeline around it.
+    expect(clear("$ = { a: $$.map(d => ({ d, n: $$.size() })) };")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $facet: { a: [{ $replaceWith: { d: CLEAR_ROOT, n: "$__jsmql.size" } }] } },
+    ]);
+  });
+
+  it("reads the bare `$$ROOT` when nothing is under the namespace", () => {
+    expect(clear("$.copy = $;")).toEqual([{ $set: { copy: "$$ROOT" } }]);
+    expect(clear("$ = { ...$, y: 1 };")).toEqual([{ $replaceWith: { $mergeObjects: ["$$ROOT", { y: 1 }] } }]);
+  });
+
+  it("keeps the cleanup after a stage you write that keeps `$$ROOT` (HR1)", () => {
+    expect(clear('let t = $.a + 1; $replaceWith("$$ROOT");')).toEqual([
+      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+      { $replaceWith: "$$ROOT" },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 // ── every pipeline above, on a real server ───────────────────────────────────
 
 let client: MongoClient | null = null;
@@ -1160,6 +1232,25 @@ afterAll(async () => {
 /** A source's pipeline, run over the live collection. */
 const run = (src: string): Promise<Record<string, unknown>[]> =>
   coll!.aggregate<Record<string, unknown>>(pipeline(src) as Record<string, unknown>[]).toArray();
+
+/** Does any field at any depth carry the compiler's namespace? */
+const holdsNamespace = (v: unknown): boolean =>
+  Array.isArray(v)
+    ? v.some(holdsNamespace)
+    : typeof v === "object" && v !== null && v.constructor === Object
+      ? Object.entries(v).some(([k, x]) => k.startsWith("__jsmql") || holdsNamespace(x))
+      : false;
+
+describe("compiler/emit/statement — the namespace, against the server's own answer", () => {
+  it.skipIf(!up)("gives back no document that holds `__jsmql` at any depth", async () => {
+    expect(NAMESPACE_FREE.length).toBeGreaterThan(0);
+    for (const src of NAMESPACE_FREE) {
+      const got = await run(src);
+      expect(got.length, src).toBeGreaterThan(0);
+      expect(holdsNamespace(got), `${src}\n${JSON.stringify(got)}`).toBe(false);
+    }
+  });
+});
 
 describe("compiler/emit/statement — a regex literal in MQL that you write is a BSON regex", () => {
   it("keeps the regex in a query document, in an operator's operand, and in a stage body", () => {

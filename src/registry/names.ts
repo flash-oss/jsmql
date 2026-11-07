@@ -9244,7 +9244,7 @@ export const NAMES = {
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // The last document stays. "Last" means last in the current order of the stream.
-      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" }),
+      emit: ({ args, reshape, wholeDocument }) => collapse(reshape(args[0]), { $last: wholeDocument() }),
     },
     statement: unsupported(
       "'.keyBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.keyBy();'",
@@ -9290,7 +9290,7 @@ export const NAMES = {
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
-      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" }),
+      emit: ({ args, reshape, wholeDocument }) => collapse(reshape(args[0]), { $push: wholeDocument() }),
     },
     statement: unsupported(
       "'.groupBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.groupBy();'",
@@ -12018,7 +12018,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: () => "$$ROOT" },
+    expr: { args: { sig: "", none: true }, emit: ({ wholeDocument }) => wholeDocument() },
     stream: unsupported("'$' is the document, not a stream. To replace it write '$ = <expr>'."),
     statement: unsupported("'$' on its own is a value. To replace the document write '$ = <expr>'."),
     group: unsupported("'$' is not an accumulator. Inside '$group' write the MongoDB operator."),

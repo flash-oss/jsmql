@@ -201,16 +201,18 @@ export class Capture {
   /** The level of documents this stage's `let` evaluates against. */
   readonly level: number;
   /** var name → the value it carries, in first-read order. */
-  readonly vars: Record<string, string> = {};
+  readonly vars: Record<string, unknown> = {};
+  /** The value's JSON text → its var: the whole document can be an object (`Chain.wholeDocument`). */
   private readonly byValue = new Map<string, MongoVar>();
 
   constructor(level: number) {
     this.level = level;
   }
 
-  /** The variable that carries `value` (a `"$path"`). This method mints it on first read. */
-  take(kind: "f" | "v" | "s", hint: string, value: string): MongoVar {
-    const have = this.byValue.get(value);
+  /** The variable that carries `value` (a `"$path"`, or the whole document). This method mints it on first read. */
+  take(kind: "f" | "v" | "s", hint: string, value: unknown): MongoVar {
+    const key = JSON.stringify(value);
+    const have = this.byValue.get(key);
     if (have !== undefined) return have;
     const base =
       kind === "f"
@@ -220,7 +222,7 @@ export class Capture {
           : letSysVar(hint, this.level);
     let name = base;
     for (let n = 2; name in this.vars; n++) name = `${base}_${n}`;
-    this.byValue.set(value, name as MongoVar);
+    this.byValue.set(key, name as MongoVar);
     this.vars[name] = value;
     return name as MongoVar;
   }

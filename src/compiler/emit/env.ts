@@ -106,6 +106,18 @@ export function injectedPlacement(site: Site): "literal" | "asWritten" | "refuse
   return "refused";
 }
 
+/** What `Chain.mark` saves, and `Chain.rewind` puts back. */
+export type ChainMark = {
+  readonly hoisted: number;
+  readonly stamped: ReadonlySet<string>;
+  readonly slots: number;
+  readonly dirty: boolean;
+  readonly element: string;
+  readonly terminal: Chain["terminal"];
+  readonly bareReads: number;
+  readonly wrote: number;
+};
+
 /**
  * The (sub-)pipeline under assembly. Held by reference on purpose: two
  * lowerings of one statement append to the same list, in order.
@@ -126,8 +138,27 @@ export class Chain {
   /** Stages a value placed ahead of the stage it stands in; `ahead` drains them. */
   readonly hoisted: Stage[] = [];
   private slots = 0;
-  /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
-  dirty = false;
+  /**
+   * True when a field under `__jsmql` may be on the documents. It owns the
+   * trailing cleanup. `wrote` counts each change from false to true. So a
+   * statement can see that it put the namespace on the document, also when a
+   * later stage of the same statement removed it.
+   */
+  get dirty(): boolean {
+    return this.holdsNamespace;
+  }
+  set dirty(v: boolean) {
+    if (v && !this.holdsNamespace) this.wrote++;
+    this.holdsNamespace = v;
+  }
+  private holdsNamespace = false;
+  wrote = 0;
+  /**
+   * The chain whose documents flow into this one. It is a chain for a body over
+   * the SAME documents (a `$facet` branch), and null for a pipeline of its own.
+   * A read of the whole document here also reads the documents of that chain.
+   */
+  source: Chain | null = null;
   /**
    * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
    * and does not emit it. So nothing can land after it, and the cleanup
@@ -192,15 +223,52 @@ export class Chain {
    * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
    * `__jsmql.tmp.0`. One lowering, one output.
    */
-  mark(): { hoisted: number; stamped: ReadonlySet<string>; slots: number } {
-    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
+  mark(): ChainMark {
+    return {
+      hoisted: this.hoisted.length,
+      stamped: new Set(this.stamped),
+      slots: this.slots,
+      dirty: this.dirty,
+      element: this.element,
+      terminal: this.terminal,
+      bareReads: this.bareReads,
+      wrote: this.wrote,
+    };
   }
 
-  /** Undo everything hoisted, stamped and minted after `mark`. */
-  rewind(m: { hoisted: number; stamped: ReadonlySet<string>; slots: number }): void {
+  /** Undo each hoist, stamp, slot, write and read since `mark`. */
+  rewind(m: ChainMark): void {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
     this.slots = m.slots;
+    this.dirty = m.dirty;
+    this.element = m.element;
+    this.terminal = m.terminal;
+    this.bareReads = m.bareReads;
+    this.wrote = m.wrote;
+  }
+
+  /**
+   * How many times a lowering read the whole document as the bare `$$ROOT`. A
+   * statement can read it bare, and then hoist a stage that writes under
+   * `__jsmql` ahead of itself. That statement lowers again with `clearRoot`
+   * true. See `wholeDocument`.
+   */
+  bareReads = 0;
+  /** Read the whole document without the namespace, also when `dirty` is false. */
+  clearRoot = false;
+
+  /**
+   * The whole document as a value. When a field under `__jsmql` may be on the
+   * document, the value leaves the namespace out. The namespace is data of the
+   * compiler, never data of the developer. See docs/specs/let-bindings.md § The whole document as a value.
+   */
+  wholeDocument(): unknown {
+    const fed: Chain[] = [];
+    for (let c: Chain | null = this; c !== null; c = c.source) fed.push(c);
+    if (this.dirty || fed.some((c) => c.clearRoot)) return { $unsetField: { field: JSMQL_NS, input: "$$ROOT" } };
+    for (const c of fed) c.bareReads++;
+    return "$$ROOT";
   }
 
   /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
@@ -364,8 +432,25 @@ export class Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
-    if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
+    return this.hop(loc, loc.path === "" ? "$$ROOT" : "$" + loc.path, pos) as string;
+  }
+
+  /**
+   * Read a located value as a VALUE at THIS level. This is `render`, except that
+   * the whole document comes from the chain of its own level
+   * (`Chain.wholeDocument`). A path stays a path, so a caller that builds on the
+   * path keeps `render`.
+   */
+  value(loc: Located, pos: number): unknown {
+    if (loc.kind === "var" || loc.path !== "") return this.render(loc, pos);
+    if (this.site.root === "updateDoc") throw readInUpdateDocument("$$ROOT", pos);
+    const chain = loc.level === this.level ? this.chain : (this.foreign()[loc.level].outer ?? this.chain);
+    return this.hop(loc, chain.wholeDocument(), pos);
+  }
+
+  /** Read `value` on level `loc.level`, and carry it to this level through each `$lookup.let`. */
+  private hop(loc: Exclude<Located, { kind: "var" }>, value: unknown, pos: number): unknown {
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(value as string, pos);
     if (loc.level === this.level) return value;
     // The boundary whose `let` evaluates against level-`loc.level` documents.
     const boundary = this.foreign()[loc.level];
@@ -452,7 +537,10 @@ export class Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
-    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") {
+      chain.dirty ||= this.chain.dirty;
+      chain.source = this.chain;
+    }
     return new Env(this.scope, site, chain, documents);
   }
 

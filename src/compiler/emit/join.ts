@@ -87,7 +87,7 @@ export type Lookup = {
   /** The one correlated equality the body opened with, as the pair; null when it opened with anything else. */
   readonly pair: Pair | null;
   /** What the pipeline still reads of the outer document — the pair's own read is not repeated here. */
-  readonly let: Record<string, string> | null;
+  readonly let: Record<string, unknown> | null;
   /** The body's stages after the pair's `$match` — the whole body when there is no pair. */
   readonly pipeline: Stage[];
   /** Did the body read the outer document at all — through the pair or through `let`? */
@@ -276,9 +276,9 @@ function reads(v: unknown, name: string): boolean {
  * and an equality under `||`.
  */
 function takePair(
-  vars: Record<string, string> | null,
+  vars: Record<string, unknown> | null,
   pipeline: Stage[],
-): { pair: Pair | null; let: Record<string, string> | null; pipeline: Stage[] } {
+): { pair: Pair | null; let: Record<string, unknown> | null; pipeline: Stage[] } {
   const whole = { pair: null, let: vars, pipeline };
   if (vars === null || pipeline.length === 0) return whole;
   const { $expr, ...query } = (pipeline[0] as { $match?: Record<string, unknown> }).$match ?? {};

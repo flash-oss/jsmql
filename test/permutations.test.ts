@@ -327,6 +327,14 @@ afterAll(async () => {
   await client?.close();
 });
 
+/** Does any field at any depth carry the compiler's namespace? */
+const holdsNamespace = (v: unknown): boolean =>
+  Array.isArray(v)
+    ? v.some(holdsNamespace)
+    : typeof v === "object" && v !== null && v.constructor === Object
+      ? Object.entries(v).some(([k, x]) => k.startsWith("__jsmql") || holdsNamespace(x))
+      : false;
+
 // Compile every chain in `subset`; when a mongod is connected, run each emitted
 // MQL and collect any server rejection. Fails with the offending chains listed.
 async function checkAll(subset: Chain[]) {
@@ -354,7 +362,9 @@ async function checkAll(subset: Chain[]) {
         if (kind === "expr") {
           await mainColl.aggregate([{ $addFields: { __v: mql } }, { $project: { _id: 0, __v: 1 } }]).toArray();
         } else {
-          await mainColl.aggregate(mql as Record<string, unknown>[]).toArray();
+          const docs = await mainColl.aggregate(mql as Record<string, unknown>[]).toArray();
+          // `__jsmql` is the compiler's scratch space, and never the developer's data.
+          if (holdsNamespace(docs)) runFails.push(`${src}  ::  a document holds a field under __jsmql`);
         }
       } catch (e) {
         const err = e as { codeName?: string; message: string };

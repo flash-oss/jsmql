@@ -366,12 +366,44 @@ The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace
 still on the documents (`Chain.dirty`). A `let` slot, a join's scratch slot, and
 the stream count share the namespace and the one cleanup. A stage that replaced
 the document clears the flag, so the cleanup never unsets a field that is
-already gone. A scratch field that a later stage writes sets the flag again: the
-flag follows the stages in the order they stand. A `$facet` branch is a pipeline
-over the documents that the `$facet` receives. So its chain starts with the flag
-of the chain around it (`Env.enter`). So each branch ends with its own cleanup,
-and the `$facet` output holds no scratch field. A program whose `let`s all
-folded emits no trace of the machinery.
+already gone. Raw MQL that keeps the bare `$$ROOT` or `$$CURRENT` in a replacing
+stage (`$replaceWith("$$ROOT")`) keeps the namespace. So the flag stays, and the
+cleanup follows that stage. A scratch field that a later stage writes sets the
+flag again: the flag follows the stages in the order they stand. A `$facet`
+branch is a pipeline over the documents that the `$facet` receives. So its chain
+starts with the flag of the chain around it (`Env.enter`). So each branch ends
+with its own cleanup, and the `$facet` output holds no scratch field. A program
+whose `let`s all folded emits no trace of the machinery.
+
+### The whole document as a value
+
+The trailing `$unset` removes the top-level field only. So a copy of the
+document inside a value keeps `__jsmql`. Examples are `$.copy = $`, `$push($)`,
+`.groupBy()` and a `$lookup.let`. A read of the whole document asks its chain
+(`Chain.wholeDocument`). When the namespace may be on the document, the read is
+`{ $unsetField: { field: "__jsmql", input: "$$ROOT" } }`. Otherwise it is the
+bare `"$$ROOT"`.
+
+```js
+let t = $.a + 1; $ = { ...$, y: t };
+// → [{ $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+//    { $replaceWith: { $mergeObjects: [{ $unsetField: { field: "__jsmql", input: "$$ROOT" } }, { y: "$__jsmql.var.t" }] } }]
+$.copy = { d: $, n: $$.size() };
+// → [{ $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+//    { $set: { copy: { $mergeObjects: [{ d: { $unsetField: { field: "__jsmql", input: "$$ROOT" } }, n: "$__jsmql.size" }] } } },
+//    { $unset: "__jsmql" }]
+```
+
+The second example shows why one check at the read is not enough. The compiler
+lowers `$` before `$$.size()` hoists its stage ahead of the `$set`. So the
+statement lowers again (`clearOfNamespace` in `statement.ts`) when two things
+are true. First, it read the whole document bare. Second, a stage ahead of the
+read's own stage wrote under `__jsmql`. That stage is a hoisted stage, or an
+earlier stage of the same statement. A `$facet` branch reads the documents of
+its outer chain (`Chain.source`), so its bare read counts there too. A raw
+`"$$ROOT"` stays as written (HR1). So a raw stage that puts it inside a value,
+for example `$group({ _id: null, all: { $push: "$$ROOT" } })` after a `let`,
+keeps `__jsmql` in that value.
 
 ## Output stability
 

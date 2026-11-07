@@ -353,6 +353,7 @@ export function exprInputs(
     args,
     keys,
     value,
+    wholeDocument: () => env.chain.wholeDocument(),
     present,
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
@@ -782,6 +783,7 @@ export function stageInputs(
       const path = env.chain.element;
       return { path, ref: path === "" ? "$$ROOT" : "$" + path };
     },
+    wholeDocument: () => env.chain.wholeDocument(),
     unwound: (path) => {
       env.chain.element = path;
     },

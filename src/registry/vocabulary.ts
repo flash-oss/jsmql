@@ -1049,6 +1049,13 @@ export type ExprIn = {
   /** Lower an expression to the MQL of its VALUE. */
   value: (e: Expr) => unknown;
   /**
+   * The whole document as a value: `$$ROOT`, without the compiler's `__jsmql`
+   * namespace when the document may carry it. A cell that puts the document
+   * itself into its output (`$`, `.groupBy()`, `.keyBy()`) reads it here, and
+   * never spells `$$ROOT`. See docs/specs/let-bindings.md § The whole document as a value.
+   */
+  wholeDocument: () => unknown;
+  /**
    * The kind that an expression PROVABLY has, or "unknown". It is the same proof
    * that the receiver check reads, and this cell offers it for an ARGUMENT. An
    * operator that takes one BSON type reads it, and then renders an argument of
@@ -1221,6 +1228,8 @@ export type StageIn = {
    * here.
    */
   element: () => { readonly path: string; readonly ref: string };
+  /** See ExprIn.wholeDocument. */
+  wholeDocument: () => unknown;
   /**
    * The element now lives in `path`. A cell that unwinds an array field says so,
    * and the callback of every later link reads its parameter there. A stage that

@@ -149,7 +149,8 @@ export function lowerValue(node: Expr, env: Env): unknown {
       return injectedValue(node, env);
     case "FieldRef": {
       readablePath(node, env);
-      const path = reachable(env.render(locate(node, env) as Located, node.pos));
+      const read = env.value(locate(node, env) as Located, node.pos);
+      const path = typeof read === "string" ? reachable(read) : read;
       // `$.user?.name` is JavaScript's `undefined` when `user` is not there. A document
       // written with it holds the key: `x: null`. A bare path would leave the key out.
       return node.optional === true ? { $ifNull: [path, null] } : path;
@@ -483,7 +484,7 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
         return b.ref.ref;
       case "document":
       case "field":
-        return env.render(locate(node, env) as Located, node.pos);
+        return env.value(locate(node, env) as Located, node.pos);
       case "constant":
         return b.ref.value;
       case "function":

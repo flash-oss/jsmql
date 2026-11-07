@@ -8006,7 +8006,7 @@ var NAMES = {
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // The last document stays. "Last" means last in the current order of the stream.
-      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" })
+      emit: ({ args, reshape, wholeDocument }) => collapse(reshape(args[0]), { $last: wholeDocument() })
     },
     statement: unsupported(
       "'.keyBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.keyBy();'"
@@ -8050,7 +8050,7 @@ var NAMES = {
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
-      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" })
+      emit: ({ args, reshape, wholeDocument }) => collapse(reshape(args[0]), { $push: wholeDocument() })
     },
     statement: unsupported(
       "'.groupBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.groupBy();'"
@@ -10613,7 +10613,7 @@ var NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: () => "$$ROOT" },
+    expr: { args: { sig: "", none: true }, emit: ({ wholeDocument }) => wholeDocument() },
     stream: unsupported("'$' is the document, not a stream. To replace it write '$ = <expr>'."),
     statement: unsupported("'$' on its own is a value. To replace the document write '$ = <expr>'."),
     group: unsupported("'$' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -23349,17 +23349,19 @@ var Capture = class {
   constructor(level) {
     /** var name → the value it carries, in first-read order. */
     this.vars = {};
+    /** The value's JSON text → its var: the whole document can be an object (`Chain.wholeDocument`). */
     this.byValue = /* @__PURE__ */ new Map();
     this.level = level;
   }
-  /** The variable that carries `value` (a `"$path"`). This method mints it on first read. */
+  /** The variable that carries `value` (a `"$path"`, or the whole document). This method mints it on first read. */
   take(kind, hint2, value) {
-    const have = this.byValue.get(value);
+    const key = JSON.stringify(value);
+    const have = this.byValue.get(key);
     if (have !== void 0) return have;
     const base = kind === "f" ? letFieldVar(hint2, this.level) : kind === "v" ? letBindingVar(hint2, this.level) : letSysVar(hint2, this.level);
     let name2 = base;
     for (let n2 = 2; name2 in this.vars; n2++) name2 = `${base}_${n2}`;
-    this.byValue.set(value, name2);
+    this.byValue.set(key, name2);
     this.vars[name2] = value;
     return name2;
   }
@@ -23748,8 +23750,14 @@ var Chain = class {
     /** Stages a value placed ahead of the stage it stands in; `ahead` drains them. */
     this.hoisted = [];
     this.slots = 0;
-    /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
-    this.dirty = false;
+    this.holdsNamespace = false;
+    this.wrote = 0;
+    /**
+     * The chain whose documents flow into this one. It is a chain for a body over
+     * the SAME documents (a `$facet` branch), and null for a pipeline of its own.
+     * A read of the whole document here also reads the documents of that chain.
+     */
+    this.source = null;
     /**
      * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
      * and does not emit it. So nothing can land after it, and the cleanup
@@ -23780,7 +23788,29 @@ var Chain = class {
      * `preservesCount` clears the set, so the next read stamps again.
      */
     this.stamped = /* @__PURE__ */ new Set();
+    /**
+     * How many times a lowering read the whole document as the bare `$$ROOT`. A
+     * statement can read it bare, and then hoist a stage that writes under
+     * `__jsmql` ahead of itself. That statement lowers again with `clearRoot`
+     * true. See `wholeDocument`.
+     */
+    this.bareReads = 0;
+    /** Read the whole document without the namespace, also when `dirty` is false. */
+    this.clearRoot = false;
     this.isPipeline = isPipeline;
+  }
+  /**
+   * True when a field under `__jsmql` may be on the documents. It owns the
+   * trailing cleanup. `wrote` counts each change from false to true. So a
+   * statement can see that it put the namespace on the document, also when a
+   * later stage of the same statement removed it.
+   */
+  get dirty() {
+    return this.holdsNamespace;
+  }
+  set dirty(v) {
+    if (v && !this.holdsNamespace) this.wrote++;
+    this.holdsNamespace = v;
   }
   proved(node, type2) {
     this.proofs.set(node, type2);
@@ -23813,13 +23843,39 @@ var Chain = class {
    * `__jsmql.tmp.0`. One lowering, one output.
    */
   mark() {
-    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
+    return {
+      hoisted: this.hoisted.length,
+      stamped: new Set(this.stamped),
+      slots: this.slots,
+      dirty: this.dirty,
+      element: this.element,
+      terminal: this.terminal,
+      bareReads: this.bareReads,
+      wrote: this.wrote
+    };
   }
-  /** Undo everything hoisted, stamped and minted after `mark`. */
+  /** Undo each hoist, stamp, slot, write and read since `mark`. */
   rewind(m) {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
     this.slots = m.slots;
+    this.dirty = m.dirty;
+    this.element = m.element;
+    this.terminal = m.terminal;
+    this.bareReads = m.bareReads;
+    this.wrote = m.wrote;
+  }
+  /**
+   * The whole document as a value. When a field under `__jsmql` may be on the
+   * document, the value leaves the namespace out. The namespace is data of the
+   * compiler, never data of the developer. See docs/specs/let-bindings.md § The whole document as a value.
+   */
+  wholeDocument() {
+    const fed = [];
+    for (let c = this; c !== null; c = c.source) fed.push(c);
+    if (this.dirty || fed.some((c) => c.clearRoot)) return { $unsetField: { field: JSMQL_NS, input: "$$ROOT" } };
+    for (const c of fed) c.bareReads++;
+    return "$$ROOT";
   }
   /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages, reads2) {
@@ -23945,7 +24001,22 @@ var Env = class _Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    return this.hop(loc, loc.path === "" ? "$$ROOT" : "$" + loc.path, pos);
+  }
+  /**
+   * Read a located value as a VALUE at THIS level. This is `render`, except that
+   * the whole document comes from the chain of its own level
+   * (`Chain.wholeDocument`). A path stays a path, so a caller that builds on the
+   * path keeps `render`.
+   */
+  value(loc, pos) {
+    if (loc.kind === "var" || loc.path !== "") return this.render(loc, pos);
+    if (this.site.root === "updateDoc") throw readInUpdateDocument("$$ROOT", pos);
+    const chain2 = loc.level === this.level ? this.chain : this.foreign()[loc.level].outer ?? this.chain;
+    return this.hop(loc, chain2.wholeDocument(), pos);
+  }
+  /** Read `value` on level `loc.level`, and carry it to this level through each `$lookup.let`. */
+  hop(loc, value, pos) {
     if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
     if (loc.level === this.level) return value;
     const boundary = this.foreign()[loc.level];
@@ -24021,7 +24092,10 @@ var Env = class _Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
-    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain2.dirty ||= this.chain.dirty;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") {
+      chain2.dirty ||= this.chain.dirty;
+      chain2.source = this.chain;
+    }
     return new _Env(this.scope, site, chain2, documents);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
@@ -25927,6 +26001,7 @@ function exprInputs(name2, recv, args, keys, env, node, read3, overrides = /* @_
     args,
     keys,
     value,
+    wholeDocument: () => env.chain.wholeDocument(),
     present: present2,
     kind: (e) => kindOf4(e, argEnv),
     type: (e) => typeOf(e, argEnv),
@@ -26208,6 +26283,7 @@ function stageInputs(name2, args, keys, env, node, read3, soFar = [], written2 =
       const path = env.chain.element;
       return { path, ref: path === "" ? "$$ROOT" : "$" + path };
     },
+    wholeDocument: () => env.chain.wholeDocument(),
     unwound: (path) => {
       env.chain.element = path;
     }
@@ -26277,7 +26353,8 @@ function lowerValue(node, env) {
       return injectedValue(node, env);
     case "FieldRef": {
       readablePath(node, env);
-      const path = reachable(env.render(locate(node, env), node.pos));
+      const read3 = env.value(locate(node, env), node.pos);
+      const path = typeof read3 === "string" ? reachable(read3) : read3;
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
     case "StreamRef":
@@ -26520,7 +26597,7 @@ function identifier(node, env) {
         return b.ref.ref;
       case "document":
       case "field":
-        return env.render(locate(node, env), node.pos);
+        return env.value(locate(node, env), node.pos);
       case "constant":
         return b.ref.value;
       case "function":
@@ -27552,6 +27629,25 @@ function lowerProgram(program, env) {
 }
 var landed = (stages, env) => ({ stages, env: afterStages(stages, env) });
 function statementStages(stmt, env, first) {
+  return clearOfNamespace(env, () => statementStagesOnce(stmt, env, first));
+}
+function clearOfNamespace(env, lower) {
+  const chains = [.../* @__PURE__ */ new Set([env.chain, env.rootChain])];
+  const marks = chains.map((c) => c.mark());
+  const step2 = lower();
+  const chain2 = env.chain;
+  const m = marks[0];
+  const wroteAhead = chain2.wrote > m.wrote && (chain2.hoisted.length > m.hoisted || step2.stages.length > 1);
+  if (chain2.bareReads === m.bareReads || !wroteAhead) return step2;
+  chains.forEach((c, i) => c.rewind(marks[i]));
+  chain2.clearRoot = true;
+  try {
+    return lower();
+  } finally {
+    chain2.clearRoot = false;
+  }
+}
+function statementStagesOnce(stmt, env, first) {
   if (stmt.type === "UpdateFilter") return writeStages(stmt, env, first);
   if (stmt.type === "LetDecl") return letStages(stmt, env);
   if (stmt.type === "FuncDecl") {
@@ -27596,7 +27692,7 @@ function declStages(run, env) {
   for (const decl of run) {
     const mark = env.chain.mark();
     const rootMark = env.rootChain.mark();
-    const step2 = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    const step2 = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : clearOfNamespace(scope, () => letStages(decl, scope));
     const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
     if (consumed > 0 && hoisted) {
       env.chain.rewind(mark);
@@ -27662,11 +27758,19 @@ function afterStages(stages, env) {
     if (replacesDocument(name2, stage)) {
       out = out.dropFields(name2, afterReplace(name2));
       env.chain.placed(true);
-      env.chain.dirty = false;
+      if (!keepsRoot(stage)) env.chain.dirty = false;
     }
     out = out.document(after);
   }
   return out;
+}
+function keepsRoot(v) {
+  if (typeof v === "string") return v === "$$ROOT" || v === "$$CURRENT";
+  if (Array.isArray(v)) return v.some(keepsRoot);
+  if (!isPlainObject(v)) return false;
+  const cleared = v.$unsetField;
+  if (Object.keys(v).length === 1 && cleared?.field === JSMQL_NS) return false;
+  return Object.values(v).some(keepsRoot);
 }
 function replacesDocument(name2, stage) {
   const fact = documentOf(name2);
