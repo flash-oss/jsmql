@@ -403,7 +403,8 @@ earlier stage of the same statement. A `$facet` branch reads the documents of
 its outer chain (`Chain.source`), so its bare read counts there too. A raw
 `"$$ROOT"` stays as written (HR1). So a raw stage that puts it inside a value,
 for example `$group({ _id: null, all: { $push: "$$ROOT" } })` after a `let`,
-keeps `__jsmql` in that value.
+keeps `__jsmql` in that value. See
+[state-machines.md](state-machines.md#the-pipeline-chain).
 
 ## Output stability
 

@@ -198,3 +198,60 @@ describe("strict-shape `.compile` builders", () => {
     );
   });
 });
+
+describe("a compile builder keeps no state between calls", () => {
+  // Each answer must equal the answer of a new builder for the same parameters, after any earlier call.
+  const SOURCES: [(src: string) => (p: Record<string, unknown>) => unknown, string][] = [
+    [jsmql.compile, "({ v }, { $ }) => $.a === v && $.b.has(1)"],
+    [jsmql.compile, "({ v }, { $ }) => $.a in v"],
+    [jsmql.compile, '({ v }, { $ }) => $.a === v || $.b === "$x"'],
+    [jsmql.expr.compile, "({ v }, { $ }) => ({ k: [v, $.a], t: `x${v}` })"],
+    [jsmql.expr.compile, "({ v }, { $ }) => $.items.filter(i => i.p === v)"],
+    [jsmql.pipeline.compile, "({ v }, { $ }) => { let t = v; $.y = t; $.c = $ }"],
+    [jsmql.pipeline.compile, "({ v }, { $, $$ }) => { $match($.a === v); $.n = $$.size() }"],
+    [jsmql.update.compile, "({ v }, { $ }) => { $.x = v; $.y = [1, 2] }"],
+  ];
+  const VALUES: unknown[] = [1, "x", "$a", "", true, null, [1, 2], [], { a: 1 }, new Date(0)];
+  const answer = (run: () => unknown): string => {
+    try {
+      return JSON.stringify(run());
+    } catch (e) {
+      return `throws ${(e as Error).message.split("\n")[0]}`;
+    }
+  };
+
+  it("answers each call as a new builder does, in any order, after a throw too", () => {
+    for (const [compile, src] of SOURCES) {
+      const fresh = VALUES.map((v) => answer(() => compile(src)({ v })));
+      const builder = compile(src);
+      const orders = [VALUES.map((_, i) => i), VALUES.map((_, i) => VALUES.length - 1 - i)];
+      for (const order of orders) {
+        for (const i of order)
+          expect(
+            answer(() => builder({ v: VALUES[i] })),
+            `${src} with ${fresh[i]}`,
+          ).toBe(fresh[i]);
+      }
+    }
+  });
+
+  it("gives a new document on each call, so a caller that changes one changes no other", () => {
+    for (const [compile, src] of SOURCES) {
+      const builder = compile(src);
+      const first = builder({ v: [1, 2] }) as Record<string, unknown>;
+      const before = JSON.stringify(builder({ v: [1, 2] }));
+      // mongoose casts a filter in place; this does the same to every object and array in the answer
+      const change = (x: unknown): void => {
+        if (Array.isArray(x)) {
+          x.forEach(change);
+          x.push("changed");
+        } else if (typeof x === "object" && x !== null && x.constructor === Object) {
+          Object.values(x).forEach(change);
+          (x as Record<string, unknown>).changed = true;
+        }
+      };
+      change(first);
+      expect(JSON.stringify(builder({ v: [1, 2] })), src).toBe(before);
+    }
+  });
+});

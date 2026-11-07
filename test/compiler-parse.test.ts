@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { parse, parseEntry, parseExpression } from "../src/compiler/parse/parser.ts";
 import { INFIX, PREFIX } from "../src/compiler/parse/tables.ts";
+import { lex, LexError } from "../src/compiler/lex/lexer.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { TOKENS } from "../src/registry/tokens.ts";
 import { KEYWORDS } from "../src/registry/keywords.ts";
@@ -879,5 +880,45 @@ describe("compiler/parse — `$.name(…)` is a method on the document", () => {
     expect(only("$.pick")).toEqual({ type: "FieldRef", path: "pick", pos: 0 });
     const chained = only("$.pick.x") as { object: unknown };
     expect(chained.object).toEqual({ type: "FieldRef", path: "pick", pos: 0 });
+  });
+});
+
+describe("compiler/lex — the lexer's state (docs/specs/state-machines.md § The lexer)", () => {
+  const types = (src: string): string[] => lex(src).map((t) => t.type);
+
+  it("L1: an interpolation still open at the end is a positioned error", () => {
+    expect(() => lex("`a${$.b")).toThrow(LexError);
+    let pos = -1;
+    try {
+      lex("`a${ {k: 1}.k ");
+    } catch (e) {
+      pos = (e as LexError).pos;
+    }
+    expect(pos).toBeGreaterThan(0);
+  });
+
+  it("L2: a `}` closes the interpolation that opened at its own depth only", () => {
+    expect(types("`x${ {k: 1}.k }y`")).toEqual([
+      "TemplateStart",
+      "TemplateChars",
+      "TemplateExprStart",
+      "LBrace",
+      "Ident",
+      "Colon",
+      "Number",
+      "RBrace",
+      "Dot",
+      "Ident",
+      "TemplateChars",
+      "TemplateEnd",
+      "EOF",
+    ]);
+  });
+
+  it("L3: a `/` after a value is a division, and anywhere else starts a regex", () => {
+    expect(types("`a` / 2")).toContain("Slash");
+    expect(types("[1][0] / 2")).toContain("Slash");
+    expect(types("/a/.test($.b)")[0]).toBe("RegexLiteral");
+    expect(types("$.b.match(/a/)")).toContain("RegexLiteral");
   });
 });

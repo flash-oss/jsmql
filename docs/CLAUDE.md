@@ -58,6 +58,7 @@ A new operator or syntax feature lands as a row in the registry. You update the 
 | `specs/stream-size.md` | `$$.size()` → the document count of the stream as a value, made by a lazily-materialised `$setWindowFields` `$count` (`__jsmql.size`) |
 | `specs/mql-stringify.md` | `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it: the BSON spellings, the keys, the fit-or-break layout |
 | `specs/cli.md` | The `jsmql` command-line bin (`src/cli.ts` → `dist/cjs/cli.cjs`) |
+| `specs/state-machines.md` | Each place that keeps state over time: the states, the invariants, the transitions, and the test that holds each invariant |
 | `specs/site.md` | The published site at jsmql.js.org: what GitHub Pages serves, the Jekyll passthrough rule, and the JS.ORG subdomain binding |
 
 The items that are still open live in [docs/DEFERRED.md](DEFERRED.md). That file is their single source of truth. Add a spec file when the work begins.
