@@ -198,7 +198,7 @@ Reconsider a name only if its static becomes the shorter spelling.
 
 ### lodash's `floating` argument of `.random()` (`x.random(y, true)`)
 
-The developer rejected this. `.random()` follows lodash's own rule for the form of its answer. Two whole bounds give a whole number. Any other pair gives a fractional number. A flag that forces a fractional answer adds a second rule beside the rule of the bounds. The compiler refuses a second argument with the argument-count error of the row.
+The developer rejected this. `.random()` has one rule for the form of its answer. Two whole bounds give a whole number. Any other pair gives a fractional number. A flag that forces a fractional answer adds a second rule beside the rule of the bounds. The compiler refuses a second argument with the argument-count error of the row.
 
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 

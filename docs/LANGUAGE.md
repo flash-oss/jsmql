@@ -2088,7 +2088,7 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, a number method on `0`, and a date method on the epoch. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
+**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, a number method on `0`, and a date method on the epoch. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`.
 
 In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A query clause follows the same reading: `$.s.match(/^$/)` becomes `{ s: { $in: [/^$/, null] } }`, so it also matches a document with no `s`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
@@ -2114,7 +2114,7 @@ $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $loo
 
 **A list ARGUMENT takes the same empty-list reading.** A method that compares the receiver
 against a second list guards that list, as HR5 guards the receiver. So a missing list means
-"the empty list", which is the reading lodash gives a missing list. Without the guard, `$in`
+"the empty list". Without the guard, `$in`
 and `$setIsSubset` abort the command on a null list, and a set operator such as
 `$setDifference` answers null. JSMQL passes a list that the source spells out with no guard,
 because it is already an array:
@@ -2363,8 +2363,8 @@ Most higher-order value methods accept the shorthands below, for example `.filte
 | property string (dotted paths are allowed) | `.map("addr.city")` | `x => x.addr.city` |
 | property index (a whole number) | `.keyBy(5)` | `x => x[5]` |
 | `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
-| `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` can be anything |
-| `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.has("a") && x.tags.has("b")` — a subset, like lodash's |
+| `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match: `x.a.b.d` can be anything |
+| `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.has("a") && x.tags.has("b")` — a subset test |
 | `_.matchesProperty` pair | `.find(["status.code", 200])` | `x => x.status.code === 200` |
 | single-parameter arrow | `.map(x => x.total * 1.1)` | — |
 | omitted (identity) | `.uniq()` | `x => x` |
@@ -2385,7 +2385,7 @@ JSMQL refuses the index when it proves that the elements cannot hold it. Element
 
 The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further: `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A value that is not a plain object or an array of constants compares with `===`.
 
-A key is a field name, whatever it looks like. `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does. To compare with an operator, write the predicate instead: `x => x.qty > 5`.
+A key is a field name, whatever it looks like. `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`. To compare with an operator, write the predicate instead: `x => x.qty > 5`.
 
 #### lodash array methods
 
@@ -2428,7 +2428,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A method that runs a predicate takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element that the predicate rejects, with JS truthiness, as `.filter` does (see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array, and reverses the result back. `sample` and `sampleSize` use `$rand`, so each run gives a **different result**. They are non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement**, and returns the whole shuffled array when `n` is more than the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, because a document key is a string. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2455,7 +2455,7 @@ $.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)` (n 
 $.xs.size()                                  // the element count — a string has `.length()`, an object `.keys().size()`
 ```
 
-> `take`, `drop`, `takeRight` and `dropRight` reject a **negative** count, and the error message points at the method for the other end. An `n` past the array length is fine: you get the whole array or an empty one, as in lodash. `head`, `first` and `last` on an empty array give `null`, which is MongoDB's marker for a missing value.
+> `take`, `drop`, `takeRight` and `dropRight` reject a **negative** count, and the error message points at the method for the other end. An `n` past the array length is fine: you get the whole array or an empty one. `head`, `first` and `last` on an empty array give `null`, which is MongoDB's marker for a missing value.
 
 ### Bare built-in callbacks
 
@@ -2591,9 +2591,9 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `findKey` answers the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is.
 
-> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins, as in lodash. A live mongod verified every shape here.
+> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins. A live mongod verified every shape here.
 
-> **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. `_.pick(undefined, …)` is `{}` and `({}).keys()` is `[]`, and each method gives that answer. Write `?.`, and the chain stops with `null` instead:
+> **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. So `.pick([…])` gives `{}` and `.keys()` gives `[]`. Write `?.`, and the chain stops with `null` instead:
 >
 > ```js
 > $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } }
@@ -2603,7 +2603,7 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 >
 > `$.keys()` reads the root document, which is always there, so it needs no neutral answer either way.
 
-> **JSMQL reads a `pick` or `omit` key list at query time when the source does not spell it out.** An example is a field path, or a list that holds an element read at run time. JSMQL reads each own key of the object, and matches it against the list. A key list that is missing or null picks nothing and omits nothing, as in lodash. The `$$.pick(…)` and `$$.omit(…)` STREAM forms still need a list that the source spells out. They lower to `$project`, and the server reads the field list of a stage before it reads any document.
+> **JSMQL reads a `pick` or `omit` key list at query time when the source does not spell it out.** An example is a field path, or a list that holds an element read at run time. JSMQL reads each own key of the object, and matches it against the list. A key list that is missing or null picks nothing and omits nothing. The `$$.pick(…)` and `$$.omit(…)` STREAM forms still need a list that the source spells out. They lower to `$project`, and the server reads the field list of a stage before it reads any document.
 
 ---
 
@@ -2810,7 +2810,7 @@ $.scores.max()                     // { $max: "$scores" }
 [$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-Under a dot, a number method reads a missing or `null` number as `0`, the safe value of a number. See [HR5](LANG_RULES.md). So `$.n.round(2)` gives `0` for a document with no `n`. A method whose operator refuses `0` reads `1` instead, as lodash's `_.divide()` reads a missing divisor. The logarithm of `0` stops the command, so `$.n.log()` gives `0`, the logarithm of `1`. Under `?.`, a number method gives `null`: `$.n?.round(2)` is `{ $round: ["$n", 2] }`.
+Under a dot, a number method reads a missing or `null` number as `0`, the safe value of a number. See [HR5](LANG_RULES.md). So `$.n.round(2)` gives `0` for a document with no `n`. A method whose operator refuses `0` reads `1` instead. The logarithm of `0` stops the command, so `$.n.log()` gives `0`, the logarithm of `1`. Under `?.`, a number method gives `null`: `$.n?.round(2)` is `{ $round: ["$n", 2] }`.
 
 ### Trigonometry
 
@@ -2897,7 +2897,7 @@ $.tags.join()                // the text JavaScript gives for an array: "a,b"
 - A document gives its JSON text (`'{"a":1}'`). JavaScript gives `"[object Object]"`.
 - An array gives its JSON text (`"[1,[2,3]]"`). JavaScript gives `"1,2,3"`. Write `.join()` to get JavaScript's text.
 - A regex literal gives MongoDB's text of the regex, which keeps only the flags that MongoDB knows: `/a/g.toString()` is `"/a/"`.
-- Under a dot, a missing or `null` value gives `""`, as lodash's `_.toString()` does. After a `?.`, it gives `null`. JavaScript throws for the dot, and gives `undefined` for the `?.`. The compiler adds the `$ifNull` only when the value can be missing or `null`. See [HR5](LANG_RULES.md).
+- Under a dot, a missing or `null` value gives `""`. After a `?.`, it gives `null`. JavaScript throws for the dot, and gives `undefined` for the `?.`. The compiler adds the `$ifNull` only when the value can be missing or `null`. See [HR5](LANG_RULES.md).
 
 `.toString()` takes no argument, so the compiler refuses a radix such as `(255).toString(16)`.
 
@@ -2994,7 +2994,7 @@ A missing `n` reads as `0` under a dot, so `$.n.inRange(10)` is true for a docum
 
 `.random()` is lodash's `_.random`, and the receiver is lodash's first argument. With no argument, the number is between 0 and the receiver. With one argument, it is between the receiver and the argument. The bounds swap when the first one is larger.
 
-Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`, as lodash reads it.
+Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`.
 
 ```js
 (1).random(6)            // { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }   → 1 … 6, whole
@@ -3020,8 +3020,8 @@ $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$
 (1).rangeRight(5)        // [4, 3, 2, 1]
 ```
 
-- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
-- **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
+- **With no step, the range counts down when `start` is more than `end`.** MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
+- **A missing or `null` bound reads as 0.** `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
 - **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `.ceil()` and `.floor()`. The server refuses a fraction that it reads at run time.
 - **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `n.range().map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
 
@@ -4211,7 +4211,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` sorts ascending by one or more keys. `.orderBy` takes parallel keys and directions (`1`, `-1`, `"asc"` or `"desc"`), **or** a `{ field: dir }` object with the directions inline, like `.sort({…})` | `$sort: { … }`. JSMQL rejects `.sortBy({…})`, because an object there is a lodash matches-shorthand, not a direction. The error points you at `.orderBy({…})` |
 | `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. The spellings are interchangeable, in every position where a `$$` predicate can be (see the note below) | `$match`, with the index-friendly translator: query syntax where possible, with any residual in `$expr` |
 | `.reject(<predicate>)` | The negation of `.filter`: an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
-| `.pick([fields])` / `.omit([fields])` | The lodash object methods, applied to each document. `.pick` keeps only the named fields and drops `_id` unless you name it. `.omit` drops the named fields | `$project` (inclusion or exclusion). An empty list does what lodash says: `.pick([])` makes each document `{}` (`$replaceWith: {}`), and `.omit([])` keeps each document as it is (no stage) |
+| `.pick([fields])` / `.omit([fields])` | The lodash object methods, applied to each document. `.pick` keeps only the named fields and drops `_id` unless you name it. `.omit` drops the named fields | `$project` (inclusion or exclusion). For an empty list, `.pick([])` makes each document `{}` (`$replaceWith: {}`), and `.omit([])` keeps each document as it is (no stage) |
 | `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). It accepts the same predicate spellings as `.filter`. **A sort must come first**, in any spelling (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`, `.$sort({…})`). With no sort, JSMQL rejects the call, and does not use `_id` as the default | A `$setWindowFields` stage that carries a running "has it failed yet" flag, then a `$match` on that flag (`0` keeps, `1` drops). The two methods are exact complements |
 | `.tail()` | Zero arguments: all but the first document | `$skip: 1` |
 | `.shuffle()` | No arguments: random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
@@ -4224,8 +4224,8 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.keyBy(<key>)` / `.keyBy()` | One field key, or none for the element itself | Gives the lodash object `{ <key>: <last doc> }`, like value-mode `$.arr.keyBy(...)`. The last document wins. "Last" follows the current order, so put `.sort(...)` before it when the order matters |
 | `.uniqBy(<key>)` | One field key | `$group` keeps the first document for each key, then `$replaceWith`. "First" follows the current order, so put `.sort(...)` before it when the order matters |
 | `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`), then `$replaceWith`: one document per distinct element |
-| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. JSMQL reads a missing `list` as empty, as lodash does | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. JSMQL refuses it on a stream of whole documents. Unwind the field first |
-| `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group, because lodash keeps each value once |
+| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. JSMQL reads a missing `list` as empty | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. JSMQL refuses it on a stream of whole documents. Unwind the field first |
+| `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group, because the result holds each value once |
 | `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }`. The intersection uses `$in`, then the `.uniq()` group on the key |
 | `.compact()` | **After `.flatMap`**, no arguments: drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }`. `null` in the list also drops a missing value |
 | `.flat()` | **After `.flatMap`**, when the element is itself an array | one more `$unwind: "$<el>"` |

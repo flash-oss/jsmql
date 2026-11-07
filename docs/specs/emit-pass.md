@@ -627,8 +627,8 @@ $$.take(0);                       // → [{"$match":{"$expr":false}}]           
 A callback's FIRST parameter IS the stream's document: `d.x` is the path "x"
 in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
-everywhere. The compiler binds the index and receiver parameters that lodash
-allows, and a READ of either says what to write instead (a stream has no
+everywhere. The compiler binds the index and receiver parameters of the
+callback, and a READ of either says what to write instead (a stream has no
 per-document index; `$$.size()` is its size).
 
 A stream cell receives its arguments as SOURCE and asks for the reading it
@@ -770,8 +770,7 @@ documents it ends the body the same way. `.find` is the one special head
 (the row states `picksOne`): `filter` plus `{ $limit: 1 }`, with the slot
 unwrapped by `$first`. A link that folds the stream into one document
 (`collapses` on the row: `countBy`, `keyBy`, `groupBy` with a field name) is
-unwrapped too, to `{}` when nothing matched, as lodash answers for an empty
-array. The slot is a typed binding, so `.size()` on it is `$size` with no
+unwrapped too, to `{}` when nothing matched. The slot is a typed binding, so `.size()` on it is `$size` with no
 run-time guard, and `.total` after `.find` is a path. When the body ends
 with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
 no later stage replaced), the value is the elements and not their carriers:
@@ -909,7 +908,7 @@ mode as an argument: `callback(cb, "truth")`, `objIteratee(cb, "truth")`. A
 predicate cell always asks for `"truth"`, so `truthOf` reads the body with
 the JavaScript truth rules of [LANGUAGE.md § Truthy and
 falsy](../LANGUAGE.md#truthy-and-falsy). `$.o.pickBy(v => v)` drops a `""`
-value, as lodash does.
+value.
 
 `.findKey()` reads the same pairs as `.pickBy()`. Its answer is the `k` of the
 first pair that passes: `$getField` over the `$first` of the `$filter`. When
@@ -988,8 +987,8 @@ such a list grows to a `$reduce`. The smaller shape answers null for the whole
 value on a missing argument, and aborts the query on a scalar, so correctness
 decides (a path is read three times; any other expression is bound once).
 
-A set method reads its list argument as `[]` when it is missing, as lodash
-reads a missing list: `$.a.union($.b)` is
+A set method reads its list argument as `[]` when it is missing:
+`$.a.union($.b)` is
 `{ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }`. The set
 operators answer null for a null operand, so without the wrap a missing
 argument makes the whole value null. A list argument that the proof shows present
@@ -1013,13 +1012,13 @@ spellings. Each set operation is a method of an array, and the refusal names
 these methods. `.difference()` is the set difference, `$setDifference`. It is
 not the `$filter` of lodash's `_.difference`, which keeps each duplicate.
 
-`.range()` and `.rangeRight()` follow lodash's `_.range`, and the cell adds
-what `$range` does not do. With no step, the step is `start < end ? 1 : -1`.
+`.range()` and `.rangeRight()` take the API of lodash's `_.range`, and the cell
+adds what `$range` does not do. With no step, the step is `start < end ? 1 : -1`.
 Two constant bounds fold it: the cell writes `-1` only when `start` is more than
 `end`. Otherwise the step is a `$cond` over the two bounds. A bound that is not
 a constant or a field path binds once in a `$let`, because the step reads each
 bound a second time. A bound that is not a constant reads as `{ $ifNull: [x, 0] }`,
-because lodash reads a missing bound as 0 and `$range` stops the command on null.
+because `$range` stops the command on null, and 0 is the safe value of a number.
 HR5 reads a missing receiver as 0 for the same reason. So the presence proof counts
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.

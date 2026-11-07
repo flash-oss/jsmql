@@ -111,7 +111,7 @@ $.t = $$$.orders.$set({ owner: "$tag" });   // → $set: { owner: "$tag" }      
 
 A method is a call after a dot, for example `.uniq()`. The value before the dot is the receiver. Each method works on one kind of value, and its name tells which kind. For example, `.length()` works on a string, `.size()` works on an array, and `.pick()` works on an object.
 
-The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`. Under a dot, the method gives a safe value wherever one exists, as lodash does, for every kind of receiver.
+The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`. Under a dot, the method gives a safe value wherever one exists, for every kind of receiver.
 
 **You wrote a dot.** The compiler replaces a missing or `null` receiver with the safe value of the method's kind. The method then runs on that value, and the answer is what the MongoDB operator gives for it. So the answer has the type that you expect:
 
@@ -125,7 +125,7 @@ The field that the receiver names can be missing from the document, or it can ho
 
 A method that works on every kind, for example `.toString()`, reads the safe value of the kind that it answers. A kind with no safe value, for example an ObjectId, gives `null`.
 
-The safe value of a number follows its operator, as lodash's `_.divide()` reads a missing operand as `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
+The safe value of a number follows its operator. Where the operator refuses `0`, the safe value is `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
 
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
@@ -313,4 +313,12 @@ $$$.orders.aggregate(…)         // a nested sub-pipeline: the driver's own .ag
 $$.$count("total")              // → the $count stage, called as a method of the stream
 $.createdAt.plus(7, "day")      // → $dateAdd   (.minus() → $dateSubtract)
 $.start.diff($.end, "hour")     // → $dateDiff
+```
+
+**SR4 — JSMQL borrows its API and most of its behaviour from popular modules.** The main source is lodash. Other sources are the JavaScript built-ins and a date library such as Luxon. JSMQL does not copy a module exactly: MongoDB and the rules above decide the final answer. So the documentation states what JSMQL does. It names a module for two reasons only: to show where an API comes from, or to warn you where JSMQL differs from it.
+
+```js
+$.items.groupBy("type")        // the API of lodash's _.groupBy: each key holds the elements that give it
+$.weeks.range()                // the API of lodash's _.range; a missing bound reads as 0 (HR5)
+$.a.difference($.b)            // differs from lodash: a set difference, so each value comes back once
 ```
