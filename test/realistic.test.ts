@@ -870,6 +870,54 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
   });
 });
 
+describe("list the members of each role in a workspace (lodash `.invertBy`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.workspaces.aggregate(jsmql(...))" }, () => {
+    // `members` maps a user name to the user's settings. `.invertBy("role")` reverses
+    // the mapping: each role holds the names of its members, in entry order. `.invert()`
+    // keeps one name per role, and `.invertBy()` keeps them all.
+    expect(
+      jsmql`
+$.membersByRole = $.members.invertBy("role");
+      `,
+    ).toEqual([
+      {
+        $set: {
+          membersByRole: {
+            $let: {
+              vars: {
+                jsmqlEntries: {
+                  $map: {
+                    input: { $objectToArray: { $ifNull: ["$members", {}] } },
+                    as: "jsmqlKv",
+                    in: { k: { $ifNull: [{ $toString: "$$jsmqlKv.v.role" }, "null"] }, v: "$$jsmqlKv.k" },
+                  },
+                },
+              },
+              in: {
+                $arrayToObject: {
+                  $map: {
+                    input: { $setUnion: ["$$jsmqlEntries.k", []] },
+                    as: "jsmqlKey",
+                    in: {
+                      k: "$$jsmqlKey",
+                      v: {
+                        $map: {
+                          input: { $filter: { input: "$$jsmqlEntries", cond: { $eq: ["$$this.k", "$$jsmqlKey"] } } },
+                          in: "$$this.v",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 describe("price bulk orders from a tier table that the compiler computes", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // The tier table is a constant: it reads nothing from the document, the clock or the

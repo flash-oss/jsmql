@@ -929,6 +929,12 @@ when the body calls anything, because a call may lower to a `$reduce` of its
 own and shadow them. `elements` binds one parameter per position of one
 array element — `.zipWith`'s arrow over a `$zip` pair.
 
+`objIteratee` is the object callback `(value[, key]) => …`, bound to one
+`$objectToArray` pair. An object method whose lodash iteratee reads the value
+only (`.invertBy()`) takes `iteratee` instead. Its row states an `object` slot
+layout, so the desugar pass rewrites each shorthand to an arrow. The cell then
+binds the arrow's parameter to the pair's value with a `$let`.
+
 ```
 $.a.reduce((acc, x) => acc + x, 0)
   → {"$reduce":{"input":"$a","initialValue":0,"in":{"$add":["$value","$this"]}}}

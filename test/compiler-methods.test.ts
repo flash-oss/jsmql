@@ -65,6 +65,8 @@ const DOC = {
     uuid: new UUID("6ac24965-7917-4323-8d44-920ad1d69b94"),
     bin: new Binary(Buffer.from("hi")),
   },
+  // an object whose values give one key more than once, for `.invertBy()`
+  inv: { a: { k: "x", n: 1 }, b: { k: "y", n: 2 }, c: { k: "x", n: 3 }, d: { n: 4 } },
 };
 
 type Case = { src: string; js: (d: typeof DOC) => unknown; note?: string; unordered?: true };
@@ -829,6 +831,7 @@ describe("compiler/emit — object methods", () => {
                     "mixed",
                     "mo",
                     "bt",
+                    "inv",
                   ],
                 ],
               },
@@ -1959,6 +1962,113 @@ const byIndex = (rows: readonly (readonly number[])[], i: number) => ({
   counts: rows.reduce<Record<string, number>>((o, r) => ({ ...o, [r[i]]: (o[r[i]] ?? 0) + 1 }), {}),
 });
 
+/**
+ * lodash's `_.invertBy`: the original keys, grouped by the string of the iteratee's
+ * result, in entry order. JSMQL spells a missing result as `"null"`, as `.groupBy()`
+ * does. lodash spells it `"undefined"`. So a case with a missing result maps it to null.
+ */
+const invertBy = (o: Record<string, unknown>, f: (v: any) => unknown = (v) => v): Record<string, string[]> => {
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(o)) (out[String(f(v))] ??= []).push(k);
+  return out;
+};
+
+describe("compiler/emit — `.invertBy()` gives lodash's `_.invertBy` object", () => {
+  it("groups the original keys by the iteratee's result, as strings", () => {
+    expect(compiled("$.o.invertBy()", (d) => invertBy(d.o))).toEqual({
+      $let: {
+        vars: {
+          jsmqlEntries: {
+            $map: {
+              input: { $objectToArray: { $ifNull: ["$o", {}] } },
+              as: "jsmqlKv",
+              in: { k: { $ifNull: [{ $toString: "$$jsmqlKv.v" }, "null"] }, v: "$$jsmqlKv.k" },
+            },
+          },
+        },
+        in: {
+          $arrayToObject: {
+            $map: {
+              input: { $setUnion: ["$$jsmqlEntries.k", []] },
+              as: "jsmqlKey",
+              in: {
+                k: "$$jsmqlKey",
+                v: {
+                  $map: {
+                    input: { $filter: { input: "$$jsmqlEntries", cond: { $eq: ["$$this.k", "$$jsmqlKey"] } } },
+                    in: "$$this.v",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    // two keys on one result: the group keeps the entry order
+    expect(compiled("$.inv.invertBy(v => v.n % 2)", (d) => invertBy(d.inv, (v) => v.n % 2))).toEqual({
+      $let: {
+        vars: {
+          jsmqlEntries: {
+            $map: {
+              input: { $objectToArray: { $ifNull: ["$inv", {}] } },
+              as: "jsmqlKv",
+              in: {
+                k: {
+                  $ifNull: [
+                    { $toString: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $mod: ["$$v.n", 2] } } } },
+                    "null",
+                  ],
+                },
+                v: "$$jsmqlKv.k",
+              },
+            },
+          },
+        },
+        in: {
+          $arrayToObject: {
+            $map: {
+              input: { $setUnion: ["$$jsmqlEntries.k", []] },
+              as: "jsmqlKey",
+              in: {
+                k: "$$jsmqlKey",
+                v: {
+                  $map: {
+                    input: { $filter: { input: "$$jsmqlEntries", cond: { $eq: ["$$this.k", "$$jsmqlKey"] } } },
+                    in: "$$this.v",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    // a number, a boolean, an empty string and null each become a key
+    compiled('$.mo.omit(["g"]).invertBy()', (d) =>
+      invertBy(Object.fromEntries(Object.entries(d.mo).filter(([k]) => k !== "g"))),
+    );
+    compiled("$.o.invertBy(v => v / 2)", (d) => invertBy(d.o, (v) => v / 2));
+    // an empty object, and a missing one under a dot, give the empty object
+    compiled("$.o.pickBy(v => v > 5).invertBy()", () => ({}));
+    compiled("$.nope.invertBy()", () => ({}));
+  });
+
+  it("takes each iteratee shorthand that `.groupBy()` takes", () => {
+    const same = (short: string, long: string, js: (d: typeof DOC) => unknown) => {
+      expect(compiled(short, js)).toEqual(expr(long));
+    };
+    // `d` holds no `k`: a missing result is the key "null"
+    same('$.inv.invertBy("k")', "$.inv.invertBy(x => x.k)", (d) => invertBy(d.inv, (v: { k?: string }) => v.k ?? null));
+    same('$.inv.invertBy({ k: "x" })', '$.inv.invertBy(x => x.k === "x")', (d) =>
+      invertBy(d.inv, (v: { k?: string }) => v.k === "x"),
+    );
+    same('$.inv.invertBy(["k", "y"])', '$.inv.invertBy(x => x.k === "y")', (d) =>
+      invertBy(d.inv, (v: { k?: string }) => v.k === "y"),
+    );
+  });
+});
+
 describe("compiler/emit — a whole number in an iteratee slot is lodash's `_.property(n)`", () => {
   it("emits for each method family what the arrow `x => x[n]` emits", () => {
     const same = (short: string, long: string, js: (d: typeof DOC) => unknown) => {
@@ -2857,6 +2967,8 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.pickBy(v => v != null)", {}],
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
+  ["$.o.invertBy()", {}],
+  ['$.o.invertBy("k")', {}],
   ["$.o.toPairs()", []],
   // an object method under a dot runs on `{}` (HR5)
   ["$.o.keys()", []],
@@ -3320,6 +3432,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   pickBy: ["$.o.pickBy(v => v > 1)"],
   omitBy: ["$.o.omitBy(v => v > 1)"],
   invert: ["$.o.invert()"],
+  invertBy: ["$.o.invertBy()"],
   toPairs: ["$.o.toPairs()"],
   assign: ["$.o.assign({ z: 1 })", "$.o.assign($.nope)"],
   // numbers and Math
@@ -3529,6 +3642,7 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   pickBy: ["$.nope?.pickBy(v => v > 1)", "$.mo.d?.pickBy(v => v > 1)"],
   omitBy: ["$.nope?.omitBy(v => v > 1)", "$.mo.d?.omitBy(v => v > 1)"],
   invert: ["$.nope?.invert()", "$.mo.d?.invert()"],
+  invertBy: ['$.nope?.invertBy("k")', '$.mo.d?.invertBy("k")'],
   toPairs: ["$.nope?.toPairs()", "$.mo.d?.toPairs()"],
   getFullYear: ["$.nope?.getFullYear()", "$.mo.d?.getFullYear()"],
   getMonth: ["$.nope?.getMonth()", "$.mo.d?.getMonth()"],

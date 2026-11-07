@@ -2559,7 +2559,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The iteratee of `invertBy` reads the value only, as in lodash. So it takes the same shorthands as `groupBy`: `"field"`, an index, `{ field: value }` and `["field", value]`.
 
 A reader of an object is a method of the object:
 
@@ -2574,6 +2574,8 @@ $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.pickBy(v => v)                    // keep the truthy entries: JavaScript's rule, so "" and 0 drop out (see Truthy and falsy)
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
+$.o.invertBy()                        // { <value>: [keys that hold it] } — no key is lost
+$.team.invertBy("role")               // { admin: ["bob"], user: ["ann", "cy"] }
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
 
@@ -2587,7 +2589,7 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
 
-> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins, as in lodash. A live mongod verified every shape here.
+> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys`, `invert` and `invertBy` **stringify** the key that they make, with `$toString`. When two keys have the same name, `mapKeys` and `invert` keep the last one, as in lodash. `invertBy` keeps every original key in a list, in entry order, and the order of its new keys is unspecified. A missing or null iteratee result becomes the key `"null"`, as in `groupBy`. lodash spells a missing result `"undefined"`. A live mongod verified every shape here.
 
 > **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. `_.pick(undefined, …)` is `{}` and `({}).keys()` is `[]`, and each method gives that answer. Write `?.`, and the chain stops with `null` instead:
 >
