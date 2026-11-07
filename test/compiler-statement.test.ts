@@ -1269,6 +1269,37 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
     // a field alone proves nothing: it stays one document
     expect(pipeline("$ = $.items")).toEqual([{ $replaceWith: "$items" }]);
   });
+
+  // `$unwind` names a top-level field itself, so that fan-out needs no scratch slot.
+  // `$unwind` does not traverse an array on a dotted path, so `$.a.b` keeps the slot.
+  const slotted = (path: string) => [
+    { $set: { "__jsmql.tmp.0": path } },
+    { $unwind: "$__jsmql.tmp.0" },
+    { $replaceWith: "$__jsmql.tmp.0" },
+  ];
+  it("a one-segment field path unwinds in place, and a dotted path uses the scratch slot", () => {
+    expect(pipeline("$$ = $.items;")).toEqual([{ $unwind: "$items" }, { $replaceWith: "$items" }]);
+    expect(pipeline("$$ = $.a.b;")).toEqual(slotted("$a.b"));
+  });
+  it.skipIf(!up)("the in-place fan-out gives the documents that the scratch slot gives", async () => {
+    // `items` is an array, one document, empty, null and missing. `a` is an array of documents in document 1.
+    const fanout = client!.db("jsmql_compiler_statement").collection("fanout");
+    await fanout.deleteMany({});
+    await fanout.insertMany([
+      { _id: 1, items: [{ n: 1 }, { n: 2 }], a: [{ b: { n: 3 } }, { b: { n: 4 } }] },
+      { _id: 2, items: { n: 5 }, a: { b: [{ n: 6 }] } },
+      { _id: 3, items: [] },
+      { _id: 4, items: null },
+      { _id: 5 },
+    ]);
+    const ns = async (stages: unknown[]) =>
+      (await fanout.aggregate(stages as Record<string, unknown>[]).toArray()).map((d) => d.n).sort();
+    expect(await ns(pipeline("$$ = $.items;"))).toEqual([1, 2, 5]);
+    expect(await ns(slotted("$items"))).toEqual([1, 2, 5]);
+    expect(await ns(pipeline("$$ = $.a.b;"))).toEqual([3, 4, 6]);
+    // the in-place shape loses the elements under the array `a`
+    expect(await ns([{ $unwind: "$a.b" }, { $replaceWith: "$a.b" }])).toEqual([6]);
+  });
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
       // `.uniq()` runs on the empty array when `tags` is missing (HR5), so its value is

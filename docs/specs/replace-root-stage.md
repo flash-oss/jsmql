@@ -212,6 +212,18 @@ $$ = $.lineItems.map(li => ({ sku: li.sku }));
 // ]
 ```
 
+A field path of one segment needs no slot, because `$unwind` names that field
+itself:
+
+```
+$$ = $.items;
+// → [{ $unwind: "$items" }, { $replaceWith: "$items" }]
+```
+
+A dotted path keeps the slot. `$unwind` does not traverse an array on the
+path, but the expression `"$a.b"` does. So for `{ a: [{ b: {…} }, { b: {…} }] }`,
+`{ $unwind: "$a.b" }` gives no document, and the slot gives two.
+
 A chain on the stream, on the callback's own stream, or on another
 collection takes the STREAM road, whatever kind its last link returns — a
 `$lookup` yields an array, and `$$ = $$$.orders.filter(p)` is still a

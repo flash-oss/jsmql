@@ -1393,9 +1393,8 @@ jsmql("$$$.metrics.concat($$);")
 
 jsmql("$$$.metrics.concat($.items);")
 jsmql("$$$.metrics.push(...$.items);")
-// both → [{ $set: { "__jsmql.tmp.0": "$items" } },
-//         { $unwind: "$__jsmql.tmp.0" },
-//         { $replaceWith: "$__jsmql.tmp.0" },
+// both → [{ $unwind: "$items" },
+//         { $replaceWith: "$items" },
 //         { $merge: "metrics" }]
 
 jsmql("$$$.metrics.push($.summary);")
@@ -4010,7 +4009,7 @@ jsmql("$ = $.lineItems.map(li => ({ sku: li.sku }));")
 // ✗ $ = takes one document, and this is an array; $$ = <array> makes the stream from it
 ```
 
-A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
+A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` or `$$ = [...$.items]`.
 
 A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above applies only where a row *states* the element kind. `.split()` and `.keys()` give strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where no row states the kind, the fan-out stands.
 

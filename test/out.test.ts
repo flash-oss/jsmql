@@ -398,14 +398,9 @@ describe("$merge — adding to a collection", () => {
   });
 
   // An array is not the stream, so its elements become the documents first — the
-  // same three stages `$$ = <array>;` already emits, then the write.
+  // same stages `$$ = <array>;` emits, then the write.
   it("an ARRAY of documents is written element by element", () => {
-    const stages = [
-      { $set: { "__jsmql.tmp.0": "$items" } },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
-      { $merge: "metrics" },
-    ];
+    const stages = [{ $unwind: "$items" }, { $replaceWith: "$items" }, { $merge: "metrics" }];
     expect(jsmql("$$$.metrics.concat($.items);")).toEqual(stages);
     expect(jsmql("$$$.metrics.push(...$.items);")).toEqual(stages);
   });

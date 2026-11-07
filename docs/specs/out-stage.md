@@ -36,16 +36,15 @@ document:
 ```
 $$$.metrics.concat($.items);
 $$$.metrics.push(...$.items);
-// both → [{ $set: { "__jsmql.tmp.0": "$items" } },
-//         { $unwind: "$__jsmql.tmp.0" },
-//         { $replaceWith: "$__jsmql.tmp.0" },
+// both → [{ $unwind: "$items" },
+//         { $replaceWith: "$items" },
 //         { $merge: "metrics" }]
 
 $$$.metrics.push($.summary);
 // → [{ $replaceWith: "$summary" }, { $merge: "metrics" }]
 ```
 
-Those first three stages are the ones `$$ = <array>;` already emits — one function
+The stages before `$merge` are the ones `$$ = <array>;` emits — one function
 builds both, so the two spellings cannot drift apart.
 
 The sugar covers the PLAIN merge only. `$merge`'s four settings — `on`,

@@ -687,8 +687,8 @@ function rootAsWritten(target: Expr): string {
  * Any value that is not a chain is read as the ARRAY it must be. `$.items`,
  * `[...$.items]` and `$.scores.entries()` are one road, because
  * they say one thing: the stream is these elements, one document each.
- * `$unwind` needs a materialised path, so the compiler parks the array
- * in a scratch slot first.
+ * `$unwind` needs a field path, so the compiler stores the array in a
+ * scratch slot first, unless the array is a top-level field.
  *
  * `valueEnv` is the env under which the compiler reads the VALUE, and it
  * differs by spelling. The position pass marks the `$$ =` edge STREAM
@@ -722,10 +722,19 @@ function becomeStream(
   // `$replaceWith` of a string, because a string is not an object.
   const element = elementOf(t);
   if (cannotBe(element, "object")) throw E.streamElementsNotDocuments(E.pluralNounOfKinds(element), written, value.pos);
-  const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
+  if (isTopLevelPath(arr)) return landed([{ $unwind: arr }, { $replaceWith: arr }], env);
+  const slot = env.chain.slot();
   return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
 }
+
+/**
+ * A field path of ONE segment (`"$items"`) is a field that `$unwind` names
+ * itself, so the fan-out needs no scratch slot. A dotted path needs the slot:
+ * `$unwind` does not traverse an array on the path, but the expression
+ * `"$a.b"` does. A `"$$var"` is not a field path.
+ */
+const isTopLevelPath = (v: unknown): v is string => typeof v === "string" && /^\$[^$.][^.]*$/.test(v);
 
 // ── the out road ─────────────────────────────────────────────────────────────
 
@@ -1016,9 +1025,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         continue;
       }
       // `$$ = <array>` starts the stream from the array's elements, one
-      // document each. `$unwind` needs a materialised path, so the
-      // compiler parks the array in a scratch slot first — an inline
-      // array expression is not a path.
+      // document each (`becomeStream`).
       // A chain on the stream, on the callback's own stream, or on
       // another collection is the STREAM road, whatever kind its last
       // link returns: a `$lookup` yields an array, and

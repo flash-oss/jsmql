@@ -27733,10 +27733,12 @@ function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lea
   if (cannotBe(t, "array")) throw notAStreamChain(value.pos, nounOfKinds(t), lead, how);
   const element = elementOf(t);
   if (cannotBe(element, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element), written2, value.pos);
-  const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
+  if (isTopLevelPath(arr)) return landed([{ $unwind: arr }, { $replaceWith: arr }], env);
+  const slot = env.chain.slot();
   return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
 }
+var isTopLevelPath = (v) => typeof v === "string" && /^\$[^$.][^.]*$/.test(v);
 function outTarget(t) {
   const base = chainBase(t);
   if (base.type !== "DatabaseRef" && base.type !== "ClusterRef") return null;

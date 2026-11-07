@@ -2533,20 +2533,19 @@ describe("$$$.coll — where the hoisted $lookup lands", () => {
     );
     // both spellings the message names do compile
     expect(jsmql("$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;")).toEqual([
-      { $set: { "__jsmql.tmp.0": "$items" } },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
+      { $unwind: "$items" },
+      { $replaceWith: "$items" },
       {
         $lookup: {
           from: "products",
           localField: "pid",
           foreignField: "_id",
           pipeline: [{ $limit: 1 }],
-          as: "__jsmql.tmp.1",
+          as: "__jsmql.tmp.0",
         },
       },
-      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
-      { $set: { name: "$__jsmql.tmp.1.name" } },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { name: "$__jsmql.tmp.0.name" } },
       { $unset: "__jsmql" },
     ]);
     expect(jsmql("let ps = $$$.products.filter(p => p.ok === true); $.n = $.items.map(x => ps.size());")).toEqual([
