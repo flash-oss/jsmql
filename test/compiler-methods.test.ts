@@ -1872,7 +1872,7 @@ describe("compiler/emit — array methods", () => {
   });
 
   it("refuses what the server or JavaScript would", () => {
-    expect(() => expr("$.a.take(-1)")).toThrow(/from 0 to Infinity/);
+    expect(() => expr("$.a.take(-1)")).toThrow(/of 0 or more/);
     expect(() => expr("$.a.chunk($.n)")).toThrow(/compile-time constant/);
     expect(() => expr("$.a.flat(2)")).toThrow(/from 1 to 1/);
     expect(() => expr("$.a.has(x => x > 1)")).toThrow(/searches for a VALUE/);
@@ -2141,13 +2141,13 @@ describe("compiler/emit — `.pad()` is lodash's `_.pad`", () => {
 
   it("takes a constant length of 1 or more and a pad of one ASCII character", () => {
     expect(() => expr("$.s.pad($.n)")).toThrow(
-      "'pad' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.pad()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => expr("$.s.pad(5, $.c)")).toThrow(
-      "'pad' argument 2 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.pad()' argument 2 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
-    expect(() => expr("$.s.pad(0)")).toThrow("'pad' argument 1 must be a number of 1 or more. It got 0.");
-    expect(() => expr("$.s.pad(-4)")).toThrow("'pad' argument 1 must be a number of 1 or more. It got -4.");
+    expect(() => expr("$.s.pad(0)")).toThrow("'.pad()' argument 1 must be a number of 1 or more. It got 0.");
+    expect(() => expr("$.s.pad(-4)")).toThrow("'.pad()' argument 1 must be a number of 1 or more. It got -4.");
     expect(() => expr('$.s.pad(5, "ab")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "ab".`);
     expect(() => expr('$.s.pad(5, "")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "".`);
     expect(() => expr('$.s.pad(5, "é")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "é".`);

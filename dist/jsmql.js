@@ -22030,8 +22030,11 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     const e = operands[Number(i)];
     const n2 = e === void 0 ? null : numberOf(e);
     if (n2 !== null && (n2 < lo || n2 > hi)) {
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name2}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`, e.pos);
+      const bound = hi === Number.MAX_SAFE_INTEGER || hi === Infinity ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n2}.`,
+        e.pos
+      );
     }
   }
   for (const i of args.nonZero ?? []) {
@@ -22047,7 +22050,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver, settl
     const e = operands[i];
     if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
       throw new CodegenError(
-        `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        `'${spell2(name2)}' argument ${i + 1} must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.`,
         e.pos
       );
     }

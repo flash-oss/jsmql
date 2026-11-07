@@ -3380,7 +3380,7 @@ describe("replacing date parts (.set)", () => {
   });
   it("needs a written-out object literal — MongoDB reads the parts by name", () => {
     expect(() => jsmql.expr("$.t.set($.parts)")).toThrow(
-      "'set' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.set()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => jsmql.expr("$.t.set({ ...$.p })")).toThrow(
       "MQL has no spread in an object. Write '<a>.assign(<b>)' instead.",
@@ -4859,7 +4859,7 @@ describe("array method additions", () => {
   });
   it(".toSpliced still refuses a negative deleteCount", () => {
     expect(() => jsmql.expr("$.xs.toSpliced(1, -1)")).toThrow(
-      "'toSpliced' argument 2 must be a number from 0 to Infinity. It got -1.",
+      "'.toSpliced()' argument 2 must be a number of 0 or more. It got -1.",
     );
   });
   it(".with(i, v) replaces an element by index", () => {
@@ -4890,7 +4890,7 @@ describe("array method additions", () => {
   });
   it(".with with a negative index literal throws", () => {
     expect(() => jsmql.expr("$.xs.with(-1, 9)")).toThrow(
-      "'with' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.with()' argument 1 must be a number of 0 or more. It got -1.",
     );
   });
   it("enforces .with arity (exactly 2)", () => {
@@ -5523,9 +5523,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         in: { $slice: [{ $ifNull: ["$a", []] }, "$$jsmqlI", 2] },
       },
     });
-    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(
-      "'chunk' argument 1 must be a number from 1 to Infinity. It got 0.",
-    );
+    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow("'.chunk()' argument 1 must be a number of 1 or more. It got 0.");
   });
   it(".intersection and .difference are MongoDB's set operators: each value once", () => {
     // A `$filter` would keep the receiver's duplicates. The set operators keep each value
@@ -6501,15 +6499,11 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     );
   });
   it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
-    expect(() => jsmql.expr("$.a.take(-1)")).toThrow(
-      "'take' argument 1 must be a number from 0 to Infinity. It got -1.",
-    );
+    expect(() => jsmql.expr("$.a.take(-1)")).toThrow("'.take()' argument 1 must be a number of 0 or more. It got -1.");
     expect(() => jsmql.expr("$.a.takeRight(-1)")).toThrow(
-      "'takeRight' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.takeRight()' argument 1 must be a number of 0 or more. It got -1.",
     );
-    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow(
-      "'drop' argument 1 must be a number from 0 to Infinity. It got -1.",
-    );
+    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow("'.drop()' argument 1 must be a number of 0 or more. It got -1.");
   });
 });
 
@@ -6900,7 +6894,7 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
       },
     });
     expect(() => jsmql.expr("$.a.sampleSize(-1)")).toThrow(
-      "'sampleSize' argument 1 must be a number from 0 to Infinity. It got -1.",
+      "'.sampleSize()' argument 1 must be a number of 0 or more. It got -1.",
     );
   });
 });
@@ -7545,13 +7539,13 @@ describe("string padding methods", () => {
   });
   it("takes a constant length of 1 or more and a pad of one ASCII character", () => {
     expect(() => jsmql.expr("$.code.padStart($.width)")).toThrow(
-      "'padStart' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.padStart()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => jsmql.expr("$.code.padEnd(5, $.sep)")).toThrow(
-      "'padEnd' argument 2 must be a compile-time constant. The server reads it before any document. It got an expression.",
+      "'.padEnd()' argument 2 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
     );
     expect(() => jsmql.expr("$.code.padStart(0)")).toThrow(
-      "'padStart' argument 1 must be a number of 1 or more. It got 0.",
+      "'.padStart()' argument 1 must be a number of 1 or more. It got 0.",
     );
     expect(() => jsmql.expr('$.code.padStart(5, "US")')).toThrow(
       `'.padStart()' argument 2 takes one ASCII character, but got "US".`,
@@ -8859,7 +8853,9 @@ describe(".flat / .flatMap", () => {
     });
   });
   it("rejects flat(2)", () => {
-    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow("'flat' argument 1 must be a number from 1 to 1. It got 2.");
+    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow(
+      "'.flat()' argument 1 must be a number from 1 to 1. It got 2.",
+    );
   });
   it("flatMap with lambda", () => {
     expect(jsmql.expr("$.docs.flatMap(d => d.tags)")).toEqual({

@@ -481,9 +481,12 @@ export function checkSlots(
     const e = operands[Number(i)];
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && (n < lo || n > hi)) {
-      // A range whose top is the largest safe integer is a FLOOR, and reads as one.
-      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n}.`, e!.pos);
+      // A range with no top is a floor. The refusal says so.
+      const bound = hi === Number.MAX_SAFE_INTEGER || hi === Infinity ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(
+        `'${spell(name)}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n}.`,
+        e!.pos,
+      );
     }
   }
   for (const i of args.nonZero ?? []) {
@@ -504,7 +507,7 @@ export function checkSlots(
     // A run-time value is a constant too: the call supplies it before the compile.
     if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
       throw new CodegenError(
-        `'${name}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
+        `'${spell(name)}' argument ${i + 1} must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.`,
         e.pos,
       );
     }
