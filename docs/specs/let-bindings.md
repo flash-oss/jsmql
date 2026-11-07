@@ -366,9 +366,7 @@ The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace
 still on the documents (`Chain.dirty`). A `let` slot, a join's scratch slot, and
 the stream count share the namespace and the one cleanup. A stage that replaced
 the document clears the flag, so the cleanup never unsets a field that is
-already gone. Raw MQL that keeps the bare `$$ROOT` or `$$CURRENT` in a replacing
-stage (`$replaceWith("$$ROOT")`) keeps the namespace. So the flag stays, and the
-cleanup follows that stage. A scratch field that a later stage writes sets the
+already gone. A scratch field that a later stage writes sets the
 flag again: the flag follows the stages in the order they stand. A `$facet`
 branch is a pipeline over the documents that the `$facet` receives. So its chain
 starts with the flag of the chain around it (`Env.enter`). So each branch ends
@@ -401,10 +399,24 @@ are true. First, it read the whole document bare. Second, a stage ahead of the
 read's own stage wrote under `__jsmql`. That stage is a hoisted stage, or an
 earlier stage of the same statement. A `$facet` branch reads the documents of
 its outer chain (`Chain.source`), so its bare read counts there too. A raw
-`"$$ROOT"` stays as written (HR1). So a raw stage that puts it inside a value,
-for example `$group({ _id: null, all: { $push: "$$ROOT" } })` after a `let`,
-keeps `__jsmql` in that value. See
-[state-machines.md](state-machines.md#the-pipeline-chain).
+`"$$ROOT"` or `"$$CURRENT"` stays as written (HR1). So when the namespace may be
+on the document, `clearOfNamespace` puts `{ $unset: "__jsmql" }` ahead of the
+statement that holds it. The walk skips each sub-pipeline (the row's `statement`
+or `stream` slot), because its documents are other documents. It also skips the
+objects that a row marks with `carriesRoot` (`registry/mql.ts`): the stages of a
+row that states `restoresDocuments` keep the namespace on purpose. A binding
+that was under the namespace before the statement is gone after it
+(`Env.clearedSince`). The compiler refuses a read of it and names the fix. The
+compiler cannot remove the namespace from a statement that also reads it. It
+refuses the statement (`rawRootReadsNamespace`), and the message names `$`.
+
+```js
+let t = $.a + 1; $.y = t; $group({ _id: null, all: { $push: "$$ROOT" } });
+// → [{ $set: { "__jsmql.var.t": { $add: ["$a", 1] } } }, { $set: { y: "$__jsmql.var.t" } },
+//    { $unset: "__jsmql" }, { $group: { _id: null, all: { $push: "$$ROOT" } } }]
+```
+
+See [state-machines.md](state-machines.md#the-pipeline-chain).
 
 ## Output stability
 

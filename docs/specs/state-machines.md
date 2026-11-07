@@ -114,7 +114,7 @@ branch) has a chain of its own.
 |---|---|
 | `emitted` | The stages placed so far |
 | `hoisted` | The stages a value placed ahead of the stage it stands in; `ahead()` and `flush()` drain them |
-| `dirty` | A field under `__jsmql` may be on the documents. `wrote` counts each change from false to true |
+| `dirty` | A field under `__jsmql` may be on the documents. `writes` counts each write under the namespace |
 | `terminal` | The `$out` or `$merge` stage, filed so that it stays last |
 | `element` | Where the stream's element lives: `""` for the document, or an unwound field |
 | `stamped` | The stream counts that a later read can reuse |
@@ -128,12 +128,14 @@ branch) has a chain of its own.
 | `hoist(stages, reads)` | `reads` is not stamped | the stages go into `hoisted`; `dirty = true` |
 | a `let` lands | — | one `$set` under `__jsmql.var`; `dirty = true` |
 | a stage lands (`afterStages`) | the stage does not keep `preservesCount` | `stamped` empties |
-| a stage that replaces the document lands | — | `element = ""`; `dirty = false`, except when the stage keeps a bare `$$ROOT` (`keepsRoot`) |
+| a stage that replaces the document runs | — | `element = ""`; `dirty = false` |
+| a statement holds a raw `$$ROOT` while the namespace may be there | it reads nothing under `__jsmql` | a `{ $unset: "__jsmql" }` goes ahead of it; `stamped` empties; the earlier field bindings are gone |
+| the same, and the statement reads under `__jsmql` | — | refused (`rawRootReadsNamespace`) |
 | `$out` or `$merge` is filed | `terminal` is null | `terminal` holds it |
 | a statement after a filed terminal | — | refused (`afterTerminalStage`) |
 | `wholeDocument()` | `dirty` or a `clearRoot` on this chain or a `source` | the namespace-free document; else `"$$ROOT"`, and `bareReads + 1` on each chain it reads |
 | `enter()` a branch over the same documents | — | the branch's `dirty` starts as the outer one; `source` is the outer chain |
-| `mark()` / `rewind()` | — | `rewind` puts back `hoisted`, `stamped`, `slots`, `dirty`, `wrote`, `element`, `terminal` and `bareReads` |
+| `mark()` / `rewind()` | — | `rewind` puts back `hoisted`, `stamped`, `slots`, `dirty`, `writes`, `element`, `terminal` and `bareReads` |
 | `close()` | — | `flush()`; then the stages, `{ $unset: "__jsmql" }` when `dirty`, and the terminal |
 
 A statement lowers inside `clearOfNamespace` (in
@@ -150,28 +152,14 @@ Invariants:
 - **C3.** `close()` drains `hoisted`, so it keeps each hoisted stage.
 - **C4.** One lowering gives one output. A lowering that the compiler takes back (`rewind`) leaves
   no hoist, stamp, slot number, flag or terminal behind.
-- **C5.** The compiler never changes MQL that the developer wrote (HR1). So a raw stage that keeps
-  `$$ROOT` keeps the cleanup. See below for the one place where raw MQL can still carry the
-  namespace.
+- **C5.** The compiler never changes MQL that the developer wrote (HR1). So a raw `"$$ROOT"` reads
+  a document from which the compiler removed the namespace ahead of the statement. A row that
+  gives the documents back as they were (`.uniq()`) marks its own bare `$$ROOT` with
+  `carriesRoot`, and keeps the namespace.
 
 [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) holds C1 and C5: the MQL
-of each shape, and a live run that looks for `__jsmql` at every depth.
+of each shape, each refusal, and a live run that looks for `__jsmql` at every depth.
 [test/permutations.test.ts](../../test/permutations.test.ts) checks C1 for every chain it runs.
-
-### What raw MQL can still reach
-
-HR1 keeps a raw `"$$ROOT"` as written. So a raw stage that puts the document inside a value keeps
-the namespace there, and no cleanup reaches it:
-
-```js
-let t = $.a + 1; $group({ _id: null, all: { $push: "$$ROOT" } });
-// → [{ $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
-//    { $group: { _id: null, all: { $push: "$$ROOT" } } },
-//    { $unset: "__jsmql" }]
-// each element of `all` holds __jsmql.var.t; the $unset reaches the top level only
-```
-
-The JSMQL spelling `$push($)` reads the document through its chain, and gives no namespace.
 
 ## The mongoose plugin
 

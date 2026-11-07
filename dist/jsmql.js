@@ -403,6 +403,12 @@ var pairsToObject = (pairs) => ({
     $map: { input: pairs, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] }
   }
 });
+var CARRIES_ROOT = /* @__PURE__ */ new WeakSet();
+function carriesRoot(o) {
+  CARRIES_ROOT.add(o);
+  return o;
+}
+var isRootCarrier = (o) => CARRIES_ROOT.has(o);
 
 // src/registry/ast.ts
 function isFieldPathString(e) {
@@ -648,7 +654,7 @@ var listOf = (list) => {
   };
 };
 var arrowOf = (param, body, pos) => ({ type: "Lambda", params: [param], body, pos });
-var keepFirstPer = (key) => key === "$$ROOT" ? [{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }] : [{ $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_SLOT}` }];
+var keepFirstPer = (key) => key === "$$ROOT" ? [{ $group: carriesRoot({ _id: "$$ROOT" }) }, { $replaceWith: "$_id" }] : [{ $group: { _id: key, [GROUP_SLOT]: carriesRoot({ $first: "$$ROOT" }) } }, { $replaceWith: `$${GROUP_SLOT}` }];
 var collapse = (key, acc) => [
   { $group: { _id: key, [GROUP_SLOT]: acc } },
   {
@@ -22351,6 +22357,11 @@ var functionAsValue = (name2, pos) => new CodegenError(
 );
 var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
 var afterReplace = (by) => (name2, mutable) => mutable ? `\`${name2}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name2} = \u2026\`), or carry the value as a field of the new document.` : `\`${name2}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
+var clearedForRawRoot = (name2) => `\`${name2}\` cannot be read here. A stage before this read reads the whole document as \`$$ROOT\` in raw MQL. So the compiler removed its own fields from the document ahead of that stage, and \`${name2}\` was one of them. Read \`${name2}\` before that stage, or write \`$\` in place of \`"$$ROOT"\`: \`$\` is the document without the compiler's fields, and \`${name2}\` stays.`;
+var rawRootReadsNamespace = (pos) => new CodegenError(
+  'This statement reads the whole document as `$$ROOT` in raw MQL, and it also reads a value that the compiler keeps in a field of the document: a `let` binding, a stream count or a join. `$$ROOT` would then hold that field. Write `$` in place of `"$$ROOT"`: `$` is the document without the compiler\'s fields.',
+  pos
+);
 var unfilledParam = (name2, method, why) => `\`${name2}\` has no value inside \`.${method}()\` \u2014 ${why}`;
 var negativeIndex = (index, pos) => new CodegenError(
   `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
@@ -22430,11 +22441,11 @@ function unreadableField(name2, why, read3, holder, pos) {
     const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
     const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
     const subject2 = holder ?? "this object";
-    const [owner, holds] = why.elements === true ? [
+    const [owner, holds2] = why.elements === true ? [
       `the elements of ${subject2} do not have`,
       why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
     ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
-    return new CodegenError(`'${read3}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
+    return new CodegenError(`'${read3}' reads a field that ${owner}. ${holds2}${fix === "" ? "" : ` ${fix}`}`, pos);
   }
   if (why.kinds.length === 0) return alwaysAbsent(read3, holder, pos);
   const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
@@ -23412,6 +23423,19 @@ var Scope = class _Scope {
    * The scope after a stage that replaced the document. Every binding carried in a
    * document FIELD becomes a name whose read says what dropped it.
    */
+  /**
+   * Returns the scope after the compiler removed `__jsmql` ahead of a stage. Each
+   * binding that `before` held in a field is gone. A binding that the stage
+   * itself wrote, after the removal, stays.
+   */
+  clearedSince(before, message) {
+    const bound = new Map(this.bound);
+    for (const [js, b] of this.bound) {
+      if (b.ref.kind === "field" && before.bound.get(js) === b)
+        bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
+    }
+    return new _Scope(bound, this.taken);
+  }
   dropFields(by, message) {
     const bound = new Map(this.bound);
     for (const [js, b] of this.bound) {
@@ -23751,7 +23775,7 @@ var Chain = class {
     this.hoisted = [];
     this.slots = 0;
     this.holdsNamespace = false;
-    this.wrote = 0;
+    this.writes = 0;
     /**
      * The chain whose documents flow into this one. It is a chain for a body over
      * the SAME documents (a `$facet` branch), and null for a pipeline of its own.
@@ -23801,15 +23825,15 @@ var Chain = class {
   }
   /**
    * True when a field under `__jsmql` may be on the documents. It owns the
-   * trailing cleanup. `wrote` counts each change from false to true. So a
-   * statement can see that it put the namespace on the document, also when a
-   * later stage of the same statement removed it.
+   * trailing cleanup. `writes` counts each write under the namespace. So a
+   * statement can see that it wrote there, even when a later stage of the same
+   * statement removed the namespace.
    */
   get dirty() {
     return this.holdsNamespace;
   }
   set dirty(v) {
-    if (v && !this.holdsNamespace) this.wrote++;
+    if (v) this.writes++;
     this.holdsNamespace = v;
   }
   proved(node, type2) {
@@ -23824,6 +23848,10 @@ var Chain = class {
    */
   placed(replaces) {
     if (replaces) this.element = "";
+  }
+  /** A `{ $unset: "__jsmql" }` comes before the next stage. No stamp is true after it. */
+  namespaceRemoved() {
+    this.stamped.clear();
   }
   /** A fresh `__jsmql.tmp.<n>` scratch slot. */
   slot() {
@@ -23851,7 +23879,7 @@ var Chain = class {
       element: this.element,
       terminal: this.terminal,
       bareReads: this.bareReads,
-      wrote: this.wrote
+      writes: this.writes
     };
   }
   /** Undo each hoist, stamp, slot, write and read since `mark`. */
@@ -23863,7 +23891,7 @@ var Chain = class {
     this.element = m.element;
     this.terminal = m.terminal;
     this.bareReads = m.bareReads;
-    this.wrote = m.wrote;
+    this.writes = m.writes;
   }
   /**
    * The whole document as a value. When a field under `__jsmql` may be on the
@@ -24039,6 +24067,14 @@ var Env = class _Env {
    */
   dropFields(by, message) {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
+  }
+  /**
+   * Returns this Env after the compiler removed `__jsmql` ahead of the stages since
+   * `before`. The bindings that `before` held in fields are gone.
+   * The document keeps its proof, because only the compiler's fields left it.
+   */
+  clearedSince(before, message) {
+    return new _Env(this.scope.clearedSince(before.scope, message), this.site, this.chain, this.documents);
   }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js, type2, pos) {
@@ -27413,7 +27449,7 @@ function reducerOf(call) {
   if (fn.type !== "Lambda" || fn.body === void 0 || fn.params.length !== 2) throw reduceWrapCallback(call.pos);
   return { lambda: fn, acc: fn.params[0], param: fn.params[1], body: fn.body };
 }
-function reduceWrapStages(list) {
+function reduceWrapStages(list, wholeDocument) {
   const el = list.elements[0];
   const group = { _id: null };
   const replace = {};
@@ -27442,7 +27478,7 @@ function reduceWrapStages(list) {
   if (keyed2 !== null) {
     if (init.type !== "ObjectLiteral" || init.entries.length !== 0) throw reduceWrapKeyedInit(init.pos);
     return [
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed2.k, v: keyed2.v } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed2.k, v: keyed2.v === ROOT ? wholeDocument() : keyed2.v } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } }
     ];
   }
@@ -27471,6 +27507,7 @@ function reduceWrapStages(list) {
     if (!seen.has(k)) throw reduceWrapInit(k, "the init starts it, the body does not fold it", init.pos);
   return [{ $group: group }, { $replaceWith: replace }];
 }
+var ROOT = "$$ROOT";
 function keyedEntry(body, acc, param) {
   if (body.entries.length !== 2) return null;
   const [spread, entry] = body.entries;
@@ -27478,9 +27515,9 @@ function keyedEntry(body, acc, param) {
   if (entry.type !== "KeyValueEntry" || entry.key.kind !== "computed") return null;
   const k = fieldOf(entry.key.expr, param);
   if (k === null) return null;
-  const v = entry.value.type === "Ident" && entry.value.name === param ? "$$ROOT" : fieldOf(entry.value, param);
+  const v = entry.value.type === "Ident" && entry.value.name === param ? ROOT : fieldOf(entry.value, param);
   if (v === null) return null;
-  return { k: "$" + k, v: v === "$$ROOT" ? v : "$" + v };
+  return { k: "$" + k, v: v === ROOT ? v : "$" + v };
 }
 function holdsStreamReduce(node) {
   if (node === null || typeof node !== "object") return false;
@@ -27629,23 +27666,32 @@ function lowerProgram(program, env) {
 }
 var landed = (stages, env) => ({ stages, env: afterStages(stages, env) });
 function statementStages(stmt, env, first) {
-  return clearOfNamespace(env, () => statementStagesOnce(stmt, env, first));
+  return clearOfNamespace(env, stmt.pos, () => statementStagesOnce(stmt, env, first));
 }
-function clearOfNamespace(env, lower) {
+function clearOfNamespace(env, pos, lower) {
   const chains = [.../* @__PURE__ */ new Set([env.chain, env.rootChain])];
   const marks = chains.map((c) => c.mark());
-  const step2 = lower();
   const chain2 = env.chain;
   const m = marks[0];
-  const wroteAhead = chain2.wrote > m.wrote && (chain2.hoisted.length > m.hoisted || step2.stages.length > 1);
-  if (chain2.bareReads === m.bareReads || !wroteAhead) return step2;
-  chains.forEach((c, i) => c.rewind(marks[i]));
-  chain2.clearRoot = true;
-  try {
-    return lower();
-  } finally {
-    chain2.clearRoot = false;
+  const wroteAhead = (s) => chain2.writes > m.writes && (chain2.hoisted.length > m.hoisted || s.stages.length > 1);
+  let step2 = lower();
+  if (chain2.bareReads > m.bareReads && wroteAhead(step2)) {
+    chains.forEach((c, i) => c.rewind(marks[i]));
+    chain2.clearRoot = true;
+    try {
+      step2 = lower();
+    } finally {
+      chain2.clearRoot = false;
+    }
   }
+  if (!(m.dirty || wroteAhead(step2)) || !step2.stages.some(keepsRoot)) return step2;
+  if (step2.stages.some(readsNamespace)) throw rawRootReadsNamespace(pos);
+  chain2.namespaceRemoved();
+  if (chain2.writes === m.writes) chain2.dirty = false;
+  return {
+    stages: [{ $unset: JSMQL_NS }, ...step2.stages],
+    env: step2.env.clearedSince(env, (js) => clearedForRawRoot(js))
+  };
 }
 function statementStagesOnce(stmt, env, first) {
   if (stmt.type === "UpdateFilter") return writeStages(stmt, env, first);
@@ -27692,7 +27738,7 @@ function declStages(run, env) {
   for (const decl of run) {
     const mark = env.chain.mark();
     const rootMark = env.rootChain.mark();
-    const step2 = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : clearOfNamespace(scope, () => letStages(decl, scope));
+    const step2 = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : clearOfNamespace(scope, decl.pos, () => letStages(decl, scope));
     const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
     if (consumed > 0 && hoisted) {
       env.chain.rewind(mark);
@@ -27758,20 +27804,31 @@ function afterStages(stages, env) {
     if (replacesDocument(name2, stage)) {
       out = out.dropFields(name2, afterReplace(name2));
       env.chain.placed(true);
-      if (!keepsRoot(stage)) env.chain.dirty = false;
+      env.chain.dirty = false;
     }
     out = out.document(after);
   }
   return out;
 }
-function keepsRoot(v) {
-  if (typeof v === "string") return v === "$$ROOT" || v === "$$CURRENT";
-  if (Array.isArray(v)) return v.some(keepsRoot);
-  if (!isPlainObject(v)) return false;
-  const cleared = v.$unsetField;
-  if (Object.keys(v).length === 1 && cleared?.field === JSMQL_NS) return false;
-  return Object.values(v).some(keepsRoot);
+function holds(stage, test) {
+  const name2 = Object.keys(stage)[0];
+  const walk2 = (v, path) => {
+    if (typeof v === "string") return test(v);
+    if (Array.isArray(v)) return v.some((x) => walk2(x, null));
+    if (!isPlainObject(v)) return false;
+    const cleared = v.$unsetField;
+    if (Object.keys(v).length === 1 && cleared?.field === JSMQL_NS || isRootCarrier(v)) return false;
+    return Object.entries(v).some(([k, x]) => {
+      const at2 = path === null ? null : [...path, k];
+      const slot = at2 === null ? void 0 : bodySlotAt(name2, at2)?.at;
+      if ((slot === "statement" || slot === "stream") && Array.isArray(x)) return false;
+      return walk2(x, at2);
+    });
+  };
+  return walk2(stage[name2], []);
 }
+var keepsRoot = (stage) => holds(stage, (s) => s === "$$ROOT" || s === "$$CURRENT");
+var readsNamespace = (stage) => holds(stage, (s) => s === "$" + JSMQL_NS || s.startsWith("$" + JSMQL_NS + "."));
 function replacesDocument(name2, stage) {
   const fact = documentOf(name2);
   return fact === "fields" || fact === "value" || fact === "unknown" || fact === "projection" && isInclusion(stage[name2]);
@@ -27784,7 +27841,7 @@ function isInclusion(body) {
 var DOCUMENTS2 = "$documents";
 var holdsSpread = (list) => list.elements.some((e) => e.type === "SpreadElement");
 function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
-  if (isReduceWrap(list)) return reduceWrapStages(list);
+  if (isReduceWrap(list)) return reduceWrapStages(list, () => env.chain.wholeDocument());
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
   const dropAll = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];

@@ -266,6 +266,24 @@ export const afterReplace =
       ? `\`${name}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name} = …\`), or carry the value as a field of the new document.`
       : `\`${name}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
 
+/**
+ * The message for a binding that the compiler removed with the rest of `__jsmql`,
+ * ahead of a raw stage that reads `$$ROOT`.
+ */
+export const clearedForRawRoot = (name: string): string =>
+  `\`${name}\` cannot be read here. A stage before this read reads the whole document as \`$$ROOT\` in raw MQL. So the compiler removed its own fields from the document ahead of that stage, and \`${name}\` was one of them. Read \`${name}\` before that stage, or write \`$\` in place of \`"$$ROOT"\`: \`$\` is the document without the compiler's fields, and \`${name}\` stays.`;
+
+/**
+ * The error for a raw `$$ROOT` in a statement that also reads `__jsmql`. The
+ * compiler cannot remove the namespace ahead of the statement, and `$$ROOT` would
+ * carry it.
+ */
+export const rawRootReadsNamespace = (pos: number): CodegenError =>
+  new CodegenError(
+    'This statement reads the whole document as `$$ROOT` in raw MQL, and it also reads a value that the compiler keeps in a field of the document: a `let` binding, a stream count or a join. `$$ROOT` would then hold that field. Write `$` in place of `"$$ROOT"`: `$` is the document without the compiler\'s fields.',
+    pos,
+  );
+
 /** A callback parameter the stream cannot fill — the index, the receiver. */
 export const unfilledParam = (name: string, method: string, why: string): string =>
   `\`${name}\` has no value inside \`.${method}()\` — ${why}`;

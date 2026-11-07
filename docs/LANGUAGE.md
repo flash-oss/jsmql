@@ -4871,6 +4871,21 @@ To use the value after the stage, assign the binding again (`total = …`), or p
 
 `$project` clears the scope in **inclusion** mode only. A list of the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `document: "projection"`.
 
+**`$` and a raw `"$$ROOT"` read the document without the lets.** `$` as a value (`$.copy = $`, `$push($)`) is the document without the fields that carry the lets. A `"$$ROOT"` that you write in raw MQL stays as you wrote it. So JSMQL removes the let fields with `{ $unset: "__jsmql" }` ahead of that statement. A later read of a let from an earlier statement is a compile-time error. A statement that reads a let AND a raw `"$$ROOT"` is a compile-time error too, because the document would still hold the let. Write `$` in place of `"$$ROOT"` to keep the lets:
+
+```js
+jsmql`
+  let t = $.a + 1;
+  $group({ _id: t, all: { $push: "$$ROOT" } });  // ✗ the raw $$ROOT document would hold t
+`;
+jsmql`
+  let t = $.a + 1;
+  $group({ _id: t, all: { $push: $ } });
+`;
+// → [{ $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+//    { $group: { _id: "$__jsmql.var.t", all: { $push: { $unsetField: { field: "__jsmql", input: "$$ROOT" } } } } }]
+```
+
 A chain link that groups the stream, and then gives each document it keeps back as it was, keeps the let. So `let t = $.a; $$.uniq(); $match($.x === t);` reads `t`. The row states this as `restoresDocuments`. The rule is the same inside one `,` run: after `$ = { a: $.a }`, a later write in the same run cannot read the let either.
 
 **Indexing pitfall.** A let materialises through `$addFields` / `$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place an index-eligible `$match` on a real document field **before** your `let` binding:

@@ -15,7 +15,7 @@ import type { Expr, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
 import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import { isFieldPathString } from "../../registry/ast.ts";
 import { readsRef } from "./mql.ts";
-import { setKey } from "../../registry/mql.ts";
+import { isRootCarrier, setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
 import type { Family } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
@@ -258,7 +258,7 @@ const landed = (stages: Stage[], env: Env): Step => ({ stages, env: afterStages(
 
 /** One statement's stages. `first` says whether nothing stands ahead of it here. */
 function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
-  return clearOfNamespace(env, () => statementStagesOnce(stmt, env, first));
+  return clearOfNamespace(env, (stmt as { pos: number }).pos, () => statementStagesOnce(stmt, env, first));
 }
 
 /**
@@ -268,26 +268,43 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
  * (`Chain.wholeDocument`). The same statement can also put a stage AHEAD of
  * the stage that holds the read. Examples are a hoisted `$lookup`, a stream
  * count, or an earlier stage of its own. That stage can write under `__jsmql`
- * after the compiler lowers the read. Then the statement lowers again, and every whole-document read leaves
- * the namespace out. A write in the read's own stage needs nothing: a stage
- * evaluates each expression against its input document.
+ * after the compiler lowers the read. Then the compiler lowers the statement again, and
+ * every whole-document read leaves the namespace out. A write in the read's own
+ * stage needs nothing: a stage evaluates each expression against its input
+ * document.
+ *
+ * Raw MQL keeps its `"$$ROOT"` as written (HR1). So when the namespace may be on
+ * the document, a `{ $unset: "__jsmql" }` goes ahead of the statement, and the
+ * bindings it carried are gone. A statement that also reads the namespace
+ * cannot have it removed, and the compiler refuses it.
  * See docs/specs/let-bindings.md § The whole document as a value.
  */
-function clearOfNamespace(env: Env, lower: () => Step): Step {
+function clearOfNamespace(env: Env, pos: number, lower: () => Step): Step {
   const chains = [...new Set([env.chain, env.rootChain])];
   const marks = chains.map((c) => c.mark());
-  const step = lower();
   const chain = env.chain;
   const m = marks[0];
-  const wroteAhead = chain.wrote > m.wrote && (chain.hoisted.length > m.hoisted || step.stages.length > 1);
-  if (chain.bareReads === m.bareReads || !wroteAhead) return step;
-  chains.forEach((c, i) => c.rewind(marks[i]));
-  chain.clearRoot = true;
-  try {
-    return lower();
-  } finally {
-    chain.clearRoot = false;
+  const wroteAhead = (s: Step): boolean =>
+    chain.writes > m.writes && (chain.hoisted.length > m.hoisted || s.stages.length > 1);
+  let step = lower();
+  if (chain.bareReads > m.bareReads && wroteAhead(step)) {
+    chains.forEach((c, i) => c.rewind(marks[i]));
+    chain.clearRoot = true;
+    try {
+      step = lower();
+    } finally {
+      chain.clearRoot = false;
+    }
   }
+  if (!(m.dirty || wroteAhead(step)) || !step.stages.some(keepsRoot)) return step;
+  if (step.stages.some(readsNamespace)) throw E.rawRootReadsNamespace(pos);
+  chain.namespaceRemoved();
+  // The statement's own writes come after the `$unset`. If it has none, nothing is under the namespace.
+  if (chain.writes === m.writes) chain.dirty = false;
+  return {
+    stages: [{ $unset: JSMQL_NS }, ...step.stages],
+    env: step.env.clearedSince(env, (js) => E.clearedForRawRoot(js)),
+  };
 }
 
 function statementStagesOnce(stmt: PipelineStmt, env: Env, first: boolean): Step {
@@ -370,7 +387,7 @@ function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): (Step & { c
     const step =
       decl.type === "FuncDecl"
         ? statementStages(decl, scope, false)
-        : clearOfNamespace(scope, () => letStages(decl, scope));
+        : clearOfNamespace(scope, decl.pos, () => letStages(decl, scope));
     const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
     if (consumed > 0 && hoisted) {
       env.chain.rewind(mark);
@@ -465,8 +482,7 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
     if (replacesDocument(name, stage)) {
       out = out.dropFields(name, E.afterReplace(name));
       env.chain.placed(true);
-      // Raw MQL that keeps the bare `$$ROOT` keeps `__jsmql` too, so the cleanup stays necessary.
-      if (!keepsRoot(stage)) env.chain.dirty = false;
+      env.chain.dirty = false;
     }
     out = out.document(after);
   }
@@ -474,18 +490,39 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
 }
 
 /**
- * Does this stage carry the bare document through: a `$$ROOT` or `$$CURRENT` that
- * only raw MQL spells when `__jsmql` holds a field? In that case the compiler's
- * own read of the whole document leaves the namespace out (`Chain.wholeDocument`).
+ * Does the stage hold a string that `test` accepts? The walk leaves out each
+ * sub-pipeline (the row's `statement` or `stream` slot), because its documents
+ * are not the ones this stage reads. It also leaves out the compiler's own read
+ * of the document without the namespace.
  */
-function keepsRoot(v: unknown): boolean {
-  if (typeof v === "string") return v === "$$ROOT" || v === "$$CURRENT";
-  if (Array.isArray(v)) return v.some(keepsRoot);
-  if (!isPlainObject(v)) return false;
-  const cleared = (v as { $unsetField?: { field?: unknown } }).$unsetField;
-  if (Object.keys(v).length === 1 && cleared?.field === JSMQL_NS) return false;
-  return Object.values(v).some(keepsRoot);
+function holds(stage: Stage, test: (s: string) => boolean): boolean {
+  const name = Object.keys(stage)[0];
+  const walk = (v: unknown, path: BodyPath | null): boolean => {
+    if (typeof v === "string") return test(v);
+    if (Array.isArray(v)) return v.some((x) => walk(x, null));
+    if (!isPlainObject(v)) return false;
+    const cleared = (v as { $unsetField?: { field?: unknown } }).$unsetField;
+    if ((Object.keys(v).length === 1 && cleared?.field === JSMQL_NS) || isRootCarrier(v)) return false;
+    return Object.entries(v).some(([k, x]) => {
+      const at = path === null ? null : [...path, k];
+      const slot = at === null ? undefined : bodySlotAt(name, at)?.at;
+      if ((slot === "statement" || slot === "stream") && Array.isArray(x)) return false;
+      return walk(x, at);
+    });
+  };
+  return walk(stage[name], []);
 }
+
+/**
+ * Does this stage read the bare document through `$$ROOT` or `$$CURRENT`? Only raw
+ * MQL writes these when `__jsmql` may hold a field. The compiler's own read of the
+ * whole document then leaves the namespace out (`Chain.wholeDocument`).
+ */
+const keepsRoot = (stage: Stage): boolean => holds(stage, (s) => s === "$$ROOT" || s === "$$CURRENT");
+
+/** Does this stage read a field under `__jsmql`? */
+const readsNamespace = (stage: Stage): boolean =>
+  holds(stage, (s) => s === "$" + JSMQL_NS || s.startsWith("$" + JSMQL_NS + "."));
 
 /** Does this stage replace the document — the row's fact, an inclusion `$project` judged by its body? */
 function replacesDocument(name: string, stage: Stage): boolean {
@@ -523,7 +560,7 @@ const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
  */
 function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, written = "$$ = [ … ]"): Stage[] {
   // `$$ = [{ k: $$.reduce(…) }]` — the stream folded to one document.
-  if (isReduceWrap(list)) return reduceWrapStages(list);
+  if (isReduceWrap(list)) return reduceWrapStages(list, () => env.chain.wholeDocument());
   if (holdsStreamReduce(list)) throw E.reduceWrapMisplaced(list.pos);
   const dropAll: Stage = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];

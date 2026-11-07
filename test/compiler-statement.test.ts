@@ -1187,11 +1187,85 @@ describe("compiler/emit/statement — a read of the whole document never carries
     expect(clear("$ = { ...$, y: 1 };")).toEqual([{ $replaceWith: { $mergeObjects: ["$$ROOT", { y: 1 }] } }]);
   });
 
-  it("keeps the cleanup after a stage you write that keeps `$$ROOT` (HR1)", () => {
+  it("removes the namespace ahead of a stage you write that reads `$$ROOT`, and keeps your MQL as written (HR1)", () => {
+    const t = { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } };
     expect(clear('let t = $.a + 1; $replaceWith("$$ROOT");')).toEqual([
-      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
-      { $replaceWith: "$$ROOT" },
+      t,
       { $unset: "__jsmql" },
+      { $replaceWith: "$$ROOT" },
+    ]);
+    expect(clear('let t = $.a + 1; $.y = t; $group({ _id: null, all: { $push: "$$ROOT" } });')).toEqual([
+      t,
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+      { $group: { _id: null, all: { $push: "$$ROOT" } } },
+    ]);
+    // A raw operator inside a write the compiler builds reads the same document.
+    expect(clear('let t = $.a + 1; $.copy = $mergeObjects("$$ROOT", {});')).toEqual([
+      t,
+      { $unset: "__jsmql" },
+      { $set: { copy: { $mergeObjects: ["$$ROOT", {}] } } },
+    ]);
+    // A `let` assigned again after the stage writes a new field.
+    expect(clear('let t = $.a + 1; $set({ copy: "$$ROOT" }); t = 5; $.y = t;')).toEqual([
+      t,
+      { $unset: "__jsmql" },
+      { $set: { copy: "$$ROOT" } },
+      { $set: { "__jsmql.var.t": 5 } },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("keeps a `$$ROOT` in a sub-pipeline and in a stage that returns the documents unchanged", () => {
+    // The body of a `$lookup` reads the documents of `orders`, not the ones that carry `t`.
+    expect(
+      clear('let t = $.a + 1; $.y = t; $lookup({ from: "orders", pipeline: [{ $replaceWith: "$$ROOT" }], as: "o" });'),
+    ).toEqual([
+      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $lookup: { from: "orders", pipeline: [{ $replaceWith: "$$ROOT" }], as: "o" } },
+      { $unset: "__jsmql" },
+    ]);
+    // `.uniq()` returns each document with its `let` field, so a later read still finds it.
+    expect(clear("let t = $.a + 1; $$.uniq(); $.y = t;")).toEqual([
+      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+      { $group: { _id: "$$ROOT" } },
+      { $replaceWith: "$_id" },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("reads the whole document without the namespace in a keyed reducer wrap", () => {
+    // Not in the live list: `$arrayToObject` needs a string key, and the fixture has no string field.
+    expect(
+      pipeline("let t = $.a + 1; $.y = t; $$ = [$$.reduce((acc, d) => ({ ...acc, [d.k]: d }), {})];").slice(2),
+    ).toEqual([
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: "$k", v: CLEAR_ROOT } } } },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+  });
+
+  it("refuses a later read of a binding that the removal deleted, and names the fix", () => {
+    expect(() => pipeline('let t = $.a + 1; $set({ copy: "$$ROOT" }); $.y = t;')).toThrow(
+      /`t` cannot be read here\. .*write `\$` in place of `"\$\$ROOT"`/,
+    );
+    expect(pipeline("let t = $.a + 1; $set({ copy: $ }); $.y = t;")).toEqual([
+      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+      { $set: { copy: CLEAR_ROOT } },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("refuses a raw `$$ROOT` in a statement that also reads the namespace, and names `$`", () => {
+    expect(() => pipeline('let t = $.a + 1; $group({ _id: t, all: { $push: "$$ROOT" } });')).toThrow(
+      /reads the whole document as `\$\$ROOT` in raw MQL, and it also reads a value that the compiler keeps/,
+    );
+    expect(clear("let t = $.a + 1; $group({ _id: t, all: { $push: $ } });")).toEqual([
+      { $set: { "__jsmql.var.t": { $add: ["$a", 1] } } },
+      { $group: { _id: "$__jsmql.var.t", all: { $push: CLEAR_ROOT } } },
     ]);
   });
 });

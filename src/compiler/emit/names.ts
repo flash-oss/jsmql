@@ -296,6 +296,20 @@ export class Scope {
    * The scope after a stage that replaced the document. Every binding carried in a
    * document FIELD becomes a name whose read says what dropped it.
    */
+  /**
+   * Returns the scope after the compiler removed `__jsmql` ahead of a stage. Each
+   * binding that `before` held in a field is gone. A binding that the stage
+   * itself wrote, after the removal, stays.
+   */
+  clearedSince(before: Scope, message: (js: string, mutable: boolean) => string): Scope {
+    const bound = new Map(this.bound);
+    for (const [js, b] of this.bound) {
+      if (b.ref.kind === "field" && before.bound.get(js) === b)
+        bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
+    }
+    return new Scope(bound, this.taken);
+  }
+
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Scope {
     const bound = new Map(this.bound);
     for (const [js, b] of this.bound) {

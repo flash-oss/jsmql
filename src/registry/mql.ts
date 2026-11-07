@@ -547,3 +547,20 @@ export const pairsToObject = (pairs: unknown): unknown => ({
     $map: { input: pairs, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] },
   },
 });
+
+/**
+ * These objects keep the bare `$$ROOT` on purpose. They are the stages of a row that
+ * returns each document unchanged (`.uniq()`). The document keeps every field,
+ * `__jsmql` included. The compiler's check for a raw `$$ROOT` leaves these objects out.
+ * See docs/specs/let-bindings.md § The whole document as a value.
+ */
+const CARRIES_ROOT = new WeakSet<object>();
+
+/** Mark `o` as an object that keeps the bare `$$ROOT` on purpose. */
+export function carriesRoot<T extends object>(o: T): T {
+  CARRIES_ROOT.add(o);
+  return o;
+}
+
+/** Does `o` keep the bare `$$ROOT` on purpose? */
+export const isRootCarrier = (o: object): boolean => CARRIES_ROOT.has(o);

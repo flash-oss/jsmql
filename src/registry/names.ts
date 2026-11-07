@@ -63,6 +63,7 @@ import {
   wordsExpr,
   atPrecision,
   isNullish,
+  carriesRoot,
 } from "./mql.ts";
 import type { CallArg } from "./ast.ts";
 import { isFieldPathString } from "./ast.ts";
@@ -1091,8 +1092,8 @@ const arrowOf = (param: string, body: Expr, pos: number): Expr => ({ type: "Lamb
  */
 const keepFirstPer = (key: unknown): Stage[] =>
   key === "$$ROOT"
-    ? [{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }]
-    : [{ $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_SLOT}` }];
+    ? [{ $group: carriesRoot({ _id: "$$ROOT" }) }, { $replaceWith: "$_id" }]
+    : [{ $group: { _id: key, [GROUP_SLOT]: carriesRoot({ $first: "$$ROOT" }) } }, { $replaceWith: `$${GROUP_SLOT}` }];
 
 const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   { $group: { _id: key, [GROUP_SLOT]: acc } },

@@ -115,7 +115,7 @@ export type ChainMark = {
   readonly element: string;
   readonly terminal: Chain["terminal"];
   readonly bareReads: number;
-  readonly wrote: number;
+  readonly writes: number;
 };
 
 /**
@@ -140,19 +140,19 @@ export class Chain {
   private slots = 0;
   /**
    * True when a field under `__jsmql` may be on the documents. It owns the
-   * trailing cleanup. `wrote` counts each change from false to true. So a
-   * statement can see that it put the namespace on the document, also when a
-   * later stage of the same statement removed it.
+   * trailing cleanup. `writes` counts each write under the namespace. So a
+   * statement can see that it wrote there, even when a later stage of the same
+   * statement removed the namespace.
    */
   get dirty(): boolean {
     return this.holdsNamespace;
   }
   set dirty(v: boolean) {
-    if (v && !this.holdsNamespace) this.wrote++;
+    if (v) this.writes++;
     this.holdsNamespace = v;
   }
   private holdsNamespace = false;
-  wrote = 0;
+  writes = 0;
   /**
    * The chain whose documents flow into this one. It is a chain for a body over
    * the SAME documents (a `$facet` branch), and null for a pipeline of its own.
@@ -197,6 +197,11 @@ export class Chain {
     if (replaces) this.element = "";
   }
 
+  /** A `{ $unset: "__jsmql" }` comes before the next stage. No stamp is true after it. */
+  namespaceRemoved(): void {
+    this.stamped.clear();
+  }
+
   /** A fresh `__jsmql.tmp.<n>` scratch slot. */
   slot(): FieldSlot {
     this.dirty = true;
@@ -232,7 +237,7 @@ export class Chain {
       element: this.element,
       terminal: this.terminal,
       bareReads: this.bareReads,
-      wrote: this.wrote,
+      writes: this.writes,
     };
   }
 
@@ -245,7 +250,7 @@ export class Chain {
     this.element = m.element;
     this.terminal = m.terminal;
     this.bareReads = m.bareReads;
-    this.wrote = m.wrote;
+    this.writes = m.writes;
   }
 
   /**
@@ -476,6 +481,15 @@ export class Env {
    */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
+  }
+
+  /**
+   * Returns this Env after the compiler removed `__jsmql` ahead of the stages since
+   * `before`. The bindings that `before` held in fields are gone.
+   * The document keeps its proof, because only the compiler's fields left it.
+   */
+  clearedSince(before: Env, message: (js: string, mutable: boolean) => string): Env {
+    return new Env(this.scope.clearedSince(before.scope, message), this.site, this.chain, this.documents);
   }
 
   /** The developer's own variable — a lambda parameter, a `$let` var. */

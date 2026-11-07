@@ -161,8 +161,10 @@ export function reducerOf(call: Call): { lambda: Lambda; acc: string; param: str
 
 /**
  * `$$ = [ … ]` that holds a reducer wrap → `[{ $group: { _id: null, … } }, { $replaceWith: { … } }]`.
+ * `wholeDocument` is the chain's read of the whole document (`Chain.wholeDocument`), for a
+ * value that is the document itself (`[d.id]: d`).
  */
-export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>): Stage[] {
+export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>, wholeDocument: () => unknown): Stage[] {
   const el = list.elements[0] as Expr;
   const group: Record<string, unknown> = { _id: null };
   const replace: Record<string, unknown> = {};
@@ -202,7 +204,7 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
   if (keyed !== null) {
     if (init.type !== "ObjectLiteral" || init.entries.length !== 0) throw E.reduceWrapKeyedInit(init.pos);
     return [
-      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed.k, v: keyed.v } } } },
+      { $group: { _id: null, __jsmqlTmp: { $push: { k: keyed.k, v: keyed.v === ROOT ? wholeDocument() : keyed.v } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ];
   }
@@ -240,6 +242,9 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
  * computed entry keyed by a field of the document, with a field or the
  * whole document as its value. Null for any other body.
  */
+/** The value of a keyed entry that is the document itself. `reduceWrapStages` reads it through the chain. */
+const ROOT = "$$ROOT";
+
 function keyedEntry(
   body: Extract<Expr, { type: "ObjectLiteral" }>,
   acc: string,
@@ -251,9 +256,9 @@ function keyedEntry(
   if (entry.type !== "KeyValueEntry" || entry.key.kind !== "computed") return null;
   const k = fieldOf(entry.key.expr, param);
   if (k === null) return null;
-  const v = entry.value.type === "Ident" && entry.value.name === param ? "$$ROOT" : fieldOf(entry.value, param);
+  const v = entry.value.type === "Ident" && entry.value.name === param ? ROOT : fieldOf(entry.value, param);
   if (v === null) return null;
-  return { k: "$" + k, v: v === "$$ROOT" ? v : "$" + v };
+  return { k: "$" + k, v: v === ROOT ? v : "$" + v };
 }
 
 /** Is there a `$$.reduce(…)` anywhere in this tree — a wrap placed in the wrong spot? */
