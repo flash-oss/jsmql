@@ -7,7 +7,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { update } from "../src/compiler/index.ts";
-import { liveClient } from "./fixtures/live.ts";
+import { liveClient, liveUp } from "./fixtures/live.ts";
+
+const up = await liveUp();
 
 const DOC = {
   _id: 1,
@@ -171,20 +173,16 @@ const canonical = (v: unknown): string =>
       : x,
   );
 
-describe("compiler/emit/update — the server leaves what JavaScript would", () => {
-  it("applied each one, or none", async () => {
-    if (coll === null) {
-      expect(RUNS.length).toBeGreaterThan(0);
-      return;
-    }
+describe.skipIf(!up)("compiler/emit/update — the server leaves what JavaScript would", () => {
+  it("applies each update", async () => {
     const problems: string[] = [];
     for (const { src, js } of RUNS) {
-      await coll.deleteMany({});
-      await coll.insertOne(structuredClone(DOC));
+      await coll!.deleteMany({});
+      await coll!.insertOne(structuredClone(DOC));
       let got: unknown;
       try {
-        await coll.updateMany({}, update(src) as Record<string, unknown>);
-        got = await coll.findOne({});
+        await coll!.updateMany({}, update(src) as Record<string, unknown>);
+        got = await coll!.findOne({});
       } catch (e) {
         problems.push(`${src}\n  ${JSON.stringify(update(src))}\n  ${(e as Error).message}`);
         continue;

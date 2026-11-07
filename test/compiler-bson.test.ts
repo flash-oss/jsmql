@@ -248,23 +248,19 @@ describe.skipIf(!up)("compiler — a conversion of a value of its own type gives
   });
 });
 
-describe("compiler — the server accepts every document above", () => {
-  it("ran each one, or none", async () => {
-    if (coll === null) {
-      expect(FILTERS.length + PIPELINES.length).toBeGreaterThan(0);
-      return;
-    }
+describe.skipIf(!up)("compiler — the server accepts every document above", () => {
+  it("runs each filter and pipeline", async () => {
     const problems: string[] = [];
     for (const src of FILTERS) {
       try {
-        await coll.find(jsmql.filter(src) as Record<string, unknown>).toArray();
+        await coll!.find(jsmql.filter(src) as Record<string, unknown>).toArray();
       } catch (e) {
         problems.push(`${src}\n  ${(e as Error).message}`);
       }
     }
     for (const src of PIPELINES) {
       try {
-        await coll.aggregate(jsmql.pipeline(src) as Record<string, unknown>[]).toArray();
+        await coll!.aggregate(jsmql.pipeline(src) as Record<string, unknown>[]).toArray();
       } catch (e) {
         problems.push(`${src}\n  ${(e as Error).message}`);
       }

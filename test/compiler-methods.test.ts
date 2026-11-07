@@ -3158,16 +3158,13 @@ describe.skipIf(!up)("compiler/emit — a number of milliseconds converts with .
   });
 });
 
-describe("compiler/emit — the server answers each method as JavaScript would", () => {
-  it("ran each one, or none", async () => {
-    // The cases above register their sources whether a server runs or not.
-    expect(RUNS.length).toBeGreaterThan(0);
-    if (coll === null) return;
+describe.skipIf(!up)("compiler/emit — the server answers each method as JavaScript would", () => {
+  it("runs each expression", async () => {
     const problems: string[] = [];
     for (const { src, js, note, unordered: anyOrder } of RUNS) {
       let got: unknown;
       try {
-        const [doc] = await coll.aggregate([{ $addFields: { __v: expr(src) } }]).toArray();
+        const [doc] = await coll!.aggregate([{ $addFields: { __v: expr(src) } }]).toArray();
         got = doc.__v;
       } catch (e) {
         problems.push(`${src}\n  ${JSON.stringify(expr(src))}\n  ${(e as Error).message}`);
