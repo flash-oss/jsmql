@@ -214,8 +214,8 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /**
    * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
    * states it only where it differs from the safe value of the row's family. The
-   * logarithm of 0 stops the command, so `.log()` reads 1. A method that works on every kind reads the safe
-   * value of the kind that it answers: `.toString()` reads `""`, `.toBool()` reads
+   * logarithm of 0 stops the command, so `.log()` reads a missing receiver as 1. A
+   * method that works on every kind reads the safe value of the kind that it gives: `.toString()` reads `""`, `.toBool()` reads
    * false. MEASURED: `{ $ln: 0 }` stops the command, and `$.nope.log()` is 0, as
    * `(1).log()` is. test/compiler-methods.test.ts measures each row.
    */
@@ -1067,7 +1067,7 @@ const callOf = (recv: Expr, name: string, args: readonly Expr[]): Expr => ({
   pos: recv.pos,
 });
 const identOf = (name: string, pos: number): Expr => ({ type: "Ident", name, pos });
-/** `[...(list ?? [])]` — the list argument of a set method, read as the ARRAY it is: a missing one is empty. */
+/** `[...(list ?? [])]` reads the list argument of a set method as the ARRAY it is: a missing list is empty. */
 const listOf = (list: Expr): Expr => {
   if (list.type === "ArrayLiteral") return list;
   const empty: Expr = { type: "ArrayLiteral", elements: [], pos: list.pos };
@@ -1186,7 +1186,7 @@ const arrayOrEmpty = (recv: unknown): unknown => {
 };
 
 /**
- * A list ARGUMENT, read as the array it is: a missing one is `[]`.
+ * This function reads a list ARGUMENT as the array it is: a missing list is `[]`.
  * A list the proof shows THERE takes no guard, so `$.z.union($.a.uniq())` reads the
  * `.uniq()` as it is. See `arrayOrEmpty`.
  */
@@ -1455,7 +1455,7 @@ function groupedByKey(
   };
 }
 
-/** A number that reads a null or missing value as 0. `there` says the proof shows it present. */
+/** `orZero` reads a null or missing number as 0. `there` says that the proof shows that the number is present. */
 const orZero = (v: unknown, there: boolean): unknown =>
   v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
 
@@ -1524,7 +1524,7 @@ const RANGE_ARGS: Arity = {
  *   $.n.range()    → { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
  */
 function rangeOf({ recv, args, value, bind, present }: ExprIn): unknown {
-  // a missing bound reads as 0 (HR5); `$range` stops the command on null
+  // a missing bound reads as 0 (HR5), because `$range` stops the command on null
   const self = orZero(recv, present);
   const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
   if (args.length === 2) return { $range: [start, end, value(args[1])] };
@@ -5418,11 +5418,11 @@ export const NAMES = {
     iterateeSlots: {
       array: {
         sortSpec:
-          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); no argument is the natural order',
+          '`"k"` or `["k", "j"]` names the keys, ascending. JSMQL refuses `{ k: -1 }` here, because an object in this slot is a lodash matcher. No argument gives the natural order',
       },
       stream: {
         sortSpec:
-          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (an object in this slot is a lodash matcher); a stream has no natural order, so a key is required',
+          '`"k"` or `["k", "j"]` names the keys, ascending. JSMQL refuses `{ k: -1 }` here, because an object in this slot is a lodash matcher. A stream has no natural order, so a key is necessary',
       },
     },
     returns: { array: "same", stream: "stream" },
@@ -7951,7 +7951,7 @@ export const NAMES = {
               [sorted.as]: {
                 $sortArray: {
                   input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
-                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort
+                  // MEASURED: $sortArray is stable, so of two elements with equal keys, the EARLIER element stays first in a descending sort
                   sortBy: { k: -1 },
                 },
               },
@@ -9154,7 +9154,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
-      // Last wins; "last" follows the stream's current order.
+      // The last document stays. "Last" means last in the current order of the stream.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" }),
     },
     statement: unsupported(
@@ -9427,7 +9427,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named.
+      // The stage keeps ONLY the named fields of the ELEMENT. It also drops `_id`, unless the list names it.
       emit: ({ args, value, element }) => {
         const at = element().path;
         const keys = value(args[0]) as string[];
@@ -9574,11 +9574,11 @@ export const NAMES = {
     passesNull: true,
     on: "object",
     params: ["value", "key"],
-    // lodash's `_.findKey` takes its shorthands, and each one reads the VALUE, as `.find()` reads the element
+    // The row takes the shorthands of lodash's `_.findKey`. Each shorthand reads the VALUE, as `.find()` reads the element
     iterateeSlots: {
       object: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
     },
-    // MEASURED: the key of the first entry that passes, and MISSING when no entry passes, as `.find()` is
+    // MEASURED: the answer is the key of the first entry that passes. It is MISSING when no entry passes, as the answer of `.find()` is
     returns: "string",
     where: ["value"],
     filter: viaFallback,
@@ -10190,7 +10190,7 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "other", exact: 1, slotType: { 0: "array" } },
-      // The elements in `other`, one document per distinct element, so each value comes back once.
+      // The stage keeps the elements in `other`, with one document for each distinct element. So each value occurs one time.
       emit: ({ args, predicate, bind, element }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);

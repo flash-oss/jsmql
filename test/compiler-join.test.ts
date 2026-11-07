@@ -365,7 +365,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
     ]);
   });
 
-  it("a collapse leaves ONE document, `{}` when nothing matched", () => {
+  it("a collapse leaves ONE document, and the document is `{}` when nothing matched", () => {
     expect(
       compiled('$.by = $$$.orders.filter(o => o.userId === $._id).countBy("status");', [
         { _id: 1, by: { paid: 1, open: 1 } },

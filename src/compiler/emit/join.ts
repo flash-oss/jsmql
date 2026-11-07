@@ -93,9 +93,10 @@ export type Lookup = {
   /** Did the body read the outer document at all — through the pair or through `let`? */
   readonly correlated: boolean;
   /**
-   * The array holds ONE document that is the value: `.find` (unwrapped with
-   * `$first`, absent when nothing matched), or a collapse (`countBy`, which
-   * gives `{}` when nothing matched).
+   * The array holds ONE document, and that document is the value. For `.find`,
+   * `$first` unwraps the document, and the document is absent when nothing
+   * matched. For a collapse such as `countBy`, the document is `{}` when nothing
+   * matched.
    */
   readonly one: false | "find" | "collapse";
   /** What the materialised slot holds once unwrapped. */

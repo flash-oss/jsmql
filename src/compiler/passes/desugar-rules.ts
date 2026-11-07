@@ -478,7 +478,8 @@ function asArrow(
 }
 
 /**
- * The tests a matcher object states, with the API of lodash's `_.matches`.
+ * This function gives the tests that a matcher object states. A matcher object
+ * takes the API of lodash's `_.matches`.
  * It is a PARTIAL deep match, not an equality: `{ a: { b: { c: 3 } } }` is
  * `x.a.b.c === 3` and says nothing about `x.a.b.d`. `{ qty: { $gt: 5 } }` is the
  * field `qty.$gt` equal to 5, because a matcher's keys are field names. An array

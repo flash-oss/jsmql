@@ -136,10 +136,10 @@ const STREAM_RESHAPERS = [
   "shuffle()",
   "flatMap('items')",
 ];
-// NB `countBy`/`groupBy` are NOT stream reshapers: they COLLAPSE the
-// stream to a single object (`{ <key>: <count> }` / `{ <key>: [docs] }`), so they
-// live with the value-collapsing terminals below, not here — pairing them with a
-// field-stripping reshaper would feed `$arrayToObject` a null key (mongod-rejected).
+// `countBy` and `groupBy` are NOT stream reshapers. They COLLAPSE the stream to a
+// single object (`{ <key>: <count> }` / `{ <key>: [docs] }`). So they are in the list
+// below of terminals that collapse the stream to a value. A reshaper that removes
+// fields before them gives `$arrayToObject` a null key, and mongod refuses that key.
 // stream-mode reshapers over the `orders` lookup (doc-PRESERVING, on real order
 // fields) — so the value-terminals below still see `total`/`userId`. (The doc-
 // reshaping ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper

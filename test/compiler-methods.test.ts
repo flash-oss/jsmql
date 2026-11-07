@@ -57,7 +57,7 @@ const DOC = {
   mixed: [0, 1, "", "a", null, false, true],
   // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
   mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
-  // a document of documents, for the shorthands of an object predicate
+  // this document holds documents, to test the shorthands of an object predicate
   team: {
     ann: { active: false, role: "user", tags: ["x"] },
     bob: { active: true, role: "admin", tags: [] },
@@ -243,7 +243,7 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // the expected answers: the lower-case and upper-case words of the same fields
+    // these are the expected answers: the lower-case and upper-case words of the same fields
     expect(compiled("$.w.lowerCase()", () => "foo bar baz qux")).toEqual({
       $toLower: {
         $reduce: {
@@ -358,7 +358,7 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // a missing field: the dot form answers "", and `?.` answers null
+    // for a missing field, the dot form gives "", and `?.` gives null
     expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
     expect(compiled("$.nope?.upperCase()", () => null)).toHaveProperty("$cond");
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
@@ -654,7 +654,7 @@ describe("compiler/emit — object methods", () => {
   });
 
   it("finds the key of the first entry that passes", () => {
-    // lodash's `_.findKey`: the first own key whose value passes, or `undefined`
+    // this copy of lodash's `_.findKey` gives the first own key whose value passes, or `undefined`
     const findKey = <V>(o: Record<string, V> | undefined, p: (v: V, k: string) => unknown): string | undefined =>
       Object.keys(o ?? {}).find((k) => p(o![k], k));
     const pairs = (f: string) => ({ $objectToArray: { $ifNull: [f, {}] } });
@@ -684,7 +684,7 @@ describe("compiler/emit — object methods", () => {
         { $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }] },
       ),
     );
-    // the shorthands: `_.property`, `_.matches` and `_.matchesProperty` over the VALUE
+    // the shorthands `_.property`, `_.matches` and `_.matchesProperty` read the VALUE
     expect(compiled('$.team.findKey("active")', (d) => findKey(d.team, (v) => v.active))).toEqual(
       first(
         pairs("$team"),
@@ -713,7 +713,7 @@ describe("compiler/emit — object methods", () => {
     expect(compiled('$.team.findKey(["role", "admin"])', (d) => findKey(d.team, (v) => v.role === "admin"))).toEqual(
       first(pairs("$team"), { x: "$$jsmqlKv.v" }, { $eq: ["$$x.role", "admin"] }),
     );
-    // no entry passes, the object is empty, or the field is missing: `undefined`, a missing value on the server
+    // when no entry passes, when the object is empty or when the field is missing, the answer is `undefined`, a missing value on the server
     compiled("$.o.findKey(v => v > 9)", (d) => findKey(d.o, (v) => v > 9));
     compiled("({}).findKey(v => v > 1)", () => findKey({}, () => true));
     compiled("$.nope.findKey(v => v > 1)", () => findKey(undefined, () => true));
@@ -1745,7 +1745,7 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
   });
 
-  it("folds, sets and groups each array", () => {
+  it("computes the folds, the set operations and the groups of an array", () => {
     // `$sum`, `$avg` and `$max` answer null as they answer `[]`, so HR5 adds no `$ifNull`.
     expect(compiled("$.a.sum()", (d) => 6)).toEqual({ $sum: "$a" });
     expect(compiled("$.a.mean()", (d) => 2)).toEqual({ $avg: "$a" });

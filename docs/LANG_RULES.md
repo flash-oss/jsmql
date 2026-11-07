@@ -125,7 +125,7 @@ The field that the receiver names can be missing from the document, or it can ho
 
 A method that works on every kind, for example `.toString()`, reads the safe value of the kind that it answers. A kind with no safe value, for example an ObjectId, gives `null`.
 
-The safe value of a number follows its operator. Where the operator refuses `0`, the safe value is `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
+The operator of the method sets the safe value of a number. Where the operator refuses `0`, the safe value is `1`. So `$.n.log()` gives `0`, the logarithm of `1`, and the server never meets the logarithm of `0`.
 
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
@@ -315,7 +315,7 @@ $.createdAt.plus(7, "day")      // → $dateAdd   (.minus() → $dateSubtract)
 $.start.diff($.end, "hour")     // → $dateDiff
 ```
 
-**SR4 — JSMQL borrows its API and most of its behaviour from popular modules.** The main source is lodash. Other sources are the JavaScript built-ins and a date library such as Luxon. JSMQL does not copy a module exactly: MongoDB and the rules above decide the final answer. So the documentation states what JSMQL does. It names a module for two reasons only: to show where an API comes from, or to warn you where JSMQL differs from it.
+**SR4 — JSMQL takes its API and most of its behaviour from JavaScript modules that many developers know.** The main source is lodash. Other sources are the JavaScript built-ins and a date library such as Luxon. JSMQL does not copy a module exactly: MongoDB and the rules above decide the final answer. So the documentation states what JSMQL does. It names a module for two reasons only: to show where an API comes from, or to warn you where JSMQL differs from it.
 
 ```js
 $.items.groupBy("type")        // the API of lodash's _.groupBy: each key holds the elements that give it

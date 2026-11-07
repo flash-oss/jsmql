@@ -617,9 +617,9 @@ export function stageInputs(
    * A callback's FIRST parameter IS the stream's element: the document itself, so
    * its fields are top-level paths — or, after `.flatMap("items")`, the unwound
    * field, so its fields are `items.<field>` (the chain's `element`). A callback
-   * can also name an index and the receiver; a stream has no per-document
-   * index, and the receiver is the stream itself, so each is bound as a name
-   * whose READ says what to write instead.
+   * can also name an index and the receiver. A stream has no per-document
+   * index, and the receiver is the stream itself. So the compiler binds each one
+   * as a name. When the code reads the name, the error says what to write instead.
    */
   const bound = (cb: Expr): Env | null => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;

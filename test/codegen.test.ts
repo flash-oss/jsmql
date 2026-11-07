@@ -5264,7 +5264,7 @@ describe("toSorted / sort key function", () => {
     });
   });
   it("a computed key under a minus is the key with the direction flipped — never the negated key sorted descending", () => {
-    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) answers [3, 2, 1].
+    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) gives [3, 2, 1].
     expect(jsmql.expr("$.nums.sortBy(x => -x)")).toEqual({
       $map: {
         input: {

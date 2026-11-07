@@ -493,8 +493,8 @@ describe("$match translation — typeof: 'boolean' is refused, 'bool' is the nam
 
 describe("$match translation — .size() → a guarded $size under $expr", () => {
   // `.size()` counts the elements of an array. The query language has no operator for a
-  // count, so the comparison stays under `$expr`. A missing array runs `.size()` on the
-  // empty array (HR5), so `$size` never aborts.
+  // count, so the comparison stays under `$expr`. For a missing array, `.size()` runs on
+  // the empty array (HR5), so `$size` never aborts.
   // `.length()` is the length of a STRING: on a bare field it takes `$strLenCP` under a
   // null guard, with no test of the receiver's type at run time.
 

@@ -60,7 +60,7 @@ assert($$.size() === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
-  .$sort({ createdAt: -1 }) // the $sort stage as a link of the chain
+  .$sort({ createdAt: -1 }) // this link of the chain is the $sort stage
   .take(10)
   .map("productIds")
   .flatten()
@@ -703,8 +703,8 @@ describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pip
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // An API response carries a few public fields of each active user and nothing
     // else. `$ = $.pick([...])` reads as "the document becomes these fields of
-    // itself", and lowers to the one `$project` the stream spelling `$$.pick([...])`
-    // emits — `_id` goes too unless it is named.
+    // itself", and lowers to the one `$project` that the stream spelling
+    // `$$.pick([...])` emits. The `$project` also drops `_id`, unless the list names it.
     expect(
       jsmql`
 $match($.status === "active");
@@ -727,8 +727,8 @@ describe(
       // Field-level access control: each document carries the viewer's own list of
       // readable field names, so the key list is only known at query time. jsmql walks
       // the record's own keys and matches each against that list — `$objectToArray` +
-      // `$filter` + `$arrayToObject`. A viewer with no list sees nothing, and the
-      // `$ifNull` keeps `$in` from aborting the whole command on it. Verified on mongod.
+      // `$filter` + `$arrayToObject`. A viewer with no list sees nothing. Without the
+      // `$ifNull`, `$in` aborts the whole command on a missing list. Verified on mongod.
       expect(
         jsmql`
 $match($.deletedAt == null);
@@ -840,7 +840,7 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
 describe("list the start date of each week in a plan (lodash `.range`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.plans.aggregate(jsmql(...))" }, () => {
     // `$.weeks.range()` is `_.range(weeks)`: the integers 0 .. weeks - 1. A plan with
-    // no `weeks` field gets an empty list, because a missing bound reads as 0 (HR5).
+    // no `weeks` field receives an empty list, because a missing bound reads as 0 (HR5).
     expect(
       jsmql`
 $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
@@ -872,8 +872,8 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
 describe("pick the warehouse that ships an order (`.findKey`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // `stock` maps each warehouse code to its stock record. `.findKey()` gives the code of
-    // the first warehouse that passes, and no field when no warehouse passes. The
-    // `{ qty: 0 }` shorthand reads each record: `s => s.qty === 0`.
+    // the first warehouse that passes. When no warehouse passes, the stage writes no
+    // field. The `{ qty: 0 }` shorthand reads each record: `s => s.qty === 0`.
     expect(
       jsmql`
 $.outOfStockAt = $.stock.findKey({ qty: 0 });

@@ -1413,7 +1413,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
 });
 
 describe("the lodash set methods, .compact, .flat and the bare sorts work on an unwound ELEMENT", () => {
-  // MEASURED on the project's mongod over ids: [3, 1, 2, null, 0, 2] — the expected answers:
+  // The project's mongod measured these answers over ids [3, 1, 2, null, 0, 2]:
   // .difference([1, 2]) keeps 3, null, 0; .intersection([1, 2, 9]) keeps one 1 and one 2;
   // .compact().sortBy() answers 1, 2, 2, 3.
 
@@ -2107,7 +2107,7 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
     ]);
   });
 
-  it("the key-less .countBy() / .groupBy() / .keyBy() key on the element itself", () => {
+  it("the key-less .countBy(), .groupBy() and .keyBy() use the element itself as the key", () => {
     expect(jsmql("$$.countBy();")).toEqual([
       { $group: { _id: "$$ROOT", __jsmqlTmp: { $sum: 1 } } },
       {

@@ -2428,7 +2428,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A method that runs a predicate takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element that the predicate rejects, with JS truthiness, as `.filter` does (see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array, and reverses the result back. `sample` and `sampleSize` use `$rand`, so each run gives a **different result**. They are non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement**, and returns the whole shuffled array when `n` is more than the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, because a document key is a string. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`, `groupBy` and `countBy` **stringify** the key with `$toString`, because a document key is a string. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => id.toObjectId())` (it lowers to `$toObjectId`; see [Type conversion methods](#type-conversion-methods)). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2455,7 +2455,7 @@ $.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)` (n 
 $.xs.size()                                  // the element count — a string has `.length()`, an object `.keys().size()`
 ```
 
-> `take`, `drop`, `takeRight` and `dropRight` reject a **negative** count, and the error message points at the method for the other end. An `n` past the array length is fine: you get the whole array or an empty one. `head`, `first` and `last` on an empty array give `null`, which is MongoDB's marker for a missing value.
+> `take`, `drop`, `takeRight` and `dropRight` reject a **negative** count, and the error message points at the method for the other end. JSMQL also accepts an `n` that is more than the array length. The answer is then the whole array or an empty array. `head`, `first` and `last` on an empty array give `null`, which is MongoDB's marker for a missing value.
 
 ### Bare built-in callbacks
 
@@ -2589,9 +2589,9 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
 
-> `findKey` answers the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is.
+> `findKey` gives the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is.
 
-> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins. A live mongod verified every shape here.
+> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the result keeps the last one. A live mongod verified every shape here.
 
 > **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. So `.pick([…])` gives `{}` and `.keys()` gives `[]`. Write `?.`, and the chain stops with `null` instead:
 >
@@ -4225,7 +4225,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.uniqBy(<key>)` | One field key | `$group` keeps the first document for each key, then `$replaceWith`. "First" follows the current order, so put `.sort(...)` before it when the order matters |
 | `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`), then `$replaceWith`: one document per distinct element |
 | `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. JSMQL reads a missing `list` as empty | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. JSMQL refuses it on a stream of whole documents. Unwind the field first |
-| `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group, because the result holds each value once |
+| `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group. The group keeps each value one time |
 | `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }`. The intersection uses `$in`, then the `.uniq()` group on the key |
 | `.compact()` | **After `.flatMap`**, no arguments: drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }`. `null` in the list also drops a missing value |
 | `.flat()` | **After `.flatMap`**, when the element is itself an array | one more `$unwind: "$<el>"` |

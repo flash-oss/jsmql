@@ -627,9 +627,10 @@ $$.take(0);                       // → [{"$match":{"$expr":false}}]           
 A callback's FIRST parameter IS the stream's document: `d.x` is the path "x"
 in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
-everywhere. The compiler binds the index and receiver parameters of the
-callback, and a READ of either says what to write instead (a stream has no
-per-document index; `$$.size()` is its size).
+everywhere. The compiler binds the index parameter and the receiver parameter of the
+callback. When the callback reads either parameter, the error says what to
+write instead. A stream has no per-document index. `$$.size()` gives the size
+of the stream.
 
 A stream cell receives its arguments as SOURCE and asks for the reading it
 wants: `predicate(cb)` a query document (total — a body with no native form
@@ -768,9 +769,9 @@ a value `.map` — read the materialised array as a VALUE. A method after a fiel
 link only while the body's element is an unwound field; on a stream of whole
 documents it ends the body the same way. `.find` is the one special head
 (the row states `picksOne`): `filter` plus `{ $limit: 1 }`, with the slot
-unwrapped by `$first`. A link that folds the stream into one document
-(`collapses` on the row: `countBy`, `keyBy`, `groupBy` with a field name) is
-unwrapped too, to `{}` when nothing matched. The slot is a typed binding, so `.size()` on it is `$size` with no
+unwrapped by `$first`. The compiler also unwraps a link that folds the
+stream into one document (`collapses` on the row: `countBy`, `keyBy`, `groupBy`
+with a field name). When nothing matched, the value is `{}`. The slot is a typed binding, so `.size()` on it is `$size` with no
 run-time guard, and `.total` after `.find` is a path. When the body ends
 with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
 no later stage replaced), the value is the elements and not their carriers:
@@ -1012,13 +1013,13 @@ spellings. Each set operation is a method of an array, and the refusal names
 these methods. `.difference()` is the set difference, `$setDifference`. It is
 not the `$filter` of lodash's `_.difference`, which keeps each duplicate.
 
-`.range()` and `.rangeRight()` take the API of lodash's `_.range`, and the cell
-adds what `$range` does not do. With no step, the step is `start < end ? 1 : -1`.
+`.range()` and `.rangeRight()` take the API of lodash's `_.range`. The cell adds
+what `$range` does not do. With no step, the step is `start < end ? 1 : -1`.
 Two constant bounds fold it: the cell writes `-1` only when `start` is more than
 `end`. Otherwise the step is a `$cond` over the two bounds. A bound that is not
 a constant or a field path binds once in a `$let`, because the step reads each
 bound a second time. A bound that is not a constant reads as `{ $ifNull: [x, 0] }`,
-because `$range` stops the command on null, and 0 is the safe value of a number.
+because `$range` stops the command on null. 0 is the safe value of a number.
 HR5 reads a missing receiver as 0 for the same reason. So the presence proof counts
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.
