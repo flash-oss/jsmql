@@ -733,7 +733,7 @@ const VALUE_METHOD_SIGNATURES = {
   random: {
     recv: "Number",
     sig: "(upper?: number): number",
-    doc: "Gives a random number between two bounds, as lodash's `_.random` does. Two whole bounds give a whole number.",
+    doc: "Gives a random number between two bounds, with the API of lodash's `_.random`. Two whole bounds give a whole number.",
   },
   // The receiver is lodash's `end` alone, and its `start` with more arguments.
   range: {

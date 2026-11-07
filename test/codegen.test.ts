@@ -6830,7 +6830,7 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
   });
   it(".sortBy rejects an object arg (lodash matches-shorthand, not a direction)", () => {
     expect(() => jsmql.expr("$.a.sortBy({ age: -1 })")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. '.sortBy()' takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
   it(".orderBy zips parallel keys + orders; missing orders default ascending", () => {

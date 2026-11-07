@@ -616,7 +616,7 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
     expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
     expect(() => jsmql("$$ = $$.sortBy({ age: -1 });")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. '.sortBy()' takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
 
@@ -2498,7 +2498,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       { $lookup: { from: "orders", pipeline: [{ $sort: { cat: -1 } }], as: "o" } },
     ]);
     expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. '.sortBy()' takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
 

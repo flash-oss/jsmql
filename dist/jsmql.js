@@ -24878,7 +24878,7 @@ function keySortSpec(arg, method, kind, objects = true) {
   if (arg.type === "ObjectLiteral") {
     if (!objects) {
       throw new CodegenError(
-        `.${method}({ \u2026 }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.`,
+        `.${method}({ \u2026 }) reads an object as a lodash matcher, not as directions. '.sortBy()' takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.`,
         arg.pos
       );
     }
