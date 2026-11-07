@@ -870,11 +870,11 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
   });
 });
 
-describe("pick the warehouse that ships an order (lodash `.findKey`)", { features: ["Pipelines"] }, () => {
+describe("pick the warehouse that ships an order (`.findKey`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // `stock` maps each warehouse code to its stock record. `.findKey()` gives the code of
     // the first warehouse that passes, and no field when no warehouse passes. The
-    // `{ qty: 0 }` shorthand reads each record, as lodash's `_.findKey(stock, { qty: 0 })` does.
+    // `{ qty: 0 }` shorthand reads each record: `s => s.qty === 0`.
     expect(
       jsmql`
 $.outOfStockAt = $.stock.findKey({ qty: 0 });

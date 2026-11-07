@@ -152,9 +152,8 @@ different fact with its own name:
   `sortSpecOf` in `src/compiler/emit/sort-spec.ts`; the pass accepts them
   without rewriting them — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`)
 
-An object receiver can state a layout too. `.findKey()` does, because
-lodash's `_.findKey` takes the shorthands. The desugar rule writes an arrow
-with one parameter, so the shorthand reads the value of each entry, never its key:
+An object receiver can state a layout too, as `.findKey()` does. The desugar
+rule writes an arrow with one parameter, so the shorthand reads the value of each entry, never its key:
 `$.team.findKey({ role: "admin" })` is `$.team.findKey(x => x.role === "admin")`.
 
 Only a layout has slots for the rule to rewrite. The rule reads the receiver's
