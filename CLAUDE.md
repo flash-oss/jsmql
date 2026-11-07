@@ -160,9 +160,10 @@ Excluded: [docs/DEVLOG/](docs/DEVLOG) history (new entries still follow the
 rule), generated files, and code itself — a code block, an inline code span and a
 `// →` claim pair stay exact.
 
-**Check new and edited prose with a cheap sub-agent.** Before you commit a change
-that adds or edits prose, start one sub-agent on the cheapest model
-(`model: "haiku"`). The sub-agent reads [docs/STE.md](docs/STE.md), then checks
+**Check new and edited prose with a sub-agent.** Before you commit a change that
+adds or edits prose, start one sub-agent on Sonnet or Opus (`model: "sonnet"` or
+`model: "opus"`). Never use Haiku for this check, because Haiku misses problems
+that Sonnet and Opus find. The sub-agent reads [docs/STE.md](docs/STE.md), then checks
 the prose lines of the staged diff (`git diff --cached`) and the draft commit
 message that you give it. It reports each sentence that does not obey the digest,
 with the file, the line, the rule and a replacement. It does not edit a file.
