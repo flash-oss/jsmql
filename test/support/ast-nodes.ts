@@ -47,7 +47,7 @@ export const EVERY_NODE: Record<Node["type"], true> & Record<NodeName, true> = {
   Pipeline: true,
 };
 
-// The proof that `tsc` reads this file: a name the tree does not hold is refused.
+// The proof that `tsc` reads this file: `tsc` refuses a name that the tree does not hold.
 // @ts-expect-error — 'MathCall' is not a node of ast.ts
 const NOT_A_NODE: NodeName = "MathCall";
 void NOT_A_NODE;

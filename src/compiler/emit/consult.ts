@@ -98,14 +98,14 @@ export type Verdict =
   /**
    * The row has no cell for this position, which is not the same as a refusal of it.
    * Only a MongoDB row has an `updateDoc` cell, because only a MongoDB operator
-   * is ever specific to an update document: `$.views++` is a STATEMENT, and
-   * whether the program lowers to `{$inc:…}` or to `{$set:…}` is a property of
+   * is ever specific to an update document. `$.views++` is a STATEMENT.
+   * Whether the program lowers to `{$inc:…}` or to `{$set:…}` is a property of
    * the whole program, not of that node.
    */
   | { kind: "noCell"; name: string; position: Position }
   /**
    * A cell the row hands to a PASS — `inCode(<file>)`. There is nothing here to
-   * lower: the pass either rewrote the node already or left it, and a caller that
+   * lower. The pass either rewrote the node already or left it. A caller that
    * meets this verdict must read the node the way its other cells describe.
    */
   | { kind: "inCode"; name: string; position: Position; file: string; args: Arity | undefined };

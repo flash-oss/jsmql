@@ -1,19 +1,16 @@
 /**
  * A live suite may report green for exactly one reason: the server is not running.
  *
- * Every suite that talks to mongod wraps its setup so that an unreachable instance
- * skips and does not fail — `npm test` must stay green for a contributor who has
- * not run `npm run fixture:up`. The danger is what else that wrapper swallows. A
- * wrong password, a missing grant, a refused command: each one lands in the same
- * `catch`, the suite runs its compile-only half, and the run reports GREEN when the
- * half that catches what a `toEqual` cannot does not run. One cause:
- * `readWrite` alone cannot drop a database, and some suites
- * drop theirs first.
+ * Every suite that talks to mongod wraps its setup so that an unreachable instance skips and does not fail.
+ * `npm test` must stay green for a contributor who has not run `npm run fixture:up`. The danger is what else
+ * that wrapper swallows. A wrong password, a missing grant, a refused command: each one lands in the same
+ * `catch`. The suite then runs its compile-only half. The run reports GREEN, but the half that catches what a
+ * `toEqual` cannot does not run. One cause: `readWrite` alone cannot drop a database, and some suites drop
+ * theirs first.
  *
- * So the connection is made in ONE place, `test/fixtures/live.ts`, which skips on
- * "could not reach a server at all" and throws on everything else. This file keeps
- * every suite on that path: a hand-rolled client, or a `catch` that nulls one, is
- * what re-opens the hole.
+ * So the suite code makes the connection in ONE place, `test/fixtures/live.ts`, which skips on "could not reach
+ * a server at all" and throws on everything else. This file keeps every suite on that path: a hand-rolled
+ * client, or a `catch` that nulls one, is what re-opens the hole.
  *
  * See test/CLAUDE.md § "Suites that connect to a server must report whether they connected".
  */
@@ -77,10 +74,9 @@ describe("every live suite connects through test/fixtures/live.ts", () => {
   });
 });
 
-// A suite that connects through a fixture module inherits that module's idea of
-// "no server". So each fixture module a suite reaches obeys the same rules, plus
-// one more: a `catch` may answer "not running" (false or null) only after it asks
-// `isUnreachable` from live.ts. `live.ts` holds the rule itself, so it is exempt.
+// A suite that connects through a fixture module inherits that module's idea of "no server". So each fixture
+// module a suite reaches obeys the same rules, plus one more. A `catch` may answer "not running" (false or
+// null) only after it asks `isUnreachable` from live.ts. `live.ts` holds the rule itself, so it is exempt.
 const FIXTURE_DIR = join(TEST_DIR, "fixtures");
 const fixtureText = (f: string) => readFileSync(join(FIXTURE_DIR, f), "utf8");
 const importsOf = (text: string, prefix: string) =>

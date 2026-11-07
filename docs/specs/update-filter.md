@@ -1,6 +1,7 @@
 # Update filters
 
-How `=`, `+=`, `-=`, `*=`, `/=`, and `delete` lower from JavaScript syntax to MongoDB pipeline `$set` / `$unset` stages.
+How `=`, `+=`, `-=`, `*=`, `/=`, and `delete` lower from JavaScript syntax to
+MongoDB pipeline `$set` / `$unset` stages.
 
 User-facing reference is `docs/LANGUAGE.md` § Update filters.
 
@@ -45,17 +46,16 @@ that operator, and everywhere else it opens a regular expression.
 
 ## Parser
 
-A program is a `;`-separated statement loop. A statement is an `UpdateFilter` when it
-starts with `delete`, `++` or `--`, or when its expression is followed by an
-assignment operator. The `,` inside one continues the run and the `;` ends it. A `,`
-must lead to the next write: `$.a = 1,` and `($.a = 1, $.b = 2,)` are JavaScript
-SyntaxErrors, so the parser refuses each one at the `,`, and names the comma-free form.
-The
-same per-element rule applies inside a bracketed pipeline (`[$match(…), $.a = 1,
-delete $.tmp]`), where `,` is the only separator. A parenthesised assignment
-(`($.a = 1), ($.b = 2)` — what a formatter writes) is read as the write it is, so it
-coalesces exactly as the bare form does. See
-[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
+A program is a `;`-separated statement loop. A statement is an `UpdateFilter`
+when it starts with `delete`, `++` or `--`, or when an assignment operator
+follows its expression. The `,` inside one continues the run and the `;` ends
+it. A `,` must lead to the next write. `$.a = 1,` and `($.a = 1, $.b = 2,)` are
+JavaScript SyntaxErrors. So the parser refuses each one at the `,` and names the
+comma-free form. The same per-element rule applies inside a bracketed pipeline
+(`[$match(…), $.a = 1, delete $.tmp]`), where `,` is the only separator. The
+parser reads a parenthesised assignment (`($.a = 1), ($.b = 2)` — what a
+formatter writes) as the write it is, so it coalesces exactly as the bare form
+does. See [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
 
 ### Chained `=` (right-associative)
 
@@ -82,9 +82,10 @@ For `$.a += rhs`, the parser emits:
 { type: "AssignExpr", target: <$.a>, value: { type: "BinaryExpr", op: "+", left: <$.a>, right: <rhs> } }
 ```
 
-The `<$.a>` node is shared between `target` and `value.left`, because the AST stays
-immutable at codegen time, so the shared node is safe. For a compound `+`, the existing `BinaryExpr +` codegen
-already picks `$concat` for a string or `$add` for a number. It needs no new code.
+`target` and `value.left` share the `<$.a>` node. This is safe, because the AST
+stays immutable at codegen time. For a compound `+`, the existing `BinaryExpr +`
+codegen already picks `$concat` for a string or `$add` for a number. It needs no
+new code.
 
 ### Increment / decrement
 
@@ -124,9 +125,10 @@ statement after the read. A prefix write gives the value from after it, so the m
 places the statement before the read. The same refusal covers a statement-level
 `$.x++ + 1;`, because JavaScript reads the `+ 1` as a value around the write.
 
-A target here validates the same way as for an assignment: a place, which is a field
-path, a binding, or a chain of accesses on one. `1++` and `f()++` are rejected at parse
-time. `$.items[0]++` parses, and the emit phase refuses its computed destination.
+A target here validates the same way as for an assignment: a place, which is a
+field path, a binding, or a chain of accesses on one. The parser rejects `1++`
+and `f()++` at parse time. `$.items[0]++` parses, and the emit phase refuses its
+computed destination.
 
 ### Parenthesized assignments
 
@@ -175,12 +177,13 @@ JavaScript's left-to-right meaning. It walks the run and opens a new group when:
    JavaScript would. A `"$a"` in raw MQL is the field `a` (HR1) and ends the group
    the same way. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing.
 
-Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "path" }`
-for one path and `{ $unset: ["a", "b"] }` for more than one — the string form is the shorter
-valid one. The emitter writes an object-literal value as `{ $mergeObjects: [<object>] }`,
-because a literal sub-document in `$set` MERGES into the existing field on the server,
-where a JavaScript assignment replaces it ([emit-pass.md § the write road](emit-pass.md)).
-A `;` between writes is always a stage boundary, never a same-stage separator.
+Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset:
+"path" }` for one path and `{ $unset: ["a", "b"] }` for more than one — the
+string form is the shorter valid one. The emitter writes an object-literal value
+as `{ $mergeObjects: [<object>] }`. A literal sub-document in `$set` MERGES into
+the existing field on the server, where a JavaScript assignment replaces it
+([emit-pass.md § the write road](emit-pass.md)). A `;` between writes is always
+a stage boundary, never a same-stage separator.
 
 `jsmql()` and `jsmql.pipeline()` return these stages; a lone write with no `;` is a
 pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)).
@@ -205,31 +208,32 @@ constants only.
 | `$.b = $.a` paired with `delete $.a`, either order | `$rename` |
 | `$inc({ n: 2 })`, `{ $set: { a: 1 } }` | merged in as written |
 
-The lowering refuses a value computed from the document, because the server reads
-`"$b"` in an update document as the string. The pipeline form
+The lowering refuses a value computed from the document, because the server
+reads `"$b"` in an update document as the string. The pipeline form
 (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` also accepts, is the
 alternative to name. The message quotes the read as the server would see it, for
 example `'$name'` for `$.name`. A copy of the whole document (`$.a = $`) has no
-`$rename` form, so its refusal names the pipeline form alone. The rename pair above is the one read of the document that a
-document-form update takes, because `$rename` names the source field, and does not
-evaluate it. A value the server computes without reading the document (`Date()`
-inside a value, `ObjectId()`, `Date.now()`) is refused by its row's `updateDoc` cell,
-which names the write that does exist (`$.<field> = Date()` is `$currentDate`) and
-the pipeline form. A row without that cell gets the position's general sentence from
-`refusalFor` in [src/compiler/emit/errors.ts](../../src/compiler/emit/errors.ts). The
-lowering also refuses two writes to one path, and anything that is not a write or an
-update operator, such as a stage, `assert`, or a stream chain.
+`$rename` form, so its refusal names the pipeline form alone. The rename pair
+above is the one read of the document that a document-form update takes.
+`$rename` names the source field and does not evaluate it. A value the server
+computes without reading the document (`Date()` inside a value, `ObjectId()`,
+`Date.now()`) is refused by its row's `updateDoc` cell, which names the write
+that does exist (`$.<field> = Date()` is `$currentDate`) and the pipeline form.
+A row without that cell gets the position's general sentence from `refusalFor`
+in [src/compiler/emit/errors.ts](../../src/compiler/emit/errors.ts). The
+lowering also refuses two writes to one path. It also refuses anything that is
+not a write or an update operator, such as a stage, `assert`, or a stream chain.
 
 ### Mutators
 
 A mutator method at statement position — `$.tags.push(x)`, `$.items.sort()`,
 `$.s.trimStart()` — is the write it means. The desugar pass
-([desugar-pass.md](desugar-pass.md)) rewrites a call whose row states a `mutatorForm`
-to the `AssignExpr` of its value form (`$.tags = $.tags.concat([x])`), and the roads
-above lower that. `.assign()` is not a mutator: it answers a new object. A bare
-`$.p.assign(…);` statement is refused, and the error names the write
-`$.p = { ...$.p, … };`, which lowers to
-`{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }`. In an expression,
+([desugar-pass.md](desugar-pass.md)) rewrites a call whose row states a
+`mutatorForm` to the `AssignExpr` of its value form (`$.tags =
+$.tags.concat([x])`), and the roads above lower that. `.assign()` is not a
+mutator: it answers a new object. The compiler refuses a bare `$.p.assign(…);`
+statement. The error names the write `$.p = { ...$.p, … };`, which lowers to `{
+$set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }`. In an expression,
 `.assign()` is `$mergeObjects`.
 
 ## Error message conventions

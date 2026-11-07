@@ -113,7 +113,7 @@ export function mergeDevlog(baseText, oursText, theirsText) {
 function git(args) {
   // The DEVLOG grows across a month, and `spawnSync` has its own default maximum
   // buffer size. Without a bigger one, a read fails with ENOBUFS and reports itself
-  // as "not conflicted", which is the opposite of what actually happened.
+  // as "not conflicted". This is the opposite of what actually happened.
   return spawnSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 }
 

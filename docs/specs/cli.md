@@ -57,8 +57,8 @@ whatever the indent says.
 
 `--validate` is the exception. It reports `{ valid, errors }`, which holds
 strings and numbers only. This is a machine-readable report, not a document,
-so the CLI writes it as JSON. It is indented by `--indent`, and on one line
-under `--compact`.
+so the CLI writes it as JSON. `--indent` sets the indent, and `--compact`
+puts it on one line.
 
 ## Parameters (`--arg` / `--argjson`)
 

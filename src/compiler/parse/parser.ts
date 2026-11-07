@@ -11,10 +11,10 @@
 //
 // The parser is NAME-BLIND. It never compares an identifier to a set. `Math`,
 // `String` and a lambda parameter are all `Ident`, and a later phase decides which
-// one it is, in names.ts. See src/registry/ast.ts. The one registry fact the
-// parser reads about a NAME is `blockBodyOf`, because the callee decides whether a
-// `{ … }` callback body is JavaScript or pipeline stages, and only the parser
-// holds both the callee and the body at the same time.
+// one it is, in names.ts. See src/registry/ast.ts. The parser reads one registry
+// fact about a NAME: `blockBodyOf`. The callee decides whether a `{ … }` callback
+// body is JavaScript or pipeline stages. Only the parser holds both the callee and
+// the body at the same time.
 
 import type {
   ArrayElement,
@@ -88,8 +88,8 @@ export function parse(source: string): Program {
  * The ENTRY form: `(params, { $, … }) => <body>`.
  *
  * This form allows at most two destructures. The one with `$`-prefixed keys is
- * the toolbox. It binds compiler services, and the parser discards it once the
- * body is parsed. The one with bare keys binds query parameters. The KEYS decide
+ * the toolbox. It binds compiler services, and the parser discards it after it
+ * parses the body. The one with bare keys binds query parameters. The KEYS decide
  * which is which, not the position, so the parser catches a "toolbox before
  * params" mistake by name.
  *
@@ -105,7 +105,7 @@ export function parseEntry(source: string): EntryForm {
   return entry;
 }
 
-/** This is exposed for the tests, and for phases that already hold tokens. */
+/** The parser exports this for the tests, and for phases that already hold tokens. */
 export function parseExpression(source: string): Expr {
   const p = new Parser(lex(source), source);
   const e = p.expression();
@@ -124,7 +124,10 @@ const needsReturn = (pos: number, got: string): string =>
   "Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.";
 
 /** How a message spells a statement that stands where a callback's declarations go. */
-/** A statement that IS a pipeline statement: a stage call, a bare call such as `assert(…)`, a write, or a function declaration. This excludes a stray expression (`d.v;`). */
+/**
+ * A statement that IS a pipeline statement: a stage call, a bare call such as `assert(…)`, a write,
+ * or a function declaration. A stray expression (`d.v;`) is not one.
+ */
 function isStageStmt(stmt: PipelineStmt): boolean {
   const s = stmt as { type: string };
   return s.type === "OperatorCall" || s.type === "UpdateFilter" || s.type === "CallExpression" || s.type === "FuncDecl";
@@ -248,8 +251,8 @@ function refuseDuplicateParams(binders: readonly Binder[]): void {
 /**
  * JavaScript declares a name once per scope. A function's parameters and the
  * declarations at the top of its block share one scope. So `x => { const x = 1; … }`
- * is a SyntaxError, because it declares `x` twice, and so is a
- * second `let a` in one block. A nested function opens a scope of its own, and a
+ * is a SyntaxError, because it declares `x` twice. A second `let a` in one block
+ * is a SyntaxError too. A nested function opens a scope of its own, and a
  * declaration there may shadow the outer name. The parser holds this rule, because
  * the fold inlines a constant declaration before any later phase can see it.
  */
@@ -371,11 +374,11 @@ function refuseWholeTarget(target: Expr, op: string, pos: number): void {
 class Parser {
   private readonly c: Cursor;
   /**
-   * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
-   * pipeline STAGES, minus the ones that a callee which takes stages claimed. Whatever
-   * is left when the parse ends is a JavaScript block that forgot its `return`,
-   * and the parser refuses it with the callee-independent wording. This is a set,
-   * not a flag threaded through every expression method, because the parser
+   * Every lambda whose `{ … }` body had no `return`. The parser read each one as
+   * pipeline STAGES. A callee that takes stages claims some of them, and the parser
+   * removes those. Whatever is left when the parse ends is a JavaScript block that
+   * forgot its `return`. The parser refuses it with the callee-independent wording.
+   * This is a set, not a flag threaded through every expression method. The parser
    * builds the body many calls below the callee that decides what it means.
    */
   private readonly unclaimedStages = new Map<Lambda, number>();
@@ -678,7 +681,7 @@ class Parser {
     return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
 
-  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
+  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's. The parser allows a trailing comma. */
   private paramList(): ParamRead[] {
     this.c.expect("LParen");
     const out: ParamRead[] = [];
@@ -782,10 +785,10 @@ class Parser {
 
   /**
    * Does the expression that starts here end in an assignment? This is a SCAN of
-   * the tokens to the end of the expression, the first `,` / `;` / closing
-   * bracket at depth zero, that looks for an assignment operator at depth zero.
+   * the tokens. It runs to the end of the expression: the first `,` / `;` / closing
+   * bracket at depth zero. It looks for an assignment operator at depth zero.
    * It is a scan, not a speculative parse. A speculative parse here doubled the
-   * work at every nesting level, exponential on `[[[…]]]`, and swallowed every
+   * work at every nesting level, exponential on `[[[…]]]`. It also swallowed every
    * error that the speculation raised.
    */
   private startsAWrite(): boolean {
@@ -961,7 +964,7 @@ class Parser {
       t === "DatabaseRef" ||
       t === "ClusterRef";
     if (isPlace) return;
-    // A method call is spelled by the CALL that the source wrote, not by the rule that built its receiver.
+    // The message spells a method call by the CALL that the source wrote, not by the rule that built its receiver.
     // `$.s.trim()` is a `MethodCall` node whose rule is `.field`. A message about the `.field` rule
     // identifies a form the reader never typed.
     if (target.expr.type === "MethodCall") {
@@ -1498,8 +1501,8 @@ class Parser {
   }
 
   /**
-   * Skips to the end of one refused pattern part, past a default's expression, a
-   * rest element, or a nested pattern, so the reader can tell whether an arrow
+   * Skips to the end of one refused pattern part. The part is a default's expression, a
+   * rest element, or a nested pattern. The skip lets the reader tell whether an arrow
    * follows the whole list. This returns false when the tokens run out first.
    */
   private skipPatternPart(): boolean {
@@ -1520,7 +1523,7 @@ class Parser {
    * The lambda that a parameter list and its body make. A destructured parameter
    * is one parameter under a fresh name, and each name it binds is that
    * parameter's part wherever the body reads it. So `([id, count]) => -count` IS
-   * `x => -x[1]`. The parts are substituted, never declared. So the body keeps
+   * `x => -x[1]`. The parser substitutes the parts and never declares them. So the body keeps
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
@@ -1543,7 +1546,7 @@ class Parser {
     }
     const plain = named.map((p) => (p.kind === "name" ? p.name : ""));
     const parsed = this.lambdaBody(plain, pos, binders);
-    // The fresh names step aside from every name that the body mentions, and from
+    // The fresh names differ from every name that the body mentions, and from
     // every other parameter. So no part can capture a name that the developer wrote.
     const taken: object[] = [parsed, ...plain.filter((n) => n !== "").map((n) => ({ type: "Ident", name: n }))];
     const names = [...plain];

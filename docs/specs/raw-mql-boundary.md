@@ -113,11 +113,11 @@ stays unmarked, and it is a field path (HR1). The marks go on the parsed tree it
 A `.compile` builder reuses that tree, and each run gives the same marks. So the
 entry calls the pass before `inject`, which copies the tree.
 
-A mark is not a new node, so each compile-time reader keeps `.value`: the fold, the
-regex road of `.startsWith()`, a constant length, the string type of `+`. The one
-question "is this a field path?" has one answer, `isFieldPathString(node)` in
-[src/registry/ast.ts](../../src/registry/ast.ts). Every site that used to test
-`value.startsWith("$")` on a source node asks it.
+A mark is not a new node, so each compile-time reader keeps `.value`. These
+readers are the fold, the regex road of `.startsWith()`, a constant length, and
+the string type of `+`. The one question "is this a field path?" has one answer,
+`isFieldPathString(node)` in [src/registry/ast.ts](../../src/registry/ast.ts).
+Every site that used to test `value.startsWith("$")` on a source node asks it.
 
 The fold computes only from JSMQL constructs (`EVALUABLE_TYPES` in
 [src/compiler/passes/fold.ts](../../src/compiler/passes/fold.ts)), and a `const`
@@ -126,12 +126,13 @@ value is a whole value that JSMQL owns. So each string that the fold spells is t
 `{ $literal: "$y!" }`, and `const s = "$y"; $unwind(s)` is refused, not a path.
 
 The emit phase reads a marked string with the placement of a run-time value
-(`injectedPlacement` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts)):
-`{ $literal: … }` where the server evaluates it, the string as written in a query, an
-update document and a developer's own `$literal`, and a refusal where the string
-becomes part of the MQL. A lowered `{ $literal: "…" }` is still constant text:
-`constantText` in [src/registry/mql.ts](../../src/registry/mql.ts) reads it, so a
-length or a one-character pad folds as it does for a plain string.
+(`injectedPlacement` in
+[src/compiler/emit/env.ts](../../src/compiler/emit/env.ts)): `{ $literal: … }`
+where the server evaluates it, the string as written in a query, an update
+document and a developer's own `$literal`, and a refusal where the string
+becomes part of the MQL. A lowered `{ $literal: "…" }` is still constant text.
+`constantText` in [src/registry/mql.ts](../../src/registry/mql.ts) reads it, so
+a length or a one-character pad folds as it does for a plain string.
 
 ```
 $.file.endsWith("$ext")   → … { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 4] } … { $literal: "$ext" }

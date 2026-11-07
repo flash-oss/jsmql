@@ -16,9 +16,9 @@ import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
 /** The tree, with source offsets erased — two spellings sit at different columns. */
 // `mutates` is the emitter's note that a write came from a mutator, not part of what the source means.
-// `pos`, `mutates`, `wrote` and `minted` are provenance, not meaning: `wrote` records the name the
-// source spelled so a refusal can name it, `minted` marks a parameter name that no source
-// spells, and a sugar still MEANS the plain form.
+// `pos`, `mutates`, `wrote` and `minted` are provenance, not meaning. `wrote` records the name the
+// source spelled so a refusal can name it. `minted` marks a parameter name that no source
+// spells. A sugar still MEANS the plain form.
 const shape = (src: string): string =>
   JSON.stringify(desugar(parse(src)), (k, v) =>
     k === "pos" ? 0 : k === "mutates" || k === "wrote" || k === "minted" ? undefined : v,
@@ -200,8 +200,8 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
 
   it("writes a mutator with no same-argument twin through the form its row states", () => {
     // `.toSpliced(-1, 1)` computes what `.pop()` does, but from arguments the
-    // caller never wrote — so the row states the write form instead, and the
-    // receiver is spread to prove it an array.
+    // caller never wrote. So the row states the write form instead, and the
+    // form spreads the receiver to prove it an array.
     expect(became("$.items.pop();")).toBe("write(MethodCall)");
     expect(became("$.items.shift();")).toBe("write(MethodCall)");
     expect(became("$.items.fill(0);")).toBe("write(MethodCall)");
@@ -256,7 +256,7 @@ describe("compiler/passes/position — the position each node stands in", () => 
 
   it("carries the stream through a foreign source, whose `$$$` is not itself one", () => {
     // `$$$` is a scope, not a source: only `$$$.<coll>` names a stream. So the
-    // bare `DatabaseRef` is left to its own row to refuse.
+    // bare `DatabaseRef` belongs to its own row, which refuses it.
     expect(at("$$ = $$$.orders.filter(d => d.x);", "stream")).toEqual(["MemberAccess.orders", "MethodCall.filter"]);
   });
 
@@ -293,7 +293,7 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
   });
 
   it("leaves a sort SPEC alone, which wears the same three spellings", () => {
-    // `{f: 1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`, and
+    // `{f: 1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`.
     // `["a", "b"]` is a path/value pair to one and two sort keys to the other.
     expect(arg('$.items.toSorted("name")')).toBe("StringLiteral");
     expect(arg("$.items.toSorted({ rank: 1 })")).toBe("ObjectLiteral");

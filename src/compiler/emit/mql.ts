@@ -21,7 +21,10 @@ export const cond = (test: Truth, then: unknown, otherwise: unknown): unknown =>
   return { $cond: [test, then, otherwise] };
 };
 
-/** `{ $filter: { input, as, cond[, limit] } }`. A test that is always true keeps the whole input; one that is always false keeps nothing. */
+/**
+ * `{ $filter: { input, as, cond[, limit] } }`. A test that is always true keeps the whole input.
+ * A test that is always false keeps nothing.
+ */
 export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknown): unknown => {
   const c = constantOf(test);
   if (c === false) return [];
@@ -29,7 +32,10 @@ export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknow
   return { $filter: limit === undefined ? { input, as, cond: test } : { input, as, cond: test, limit } };
 };
 
-/** The branches a `$switch` keeps: a case that is always false goes; a case that is always true ends the list and becomes the default. */
+/**
+ * The branches a `$switch` keeps. A case that is always false goes.
+ * A case that is always true ends the list and becomes the default.
+ */
 const liveBranches = (
   branches: readonly { readonly case: Truth; readonly then: unknown }[],
 ): { readonly kept: { readonly case: Truth; readonly then: unknown }[]; readonly decided: unknown | undefined } => {

@@ -2,8 +2,8 @@
 //
 // Raw MQL is an `$op(…)` call, or an object with a `$` key. On the query road, a
 // plain object that is an operand of `&&`, `||` or `!` is a query document, which
-// is raw MQL too. This pass reads the tree AS PARSED: before a template value or a
-// `jsmql.compile` parameter goes in (a passed value is not source), and before a
+// is raw MQL too. This pass reads the tree AS PARSED. It runs before a template value or a
+// `jsmql.compile` parameter goes in, because a passed value is not source. It also runs before a
 // fold or a desugar rule moves a node to another place.
 //
 // See docs/specs/raw-mql-boundary.md and docs/LANG_RULES.md (HR6).
@@ -89,9 +89,9 @@ export function rawMqlBoundary(program: Program, road: Road): void {
 
 /**
  * `ctx` is where the node stands. `role` names the construct when `ctx` is
- * "operand". `query` is true on the query road's predicate spine: the program root
- * of a Filter, or the argument of a stage whose whole body is a filter
- * (`$match`), and down through `&&`, `||` and `!` only.
+ * "operand". `query` is true on the predicate spine of the query road. The spine
+ * is the program root of a Filter, or the argument of a stage whose whole body is a
+ * filter (`$match`). It runs down through `&&`, `||` and `!` only.
  */
 function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Road): void {
   if (Array.isArray(node)) {

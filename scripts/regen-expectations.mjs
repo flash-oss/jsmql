@@ -5,10 +5,11 @@
 // hand edit. This script makes them, and only them:
 //   expect(<call>).toEqual|toStrictEqual|toBe(<literal>)   → the literal becomes the compiler's answer
 //   expect(() => <call>).toThrow(<matcher>)                → the matcher becomes the message the compiler raises
-// A call that throws where a value was expected, or returns where a throw was expected,
-// stays as it is and gets listed. A polarity change is a behaviour change, and a human
-// must judge it (see convert-expectations.mjs for the mechanical half). The regenerated
-// file must be reviewed as a difference: a wrong answer regenerates just as well as a right one.
+// A call that throws where a value was expected stays as it is. A call that returns where a
+// throw was expected also stays as it is. The script lists both. A polarity change is a
+// behaviour change, and a human must judge it (see convert-expectations.mjs for the mechanical
+// half). Review the regenerated file as a difference: a wrong answer regenerates just as well
+// as a right one.
 //
 // Run by hand:  node scripts/regen-expectations.mjs test/<suite>.test.ts
 import ts from "typescript";

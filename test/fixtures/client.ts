@@ -21,10 +21,9 @@ export async function connectReadOnly(): Promise<{ client: MongoClient; db: Db }
 }
 
 /**
- * Is the fixture instance running? False ONLY when no server answers. When a
- * server answers, this checks the read-only login and the seeded dataset, and
- * throws when either is wrong — at import time, so the file fails and never
- * turns into a green skip.
+ * Is the fixture instance running? False ONLY when no server answers. When a server answers, this checks the
+ * read-only login and the seeded dataset. It throws when either is wrong, at import time, so the file fails and
+ * never turns into a green skip.
  */
 export async function fixtureReady(): Promise<boolean> {
   const client = new MongoClient(READONLY_URI, { serverSelectionTimeoutMS: 1500 });
@@ -47,9 +46,9 @@ export async function fixtureReady(): Promise<boolean> {
   return true;
 }
 
-// Fail loudly if the on-disk dataset does not match what the tests expect (for
-// example a different version was seeded out of band). The read-only user cannot
-// write, so this check is the only guard against a drifted dataset.
+// Fail loudly if the on-disk dataset does not match what the tests expect (for example, a person seeded a
+// different version out of band). The read-only user cannot write, so this check is the only guard against a
+// drifted dataset.
 export async function assertIntegrity(db: Db): Promise<void> {
   const meta = await db.collection(META_COLLECTION).findOne({ _id: "version" as never });
   const hash = (meta as { hash?: string } | null)?.hash;

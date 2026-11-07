@@ -3,8 +3,8 @@
 // This is a proof, not a guess. A literal proves its own kind. A row's `returns`
 // proves a call's type, evaluated against the receiver and the arguments. A
 // binding carries the proof it was made with. A field path answers what the
-// document `Type` on its level records at that path: `ANY` for a field the
-// program never wrote, the written value's proof after a write. The dispatch in
+// document `Type` on its level records at that path. That is `ANY` for a field
+// the program never wrote, and the written value's proof after a write. The dispatch in
 // select.ts turns "unknown" into a runtime test. It never turns "unknown" into
 // an assumption. So this module must never answer with a kind it cannot show.
 // See docs/specs/types.md.
@@ -78,23 +78,23 @@ const NAMESPACES = namespaceNames();
  *
  * A literal is. The root document is present (`$.keys()`). A binding states
  * whether it is (a `$lookup`'s array, a `let` of a present value). A call
- * is, when its row states `neverNull` and its receiver and every value
- * argument are also present — `$map` over an array that is there gives an
+ * is present when its row states `neverNull`. Its receiver and every value
+ * argument must also be present: `$map` over an array that is there gives an
  * array that is there. A row that states `"always"` reads a missing argument
- * itself, so only its receiver counts: `$.a.union($.b)` is there, because a
- * dot wraps `a` and the cell wraps `b`. A field path is present only where the document's
- * proof says so: the document may lack it, and every array operator returns
- * null for a missing input. A `? :` is present when both branches are; a
- * property read is present when the object's proof says so.
+ * itself, so only its receiver counts. For example `$.a.union($.b)` is there,
+ * because a dot wraps `a` and the cell wraps `b`. A field path is present only
+ * where the document's proof says so. The document may lack it, and every array
+ * operator returns null for a missing input. A `? :` is present when both
+ * branches are. A property read is present when the object's proof says so.
  * MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command.
  * So a cell guards with `$ifNull` exactly where this function returns false.
  */
 export const isPresent = (node: Expr, env: Env): boolean => !typeOf(node, env).absent;
 
 /**
- * What a ROW or the source states about presence, or null where the proof's own
- * `absent` flag is the answer — a `? :` joins its branches, a property read
- * carries the object's proof, a binding carries what its value proved.
+ * What a ROW or the source states about presence. It is null where the proof's own
+ * `absent` flag is the answer. A `? :` joins its branches. A property read
+ * carries the object's proof. A binding carries what its value proved.
  */
 function statedPresence(node: Expr, env: Env): boolean | null {
   switch (node.type) {
@@ -116,10 +116,10 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
       // A namespace (`Number.isInteger(n)`) is not a value; its arguments carry the answer.
-      // HR5: under a dot, a method runs on the safe value of its kind when its receiver
-      // is null or missing (`[]`, `{}`, `""`, `0`, or the value its row states). `lower.ts`
-      // wraps the receiver, so the receiver counts as there. A `?.` anywhere on the spine
-      // below stops the chain instead, and the value is then null when the tested link is.
+      // HR5: under a dot, a method runs on the safe value of its kind. This happens when its
+      // receiver is null or missing (`[]`, `{}`, `""`, `0`, or the value its row states).
+      // `lower.ts` wraps the receiver, so the receiver counts as there. A `?.` anywhere on
+      // the spine below stops the chain instead. The value is then null when the tested link is.
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name);
       const wrapped = !spineHasOptional(node) && emptyValueOf(name, family) !== null;
       const receiver =
@@ -237,7 +237,7 @@ export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(t
 /**
  * What a call's operands prove, for the kind check of select.ts (HR7). `env` is the Env in
  * which the operands are evaluated. `source` is the node whose elements a row reads, with its own
- * Env: the receiver of a method, the last operand of a production, or null where the
+ * Env. It is the receiver of a method, the last operand of a production, or null where the
  * call has none.
  *
  * `objectForm` says that the row takes a document in place of its other slot kinds
@@ -249,11 +249,12 @@ export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(t
  * `isField` is given on the query road only, and it says which operands name a field of
  * the document. SR2: a query compares a FIELD that holds an array through the elements
  * of the array, so `{ tags: "x" }` tests a string against the elements of `tags`. Such a
- * field proves the kinds of its elements in place of `array`, and this rule lives in one
- * place, in this function. The array itself stays a possible kind when another operand can be an
- * array too, because `{ tags: ["a"] }` compares the whole array. An element of unknown
- * kind makes the field unproven. An `element` slot reads its own view (`asElement`), and a
- * slot that takes an array reads the operand as one value (`whole`). See `Proofs`.
+ * field proves the kinds of its elements in place of `array`. This rule lives in one
+ * place, in this function. The array itself stays a possible kind when another operand
+ * can be an array too, because `{ tags: ["a"] }` compares the whole array. An element of
+ * unknown kind makes the field unproven. An `element` slot reads its own view
+ * (`asElement`). A slot that takes an array reads the operand as one value (`whole`).
+ * See `Proofs`.
  */
 export function proofsFor(
   args: readonly CallArg[],
@@ -404,9 +405,9 @@ function callOn(name: string, receiver: Type, family: string | null, args: reado
 /**
  * A call on an UNPROVEN receiver. The call is on one of the families the row
  * names, or the server raises an error. So the result is the row's answer over
- * the field families it accepts, joined: `.size()` is a number on an array and
- * on an object, so it is a number. It is the one family's answer when there is
- * only one (`.map`). A receiver that may be more than one kind proves each of them.
+ * the field families it accepts, joined. For example `.size()` is a number on an
+ * array and on an object, so it is a number. The result is the one family's answer
+ * when there is only one (`.map`). A receiver that may be more than one kind proves each of them.
  */
 function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], env: Env): Type {
   const r = returnsOf(name);
@@ -598,10 +599,10 @@ function operatorKeyOf(v: unknown): string | null {
 /**
  * What an emitted MQL VALUE proves, read against the document `doc` it runs
  * over. This is how the compiler learns what a stage made of the document
- * without the stage's source: the emitted body names the output fields and the
+ * without the stage's source. The emitted body names the output fields and the
  * operators that fill them, whatever road wrote it. A field path reads the
- * input document's proof; an operator answers its row's `returns`; a literal
- * proves itself; a `$$` variable proves nothing. See docs/specs/types.md § The
+ * input document's proof. An operator answers its row's `returns`. A literal
+ * proves itself. A `$$` variable proves nothing. See docs/specs/types.md § The
  * document after a stage.
  */
 export function typeOfEmitted(value: unknown, doc: Type): Type {

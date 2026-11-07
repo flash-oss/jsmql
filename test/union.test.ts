@@ -106,10 +106,9 @@ describe("$$.push — inline document(s)", () => {
 });
 
 describe("$$.push / $$ = [ … ] — a written document holds only what the program spells", () => {
-  // `$documents` runs inside the `$unionWith` with NO input document, and it is the
-  // FIRST stage of that body — so nothing there can read the outer document and
-  // nothing can stand ahead of it to produce a value. Both spellings of the list
-  // refuse alike. `$$ = [ … ]` must lower its documents INSIDE the boundary. Outside it,
+  // `$documents` runs inside the `$unionWith` with NO input document, and it is the FIRST stage of that body.
+  // So nothing there can read the outer document, and nothing can stand ahead of it to produce a value. Both
+  // spellings of the list refuse alike. `$$ = [ … ]` must lower its documents INSIDE the boundary. Outside it,
   // the emitted field path makes the server answer `{}`, in silence.
   it("refuses an outer-document read, in either spelling", () => {
     const outer = /'\$unionWith' has no 'let': its body cannot read the outer document/;
@@ -302,19 +301,19 @@ describe("chain errors only ever name syntax that works here", () => {
     expect(jsmql("$$ = $$.concat({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
   });
 
-  // A `$facet` branch has no statement position, so the statement form must not
-  // be offered there — but it must still be offered where it does work.
+  // A `$facet` branch has no statement position, so the compiler must not offer the statement form there. But
+  // it must still offer it where it does work.
   it("offers the statement form only where a statement position exists", () => {
-    // A facet branch is the one container that bans the stage a written list makes,
-    // at any depth — MEASURED: the server refuses `$documents` inside a `$unionWith`
-    // inside a `$facet`. A branch that appends a COLLECTION is fine.
+    // A facet branch is the one container that bans the stage a written list makes, at any depth. MEASURED: the
+    // server refuses `$documents` inside a `$unionWith` inside a `$facet`. A branch that appends a COLLECTION
+    // is fine.
     expect(() => jsmql("$ = { k: $$.push({ a: 1 }) };")).toThrow(
       "'.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere inside a '$facet' — however deeply it is nested. Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
     );
     expect(jsmql("$ = { k: $$.push(...$$$.archive) };")).toEqual([{ $facet: { k: [{ $unionWith: "archive" }] } }]);
   });
 
-  // A near-miss must not be answered with `.push`, which is not a chain method either.
+  // The compiler must not answer a near-miss with `.push`, which is not a chain method either.
   it("suggests a real chain method for a near-miss", () => {
     expect(() => jsmql("$$ = $$.dropp();")).toThrow(
       "'.dropp()' is not a method of the stream '$$'. Did you mean '.drop()'? A stage is a link too: '$$.$match(…)'.",

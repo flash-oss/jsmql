@@ -3,8 +3,8 @@
 // A sugar is a construct that MEANS another construct the language already has.
 // The pass rewrites the sugar here, so phases 4 and 5 see fewer shapes. A phase
 // cannot mishandle a shape it never sees. That is the whole argument for the
-// pass: a lowering phase that recognises sugar itself must recognise it in
-// every loop that lowers, and a loop that does not know a form mis-lowers it
+// pass. A lowering phase that recognises sugar itself must recognise it in
+// every loop that lowers. A loop that does not know a form mis-lowers it
 // silently.
 //
 // TWO PROPERTIES OF THE PASS.
@@ -16,7 +16,7 @@
 //    more.
 //
 // 2. The pass REPEATS until nothing changes, because a rewrite can produce more
-//    sugar, and folding runs between the rounds:
+//    sugar. Folding runs between the rounds:
 //      const k = "name"; $.items.map(k)
 //        → $.items.map("name")        the constant is inlined
 //          → $.items.map(x => x.name)   the shorthand becomes an arrow
@@ -33,11 +33,11 @@ import { mapTreeIn } from "./walk.ts";
 
 /**
  * A backstop on rounds, far above anything a program reaches. It is NOT how the
- * pass tells a fixpoint from a cycle — the tree hash below does that: a round
- * that produces a tree already seen is a cycle, whatever its number. A fixed
- * round limit is the wrong test, because a chain of declarations, where each one
- * needs the previous one folded and a rule run, advances one link per round, and
- * a developer may write as many links as they like.
+ * pass tells a fixpoint from a cycle. The tree hash below does that. A round
+ * that produces a tree from an earlier round is a cycle, whatever its number. A fixed
+ * round limit is the wrong test. A chain of declarations advances one link per round,
+ * because each one needs the previous one folded and a rule run. A developer may write
+ * as many links as they like.
  */
 const MAX_ROUNDS = 100_000;
 
@@ -48,10 +48,10 @@ const fingerprint = (program: Program): string => JSON.stringify(program, (k, v)
 
 /**
  * A write stands only where a statement may stand. The parser reads `[$.x++]`
- * as a pipeline element, because only the position pass knows that the array
+ * as a pipeline element. Only the position pass knows that the array
  * in `$.y = [$.x++]` is a value. This check runs once, before any rule rewrites
- * a write, so the refusal quotes the write as the developer spelled it: the
- * refusal that `$.y = $.x++` gets.
+ * a write. So the refusal quotes the write as the developer spelled it, as it does
+ * for `$.y = $.x++`.
  */
 function refuseWritesInValues(program: Program, root: RootWhere): void {
   mapTreeIn(program, root, edge, (node, where) => {
@@ -96,14 +96,14 @@ export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): D
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let next = applyRules(current, root);
     // The fold runs AFTER the rules in each round, and the two feed each other.
-    // A mutator statement has by now become a plain assignment, so "was this
+    // A mutator statement is by now a plain assignment. So "was this
     // name written to" is one question, not a list of method names. A
-    // constant the fold inlines becomes a literal the rules can match next round:
+    // constant that the fold inlines becomes a literal that the rules can match next round:
     //   const k = "name"; $.items.map(k)   →   map("name")   →   map(x => x.name)
     next = fold(next);
     if (next === current) return { program: current, rounds: round };
-    // A tree seen in an earlier round means two rules undo each other's work —
-    // a bug in the table, never a fact about the source.
+    // A tree from an earlier round means that two rules undo each other's work.
+    // This is a bug in the table, never a fact about the source.
     const print = fingerprint(next);
     if (seen.has(print)) {
       throw new Error(

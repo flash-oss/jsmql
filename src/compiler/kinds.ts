@@ -59,17 +59,17 @@ export type KindFault =
     };
 
 /**
- * What the compiler proves of the operands of one call: a proof per argument, and a
- * proof of ONE element of the element source (the receiver of a method, the last
+ * What the compiler proves of the operands of one call. It holds a proof per argument
+ * and a proof of ONE element of the element source (the receiver of a method, the last
  * operand of a production). An argument beyond the list is unproven.
  *
  * `viaElements[i]` says that `args[i]` is the proof of the ELEMENTS of operand `i`, in
- * place of the operand: a field that holds an array on the query road (SR2), and a spread.
- * `packed` says that the call's arguments came in as ONE packed list (`f(...xs)`, see the
- * desugar pass), so `args` holds one proof per ELEMENT of that list.
+ * place of the operand. Two cases use it: a field that holds an array on the query road (SR2),
+ * and a spread. `packed` says that the call's arguments came in as ONE packed list (`f(...xs)`,
+ * see the desugar pass). So `args` holds one proof per ELEMENT of that list.
  *
  * `items` is the TUPLE form of `elements`: the element source is an array of a fixed length,
- * for example a literal, and `items[i]` is the proof of position `i`. Each position holds a
+ * for example a literal. `items[i]` is the proof of position `i`. Each position holds a
  * value that is certain, so the `elements` rule judges each position alone. Without `items`,
  * `elements` is a SET proof: one proof for every position.
  *

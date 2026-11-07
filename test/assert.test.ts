@@ -1,9 +1,7 @@
-// Tests for `assert(condition[, message])` → conditional-error `$match` guard.
-// See docs/specs/assert.md for the design and docs/LANGUAGE.md for the
-// user-facing reference. The lowering targets a `$convert` whose `to` is a
-// `$cond`: a holding assertion converts `true`→bool (no-op), a failing one
-// names the message as a bson type. MongoDB rejects that type name at runtime,
-// and its error text holds the message.
+// Tests for `assert(condition[, message])` → conditional-error `$match` guard. See docs/specs/assert.md for the
+// design and docs/LANGUAGE.md for the user-facing reference. The lowering targets a `$convert` whose `to` is a
+// `$cond`. A holding assertion converts `true`→bool (no-op). A failing one names the message as a bson type.
+// MongoDB rejects that type name at runtime, and its error text holds the message.
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -45,7 +43,7 @@ describe("assert — lowering", () => {
   });
 
   it("defaults the message when omitted", () => {
-    // Bare `$.active` is wrapped in JS-truthiness, like every other boolean context.
+    // The compiler wraps bare `$.active` in JS-truthiness, like every other boolean context.
     expect(jsmql("assert($.active)")).toEqual([
       {
         $match: {

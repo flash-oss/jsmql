@@ -31,9 +31,9 @@ answers it on the way DOWN. `edge(node, key, here)` in
 what the position becomes on one parent-to-property step, and `mapTreeIn` carries
 it forward.
 
-The pass cannot use a set of nodes looked up by identity. A walk that rewrites rebuilds
-a parent as soon as one of its children changes, so by the time a rule runs, the
-object it holds is no longer the object anyone recorded.
+The pass cannot use a set of nodes looked up by identity. A walk that rewrites
+rebuilds a parent as soon as one of its children changes. So when a rule runs,
+the object it holds is no longer the object that anyone recorded.
 
 ## The root is the caller's fact
 
@@ -131,9 +131,9 @@ $group({ _id: null, r: $push([$.x, $.y]) });     → [{ $group: { _id: null, r: 
 $group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses the two operands
 ```
 
-`$covariancePop` and `$covarianceSamp` are the exception that the registry states, and does not
-derive: their window slot genuinely takes an array of two, and one operand
-answers `null`.
+`$covariancePop` and `$covarianceSamp` are the exception that the registry
+states and does not derive. Their window slot genuinely takes an array of two,
+and one operand answers `null`.
 
 A JavaScript aggregate in such a slot (`$.a.sum()`, `.first()`, `.sumBy(fn)`) is
 the compiler's own lowering, so HR3 applies to it: the cell must emit ONE operand.
@@ -190,11 +190,11 @@ An `evaluates` path below the leaf keeps the walk descending, the same as a
 `edge` also returns three things `Position` does not name:
 
 - **`target`** — the left of `=`, the operand of `delete`, or the callee of a
-  call. JSMQL does not evaluate it: each one names a place to write or a thing to
-  call. If the pass called it a value, a rule meant for an expression could fire on the
-  destination of a write, or fold `f` away in `f(1)` to give `3(1)`. The fold pass
-  and this pass share the one predicate that decides this, `namesSomething` in
-  naming.ts.
+  call. JSMQL does not evaluate it: each one names a place to write or a thing
+  to call. If the pass called it a value, a rule meant for an expression could
+  fire on the destination of a write. It could also fold `f` away in `f(1)` to
+  give `3(1)`. The fold pass and this pass share the one predicate that decides
+  this, `namesSomething` in naming.ts.
 - **`stageBody`** — part-way down a body path the stage's row still owns, with the
   stage and the path so far. This is a waypoint, not a place a name can be legal
   in.

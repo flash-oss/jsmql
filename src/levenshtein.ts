@@ -24,9 +24,9 @@ export function levenshtein(a: string, b: string): number {
 
 /**
  * Find the candidate string closest to `name` by edit distance. Returns null
- * when no candidate is close enough to be a likely typo (max 2 edits, and the
- * distance must be strictly less than the input's own length so a totally
- * unrelated short name does not trigger).
+ * when no candidate is close enough to be a likely typo (max 2 edits). The
+ * distance must be strictly less than the length of the input, so a totally
+ * unrelated short name does not trigger.
  */
 export function closestNameTo(name: string, candidates: Iterable<string>): string | null {
   let best: { name: string; dist: number } | null = null;

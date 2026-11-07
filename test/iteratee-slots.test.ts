@@ -1,11 +1,9 @@
-// `iterateeSlots` says which argument slots stand in for an arrow, on which
-// receiver, and with which spellings. The claim has value only if something
-// checks it, so this re-measures every declared form against the arrow it means —
-// and every form a slot leaves out, to confirm it is refused.
+// `iterateeSlots` says which argument slots stand in for an arrow, on which receiver, and with which spellings.
+// The claim has value only if something checks it. So this re-measures every declared form against the arrow it
+// means, and every form a slot leaves out, to confirm that the compiler refuses it.
 //
-// The comparison erases binding names first: two spellings of one meaning differ
-// only in what the compiler called its own `$let` vars and `$map` `as`, which is
-// not a difference in meaning. See support/canon.ts.
+// The comparison erases binding names first. Two spellings of one meaning differ only in what the compiler
+// called its own `$let` vars and `$map` `as`. That is not a difference in meaning. See support/canon.ts.
 
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -44,8 +42,8 @@ const familiesOf = (r: Row): readonly Family[] =>
 function source(name: string, family: Family, slot: number, arg: string): { src: string; expr: boolean } {
   const withLead = (a: string): string => (slot === 0 ? a : `$.other${a === "" ? "" : ", " + a}`);
   if (family === "stream") {
-    // Two names keep only a leading or trailing run, so they need an order first; a
-    // row that reads the ELEMENT needs an unwound field to read.
+    // Two names keep only a leading or trailing run, so they need an order first. A row that reads the ELEMENT
+    // needs an unwound field to read.
     const head =
       name === "takeWhile" || name === "dropWhile"
         ? '$$.toSorted("n")'
@@ -61,9 +59,9 @@ function source(name: string, family: Family, slot: number, arg: string): { src:
 const compile = (src: string, expr: boolean): string => canon(expr ? jsmql.expr(src) : jsmql(src));
 
 /**
- * Is this family REFUSED in value position? A refused family takes no callback, so it
- * states no iteratee layout — `groupBy` is spelled on `Object` only to give
- * `Object.groupBy(…)` a message that names the receiver form.
+ * Is this family REFUSED in value position? A refused family takes no callback, so it states no iteratee
+ * layout. The row spells `groupBy` on `Object` only to give `Object.groupBy(…)` a message that names the
+ * receiver form.
  */
 const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
   const cell = row.expr as { perFamily?: Record<string, unknown> } | undefined;
@@ -175,13 +173,11 @@ describe("registry — a spelling a slot leaves out is refused", () => {
   });
 
   it("accepts a sort specification where the row says the argument is one", () => {
-    // `"k"` here is an ORDER, not `x => x.k`: the same spelling as a property-path
-    // shorthand with a different meaning, which is why it is its own state and
-    // not a slot form — a form is identified by its spelling.
-    // The one spelling every row that takes a sort shares is the key string; which
-    // OTHER forms each takes (an object, an array of keys, no argument) is that
-    // row's arity and src/compiler/emit/sort-spec.ts's business. A mutator is a statement, so it is
-    // tried where a statement stands.
+    // `"k"` here is an ORDER, not `x => x.k`. It is the same spelling as a property-path shorthand with a
+    // different meaning. So it is its own state and not a slot form: its spelling identifies a form. Every row
+    // that takes a sort shares one spelling, the key string. Which OTHER forms each row takes (an object, an
+    // array of keys, no argument) is that row's arity and src/compiler/emit/sort-spec.ts's business. A mutator
+    // is a statement, so the compiler tries it where a statement stands.
     const orders: string[] = [];
     for (const [name, row] of rows()) {
       for (const [family, layout] of Object.entries(row.iterateeSlots as object) as [Family, Layout][]) {

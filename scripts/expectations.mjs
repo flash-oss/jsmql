@@ -2,7 +2,7 @@
 // file as a TypeScript AST, evaluate an expression in the scope that the file itself builds,
 // and write a value back as the source a reviewer reads in the difference.
 //
-// Neither script runs on a hook. Both are invoked by hand. See scripts/CLAUDE.md.
+// Neither script runs on a hook. You invoke both by hand. See scripts/CLAUDE.md.
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

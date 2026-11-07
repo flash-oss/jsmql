@@ -1,11 +1,9 @@
 // The cross-references inside the registry that no type-level audit can hold.
 //
-// names.ts holds seven audits at its foot, each a type that goes `never` when a
-// reference dangles. Four references escape that form: they relate one field's
-// PRESENCE to another's CONTENT (`only` to `where`, `params` to `iterateeSlots`),
-// or they relate a vocabulary member to the rows that use it. Those are runtime
-// facts over the whole table, so they live here — and each one was made to fail
-// before it was trusted.
+// names.ts holds seven audits at its foot, each a type that goes `never` when a reference dangles. Four
+// references escape that form. They relate one field's PRESENCE to another's CONTENT (`only` to `where`,
+// `params` to `iterateeSlots`). Or they relate a vocabulary member to the rows that use it. Those are runtime
+// facts over the whole table, so they live here. The author made each one fail before the author trusted it.
 
 import { readFileSync, readdirSync } from "node:fs";
 import yaml from "js-yaml";
@@ -35,9 +33,9 @@ const familiesOf = (row: Row): readonly string[] =>
   row.on === undefined || row.on === "any" ? [] : Array.isArray(row.on) ? row.on : [row.on as string];
 
 /**
- * Is this family REFUSED in value position? A refused family takes no callback, so it
- * states no iteratee layout — `groupBy` is spelled on `Object` only to give
- * `Object.groupBy(…)` a message that names the receiver form.
+ * Is this family REFUSED in value position? A refused family takes no callback, so it states no iteratee
+ * layout. The row spells `groupBy` on `Object` only to give `Object.groupBy(…)` a message that names the
+ * receiver form.
  */
 const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
   const cell = row.expr as { perFamily?: Record<string, unknown> } | undefined;
@@ -50,12 +48,11 @@ const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
 };
 describe("registry — every name that takes a callback states its slot layout", () => {
   it("states iterateeSlots for every family in `on`: a layout, arrowOnly, or sortSpec", () => {
-    // A row with `params` takes a callback. Without a layout the desugar pass
-    // cannot tell `$.o.mapValues("name")` (refused — a two-parameter arrow only)
-    // from `$.rows.uniqBy("id")` (a property-path shorthand), and phase 5 receives
-    // a string where an arrow belongs with no row text to quote. `arrowOnly` is
-    // the stated form of "nothing stands in for the arrow here" — an omission
-    // and a decision look alike, so the decision has to be written.
+    // A row with `params` takes a callback. Without a layout the desugar pass cannot tell
+    // `$.o.mapValues("name")` (refused: a two-parameter arrow only) from `$.rows.uniqBy("id")` (a property-path
+    // shorthand). Then phase 5 receives a string where an arrow belongs, with no row text to quote. `arrowOnly`
+    // is the stated form of "nothing stands in for the arrow here". An omission and a decision look alike, so
+    // the row must state the decision.
     const missing: string[] = [];
     for (const [name, row] of rows) {
       if (row.kind !== "name" || row.params === undefined) continue;
@@ -83,9 +80,9 @@ describe("registry — a row that reads null as the empty value", () => {
 
 describe("registry — the reserved names it spells for itself", () => {
   it("every slot the registry spells is the one src/namespace.ts reserves", () => {
-    // The registry imports nothing outside itself, so a reserved name it needs is
-    // written twice. Nothing else holds the two spellings together: a rename on one
-    // side alone would give a stage that writes one field and a read of another.
+    // The registry imports nothing outside itself, so the project writes a reserved name that it needs twice.
+    // Nothing else holds the two spellings together. A rename on one side alone would give a stage that writes
+    // one field and a read of another.
     expect(GROUP_SLOT).toBe(GROUP_TMP);
     expect(LENGTH_SLOT).toBe(NS_LENGTH_SLOT);
   });
@@ -95,20 +92,19 @@ describe("registry — `only` and the positions it qualifies", () => {
   const ONLY: readonly Only[] = ["stageFirst", "stageLast", "update", "afterSort"];
 
   it("uses every member of the Only vocabulary on at least one row", () => {
-    // `afterSort` was declared, documented with an example, and stated by no row
-    // — so `$$ = $$.takeWhile(p)` would emit the $setWindowFields mongod
-    // refuses (Location5339901), and not the refusal that asks for a sort first.
+    // `afterSort` had a declaration and a documented example, but no row stated it. So `$$ = $$.takeWhile(p)`
+    // would emit the $setWindowFields mongod refuses (Location5339901), and not the refusal that asks for a
+    // sort first.
     const unused = ONLY.filter((o) => !rows.some(([, row]) => row.only?.includes(o) === true));
     expect(unused).toEqual([]);
   });
 
   it("states `only` on a row that can stand as a stage, a chain link, or in a stage's body", () => {
-    // Every Only member qualifies a stage or a link — "first stage", "last stage",
-    // "an update-pipeline stage", "a link after a sort" — and the placement may
-    // belong to an OPERATOR the stage carries, not to the stage itself:
-    // MEASURED, the server allows a `$match` with `$text` only as the first stage, so
-    // the rule is `$text`'s and the stage it qualifies is whichever `$match` holds it.
-    // A row that stands in none of those three positions has nothing to qualify.
+    // Every Only member qualifies a stage or a link: "first stage", "last stage", "an update-pipeline stage",
+    // "a link after a sort". The placement may belong to an OPERATOR that the stage carries, not to the stage
+    // itself: MEASURED, the server allows a `$match` with `$text` only as the first stage. So the rule is
+    // `$text`'s, and the stage it qualifies is whichever `$match` holds it. A row that stands in none of those
+    // three positions has nothing to qualify.
     const stray: string[] = [];
     for (const [name, row] of rows) {
       if (row.only === undefined || row.only.length === 0) continue;
@@ -119,10 +115,10 @@ describe("registry — `only` and the positions it qualifies", () => {
   });
 
   it("states `document` on every stage row, and on no other", () => {
-    // The document `Type` changes at a STAGE — `$group`, `$replaceRoot`, `$set` —
-    // and a stage is the row with a body layout (`bodyPositions`). On a value row the
-    // fact would tell the scope tracker to drop bindings after an expression; on a
-    // stage row without it the tracker would have to guess. So the two come as a pair.
+    // The document `Type` changes at a STAGE — `$group`, `$replaceRoot`, `$set` — and a stage is the row with a
+    // body layout (`bodyPositions`). On a value row the fact would tell the scope tracker to drop bindings
+    // after an expression. On a stage row without it the tracker would have to guess. So the two come as a
+    // pair.
     const wrong: string[] = [];
     for (const [name, row] of rows) {
       const isStage = row.bodyPositions !== undefined;
@@ -142,11 +138,11 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
     ),
   );
 
-  // A `statement` slot holds one of two things, and they are not alike: a pipeline of
-  // its own (`$lookup.pipeline`) has a FIRST position and its own placement rules; an
-  // update spec (`$merge.whenMatched`) has neither and runs a closed set of stages.
-  // No other field tells them apart, so the row states it — and this fails the build
-  // for a row that forgets, which is how the distinction stays honest as rows are added.
+  // A `statement` slot holds one of two things, and they are not alike. A pipeline of its own
+  // (`$lookup.pipeline`) has a FIRST position and its own placement rules. An update spec
+  // (`$merge.whenMatched`) has neither and runs a closed set of stages. No other field tells them apart, so the
+  // row states it. This test fails the build for a row that forgets, which is how the distinction stays honest
+  // as rows are added.
   it("every row with one states `statementBody`", () => {
     expect(withStatementSlot.length).toBeGreaterThan(0);
     const silent = withStatementSlot.filter(([, r]) => r.statementBody === undefined).map(([n]) => n);
@@ -161,8 +157,8 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
     expect(spurious).toEqual([]);
   });
 
-  // An update spec's list is a set of STAGE names: a name that is not one could never
-  // match the stage `place` asks about, so the allowance would silently never apply.
+  // An update spec's list is a set of STAGE names. A name that is not one could never match the stage `place`
+  // asks about, so the allowance would silently never apply.
   it("every name an update spec allows is a stage this registry has", () => {
     const stages = new Set(
       Object.entries(NAMES as Record<string, Row>)
@@ -179,8 +175,8 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
 });
 
 describe("registry — each `valueTwin` names an operator with a value form", () => {
-  // `$.items.$match(…)` names the twin in its refusal, so the twin must be a real
-  // operator that a value takes, and the fact must sit on a stage.
+  // `$.items.$match(…)` names the twin in its refusal. So the twin must be a real operator that a value takes,
+  // and the fact must sit on a stage.
   it("states `valueTwin` on a stage, naming an operator whose row lists `value`", () => {
     const wrong: string[] = [];
     let stated = 0;

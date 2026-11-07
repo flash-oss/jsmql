@@ -1,9 +1,9 @@
 // Phase 5 — EMIT. Every message the emit phase can produce, worded once.
 //
-// A refusal is either a row's own text (`unsupported(…)`, handed on through
-// `refusalSentence`), or one of the shapes below. Each shape is built from
-// what the row states — a signature, a receiver list, a position. No
-// sentence here says something a row could have carried.
+// A refusal is either the own text of a row (`unsupported(…)`, which `refusalSentence`
+// hands on), or one of the shapes below. Each shape comes from what the row states:
+// a signature, a receiver list, a position. No sentence here says something that a row
+// could have carried.
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
@@ -130,7 +130,7 @@ export function refusalFor(
       );
     case "wrongReceiver": {
       const accepts = sel.accepts === "any" ? "any value" : sel.accepts.map((f) => `'${f}'`).join(", ");
-      // More than one possible kind arrives joined by " or "; each one takes its own article.
+      // A string joined by " or " carries more than one possible kind; each one takes its own article.
       const got =
         sel.got === null
           ? "a receiver whose type JSMQL cannot prove"
@@ -167,7 +167,7 @@ export function refusalFor(
                         : sel.got === "bool"
                           ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').`
                           : "";
-      // a property (`.length`) is spelled without the call parentheses
+      // the message spells a property (`.length`) without the call parentheses
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
     }
@@ -254,7 +254,7 @@ export const functionAsValue = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-/** A read of a name that has no value here. The binding says why, worded where it was dropped. */
+/** A read of a name that has no value here. The binding says why, in words that the code wrote where it dropped the name. */
 export const droppedBinding = (ref: { readonly message: string }, pos: number): CodegenError =>
   new CodegenError(ref.message, pos);
 
@@ -282,7 +282,7 @@ export const looseEqualityNotNull = (op: "==" | "!=", pos: number): CodegenError
     pos,
   );
 
-/** `x in <not a list>`: `in` takes a list spelled in the source, and the message names the spelling for every other right side. */
+/** `x in <not a list>`: `in` takes a list that the source spells, and the message names the spelling for every other right side. */
 export const inNeedsList = (pos: number): CodegenError =>
   new CodegenError(
     "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.",
@@ -544,7 +544,7 @@ export const arrayOfArrays = (method: string, holder: string, pos: number): Code
 
 /**
  * The callback's third parameter, in a body whose stages make its count untrue.
- * The count is stamped into a field ahead of the body. A stage that drops the
+ * The compiler stamps the count into a field ahead of the body. A stage that drops the
  * fields loses it. A stage that changes the document count makes it stale. A
  * test on either then silently answers on the wrong number.
  */
@@ -639,14 +639,14 @@ export const needsStageList = (pos: number): CodegenError =>
     pos,
   );
 
-/** A spread inside a stage list: the pipeline is written out, stage by stage. */
+/** A spread inside a stage list: the developer writes the pipeline out, stage by stage. */
 export const spreadInStageList = (pos: number): CodegenError =>
   new CodegenError(
     "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
     pos,
   );
 
-/** A name the server accepts only in the pipeline's first stage, written after something else. */
+/** A name that the server accepts only in the first stage of the pipeline, when the source writes it after something else. */
 export const mustBeFirstStage = (name: string, pos: number, why?: string): CodegenError =>
   new CodegenError(
     why ??
@@ -668,7 +668,7 @@ export const firstStageNeedsHoist = (
   /** The stage that HOLDS the name, when the rule belongs to an operator in its body (`$text` in a `$match`). */
   carrier: string | null,
 ): CodegenError => {
-  // The value the reader has to move is named after the stage jsmql had to make for it.
+  // The name of the value that the reader has to move comes from the stage that the compiler had to make for it.
   const value = hoisted === "$lookup" ? "$$$.<coll>.find({ … }).<field>" : "$$.size()";
   const later = `$match($.<field> === ${value});`;
   return new CodegenError(
@@ -680,8 +680,8 @@ export const firstStageNeedsHoist = (
 };
 
 /**
- * `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output,
- * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
+ * `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output.
+ * It reads a value that the compiler materialised into a scratch field. The `__jsmql` cleanup is
  * the stage before it, and nothing may follow it. So the field is gone by then.
  * MEASURED: mongod refuses the read of `v`.
  */
@@ -698,7 +698,7 @@ export const twoTerminalStages = (name: string, already: string, pos: number): C
     pos,
   );
 
-/** A source that is a value, handed to the pipeline entry. */
+/** A source that is a value, which the caller hands to the pipeline entry. */
 export const notAPipeline = (pos: number): CodegenError =>
   new CodegenError(
     "A pipeline is one or more statements: `;`-separated ('$match(…); $sort({…});') or a bracketed list of stages ('[$match(…), $sort({…})]'). This source is a single expression — pass it to jsmql() for a filter, or jsmql.expr() for an aggregation expression.",
@@ -1005,7 +1005,7 @@ export const notAStreamChain = (
 
 /** A link in a stream chain whose name is not a method the stream has, nor a stage. */
 export const notAStreamLink = (name: string, candidates: readonly string[], pos: number): CodegenError => {
-  // A diagnostic stage is spelled on its own reference and takes no body there,
+  // The source spells a diagnostic stage on its own reference, where it takes no body,
   // so the suggestion names that form, not the `.$name(body)` link form.
   const spell = (s: string): string => {
     const runsOn = runsOnFor(s);
@@ -1045,7 +1045,7 @@ const ARG_NOUN: Readonly<Record<string, string>> = {
 
 /**
  * A stage cell asked for a callback and got a shape this slot never takes. The
- * spellings come from the row, so the way out is the one the compiler accepts.
+ * row gives the spellings, so the way out is the one the compiler accepts.
  * An earlier pass rewrites a whole-number index, so a number that arrives here
  * in a slot that takes an index is negative or a fraction.
  */
@@ -1111,14 +1111,14 @@ export const badMatchesPropertyPair = (name: string, pos: number): CodegenError 
     pos,
   );
 
-/** An arrow with a `{ … }` body of stages where a VALUE body was wanted. */
+/** An arrow with a `{ … }` body of stages where the slot wants a VALUE body. */
 export const blockWhereValueExpected = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'.${name}()' takes an arrow that returns a value — 'd => d.x', or 'd => { …; return d.x; }'. A body of pipeline stages belongs to '.aggregate(o => { … })'.`,
     pos,
   );
 
-/** An arrow with a value body where a block of STAGES was wanted. */
+/** An arrow with a value body where the slot wants a block of STAGES. */
 export const valueWhereBlockExpected = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'.${name}()' takes an arrow whose body is a block of stages — 'o => { $match(…); $limit(1); }' — or a bracketed list of them.`,
@@ -1170,7 +1170,7 @@ export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
 
 /**
  * `$.items.map(x => $$$.c.find({ _id: x.k }))` — a join inside an expression that
- * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`. So
+ * binds its own variable. The `$lookup` is a STAGE, and the compiler hoists it out of the `$map`. So
  * its body names a variable the server never bound there, and the server
  * refuses the read (measured).
  */
@@ -1183,8 +1183,8 @@ export const readsEnclosingVariable = (name: string, stage: string, pos: number)
 /**
  * `$$.push({ n: $$$.c.find(p).n })` — a written document whose value materialises a
  * stage. The documents run inside a `$unionWith` where `$documents` is the first
- * stage. So nothing can stand ahead of them to produce the value, and the read is
- * left as a path nothing writes (measured: the server answers `{}` for it).
+ * stage. So nothing can stand ahead of them to produce the value, and the read
+ * stays as a path that nothing writes (measured: the server answers `{}` for it).
  */
 export const documentsNeedNoStage = (written: string, made: string, pos: number): CodegenError =>
   new CodegenError(
@@ -1400,7 +1400,7 @@ export const unionArg = (verb: string, slot: number, noun: string, pos: number):
     pos,
   );
 
-/** `$$$.c = $.x` — a collection is written from the stream. */
+/** `$$$.c = $.x` — a collection takes its documents from the stream. */
 export const outNeedsStream = (pos: number): CodegenError =>
   new CodegenError(
     "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
@@ -1547,7 +1547,7 @@ const nounOfValue = (v: unknown): string => {
 /**
  * `$$$[c]` where `c` cannot name a collection. A value read at run time has no name
  * yet. A value that the call supplies, or that the source writes, must be a plain
- * string: the server refuses a name that starts with '$'.
+ * string. The server refuses a name that starts with '$'.
  */
 export function collectionNameFrom(index: Expr): CodegenError {
   if (index.type === "Injected") {
@@ -1570,7 +1570,7 @@ export const badOutTarget = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-/** `$$$[$.name].find(…)` — the collection a `$lookup` reads is fixed when the pipeline is written. */
+/** `$$$[$.name].find(…)` — the developer fixes the collection that a `$lookup` reads when they write the pipeline. */
 export const collectionNameMustBeConstant = (pos: number): CodegenError =>
   new CodegenError(
     "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
@@ -1591,8 +1591,8 @@ export const notAJoinChain = (pos: number): CodegenError =>
 
 /**
  * A DIAGNOSTIC stage written as a chain link — `$$.$indexStats({})`. It reports on
- * the deployment, so it is a SOURCE stage: it stands first and is spelled on the
- * reference its scope names, with no body.
+ * the deployment, so it is a SOURCE stage. It stands first, and the source spells it on
+ * the reference its scope names, with no body.
  */
 export const diagnosticIsNotALink = (name: string, pos: number): CodegenError => {
   const runsOn = runsOnFor(name);
@@ -1607,8 +1607,8 @@ export const diagnosticIsNotALink = (name: string, pos: number): CodegenError =>
 
 /**
  * `$$$$.currentOpp();` — a name called straight on the database or the cluster.
- * Only a diagnostic stage of that scope is spelled there, so an unknown one is a
- * wrong spelling; on the database, where none is, the message names both scopes.
+ * Only a diagnostic stage of that scope has a spelling there, so an unknown one is a
+ * wrong spelling. On the database, where none has one, the message names both scopes.
  */
 export const notAStageOnRef = (
   name: string,
@@ -1669,7 +1669,7 @@ export const outerWriteInForeign = (pos: number): CodegenError =>
     pos,
   );
 
-/** `const x = …; x = …;` — a constant is written once. */
+/** `const x = …; x = …;` — a constant takes one write. */
 export const constReassigned = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${name}' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.`,
@@ -1725,7 +1725,7 @@ export const elementNeedsQuery = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-/** `$$.takeWhile(p)` with no sort before it — a MongoDB stream has no order until it is given one. */
+/** `$$.takeWhile(p)` with no sort before it — a MongoDB stream has no order until a sort gives it one. */
 export const needsPrecedingSort = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'.${name}(predicate)' keeps the ${name === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name}(…)': '$$.toSorted({ t: 1 }).${name}(o => o.ok)' — any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ … })').`,

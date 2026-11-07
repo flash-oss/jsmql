@@ -1,9 +1,8 @@
 // The registry readers every phase shares.
 //
-// A phase asks a QUESTION about a name and gets an answer from a row. The
-// question is spelled out here once, so two phases cannot answer it differently:
-// there is one place that decides whether a name is a method, and every phase
-// reads it.
+// A phase asks a QUESTION about a name and gets an answer from a row. This file
+// spells out each question once, so two phases cannot answer it differently:
+// one place decides whether a name is a method, and every phase reads it.
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
@@ -40,9 +39,9 @@ function families(on: On | undefined): readonly Family[] | "any" | undefined {
  * The families a DOCUMENT FIELD's value can have.
  *
  * `Math`, `Object`, `Number`, `Date` and `Array` are also families, but they are
- * static namespaces reached through a bare name — never through `$.<path>`. So
- * `Math.PI` is a read on a namespace and `$.Math.PI` is a two-segment field path,
- * and the two cannot be told apart without this distinction.
+ * static namespaces that a program reaches through a bare name — never through
+ * `$.<path>`. So `Math.PI` is a read on a namespace and `$.Math.PI` is a two-segment
+ * field path. Without this distinction the two look the same.
  */
 const FIELD_FAMILIES: readonly Family[] = Object.keys(FIELD_FAMILY_TYPES) as FieldFamily[];
 
@@ -76,8 +75,8 @@ export function isStageName(name: string): boolean {
  * Where a path inside a stage's body stands, and whether a longer key still
  * claims something below it.
  *
- * BOTH facts, because a caller needs both: the position is what a leaf under
- * this path holds, and `deeper` says an object under it must continue to descend
+ * BOTH facts, because a caller needs both. The position is what a leaf under
+ * this path holds. `deeper` says that an object under it must continue to descend
  * before the row can answer for its keys. Without the second, `$setWindowFields`'s
  * body would settle as a value and its `output` keys would never reach the
  * window position; without the first, `$merge("out")` — a body with no keys to
@@ -113,7 +112,7 @@ const wildcards = (key: readonly string[]): number => key.filter((seg) => seg ==
  * Which position `path` holds inside `stage`'s body — see `bodyPositions` for the
  * path vocabulary. Undefined when `stage` is not a stage at all.
  *
- * The longest key that covers it wins, and a literal beats a `*` of the same length,
+ * The longest key that covers it wins. A literal beats a `*` of the same length,
  * so `$group`'s `{ "": "value", "*": "group", _id: "value" }` reads as written:
  * `_id` is an expression and every other key is an accumulator.
  */
@@ -258,8 +257,9 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
 /**
- * What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an
- * array makes the server refuse, or the one kind that every element must have (HR7).
+ * What a method needs of its receiver's ELEMENTS. The answer is `"scalar"` when an element
+ * that is an array makes the server refuse. Otherwise it is the one kind that every element
+ * must have (HR7).
  */
 export function elementsOf(name: string): "scalar" | Kind | undefined {
   return (row(name) as { elements?: "scalar" | Kind } | undefined)?.elements;
@@ -374,8 +374,8 @@ const emitRow = (name: string): EmitRow | undefined =>
 export function soleFieldFamilyOf(name: string): Family | null {
   const fams = families(row(name)?.on);
   if (fams === undefined || fams === "any") return null;
-  // A family a document FIELD can hold, and one the row LOWERS. A namespace
-  // (`Math`, `Object`) is reached by a bare name and never through `$.<path>`; a
+  // A family a document FIELD can hold, and one the row LOWERS. A program reaches a
+  // namespace (`Math`, `Object`) by a bare name and never through `$.<path>`; a
   // family the row REFUSES cannot be the family of a receiver in a program that
   // compiles, so `.keys()` on an unproven field is a call on an object.
   const fields = fams.filter((f) => FIELD_FAMILIES.includes(f) && !refusesFamily(name, f));
@@ -568,10 +568,11 @@ function nullReceiverAsOf(name: string): 0 | 1 | "" | false | Date | undefined {
 
 /**
  * HR5: under a dot, a method runs on the SAFE value of its kind when its receiver is
- * null or missing: `[]` for an array, `{}` for an object, `""` for a string, `0` for a
- * number, and the epoch for a date. A family with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
- * `family` is the receiver's proven family, or null; then the row's own field families
- * decide, and they must agree on one safe value.
+ * null or missing. The safe value is `[]` for an array, `{}` for an object, `""` for a
+ * string, `0` for a number, and the epoch for a date. A family with no safe value gives
+ * null. A row that states `nullReceiverAs` reads that value. Else `family` is the
+ * receiver's proven family, or null; then the row's own field families decide, and they
+ * must agree on one safe value.
  */
 export function emptyValueOf(
   name: string,
@@ -597,7 +598,10 @@ export function emptyValueOf(
   return null;
 }
 
-/** The sentence a refusal adds when the receiver is proven to be `family`, which this row does not take. Null when the row states none. */
+/**
+ * The sentence a refusal adds when the compiler proves the receiver to be `family`,
+ * which this row does not take. Null when the row states none.
+ */
 export function siblingOf(name: string, family: string): string | null {
   return (row(name) as { sibling?: Readonly<Record<string, string>> } | undefined)?.sibling?.[family] ?? null;
 }
@@ -649,8 +653,8 @@ export function everyStageName(): readonly string[] {
 
 /**
  * Every MongoDB OPERATOR the registry states — a name callable at the top level of a
- * position that evaluates one. A name `onlyInside` confines to another operator's body
- * in EVERY position it is legal in (`$box`, `$case`, `$each`) is not one: it cannot
+ * position that evaluates one. A name that `onlyInside` confines to another operator's
+ * body in EVERY position it is legal in (`$box`, `$case`, `$each`) is not one. It cannot
  * stand alone, so nothing should offer it as though it could.
  */
 export function everyOperatorName(): readonly string[] {
@@ -679,8 +683,8 @@ export function describes(name: string, half: "operator" | "stage"): string {
 }
 
 /**
- * The stage's diagnostic tier — the sigil scope its sugar spelling is reached
- * through, and whether it takes an options document — or undefined for an
+ * The stage's diagnostic tier: the sigil scope through which a program reaches its
+ * sugar spelling, and whether it takes an options document. Undefined for an
  * ordinary stage that reads the stream.
  */
 export function diagnosticOf(
@@ -739,9 +743,9 @@ export function isGlobalName(name: string): boolean {
 
 /**
  * The row a CONSTRUCT names, from the production that builds its node type:
- * `StreamRef` is built by the production whose first token is `$$`, and
- * `$$` is a row. Read off both registries, so a root spelling is never listed
- * beside the node type it builds.
+ * The production whose first token is `$$` builds `StreamRef`, and `$$` is a row.
+ * The function reads both registries, so the code never lists a root spelling
+ * beside the node type that it builds.
  */
 export function rowForNodeType(nodeType: string): string | undefined {
   for (const p of Object.values(PRODUCTIONS) as { becomes: unknown; tokens: readonly string[] }[]) {

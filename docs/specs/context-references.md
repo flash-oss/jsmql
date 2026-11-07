@@ -65,19 +65,19 @@ case "DoubleDollar":
 // TripleDollar → DatabaseRef and QuadDollar → ClusterRef read the same way.
 ```
 
-The prefix carries no follow-token guard of its own, because a prefix IS a whole expression: `$$$.<coll> = $$` has a bare `$$` as its RHS. The surrounding grammar decides what may follow a prefix. The typo `$$foo` (no separator, then an identifier) is a parse error at the point where the statement ends. A bare prefix that no road claims is refused at emit time, in the words its own row states.
+The prefix carries no follow-token guard of its own, because a prefix IS a whole expression: `$$$.<coll> = $$` has a bare `$$` as its RHS. The surrounding grammar decides what may follow a prefix. The typo `$$foo` (no separator, then an identifier) is a parse error at the point where the statement ends. The emitter refuses a bare prefix that no road claims. It uses the words that the row of the prefix states.
 
 Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens in the standard primary-postfix loop.
 
 ## Lowering
 
-[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — the three marker nodes share one case on the value road, `rootAsValue`. This case asks the node's registry row what it says about the position the node stands in, then throws that refusal with the node's own `pos`:
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — the three marker nodes share one case on the value road, `rootAsValue`. This case asks the registry row of the node what it says about the position of the node. Then it throws that refusal with the `pos` of the node:
 
 ```
 $.x = $$   // ✗ the root stream is not a value; a method on it, such as $$.size(), is one
 ```
 
-Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node and is refused there. No wrapper site needs a case of its own.
+Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node, and the emitter refuses it there. No wrapper site needs a case of its own.
 
 `src/index.ts` maps `CodegenError` to `ValidationError` (see the [error table in src/CLAUDE.md](../../src/CLAUDE.md)). So `jsmql.validate("$.x = $$")` returns `{ valid: false, errors: [{ ..., pos: <prefix-pos> }] }`.
 
@@ -86,7 +86,7 @@ Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, 
 The emitter locates a `FieldRef` through one function, `locate` in `src/compiler/emit/lower.ts`. Every write target and read shares this function. A context ref is not a document field path, so `locate` answers `null` for one, and each caller states its own rule:
 
 - A read has no path to render.
-- A write target is rejected — you cannot write to `$$.foo`.
+- The compiler rejects a write target. You cannot write to `$$.foo`.
 - The filter road drops to `$expr`, where the value road's refusal fires.
 
 ## Tests
@@ -101,13 +101,13 @@ The emitter locates a `FieldRef` through one function, `locate` in `src/compiler
 - Lexer cap (5 or more `$`).
 - The prefix tokens do not change `$.` behaviour.
 
-Tests use the string form, not the arrow form, but the arrow form also type-checks: `$$` / `$$$` / `$$$$` are declared as ambient globals in [`src/globals.ts`](../../src/globals.ts) (through `import "@koresar/jsmql/globals"`). This declaration gives completion for the diagnostic source stages, and — on `$$` — for the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …). See `globals-generation.md` § Context references.
+Tests use the string form, not the arrow form, but the arrow form also type-checks: [`src/globals.ts`](../../src/globals.ts) declares `$$` / `$$$` / `$$$$` as ambient globals (through `import "@koresar/jsmql/globals"`). This declaration gives completion for the diagnostic source stages, and — on `$$` — for the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …). See `globals-generation.md` § Context references.
 
 ## What each reference carries
 
 - **`$$` — the root stream, at every depth.** A chain on it is the stream road (`$$.filter(…);`, [stream-methods.md](stream-methods.md)). `$$ = …` replaces the stream ([replace-stream-stage.md](replace-stream-stage.md)). `$$.push(…)` unions documents in ([union-stage.md](union-stage.md)). `$$.size()` is the stream's count ([stream-size.md](stream-size.md)). `$$` also carries the collection-scoped diagnostic sources (`$$.indexStats()`, [system-stages.md](system-stages.md)). `$$` is never a value: the compiler refuses `$.x = $$.filter(…)` and names the `$facet` form, `$$.size()`, and the statement form instead. Inside a body over another collection, `$$` is still the ROOT stream — the body's own stream is the callback's third parameter.
 - **`$$$.<coll>` — a collection of the current database.** A chain on it reads that collection, through the join road ([lookup-stage.md](lookup-stage.md)). As a write target, it names the `$out` destination ([out-stage.md](out-stage.md)). The source writes the name directly, or supplies it as a `jsmql.compile` parameter; the name is never computed.
 - **`$$$$.<db>.<coll>` — a collection of another database.** This is a write target only (`$out` takes a `{ db, coll }` namespace). The compiler refuses a read, because `$lookup` and `$unionWith` reach the current database alone. The `{ db, coll }` form belongs to Atlas Data Federation, and a MongoDB server refuses it there (HR3). `$$$$` also carries the cluster-scoped diagnostic sources (`$$$$.currentOp(…)`).
-- **Types.** `src/globals.ts` declares the three as ambient globals. Each type carries the surface that prefix carries — the stream vocabulary, the chained stage calls, the stream count, and the value terminals on `$$` and `$$$.<coll>`, plus the diagnostic sources on `$$` and `$$$$`. The document stays `any` ([globals-generation.md](globals-generation.md)).
+- **Types.** `src/globals.ts` declares the three as ambient globals. Each type carries the surface that its prefix carries. That surface is the stream vocabulary, the chained stage calls, the stream count, and the value terminals on `$$` and `$$$.<coll>`. It also holds the diagnostic sources on `$$` and `$$$$`. The document stays `any` ([globals-generation.md](globals-generation.md)).
 
 `$$.find(p)` / `$$.filter(p)` as a VALUE — reading the current collection as data — has no lowering. A `$lookup` needs the collection's name, and a pipeline does not carry that name. So the compiler refuses the value form and names the statement form (`$$.filter(p);`), the `$facet` form, and `$$.size()` instead.

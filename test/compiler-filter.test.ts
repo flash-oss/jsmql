@@ -36,8 +36,8 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
     expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool" } });
-    // A name MongoDB does not know is refused with the nearest one, never lowered
-    // to a test that quietly matches nothing.
+    // The compiler refuses a name MongoDB does not know and gives the nearest one.
+    // It never lowers the name to a test that quietly matches nothing.
     expect(() => filter('typeof $.a === "boolean"')).toThrow(/never true\. Did you mean 'bool'\?/);
     expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
     expect(filter('typeof $.a !== "objectId"')).toEqual({ a: { $not: { $type: "objectId" } } });
@@ -164,8 +164,8 @@ describe("compiler/emit/filter — the truth of a `$op(…)` call is split by sp
 
 describe("compiler/emit/filter — a raw query document", () => {
   it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
-    // Raw MQL passes through, keys as written (HR1) — and a name this build
-    // does not list in filter position, because a newer query operator must round-trip.
+    // Raw MQL passes through, keys as written (HR1). A name that this build
+    // does not list in filter position passes too, because a newer query operator must round-trip.
     expect(filter("{ a: 1 }")).toEqual({ a: 1 });
     expect(filter("{ a: { $gt: 1 } }")).toEqual({ a: { $gt: 1 } });
     expect(filter("{ a: { $size: 2 } }")).toEqual({ a: { $size: 2 } });
@@ -274,9 +274,9 @@ describe("compiler/emit/filter — methods and operators", () => {
     // so it accepted "z.\n" where JavaScript's endsWith does not.
     expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/ } });
     expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i } });
-    // The operator form, not the shorter `{ s: /^a/i }`. MEASURED, the two select the
-    // same documents at every query site, and the operator form is the one that
-    // survives where they differ — both of which jsmql emits into: a sibling on the
+    // The operator form, not the shorter `{ s: /^a/i }`. MEASURED: the two select the
+    // same documents at every query site. The operator form is the one that
+    // survives where they differ. jsmql emits into both of those sites: a sibling on the
     // same field, and `$elemMatch`, which needs an object.
     expect(filter('$.s.match(/^a/i) && $.s !== "zzz"')).toEqual({ s: { $regex: /^a/i, $ne: "zzz" } });
     expect(filter("$.items.some(i => i.s.match(/^a/))")).toEqual({ items: { $elemMatch: { s: { $regex: /^a/ } } } });
@@ -363,7 +363,7 @@ describe("compiler/emit/filter — methods and operators", () => {
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
     // The query cell answers null, and the fallback asks the VALUE lowering, which
     // arrives under `$expr`.
-    // A receiver PROVEN to be no string is refused before either: `.abs()` returns a number.
+    // The compiler refuses a receiver PROVEN to be no string before either: `.abs()` returns a number.
     expect(() => filter('$.n.abs().startsWith("A")')).toThrow(/not available on a 'number'/);
     /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
     const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
@@ -434,8 +434,8 @@ describe("compiler/emit/filter — methods and operators", () => {
 
 describe("compiler/emit/filter — a read inside a raw query value has no query form", () => {
   // The query language compares a field with a CONSTANT, so `$.b` in a query slot is
-  // the two-character string "$b" and the filter matches nothing. The question is
-  // asked at every depth: an array, a document, a nesting of both.
+  // the two-character string "$b". Then the filter matches nothing. The test asks the question
+  // at every depth: an array, a document, a nesting of both.
   it("lifts the whole comparison when a read sits anywhere inside the value", () => {
     expect(filter("{ a: $.b }")).toEqual({ $expr: { $eq: ["$a", "$b"] } });
     expect(filter("{ a: [1, $.b] }")).toEqual({ $expr: { $eq: ["$a", [1, "$b"]] } });

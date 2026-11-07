@@ -4,10 +4,10 @@
 // accept a JSMQL string or arrow at the right slot.
 //
 // Not a vitest test (no `.test.ts` suffix, so vitest skips it). The smoke
-// suite in test/smoke.test.ts spawns tsc against it; mongoose is pinned at
-// `"*"` in devDependencies so every `npm install` pulls the latest, which
-// turns this case into the canary that catches the augmentation when it
-// drifts against mongoose's generics as they change.
+// suite in test/smoke.test.ts spawns tsc against it. The devDependencies pin
+// mongoose at `"*"`, so every `npm install` pulls the latest. This turns the
+// case into the canary that catches the augmentation when it drifts against
+// the generics of mongoose as they change.
 
 import mongoose from "mongoose";
 import "../../src/mongoose.ts";
@@ -34,8 +34,8 @@ const userSchema = new mongoose.Schema<User>({
 const UserModel = mongoose.model<User>("User", userSchema);
 
 // All four call-shape inputs must pass the type check at each slot. The
-// regular MQL forms (plain object / array) must continue to work untouched —
-// that is the pass-through path — and the JSMQL forms (string / arrow) must
+// regular MQL forms (plain object / array) must keep working untouched.
+// That is the pass-through path. The JSMQL forms (string / arrow) must
 // type-check through the augmentation.
 
 // find — filter at 0

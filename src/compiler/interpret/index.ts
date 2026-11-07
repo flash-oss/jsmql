@@ -7,9 +7,9 @@
 //
 // THE ONE INVARIANT: a value that the interpreter answers equals the value that the
 // server answers for the same MQL. Where the server answer is not exactly specified,
-// the operator is refused. A refusal is never a failure: the expression then stays a
+// the interpreter refuses the operator. A refusal is never a failure: the expression then stays a
 // runtime expression. The interpreter runs on MQL that already passed the kind check
-// of HR7, so it has no path for a type error: a wrong kind is a refusal.
+// of HR7. So it has no path for a type error: a wrong kind is a refusal.
 //
 // See src/compiler/interpret/CLAUDE.md.
 
@@ -138,7 +138,7 @@ function step(budget: Budget, scope: Scope | null, depth: number, node: unknown)
  * The value of an MQL expression, or the reason that there is none.
  *
  * A literal is its own value. A string that starts with `$` is a field path or a system
- * variable, so it has no value, unless it names a variable that a `$let`,
+ * variable, so it has no value. It has a value only when it names a variable that a `$let`,
  * `$map`, `$filter` or `$reduce` bound. `{ $literal: v }` is `v`. An object with one
  * `$` key is an operator call, and an object with a `$` key beside other keys is not an
  * expression. A NaN or an infinity in a part that the answer needs gives `unspellable`, and the caller reports it.

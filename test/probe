@@ -4,15 +4,15 @@
 // See test/CLAUDE.md "Verify MQL against a running MongoDB".
 //
 // The server is the project's own instance on :27018, started by `npm run fixture:up`.
-// The developer's own mongod on the default port is NEVER used — it holds their real
-// work. That rule has no exception; `test/no-default-port.test.ts` holds the line.
+// Probe NEVER uses the developer's own mongod on the default port — it holds their real
+// work. That rule has no exception; `test/no-default-port.test.ts` enforces it.
 //
 // Input: MQL JSON as a positional arg, or on stdin if no positional is given.
 //   echo '[{"$match":{"age":{"$gt":18}}}]' | ./test/probe
 //   ./test/probe '{"$gt":["$age",18]}' --doc '{"age":20}'
 //   node ../src/cli.ts --pipeline '$.age > 18' | ./test/probe   # pipe jsmql's MQL straight in
 //
-// Shape is auto-detected; override with a flag:
+// Probe detects the shape on its own; override it with a flag:
 //   --pipeline   db.coll.aggregate(<array>)
 //   --filter     db.coll.find(<object>)
 //   --expr       db.coll.aggregate([{ $addFields: { __v: <object> } }])  — a bare jsmql.expr fragment
@@ -27,15 +27,15 @@
 //   -h, --help     show this help
 //
 // Input is JAVASCRIPT, which is what the jsmql CLI writes — `new Date(…)`,
-// `new ObjectId(…)`, `/re/i`. It is evaluated with the driver's own BSON classes in
-// scope, so probe refuses exactly what a driver script would refuse: that is the point
+// `new ObjectId(…)`, `/re/i`. Probe evaluates it with the driver's own BSON classes in
+// scope. So probe refuses exactly what a driver script would refuse: that is the point
 // of it. Plain JSON still works, because JSON is JavaScript. An Extended JSON WRAPPER
 // (`{"$oid": "…"}`) is refused, not converted — as JavaScript it is a plain
 // subdocument that would silently match nothing.
 //
-// Output goes to stdout (or -o <file>) in the same JavaScript form, so a result can be
-// pasted back into --doc. The server's own rejection message is printed verbatim when
-// mongod refuses the shape — that refusal IS the signal that you probe for.
+// Probe prints the output to stdout (or -o <file>) in the same JavaScript form. So you can
+// paste a result back into --doc. Probe prints the server's own rejection message verbatim
+// when mongod refuses the shape — that refusal IS the signal that you probe for.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import * as mongodb from "mongodb";
@@ -51,7 +51,7 @@ const BSON_GLOBALS = {
   Code: mongodb.Code, DBRef: mongodb.DBRef, BSONSymbol: BSON.BSONSymbol, BSONRegExp: BSON.BSONRegExp,
 };
 
-// Every Extended JSON wrapper. As JavaScript each is an ordinary subdocument, so a
+// Every Extended JSON wrapper. As JavaScript each is an ordinary subdocument. So a
 // document that holds one runs and matches nothing — the exact failure probe exists to catch.
 const WRAPPERS = ["$oid", "$date", "$numberDecimal", "$numberLong", "$numberInt", "$numberDouble",
   "$binary", "$timestamp", "$minKey", "$maxKey", "$code", "$symbol", "$regularExpression", "$uuid", "$ref"];

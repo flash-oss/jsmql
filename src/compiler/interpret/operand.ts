@@ -27,7 +27,7 @@ export function evalAll(walk: Walk, nodes: readonly unknown[], anyOrder = false)
 
 /**
  * A rule over the VALUES of a positional operand. The operator takes between `min`
- * and `max` arguments, and every argument is evaluated before the rule runs.
+ * and `max` arguments, and the helper evaluates every argument before the rule runs.
  * The rule also receives the arguments as written, for a fact that no value holds.
  * A rule that reads nothing of the order of an array sets `anyOrder`. See `Walk`.
  */

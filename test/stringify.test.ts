@@ -1,12 +1,11 @@
 /**
  * `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it.
  *
- * Two assertions run over almost every case. The first is the TEXT, which is what a
- * reader sees. The second is the ROUND TRIP: the text is evaluated with the driver's
- * BSON classes in scope — the way a developer uses it, with a paste into a place where those
- * classes live — and the rebuilt value is serialised to BSON and compared byte for
- * byte with the original. Equal bytes are what "the text rebuilds the document"
- * means; a printer that wrote a plausible but different value fails there.
+ * Two assertions run over almost every case. The first is the TEXT, which is what a reader sees. The second is
+ * the ROUND TRIP. The test evaluates the text with the driver's BSON classes in scope. This is the way a
+ * developer uses it: with a paste into a place where those classes live. Then it serialises the rebuilt value
+ * to BSON and compares it byte for byte with the original. Equal bytes are what "the text rebuilds the
+ * document" means; a printer that wrote a plausible but different value fails there.
  *
  * See docs/specs/mql-stringify.md.
  */
@@ -307,8 +306,8 @@ describe("stringify: layout", () => {
   });
 
   it("takes the width from the option", () => {
-    // 20 columns for the one-line form, 14 for the inner one at its indent: a width
-    // of 16 breaks the outer document and keeps the inner one whole.
+    // 20 columns for the one-line form, 14 for the inner one at its indent. A width of 16 breaks the outer
+    // document and keeps the inner one whole.
     expect(stringify({ age: { $gt: 18 } }, { width: 16 })).toBe("{\n  age: { $gt: 18 }\n}");
   });
 

@@ -28,14 +28,14 @@
  * This plugin wraps each patched method explicitly, with its own named
  * function. The method signatures are stable across mongoose versions, and
  * each one is small. A per-method wrapper is therefore easier to read and to
- * debug than a lookup table: a stack trace points straight at the method
- * that did the wrong thing, and the signature sits right next to the call.
+ * debug than a lookup table. A stack trace points straight at the method
+ * that did the wrong thing. The signature sits right next to the call.
  *
  * `findOneAndReplace` / `replaceOne` take a full *replacement document* at
  * argument 1, not an update spec — so this plugin patches their filter slot only.
  * `findById` and `findByIdAndDelete` are id-only, so this plugin patches neither.
  * `Query.prototype.*` builder methods (`.where()`, `.gt()`, `.sort()`, …) are
- * intentionally NOT patched: jsmql keeps the mongoose surface to the `Model`
+ * intentionally NOT patched. jsmql keeps the mongoose surface to the `Model`
  * statics, so developers do not have to learn a new API (DX-first). See
  * docs/specs/mongoose-plugin.md.
  */
@@ -59,7 +59,7 @@ function isJsmql(value: unknown): value is JsmqlInput {
  *
  * The `mongoose` parameter is typed `any` deliberately. This module does not
  * depend on mongoose at compile time (no peer/dev dep, no `import "mongoose"`),
- * so the real `Mongoose` type is not in scope here; the plugin treats the argument as
+ * so the real `Mongoose` type is not in scope here. The plugin treats the argument as
  * a duck-typed `{ Model: { find, …pre-patched statics… } }` and the per-
  * method wrappers below pass the rest through. An annotation on each captured
  * original and wrapper parameter would add noise without
@@ -82,7 +82,7 @@ export default function jsmqlMongoose(mongoose: any): void {
     );
   }
   // Idempotence: a second registration on the same Model would double-wrap
-  // every static, and the second wrap would then try to `jsmql.filter()` an
+  // every static. The second wrap would then try to `jsmql.filter()` an
   // already-lowered Filter document and throw. This guard is cheap, so this
   // plugin adds it — `__jsmqlPatched` is the marker; one property check, no
   // Symbol indirection.

@@ -1,9 +1,9 @@
 // The registry's TYPE contracts, each one made to fail.
 //
 // A type-level audit that has never failed proves nothing: a conditional that
-// matches no row passes forever. So every rule the vocabulary states as a type
-// stands here twice — once as a value that must compile, once under a
-// `@ts-expect-error` that must NOT. tsc refuses an unused `@ts-expect-error`
+// matches no row passes forever. So every rule that the vocabulary states as a type
+// stands here twice. One copy is a value that must compile. The other is under a
+// `@ts-expect-error` and must NOT compile. tsc refuses an unused `@ts-expect-error`
 // (TS2578), so a rule that no longer fires fails this file in either direction.
 // test/registry-contracts.test.ts runs it.
 
@@ -47,7 +47,7 @@ export const strayFamily: Value<"array"> = { perFamily: { array: R, string: R } 
 export const keyed: Value<"array"> = {
   byArgs: { dynamic: R, constant: unsupported("did not fold"), otherwise: unsupported("no") },
 };
-// a constant may be lowered (`Number("3")` converts on the server, a double) or refused
+// the compiler may lower a constant (`Number("3")` converts on the server, a double) or refuse it
 export const constantLowered: Value<"array"> = { byArgs: { constant: R, otherwise: unsupported("no") } };
 // @ts-expect-error — the leftover class is stated, so a hole is a decision
 export const noLeftover: Value<"array"> = { byArgs: { dynamic: R } };
@@ -101,8 +101,8 @@ export const noEvaluates: StageFacts = { bodyPositions: { "": "value" }, documen
 export const evaluatesAlone: StageFacts = { evaluates: [""] };
 
 // ── a `$op` row states the rule of each listed position, and no refusal ──────
-// A `$op(…)` call is the developer's own MQL: a position that `where` omits takes
-// HR2's plain form, so a refusal there would state a message that nobody sees.
+// A `$op(…)` call is the developer's own MQL. A position that `where` omits takes
+// the plain form of HR2, so a refusal there would state a message that nobody sees.
 
 const operand = { args: { sig: "operand", exact: 1 }, emit: () => ({}) } as const;
 export const mongoRow: MongoRow<readonly ["value"]> = { doc: "d", where: ["value"], expr: operand };

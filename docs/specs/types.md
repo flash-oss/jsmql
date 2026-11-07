@@ -56,14 +56,14 @@ nothing else is known about: the root document, a foreign collection's document)
 
 ### The document
 
-`Env.documents` holds one document `Type` per document level: index 0 is the root
-pipeline's document, and each body over another collection (`$lookup`,
-`$graphLookup`) adds one, the same levels `Binding.level` counts. A `FieldRef`
-reads level 0 at every depth, because `$` is the root document (HR4). A
-document-kind binding (a stream callback's parameter) reads its own level.
+`Env.documents` holds one document `Type` per document level. Index 0 is the
+root pipeline's document. Each body over another collection (`$lookup`,
+`$graphLookup`) adds one, the same levels that `Binding.level` counts. A
+`FieldRef` reads level 0 at every depth, because `$` is the root document (HR4).
+A document-kind binding (a stream callback's parameter) reads its own level.
 
 **The write rules.** The statement target records each write of `$.<path> = v`
-on the document, right after the write, so the next op in the same statement and
+on the document, right after the write. So the next op in the same statement and
 every later statement read it. The `$set` grouping already ends a group when a
 later write reads a path an earlier write touched, so the proof and the stage
 order agree.
@@ -93,41 +93,40 @@ order agree.
 
 `Binding.type` carries what the value proved. A `let` or `const` takes its
 value's proof. `x = <value>` on a `let` gives it the new value's proof from that
-statement on: JSMQL has no `if` and no loop at statement level, so a binding's
-type is one straight line. A `let` a document-replacing stage dropped and then
-assigned again is revived with the new value's proof.
+statement on. JSMQL has no `if` and no loop at statement level, so the type of a
+binding is one straight line. A `let` that a document-replacing stage dropped,
+and that a later statement assigns again, comes back with the new value's proof.
 
 A `const` whose value is a chain over another collection takes the join's proof,
 below.
 
 A callback parameter takes the receiver's element proof through the row's
-`binds`. A declared function is inlined per call, so its parameter takes the
-argument's proof at that call. A parameter carries its own presence: an element
-the receiver proves present (`o.keys()`, `.split()`, a literal) is
+`binds`. The compiler inlines a declared function per call, so its parameter
+takes the argument's proof at that call. A parameter carries its own presence:
+an element the receiver proves present (`o.keys()`, `.split()`, a literal) is
 present, because `$map` over a null receiver never runs the body; an element of
-an unproven array may be null. So `counts.keys().map(id => id.toObjectId())` is a
-present array of present ObjectIds, and `[1, 2, 3].map(i => $.m[i])` reads the
+an unproven array may be null. So `counts.keys().map(id => id.toObjectId())` is
+a present array of present ObjectIds, and `[1, 2, 3].map(i => $.m[i])` reads the
 key with no `$ifNull`.
 
 ### A join
 
 A chain over another collection (`$$$.<coll>.<links>`) lowers to a `$lookup`
-whose body is the peeled links, and the value is the rest of the chain over the
-`as` array ([join.ts](../../src/compiler/emit/join.ts)). The body's documents are
-the other collection's, `DOCUMENT`, run through the body's stages by
-`documentAfter` — so a `.pick([...])` link (a `$project`) closes the element, a
-`.flatMap("f")` link (an `$unwind`) types it by the field, and a `.countBy()`
-link (two `$group`s and a `$replaceWith`) makes it a record of numbers. Each link
-of the body runs over the documents that the link before it made, so its callback
+whose body is the peeled links. The value is the rest of the chain over the `as`
+array ([join.ts](../../src/compiler/emit/join.ts)). The body's documents are the
+other collection's, `DOCUMENT`, run through the body's stages by `documentAfter`
+— so a `.pick([...])` link (a `$project`) closes the element, a `.flatMap("f")`
+link (an `$unwind`) types it by the field, and a `.countBy()` link (two
+`$group`s and a `$replaceWith`) makes it a record of numbers. Each link of the
+body runs over the documents that the link before it made, so its callback
 parameter holds that proof. The outer bindings stay: the body reads them through
-`let`, never off the foreign document. The
-joined value is then the array of those documents, present, because the server
-always writes `as`; one such document, maybe absent, after a `.find`; or the one
-collapsed document, present, because the unwrap answers `{}` for nothing. The
-rest of the chain is proven over that slot, and the chain's node carries the
-answer (`Chain.proved`) so the statement that binds or writes it reads the same
-proof. A raw `$lookup` stage, and each `$facet` key, fold their own `pipeline`
-the same way.
+`let`, never off the foreign document. The joined value is then the array of
+those documents, present, because the server always writes `as`; one such
+document, maybe absent, after a `.find`; or the one collapsed document, present,
+because the unwrap answers `{}` for nothing. The rest of the chain is proven
+over that slot, and the chain's node carries the answer (`Chain.proved`) so the
+statement that binds or writes it reads the same proof. A raw `$lookup` stage,
+and each `$facet` key, fold their own `pipeline` the same way.
 
 ```js
 const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
@@ -141,9 +140,9 @@ $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0]
 ### A row's `returns`
 
 A row states its result as a `TypeExpr`, a closed data grammar the compiler
-evaluates at the call site. The terms and their meaning are documented on the type
-in [vocabulary.ts](../../src/registry/vocabulary.ts); `evaluate` in `type.ts` is
-the one reader. A term is data, not a function, so
+evaluates at the call site. [vocabulary.ts](../../src/registry/vocabulary.ts)
+documents the terms and their meaning on the type. `evaluate` in `type.ts` is
+the one reader. A term is data, not a function. So
 [test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
 measures its top kind on mongod, the registry audits read it, and the globals
 generator can turn it into a TypeScript signature. A row whose result no term
@@ -163,9 +162,9 @@ between operands of each kind, and each answer from mongod must be a stated kind
 
 The receiver's family picks the term of a per-family map. For an **unproven**
 receiver the call is on one of the families the row names, or the server raises
-an error; so the result is the row's answers over its field families, joined.
-`.size()` is a number on an array and on an object, so it is a number; a receiver
-that may be more than one kind proves each of them.
+an error. So the result is the row's answers over its field families, joined.
+`.size()` is a number on an array and on an object, so it is a number. A
+receiver that may be more than one kind proves each of them.
 
 **A callback's answer** (`{ callback: n }`) is the body's proof under the
 parameters the row's `params` bind: `value` is one element of the receiver (or a
@@ -177,16 +176,16 @@ that may be null, `.flatMap(f)` flattens one level of the callback's answer
 answer (`oneOf`).
 
 **An object shape** follows the same terms. `{ ...a, ...b }` and `.assign(...)`
-are `merge` (later wins, an open operand makes the earlier properties unknown, an
-absent operand's properties may be missing); `.pick([...])` and `.omit([...])`
-are `picked` and `omitted`, closed and open respectively; `.groupBy`, `.countBy`,
-`.keyBy` and `.mapValues` are `recordOf` a value type; `.entries()` is an array
-of `[string, value]` tuples, so a destructured pair reads each position, and
-`.fromEntries()` is `recordOf` the pair's second item (`itemOf`). An array
-literal with no spread is a tuple too: `["a", 1]` holds a string at 0 and a
-number at 1. A method that keeps the receiver's own elements — a sub-array such
-as `.take(n)`, a new order such as `.toSorted()` — answers `same`, so the
-element proof survives it.
+are `merge` (later wins, an open operand makes the earlier properties unknown,
+an absent operand's properties may be missing); `.pick([...])` and
+`.omit([...])` are `picked` and `omitted`, closed and open respectively;
+`.groupBy`, `.countBy`, `.keyBy` and `.mapValues` are `recordOf` a value type;
+`.entries()` is an array of `[string, value]` tuples, so a destructured pair
+reads each position, and `.fromEntries()` is `recordOf` the pair's second item
+(`itemOf`). An array literal with no spread is a tuple too: `["a", 1]` holds a
+string at 0 and a number at 1. A method that keeps the receiver's own elements
+answers `same`, so the element proof survives it. Examples are a sub-array such
+as `.take(n)` and a new order such as `.toSorted()`.
 
 **A read at an index or name the proof does not state may be missing.** An
 index into an array of unknown length may fall outside it, a property an open
@@ -262,12 +261,12 @@ one at a time, and fails when no answer changes.
 
 Every stage row states a `document` fact, from the `DocumentEffect` vocabulary:
 `keeps`, `fields`, `value`, `projection`, `element`, `unknown`. `StageFacts` in
-[names.ts](../../src/registry/names.ts) pairs it with `body` at the type level, so
-a stage row cannot omit it. The scope tracker drops every field-carried binding
-and skips the trailing namespace cleanup after a stage whose effect is `fields`,
-`value` or `unknown`, and after a `projection` that names fields to keep.
-MEASURED: a `let` binding survived `{ $project: { x: 0 } }` and went away under
-`{ $project: { x: 1 } }`.
+[names.ts](../../src/registry/names.ts) pairs it with `body` at the type level,
+so a stage row cannot omit it. After a stage whose effect is `fields`, `value`
+or `unknown`, and after a `projection` that names fields to keep, the scope
+tracker drops every field-carried binding. It also skips the trailing namespace
+cleanup. MEASURED: a `let` binding survived `{ $project: { x: 0 } }` and went
+away under `{ $project: { x: 1 } }`.
 
 **The effect is applied to the emitted stage, not to its source.** `documentAfter`
 in [prove.ts](../../src/compiler/emit/prove.ts) reads the stage's body as MQL:
@@ -402,11 +401,11 @@ $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind 
 
 ### The kind check
 
-HR7 says that a value that is PROVEN to have a kind its slot never takes is
-refused, even where the server accepts the MQL. A value of unknown kind passes.
-The rule lives in [kinds.ts](../../src/compiler/kinds.ts). The dispatcher reads it,
-and the fold lowers each constant through the dispatcher. So a constant gets the same
-answer as a computed value.
+HR7 says that the compiler refuses a value that has a PROVEN kind that its slot
+never takes, even where the server accepts the MQL. A value of unknown kind
+passes. The rule lives in [kinds.ts](../../src/compiler/kinds.ts). The
+dispatcher reads it, and the fold lowers each constant through the dispatcher.
+So a constant gets the same answer as a computed value.
 
 A row states the rule, never the compiler:
 
@@ -420,11 +419,11 @@ A row states the rule, never the compiler:
 - `"element"` is the kind of one element of the element source: the receiver of
   a method, the last operand of a production. An element that can be null adds
   the kind `null` to the proof of the elements. So `[1, null].has(null)` passes,
-  and `[1, 2].has(null)` is refused. A source that holds only null elements
-  proves nothing about them. An element of unknown kind makes the proof of the
-  elements unknown, as a field path does. This holds for a value that the call
-  supplies and that has no kind that the registry names, for example a regular
-  expression.
+  and the compiler refuses `[1, 2].has(null)`. A source that holds only null
+  elements proves nothing about them. An element of unknown kind makes the proof
+  of the elements unknown, as a field path does. This holds for a value that the
+  call supplies and that has no kind that the registry names, for example a
+  regular expression.
 - `homogeneous` says that every operand has one kind. The first operand of one
   proven kind sets it. An operand of unknown kind, or of two or more kinds, sets no
   kind and breaks no rule.
@@ -435,28 +434,29 @@ A proof is a set of possible kinds. The compiler refuses a value only when NO
 possible kind fits. This holds for every rule: a slot, an element of the element
 source, the shared kind of `homogeneous` operands, and `elements` on the row.
 
-One case differs: the elements of an array of a fixed length, for example a literal.
-Each position of such an array is certain, so the proof of the elements is a TUPLE,
-one proof per position. A tuple breaks the `elements` rule when ANY position has no
-fitting kind. A set of kinds breaks it only when NO kind fits. So `[1, "a"].max()` is
-refused, and `$.nums.map(x => x + 1).max()` passes, because a computed array has one
-proof for all its positions. A position of unknown kind fits. A position that is
-null proves the kind `null`, so it fits no position that needs numbers. This holds
-for a written `null` and for a read that the proof shows is null. The constant fold
-reads the same rule, so `[1, "a"].sum()` is not folded.
+One case differs: the elements of an array of a fixed length, for example a
+literal. Each position of such an array is certain, so the proof of the elements
+is a TUPLE, one proof per position. A tuple breaks the `elements` rule when ANY
+position has no fitting kind. A set of kinds breaks it only when NO kind fits.
+So the compiler refuses `[1, "a"].max()`, and `$.nums.map(x => x + 1).max()`
+passes, because a computed array has one proof for all its positions. A position
+of unknown kind fits. A position that is null proves the kind `null`, so it fits
+no position that needs numbers. This holds for a written `null` and for a read
+that the proof shows is null. The constant fold reads the same rule, so `[1,
+"a"].sum()` is not folded.
 
 A slot that takes a callback is not judged here, because the lowering of the callback
 names every spelling that the slot takes. A call with a spread passes its arguments as
 one packed list. The compiler judges the kind of each element of that list against its
 slot.
 
-A value that is `null` proves the kind `null`, and that kind fits only `"any"`. This
-holds for a written `null`, for a `null` that the call supplies, and for a read that the
-proof shows is null. A read of a field that no stage wrote keeps its own refusal, which
-names the field. The caller lowers the operands before a kind refusal.
-`jsmql.validate` binds each parameter to a value of no known kind, so a parameter proves
-no kind there. A refusal of a date in a slot that takes a number names the date methods,
-because each of them is the one spelling for its task.
+A value that is `null` proves the kind `null`, and that kind fits only `"any"`.
+This holds for a written `null`, for a `null` that the call supplies, and for a
+read that the proof shows is null. A read of a field that no stage wrote keeps
+its own refusal, which names the field. The caller lowers the operands before a
+kind refusal. `jsmql.validate` binds each parameter to a value of no known kind,
+so a parameter proves no kind there. A refusal of a date in a slot that takes a
+number names the date methods. Each of them is the one spelling for its task.
 
 ```js
 $.str + 1                  // → { $add: ["$str", 1] }   the kind of `$.str` is unknown
@@ -467,21 +467,22 @@ $max(1, "a")               // → { $max: [1, "a"] }   the escape hatch passes e
 ```
 
 The query road obeys the same rule. The query cell of an operator states the
-kinds of its value cell, so the two forms refuse the same operands. One addition comes from SR2: a query
-compares a FIELD that holds an array through the elements of the array, so
-`{ tags: "x" }` tests a string against the elements of `tags`. In a query, a
-field that the proof shows to be an array proves the kinds of its elements in
-place of `array`. A field with elements of unknown kind proves nothing. The array
-stays a possible kind when another operand can be an array too, because
-`{ tags: ["a"] }` compares the whole array.
+kinds of its value cell, so the two forms refuse the same operands. One addition
+comes from SR2: a query compares a FIELD that holds an array through the
+elements of the array, so `{ tags: "x" }` tests a string against the elements of
+`tags`. In a query, a field that the proof shows to be an array proves the kinds
+of its elements in place of `array`. A field with elements of unknown kind
+proves nothing. The array stays a possible kind when another operand can be an
+array too, because `{ tags: ["a"] }` compares the whole array.
 
 A membership test reads each element
 of the field against the elements of the list, whatever the other operand is. So
 `{ tags: { $in: ["a"] } }` tests a string. The array stays a possible kind only
 when the list can hold an array.
 
-`proofsFor` states this once, for every query cell. The refusal then says that the elements of the field are the
-kind, because the value of the field is an array.
+`proofsFor` states this once, for every query cell. The refusal then says that
+the elements of the field are the kind, because the value of the field is an
+array.
 
 ```js
 $.tags = ["a"]; $match($.tags === "x");   // → { $match: { tags: "x" } }   a string meets the string elements
@@ -517,14 +518,15 @@ can fail.
 | `{ $ne: [v, 0] }` | `number` is a possible kind |
 
 An array, an object, a date, an ObjectId or binData owes no test: JavaScript
-reads each one as true. Three shape rules follow. One test left is emitted bare,
-with no `$and`. No test left is the constant `TRUE`. The slot that reads it
-folds. `cond`, `filter` and `switchOn` in [mql.ts](../../src/compiler/emit/mql.ts)
-and the registry's own `cond` builder pick their branch at compile time. `and`,
-`or` and `not` fold a constant operand. A value whose only possible kinds are `bool` or `number` is its own
+reads each one as true. Three shape rules follow. The emitter writes one
+remaining test bare, with no `$and`. No test left is the constant `TRUE`. The
+slot that reads it folds. `cond`, `filter` and `switchOn` in
+[mql.ts](../../src/compiler/emit/mql.ts) and the registry's own `cond` builder
+pick their branch at compile time. `and`, `or` and `not` fold a constant
+operand. A value whose only possible kinds are `bool` or `number` is its own
 truth, whatever its `absent`: MEASURED, MongoDB reads `0`, a `Long` zero, a
-`Decimal128` zero, negative zero, `false`, null and missing as false, so
-`{ $cond: ["$n", …] }` agrees with JavaScript on every number.
+`Decimal128` zero, negative zero, `false`, null and missing as false, so `{
+$cond: ["$n", …] }` agrees with JavaScript on every number.
 
 ```js
 $.s = $.a.trim();  $.t = $.s ? 1 : 2;   // s: string, maybe absent
@@ -538,18 +540,18 @@ $.n = $.a.length();  $.x = $.n ? 1 : 2;  // n: number, maybe absent
 ```
 
 The rule rejected: `{ $gt: [v, ""] }` covers a string of any presence in one
-operator, because null sorts below every string. It reads as a comparison, not as
-a truth test, and a reader has to know the BSON sort order to see why it is
+operator, because null sorts below every string. It reads as a comparison, not
+as a truth test. A reader has to know the BSON sort order to see why it is
 right.
 
 **In the filter target** the same rule has a native form. `bareTruth` in
 [filter.ts](../../src/compiler/emit/filter.ts) lowers a bare field read whose
 proof rules an array out to a query clause: a boolean is `{ f: true }`, and
-anything else excludes one value per part of the proof that can be falsy —
-`{ f: { $ne: 0 } }`, `{ f: { $nin: [null, ""] } }`, `{ f: { $ne: null } }`, or
-`{}` when nothing can be falsy. A value that may be an array stays on the `$expr`
-road: the query language reads an array field element by element, so
-`{ f: { $nin: [0] } }` drops `f: [0, 1]`, which JavaScript keeps.
+anything else excludes one value per part of the proof that can be falsy — `{ f:
+{ $ne: 0 } }`, `{ f: { $nin: [null, ""] } }`, `{ f: { $ne: null } }`, or `{}`
+when nothing can be falsy. A value that may be an array stays on the `$expr`
+road. The query language reads an array field element by element, so `{ f: {
+$nin: [0] } }` drops `f: [0, 1]`, which JavaScript keeps.
 
 ### A refusal reads the whole set
 
@@ -577,8 +579,8 @@ A property read that the proof shows can give no value is a compile error.
 - A closed object holds only the fields that it names. A read of another field
   gives no value. MEASURED: `{ $getField: { field: "b", input: { a: 1 } } }` is
   missing, and so is `"$total"` after a `$group` that did not make `total`.
-- A value that is always null or missing (`NOTHING`) has no value to read. A method
-  call on it is refused with the same message (`alwaysAbsent` in
+- A value that is always null or missing (`NOTHING`) has no value to read. The
+  compiler refuses a method call on it with the same message (`alwaysAbsent` in
   [errors.ts](../../src/compiler/emit/errors.ts)).
 - A value of more than one kind, an open object, and a value that nothing is proven
   about pass. The proof cannot rule the field out there.
@@ -601,14 +603,15 @@ leave the read on the array itself. Closed elements name the fields that they ho
 does: an array has no fields, and the message names `.map(e => e.<field>)`.
 
 A stream callback's first parameter holds the document's proof at the chain's
-element (`stageInputs` in inputs.ts). So a read inside `$$.filter(d => …)` of a
-field that a `$group` did not make is refused too. A parameter that the desugar
-pass wrote for a short spelling (`{ type: "a" }`) carries `minted` on its `Ident`.
-The message then names what the parameter stands for: the document, or the element.
+element (`stageInputs` in inputs.ts). So the compiler refuses a read inside
+`$$.filter(d => …)` of a field that a `$group` did not make. A parameter that
+the desugar pass wrote for a short spelling (`{ type: "a" }`) carries `minted`
+on its `Ident`. The message then names what the parameter stands for: the
+document, or the element.
 
 An exclusion `$project` leaves the document open, with the excluded field
 `NOTHING`. A field written null is `NOTHING` too, and the proof cannot tell the two
-apart. So a bare read of such a field passes, and a read or a call after it is refused.
+apart. So a bare read of such a field passes, and the compiler refuses a read or a call after it.
 
 ```js
 $.tags.uniq().size
@@ -623,14 +626,15 @@ $.orders = $$$.orders.filter(o => o.uid === $._id);  $match($.orders.status === 
 
 A cell that would abort or answer a value on null tests the receiver first
 (`nullOr` in `names.ts`) exactly where the proof says `absent`. A written field
-whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpper();`
-emits `{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
-says `absent`, because `$getField` aborts the query on a null name (`indexAccess` in
-[lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{ $getField: { field: null,
-input: {} } }` fails, because the field name must be a string. An
-index read takes the empty value of its receiver on the same terms: `{ $ifNull: [o, {}] }`
-where the proof says `o` is `absent`, so a null `o` answers missing, as the path `"$o.p"`
-does. MEASURED: `$getField` answers null for a null input, and missing for `{}`.
+whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpper();` emits
+`{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
+says `absent`, because `$getField` aborts the query on a null name
+(`indexAccess` in [lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{
+$getField: { field: null, input: {} } }` fails, because the field name must be a
+string. An index read takes the empty value of its receiver on the same terms:
+`{ $ifNull: [o, {}] }` where the proof says `o` is `absent`. So a null `o`
+answers missing, as the path `"$o.p"` does. MEASURED: `$getField` answers null
+for a null input, and missing for `{}`.
 
 ## What proves this spec
 

@@ -9,11 +9,11 @@ shape to `$ = <expr>` (which replaces *one* doc → `$replaceWith`); `$$ = <expr
 replaces the *stream* and lowers to either a `$match` (narrow) or
 `$match` + `$unionWith` (switch source).
 
-Statement-only: `$$ = <expr>` appears as a top-level pipeline statement —
-either inside `[ ... ]` array form, or as a `;`-separated implicit-pipeline
-statement (and inside a comma-separated update-filter chain too). A use of
-it inside a Filter / `jsmql.expr` goes through the normal
-pipeline-mode-required gate.
+Statement-only: `$$ = <expr>` appears as a top-level pipeline statement. It
+appears either inside `[ ... ]` array form, or as a `;`-separated
+implicit-pipeline statement. It also appears inside a comma-separated
+update-filter chain. A use of it inside a Filter / `jsmql.expr` goes through the
+normal pipeline-mode-required gate.
 
 The trailing `;` is optional: a lone `$$ = <expr>` is Pipeline evidence on its
 own, so it emits the same stages either way. See § Single statement with no
@@ -22,9 +22,11 @@ trailing `;`.
 See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream-with---expr)
 for the user-facing reference.
 
-The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream; the assignment form this spec covers is its explicit alternative — see
-[stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
-[stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
+The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
+the assignment form this spec covers is its explicit alternative — see
+[stream-methods.md § Bare-statement stream
+chains](./stream-methods.md#bare-statement-stream-chains). [stream-methods.md §
+Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
 
 ## Lowering table
 
@@ -39,7 +41,10 @@ The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
 | `$$ = $$$.users.filter(u => u._id === $.userId)` (correlated — the body reads the outer document) | `[{ $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" }, pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }], as: "__jsmql.tmp.0" } }, { $unwind: "$__jsmql.tmp.0" }, { $replaceWith: "$__jsmql.tmp.0" }]` |
 | `$$ = $$$$.db.coll.filter(p)` | **refused** — a cross-database source would need a `{ db, coll }` namespace, and a MongoDB server refuses that; the message tells the reader to drop the `$$$$.<db>.` prefix ([lookup-stage.md](lookup-stage.md)) |
 
-`.filter` / `.reject` take their argument through the iteratee-shorthand desugar first, so an arrow and its matches-object / field-name / `["field", value]` equivalents all lower identically here and in every other container ([desugar-pass.md](desugar-pass.md)).
+`.filter` / `.reject` take their argument through the iteratee-shorthand desugar
+first, so an arrow and its matches-object / field-name / `["field", value]`
+equivalents all lower identically here and in every other container
+([desugar-pass.md](desugar-pass.md)).
 
 ## Bare `$$` as an assignment target
 
@@ -51,17 +56,40 @@ other assignment. WHICH target this means is a question for the emit phase:
 destinations ([out-stage.md](out-stage.md)), and a bare `$$$` / `$$$$` is
 refused there, with the message naming the missing segment.
 
-It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: StreamRef, value: <expr>, pos }`.
+It has no tokens or AST nodes of its own. The shape is `AssignExpr { target:
+StreamRef, value: <expr>, pos }`.
 
 ## Lowering
 
-`$$ = <expr>` is an `AssignExpr` whose target is the `StreamRef`, and it is a statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic and the strict entries agree; `jsmql.filter()` refuses it, as it refuses every pipeline. `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and hands the value to one of three roads:
+`$$ = <expr>` is an `AssignExpr` whose target is the `StreamRef`, and it is a
+statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the
+shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic
+and the strict entries agree; `jsmql.filter()` refuses it, as it refuses every
+pipeline. `writeStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the
+target and hands the value to one of three roads:
 
-- **A chain on `$$`** → the stream road, `streamStages`: the same link-by-link lowering the bare statement `$$.<chain>;` gets, so the two spellings are one program ([stream-methods.md § Where a chain runs](stream-methods.md)). A predicate lowers through the filter road with the parameter as the document.
-- **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline. When the body read the outer document, JSMQL replaces the stream per outer document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the current stream (`$match: { $expr: false }`) and unions in the other collection's pipeline. `.find` is refused here — one document is not a stream.
-- **An array literal** → `$documents`, valid only as the first statement (MongoDB places `$documents` at the head); later, `$$.push(…)` appends documents.
+- **A chain on `$$`** → the stream road, `streamStages`: the same link-by-link
+  lowering the bare statement `$$.<chain>;` gets, so the two spellings are one
+  program ([stream-methods.md § Where a chain runs](stream-methods.md)). A
+  predicate lowers through the filter road with the parameter as the document.
+- **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md §
+  The join road](lookup-stage.md)): the chain's links become the sub-pipeline.
+  When the body read the outer document, JSMQL replaces the stream per outer
+  document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the
+  current stream (`$match: { $expr: false }`) and unions in the other
+  collection's pipeline. `.find` is refused here — one document is not a stream.
+- **An array literal** → `$documents`, valid only as the first statement
+  (MongoDB places `$documents` at the head); later, `$$.push(…)` appends
+  documents.
 
-**Bindings after a source switch.** An outer read inside the switched-in chain makes the source switch correlated. An outer read is a read of the outer document, of `$$.size()`, or of an outer `let` or `const`. The `$lookup` then passes each value through its `let`. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable. The compiler refuses a later read, and the message names the stage that replaced the document ([let-bindings.md](let-bindings.md)).
+**Bindings after a source switch.** An outer read inside the switched-in chain
+makes the source switch correlated. An outer read is a read of the outer
+document, of `$$.size()`, or of an outer `let` or `const`. The `$lookup` then
+passes each value through its `let`. After the switch the documents are the
+other collection's, and a `let` bound before it becomes unreadable. The compiler
+refuses a later read, and the message names the stage that replaced the document
+([let-bindings.md](let-bindings.md)).
 
 ## Rejections
 
@@ -72,8 +100,8 @@ JSMQL refuses an unsupported RHS and names the forms that work:
 | `TernaryExpr` RHS (for example `$$ = a ? b : c`) | refused, for the reason in § Not supported (by design); the message names the right sides that work |
 | Anything else | refused; the message names the right sides that work |
 
-The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time: the token
-after `$$` has to be `.`, `[` or `=`, and the message names the expected
+The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time. The
+token after `$$` has to be `.`, `[` or `=`, and the message names the expected
 followers.
 
 A predicate's parameter is the document; `$.<field>` inside it is the OUTER
@@ -108,9 +136,9 @@ field of the new document.
 JSMQL rejects these RHS forms on purpose. They have no coherent JS semantics, so
 they are not planned:
 
-- **`$$ = cond ? A : B`** (stream-level ternary). A stream is many documents; there
-  is no single condition that swaps the *whole* stream for A or B, so "replace the
-  stream with A or B" has no JS meaning. Narrow the stream with `$$.filter(p)`, or
+- **`$$ = cond ? A : B`** (stream-level ternary). A stream is many documents. No
+  single condition swaps the *whole* stream for A or B, so "replace the stream
+  with A or B" has no JS meaning. Narrow the stream with `$$.filter(p)`, or
   switch source with `$$$.<coll>.filter(p)`.
 - **`$$.find(<predicate>)`** (self-lookup on the current collection). One
   document found in the same stream of documents is a value with nothing to do

@@ -36,12 +36,12 @@ export class Failed {
 /**
  * Where a rule evaluates one operand. `bind` names the variables that the operand sees.
  *
- * A set operator answers an array in an order that the server does not specify, so
+ * A set operator answers an array in an order that the server does not specify. So
  * the answer of the interpreter is such an array too. A rule that reads the order of
  * an array (`$first`, `$slice`, an equality) must never see it. So `at` refuses a value
  * that holds a set answer, and `raw` returns it. A rule uses `raw` when it only passes the
- * value on, or reads nothing of its order. An operator that builds a value from the
- * elements, one by one and in no order that it reads, gives a value with the same
+ * value on, or reads nothing of its order. An operator can build a value from the
+ * elements, one by one and in no order that it reads. Such a value has the same
  * unspecified order. The rule records that with `markSet`.
  */
 export type Walk = {
@@ -292,8 +292,8 @@ const signOf = (n: number): -1 | 0 | 1 => (n < 0 ? -1 : n > 0 ? 1 : 0);
 /**
  * The order of two values: -1, 0 or 1. Two values of different places in the BSON order of types
  * compare by that place. Two values of one place compare by value. It answers undefined
- * where the order is not the business of the interpreter: an opaque value of a place
- * that holds values to compare (a Long beside a number), or a value with no place.
+ * where the order is not the business of the interpreter. One case is an opaque value of a place
+ * that holds values to compare (a Long beside a number). The other is a value with no place.
  * A document compares field by field, and each field by its place, then its name, then its value.
  */
 export function compareValues(a: unknown, b: unknown): -1 | 0 | 1 | undefined {
@@ -383,7 +383,7 @@ function nameIfUnspellable(value: unknown): string | null {
 export const isIndexKey = (k: string): boolean => /^(0|[1-9][0-9]*)$/.test(k) && Number(k) < 4294967295;
 
 /**
- * A document whose keys a JavaScript object cannot keep in order, held as the pairs that keep it.
+ * A document whose keys a JavaScript object cannot keep in order. The class holds the pairs that keep the order.
  * It is opaque. No rule reads its keys. A rule that reads the document refuses it. The fold writes
  * it back as `$arrayToObject` over the pairs.
  */
@@ -396,8 +396,8 @@ export class OrderedDocument {
 
 /**
  * Does a document hold keys in an order that a JavaScript object cannot keep? An
- * object lists a key that reads as an array index (`"1"`) before every other key,
- * so a document of two or more keys with such a key loses its BSON order. A document
+ * object lists a key that reads as an array index (`"1"`) before every other key.
+ * So a document of two or more keys with such a key loses its BSON order. A document
  * of unspecified order has no order to lose, so `unordered` exempts it.
  */
 function losesKeyOrder(value: unknown, unordered: (document: object) => boolean): boolean {
@@ -461,7 +461,7 @@ export function exactDecimal(n: number): { digits: bigint; exponent: number } {
  * A number reduced to `places` decimal places, in the exact decimal value of the
  * double. `half` picks the neighbour when the dropped digits are exactly a half:
  * `$round` goes to the even one. A scaled multiplication decides on a perturbed
- * number, so this uses integer arithmetic and cannot drift. The result is read
+ * number, so this uses integer arithmetic and cannot drift. The function reads the result
  * back through its decimal spelling, which is one correctly rounded step.
  */
 export function reduceToPlaces(n: number, places: number, mode: "half-even" | "toward-zero"): number {
@@ -490,8 +490,8 @@ export function reduceToPlaces(n: number, places: number, mode: "half-even" | "t
 }
 
 /**
- * The string `$toString` writes for a number, or null where it and JavaScript part
- * company. Both write an integer below 10^16 digit for digit. Above that the
+ * The string `$toString` writes for a number, or null where it and JavaScript
+ * differ. Both write an integer below 10^16 digit for digit. Above that the
  * server switches to an exponent. A fraction has its own threshold, and `-0` keeps its sign there.
  */
 export function numberSpelling(n: number): string | null {
@@ -501,7 +501,7 @@ export function numberSpelling(n: number): string | null {
 
 /**
  * The text that `$toString` writes for a finite number whose spelling the interpreter does not
- * reproduce. The text itself is not known. Its start is: an optional minus sign, then a digit. So
+ * reproduce. The interpreter does not know the text itself. It knows only the start: an optional minus sign, then a digit. So
  * it differs from every string that does not start so, and no rule reads anything else of it. A
  * value that holds one is never an answer. It exists for the finite-number test that a lowering
  * writes as `$in: [{ $toString: x }, ["NaN", "Infinity", "-Infinity"]]`.

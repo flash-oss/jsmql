@@ -1,7 +1,6 @@
-// Two spellings of one meaning differ only in the names the compiler chose for
-// its own bindings. To compare them, rename every binding to the order it is
-// introduced — structure-identical trees introduce bindings in the same order,
-// so the numbers are stable, but a sort by name is not.
+// Two spellings of one meaning differ only in the names the compiler chose for its own bindings. To compare
+// them, rename every binding to the order it is introduced. Structure-identical trees introduce bindings in the
+// same order, so the numbers are stable, but a sort by name is not.
 //
 // A structural walk, not a string substitution: `$$value` is MongoDB's own and
 // must survive, and a `{k, v}` pair inside `$arrayToObject` is data, not a scope.
@@ -46,7 +45,7 @@ export function canon(mql: unknown): string {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
       if (key === "$let" && value !== null && typeof value === "object") {
-        // The vars are introduced BEFORE `in` is read, in written order.
+        // The compiler introduces the vars BEFORE it reads `in`, in written order., in written order.
         const let_ = value as { vars?: Record<string, unknown>; in?: unknown };
         const vars: Record<string, unknown> = {};
         for (const [n, v] of Object.entries(let_.vars ?? {})) vars[intro(n)] = walk(v);

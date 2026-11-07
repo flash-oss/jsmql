@@ -1,10 +1,9 @@
 // test/fixtures/config.ts — connection + process constants for the mongod this
 // project uses.
 //
-// HARD RULE: every MongoDB connection this project makes goes to THIS instance,
-// on port 27018. The default port is the developer's own instance and holds
-// their real work, so the project never connects to it — not to read, not to
-// probe, not to measure. `test/no-default-port.test.ts` holds that line.
+// HARD RULE: every MongoDB connection this project makes goes to THIS instance, on port 27018. The default port
+// is the developer's own instance and holds their real work. So the project never connects to it: not to read,
+// not to probe, not to measure. `test/no-default-port.test.ts` holds that line.
 //
 // The instance is auth-enabled, which is safe precisely because it is not the
 // developer's. It carries two identities: a read-only one for the integration
@@ -26,10 +25,9 @@ export const FIXTURE_DBPATH = join(FIXTURE_HOME, "db");
 export const FIXTURE_LOGPATH = join(FIXTURE_HOME, "mongod.log");
 export const FIXTURE_PIDPATH = join(FIXTURE_HOME, "mongod.pid");
 
-// Credentials for a LOCAL, THROWAWAY fixture instance — deliberately not secret.
-// The whole point of the auth-enabled instance is a server-ENFORCED read-only
-// role for the test connection: the read-only user literally cannot write, so
-// the dataset can never be mutated by a test run.
+// Credentials for a LOCAL, THROWAWAY fixture instance — deliberately not secret. The whole point of the
+// auth-enabled instance is a server-ENFORCED read-only role for the test connection. The read-only user
+// literally cannot write, so a test run can never mutate the dataset.
 export const ADMIN_USER = "jsmql_admin"; // root role — used ONLY by the seeder
 export const ADMIN_PASS = "jsmql-fixture-admin";
 export const READONLY_USER = "jsmql_ro"; // read-only role on FIXTURE_DB — used by tests
@@ -39,10 +37,9 @@ export const SCRATCH_USER = "jsmql_scratch"; // holds SCRATCH_ROLE, and nothing 
 export const SCRATCH_PASS = "jsmql-fixture-scratch";
 
 /**
- * The scratch databases — one per suite that seeds its own documents, plus the one
- * `test/probe` uses. A suite writes documents and reads them back, so it cannot use
- * the read-only identity, and it must not share a database with another suite: two
- * of them name a collection `orders`, and vitest runs suites in parallel.
+ * The scratch databases — one per suite that seeds its own documents, plus the one `test/probe` uses. A suite
+ * writes documents and reads them back, so it cannot use the read-only identity. It must not share a database
+ * with another suite: two of them name a collection `orders`, and vitest runs suites in parallel.
  *
  * This list IS the grant. `SCRATCH_USER` gets `readWrite` on these names and on no
  * others, so the integration dataset stays unwritable even to a suite with a bug in

@@ -5,12 +5,12 @@
 //
 // It may not skip for any other reason. A suite that swallows a wrong password, a
 // missing grant or a refused command continues to run its compile-only half and STILL
-// REPORTS GREEN — and the half that catches what a `toEqual` cannot has silently
-// stopped running. That is not hypothetical: four suites sat in exactly that state,
-// each one reported green, because `readWrite` alone cannot drop a database.
+// REPORTS GREEN. The half that catches what a `toEqual` cannot has silently stopped
+// running. That is not hypothetical: four suites sat in exactly that state. Each one
+// reported green, because `readWrite` alone cannot drop a database.
 //
-// So the rule these helpers enforce is: "could not reach a server at all" → skip;
-// everything else → throw, and let the suite go red.
+// So these helpers enforce one rule. "Could not reach a server at all" → skip.
+// Everything else → throw, and the suite goes red.
 //
 // The port is never named here. It comes from config.ts, and `:27018` is the only
 // one this project connects to — see test/no-default-port.test.ts.
@@ -46,8 +46,8 @@ function refused(e: unknown): Error {
 /**
  * A connected client for a live suite, or null when the instance is not running.
  *
- * Use it in `beforeAll` and then do the suite's OWN setup outside any try/catch, so a
- * failed drop or insert fails the suite, and does not disappear into a skip:
+ * Use it in `beforeAll`. Then do the suite's OWN setup outside any try/catch. This way
+ * a failed drop or insert fails the suite, and does not disappear into a skip:
  *
  *     client = await liveClient();
  *     if (client) {
@@ -83,9 +83,9 @@ export async function liveUp(timeoutMs = 700): Promise<boolean> {
 }
 
 /**
- * A connected client where "is it running?" was already settled — inside a
- * `describe.skipIf(!up)` block, or an `it.skipIf(!up)`. It never returns null, so the
- * suite needs no null check; if the instance disappears between the two, that is a
+ * A connected client where the suite already settled "is it running?", inside a
+ * `describe.skipIf(!up)` block or an `it.skipIf(!up)`. It never returns null, so the
+ * suite needs no null check. If the instance disappears between the two, that is a
  * failure that a person must see, not a silent skip.
  */
 export async function liveClientNow(): Promise<MongoClient> {

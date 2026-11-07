@@ -24,14 +24,14 @@ type Any = { type: string } & Record<string, unknown>;
  * statements by their node type. A chain whose base is one of the three
  * context references is a STREAM, and a stream is a pipeline wherever it
  * stands. Everything else asks its row. The test is that the row has NO value
- * form: `$match` is a stage and has none, but `.filter()` lists one and is
+ * form: `$match` is a stage and has none. `.filter()` lists one, so it is
  * an expression that stands alone.
  *
  * A mutator is the one row the name alone cannot answer for. `.sort()` has no
  * value form, so the row reads as a statement. But a statement WRITES, and
- * `$.items.filter(p).sort()` has nothing to write to. Asked for its
- * destination, such a call is an expression, so the value road refuses it by
- * name, and the pipeline road does not refuse a Pipeline just as hard.
+ * `$.items.filter(p).sort()` has nothing to write to. Such a call asks for its
+ * destination and is an expression. So the value road refuses it by name. The
+ * pipeline road does not refuse a Pipeline just as hard.
  */
 function statementShaped(node: Any): boolean {
   if (node.type === "Pipeline" || node.type === "UpdateFilter") return true;

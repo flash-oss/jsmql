@@ -220,7 +220,7 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
           first: { $first: "$tag" },
         },
       },
-      // the seed is folded in as JavaScript would: `.max()` from 0 is the max with 0
+      // the compiler folds the seed in as JavaScript would: `.max()` from 0 is the max with 0
       {
         $replaceWith: {
           total: "$total",
@@ -318,9 +318,9 @@ afterAll(async () => {
 });
 
 /**
- * A result reduced to what the pipeline changed: a fixture document keeps its `_id`
+ * A result reduced to what the pipeline changed. A fixture document keeps its `_id`
  * and every field that differs from the fixture (a field the pipeline added or
- * wrote), and is its id alone when none differs. A facet branch is a list of them.
+ * wrote). It is its id alone when none differs. A facet branch is a list of them.
  */
 const FIXTURE = new Map<unknown, Record<string, unknown>>([...MAIN, ...ARCHIVE].map((d) => [d._id, d]));
 const shrink = (v: unknown): unknown => {
@@ -1242,8 +1242,8 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
 
   it("a mutator with nothing to write is a VALUE, and the row names the immutable form", () => {
     // A call in the middle makes a fresh array, so there is no field to write back
-    // to. Such a chain is an expression, and the value road answers it by name —
-    // it is not a Pipeline, and a message that sends the reader to `jsmql.pipeline()` sends them
+    // to. Such a chain is an expression. The value road answers it by name.
+    // It is not a Pipeline. A message that sends the reader to `jsmql.pipeline()` sends them
     // to an entry that refuses it just as hard.
     expect(() => expr("$.xs.filter(x => x > 1).map(x => x * 2).uniq().sort()")).toThrow(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",

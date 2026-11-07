@@ -2,9 +2,9 @@
 
 **Status:** implemented (arrow form + the `function` keyword — see § The `function` keyword).
 
-How `const <name> = (params) => <body>;` declares a reusable function that is
-**not** lowered at the declaration, and how a call `name(args)` expands the body
-INLINE at the call site as an IIFE → MongoDB `$let`.
+How `const <name> = (params) => <body>;` declares a reusable function that the
+compiler does **not** lower at the declaration. A call `name(args)` expands the
+body INLINE at the call site as an IIFE → MongoDB `$let`.
 
 User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Reusable functions.
 
@@ -46,10 +46,10 @@ distinguishes the two:
 | an arrow function (`(a) => …` / `a => …`) | `FuncDecl` | none (registered, expanded on call) |
 | anything else (`$.x`, `5`, `$op(…)`, …) | `LetDecl` | a `$set { __jsmql.var.<name>: … }` stage |
 
-The fork is syntactic. There is no data dependence and no heuristic, so a JS
-developer's mental model — "a `const` that holds a function" against "a `const`
-that holds a value" — maps directly. Both keywords (`const`/`let`) work. `kind` is
-recorded on the node but has no behavioural effect for a function, because a
+The fork is syntactic. There is no data dependence and no heuristic. So a JS
+developer's mental model maps directly: "a `const` that holds a function"
+against "a `const` that holds a value". Both keywords (`const`/`let`) work. The
+node records `kind`, but it has no behavioural effect for a function, because a
 function is not reassignable and is not a value.
 
 The fork is per DECLARATOR, so a [declaration list](let-bindings.md#declaration-lists)
@@ -86,8 +86,7 @@ start. See § The `function` keyword.
 - **`parseLetDecl()`** also recognises an **unparenthesised** single-param arrow
   right-hand side (`const f = x => …`), which `parseExpression` does not — only the
   parenthesised `(x) => …` form is recognised there, through `parsePrimary`'s
-  `isLambdaStart`. Without this rule, `const f = x => …` fails as a parse error
-  at the `=>`.
+  `isLambdaStart`. Without this rule, `const f = x => …` fails with a parse error at the `=>`.
 - **`declarator()`** holds the fork itself, and the statement loop's declaration
   list (`bindings()`) is its one caller. A bracketed pipeline refuses a `const`
   element before the fork. If the parsed initialiser is a `Lambda`, it
@@ -108,35 +107,37 @@ start. See § The `function` keyword.
 
 A declaration — `const f = (x) => …`, `function f(x) { … }` — emits no stage.
 `statementStages` / `letStages` in
-[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) bind the name
-in the Env's scope as a `function` binding that holds the lambda
-([let-bindings.md § Scope and resolution](let-bindings.md)). A second declaration of
-the name, or a clash with a `let` / `const` / parameter, is refused with a
-position-bearing error. The binding is pipeline-scoped like a `let`. A body over
-the same documents (a `$facet` branch, a callback) reads it, and so does a
-`$lookup` body, because the body is inlined at the call and reads nothing the call
-site cannot.
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) bind the
+name in the Env's scope as a `function` binding that holds the lambda
+([let-bindings.md § Scope and resolution](let-bindings.md)). The compiler
+refuses a second declaration of the name, or a clash with a `let` / `const` /
+parameter, with a position-bearing error. The binding is pipeline-scoped like a
+`let`. A body over the same documents (a `$facet` branch, a callback) reads it,
+and so does a `$lookup` body, because the body is inlined at the call and reads
+nothing the call site cannot.
 
 ### Call expansion
 
-`callExpression` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
-dispatches on the callee: a name bound to a function expands it; JSMQL refuses a
-name bound to anything else, with a `didYouMean` over the declared names
-and every global that a program calls by its bare name (`bareCallableNames` in
-[src/compiler/rows.ts](../../src/compiler/rows.ts), for example `Numberr(x)` names `Number(...)`);
-a lambda takes the IIFE path. Both expansions run `applyLambda`. The lowering lowers
-each argument in the CALLER's Env, binds each parameter once by `$let` so a
-multiply-read argument is not computed twice, and lowers the body under them. A call
-with no parameters binds nothing, so no `$let` wraps the body (`const two = () =>
-$.a * 2; two()` → `{ $multiply: ["$a", 2] }`). Inside the body the function's own
-name is bound to a refusal, so direct or mutual recursion is refused. An
-expression cannot call itself in MQL.
+`callExpression` in
+[src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) dispatches on the
+callee: a name bound to a function expands it; JSMQL refuses a name bound to
+anything else, with a `didYouMean` over the declared names and every global that
+a program calls by its bare name (`bareCallableNames` in
+[src/compiler/rows.ts](../../src/compiler/rows.ts), for example `Numberr(x)`
+names `Number(...)`); a lambda takes the IIFE path. Both expansions run
+`applyLambda`. The lowering lowers each argument in the CALLER's Env, binds each
+parameter once by `$let` so a multiply-read argument is not computed twice, and
+lowers the body under them. A call with no parameters binds nothing, so no
+`$let` wraps the body (`const two = () => $.a * 2; two()` → `{ $multiply: ["$a",
+2] }`). Inside the body the function's own name is bound to a refusal, so the
+compiler refuses direct or mutual recursion. An expression cannot call itself in
+MQL.
 
 ### Free-variable capture
 
 A function body may reference more than its params — `$.field` (the document) or
-an in-scope `let`. These resolve against the CALL SITE's Env, because that is
-simply where the body is lowered. A pure-param function is the common case, and
+an in-scope `let`. These resolve against the CALL SITE's Env, because the
+compiler lowers the body there. A pure-param function is the common case, and
 capture of `$` and a `let` is a natural bonus, not a separate mechanism.
 
 ### Function-as-value
@@ -153,9 +154,9 @@ toward a call of it, because MQL has no first-class function ([DEF-032]). Two si
 ## Output stability
 
 A pipeline whose only addition is an **uncalled** function declaration produces
-**byte-identical** MQL to the same pipeline without it, because the declaration is
-erased and contributes no `__jsmql` namespace. The `$let` shape appears only at a
-call site, exactly as for a hand-written IIFE.
+**byte-identical** MQL to the same pipeline without it. The compiler erases the
+declaration, and it contributes no `__jsmql` namespace. The `$let` shape appears
+only at a call site, exactly as for a hand-written IIFE.
 
 ## Errors
 
@@ -196,13 +197,13 @@ intercepts it **by value**:
   `jsmql.compile(function (params, { $ }) { … })`.
 
 **Body grammar.** A `function` body reuses `parseExprBlockBody` — `{ (const|let
-…;)* return <expr>; }`. A body whose only statement is `return E` is normalised to
-a plain expression-body `Lambda` (`body: E`), so it is byte-identical to `(x) => E`
-in **every** position, and in the query-translation predicate positions too
-(`$$$.coll.find/filter`, `$$.filter`, stream `.filter`), which translate a `body`
-expression. A body with leading `const`/`let` keeps the `exprBlock` (→ nested
-`$let`); a query-predicate position rejects such a body, and the fix is to inline
-the bindings.
+…;)* return <expr>; }`. A body whose only statement is `return E` is normalised
+to a plain expression-body `Lambda` (`body: E`), so it is byte-identical to `(x)
+=> E` in **every** position, and in the query-translation predicate positions
+too (`$$$.coll.find/filter`, `$$.filter`, stream `.filter`), which translate a
+`body` expression. A body with leading `const`/`let` keeps the `exprBlock` (→
+nested `$let`). A query-predicate position rejects such a body, and the fix is
+to inline the bindings.
 
 **Self-termination.** A `function` declaration ends at its closing `}` (JS-style),
 so the next statement may follow with **no `;`** — `function f(x){ return x*2 } $ =

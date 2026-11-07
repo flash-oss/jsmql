@@ -30,7 +30,7 @@ import { mapTreeIn } from "./walk.ts";
 /**
  * One rewrite. It returns the node unchanged to decline, or it returns a replacement.
  *
- * A rule never recurses: `mapTree` has already rewritten the children, so the
+ * A rule never recurses. `mapTree` rewrites the children first, so the
  * node a rule sees is as reduced as it will get.
  */
 export type Rule = {
@@ -45,8 +45,8 @@ export type Rule = {
 /**
  * `+=` `-=` `*=` `/=` → `=` over the matching binary operator.
  *
- * The pass DERIVES this from the AST's own list of assignment spellings: every
- * compound operator is a binary operator followed by `=`, so the table is the
+ * The pass DERIVES this from the AST's own list of assignment spellings. Every
+ * compound operator is a binary operator followed by `=`. So the table is the
  * list minus `=` itself and the two increments. A hand-written copy here would
  * make a third table of assignment spellings, and a new `%=` would then need
  * all three.
@@ -57,8 +57,8 @@ const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
 
 /**
  * Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — and not a field?
- * The parser refuses an arithmetic write on `$` and `$$` before this pass runs,
- * because the rewrite would turn `$ += 1` into the valid-looking `$ = $ + 1`.
+ * The parser refuses an arithmetic write on `$` and `$$` before this pass runs.
+ * The rewrite would turn `$ += 1` into the valid-looking `$ = $ + 1`.
  */
 function writesACollection(target: Expr): boolean {
   const base = chainBase(target) as { type: string };
@@ -83,7 +83,7 @@ const compoundAssign: Rule = {
       target: { ...(n.target as object) },
       op: "=",
       // The target appears twice: once as the destination, once as the left
-      // operand. Each copy is FRESH, so no node object sits in two slots — the
+      // operand. Each copy is FRESH, so no node object sits in two slots. The
       // walk in walk.ts compares nodes by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n.target, right: n.value, pos: n.pos },
       pos: n.pos,
@@ -95,7 +95,7 @@ const compoundAssign: Rule = {
  * `++` and `--`, prefix or postfix, on a field or a binding.
  *
  * All four spellings produce the same MQL, because a write at statement
- * position has no value in MQL, so the pass cannot observe prefix versus
+ * position has no value in MQL. So the pass cannot tell prefix from
  * postfix. The parser records `value` as a placeholder copy of the target.
  * This rule overwrites it, and does not read it.
  */
@@ -154,8 +154,8 @@ const bareReturnBlock: Rule = {
  *   $.a.length    → FieldRef("a.length")   ← a field really called `length`
  *   $.a.length()  → the character count of `a`, a MethodCall left alone
  *
- * The rule collects the WHOLE chain from where it stands, instead of folding one
- * link, so a path of any depth becomes one FieldRef.
+ * The rule collects the WHOLE chain from where it stands. It does not fold one
+ * link. So a path of any depth becomes one FieldRef.
  */
 const fieldPath: Rule = {
   name: "memberAccess",
@@ -337,8 +337,8 @@ const mutatorSpread: Rule = {
 
 /**
  * `$.o.assign(...$.a, x)` → `$.o.assign([...$.a, x])`. A call whose rule reads its
- * arguments as ONE list (`args.spread` on the row) takes them packed into one
- * array literal. This way the cell sees a single operand, and the array
+ * arguments as ONE list (`args.spread` on the row) gets them in one array
+ * literal. This way the cell sees a single operand, and the array
  * literal's own lowering splices the spread. A rule that reads arguments one by
  * one keeps the spread, and select.ts refuses it with the alternative the row names.
  */
@@ -371,8 +371,8 @@ const packSpread: Rule = {
 //   $.items.some(x => x.active === true)  → {"items":{"$elemMatch":{"active":true}}}
 //   $.items.some({ active: true })        → {"$expr":{"$anyElementTrue":{"$map":…}}}
 //
-// Both lines mean the same thing, but on a document whose `items` is a string
-// the second FAILS the query, but the first answers it. The rewrite runs first
+// Both lines mean the same thing. On a document whose `items` is a string,
+// the second FAILS the query and the first answers it. The rewrite runs first
 // and leaves one shape to lower.
 //
 // The row states WHICH slots may be rewritten; the rule never reads this off the
@@ -545,8 +545,8 @@ const iterateeShorthand: Rule = {
 
     const recv = n.object as { type?: string; name?: string } | undefined;
     const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
-    // A receiver supplies a FAMILY, and a chain rooted in a context reference is
-    // the stream family wherever the call stands — as a `$facet` branch, as the
+    // A receiver supplies a FAMILY. A chain rooted in a context reference is
+    // the stream family wherever the call stands: as a `$facet` branch, as the
     // argument of `$$.push(…)`, as the right of `$.o = …`. A read of the call's own
     // position resolves every one of those to the array family.
     const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
@@ -561,8 +561,8 @@ const iterateeShorthand: Rule = {
       iterateeSlotsOf(n.name, family) ??
       (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
       (family === "stream" ? iterateeSlotsOf(n.name, "array") : undefined);
-    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and the pass
-    // reads a sort specification as an order, and does not rewrite it to a callback.
+    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none. The pass
+    // reads a sort specification as an order and does not rewrite it to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;
 
     const args = n.args as readonly object[];

@@ -33,10 +33,9 @@ describe("bson majors — both are installed, and they are different copies", ()
     expect((new bson7.ObjectId(HEX) as unknown as Record<symbol, number>)[BSON_VERSION]).toBe(7);
   });
 
-  // This is WHY `bson` is a peer dependency, not a plain one. A plain
-  // dependency lets npm nest jsmql's own copy beside the application's, and a value
-  // from the wrong copy does not merely fail `instanceof` — the serializer refuses it
-  // outright, so the query never reaches the server at all.
+  // This is WHY `bson` is a peer dependency, not a plain one. A plain dependency lets npm nest jsmql's own copy
+  // beside the application's. A value from the wrong copy does not merely fail `instanceof`. The serializer
+  // refuses it outright, so the query never reaches the server at all.
   it("refuses to serialize a value from the other major", () => {
     expect(() => bson7.serialize({ v: new bson6.ObjectId(HEX) })).toThrow(/BSONVersionError|version/i);
   });
@@ -51,10 +50,10 @@ describe("bson majors — what the peer dependency does and does not buy", () =>
     }
   });
 
-  // `bson` ships a dual build — its exports map sends `import` to lib/bson.node.mjs
-  // and `require` to lib/bson.cjs — so those are two class objects, and `instanceof`
-  // across that line fails for ANY pair of modules, jsmql or not. MEASURED, and it is
-  // why recognition reads the `_bsontype` tag, and does not trust a prototype.
+  // `bson` ships a dual build: its exports map sends `import` to lib/bson.node.mjs and `require` to
+  // lib/bson.cjs. So those are two class objects. `instanceof` across that line fails for ANY pair of modules,
+  // jsmql or not. MEASURED, and it is why recognition reads the `_bsontype` tag, and does not trust a
+  // prototype.
   //
   // What survives the split is the thing that matters: the BSON version symbol agrees,
   // so a driver on either side serializes the value.
@@ -69,9 +68,9 @@ describe("bson majors — what the peer dependency does and does not buy", () =>
 });
 
 describe.each(MAJORS)("%s — the behaviour src/bson.ts is built on", (_label, B) => {
-  // jsmql's refusals exist BECAUSE these wrap and do not throw. If a major ever
-  // started to throw, the refusal would still be correct — but if one started
-  // ACCEPTING a wider range, jsmql would refuse a value that major can hold.
+  // jsmql's refusals exist BECAUSE these wrap and do not throw. If a major ever started to throw, the refusal
+  // would still be correct. If one started ACCEPTING a wider range, jsmql would refuse a value that major can
+  // hold.
   it("silently wraps what it cannot hold", () => {
     expect(new B.Int32(3.7).valueOf()).toBe(3);
     expect(new B.Int32(5000000000).valueOf()).toBe(705032704);
@@ -80,9 +79,9 @@ describe.each(MAJORS)("%s — the behaviour src/bson.ts is built on", (_label, B
   });
 
   it("throws where jsmql lets the throw stand in for its own check", () => {
-    // A bare `toThrow()` on purpose: the claim is THAT the class throws, and the
-    // message text is bson's own, which differs between the two majors. jsmql wraps
-    // the throw in its own message (compiler-bson.test.ts asserts that text).
+    // A bare `toThrow()` on purpose: the claim is THAT the class throws. The message text is bson's own, and it
+    // differs between the two majors. jsmql wraps the throw in its own message (compiler-bson.test.ts asserts
+    // that text).
     expect(() => B.Decimal128.fromString("abc")).toThrow();
     expect(() => B.Decimal128.fromString("1.2345678901234567890123456789012345678")).toThrow();
     expect(() => new B.UUID("nothex")).toThrow();

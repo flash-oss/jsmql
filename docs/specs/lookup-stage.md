@@ -33,7 +33,7 @@ No new lexer or parser tokens. The receiver chain is one of:
 | `$$$$["db"]["coll"]`         | `IndexAccess { object: IndexAccess { object: ClusterRef, index: StringLiteral }, index: StringLiteral }` |
 | `$$$$.db["coll"]` / `$$$$["db"].coll` | mixed `MemberAccess` / `IndexAccess` over `ClusterRef`                                    |
 
-All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
+The standard primary-postfix loop builds all shapes ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
 
 **Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)). What the block MEANS is the row's own business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods. A stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`). The compiler refuses a stage-bearing block, and the message names the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only report an unexpected token.
 
@@ -45,7 +45,7 @@ All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/
 | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; pos: number }
 ```
 
-Exactly one of `body` / `block` is set. Every consumer that needs a value (an array method's callback, an IIFE, `$let`) refuses a block-form lambda with an actionable error. `.aggregate` is the one position that keeps a block. So a call site that reads `lambda.body` is total after that check.
+The parser sets exactly one of `body` / `block`. Every consumer that needs a value (an array method's callback, an IIFE, `$let`) refuses a block-form lambda with an actionable error. `.aggregate` is the one position that keeps a block. So a call site that reads `lambda.body` is total after that check.
 
 ## The join road
 
@@ -67,9 +67,9 @@ The callback's first parameter is the foreign document (`o.total` → `"$total"`
 
 The proof belongs to the binding, and it travels no further. A link that REPLACES the elements (`$$$.c.map(f).head()`) leaves them unproven. A field path proves nothing at all (`$.items.head()`). So both keep every method open.
 
-Before this rule stated the elements, `$$$.c.head().map(f)` emitted `$map` over a document. mongod refuses this at execution time on a non-empty collection, and it silently answers null on an empty one.
+Before this rule stated the elements, `$$$.c.head().map(f)` emitted `$map` over a document. mongod refuses this at execution time on a non-empty collection. It silently answers null on an empty one.
 
-**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.size()` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name, because it is neither a document nor a value.
+**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.size()` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name. It is neither a document nor a value.
 
 **Four destinations**, by the statement the chain stands in:
 
@@ -109,8 +109,7 @@ $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag =
 //    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
 ```
 
-`g._id` is the group key `$sortByCount` MADE, so `localField: "_id"` must be read
-after it. Ahead of the statement, the same `_id` is the source document's.
+`$sortByCount` MADE `g._id` as the group key, so the compiler must read `localField: "_id"` after it. Ahead of the statement, the same `_id` is the source document's.
 `$sortByCount` then replaces the document and discards the slot. The read comes
 back missing, and the server says nothing about it.
 
@@ -130,17 +129,12 @@ source wrote it inside, and its body would then name a variable the server never
 bound there (measured: the server refuses the read).
 
 No placement fixes this: the join runs per ARRAY ELEMENT, and a stage runs per
-DOCUMENT. So the compiler refuses the read where it stands. The message names
-the two spellings that work: make the elements documents first (`$$ = $.items;`),
-or read the collection outside the callback into a binding (`let ps =
-$$$.<coll>.filter(…);`) that the callback then uses.
+DOCUMENT. So the compiler refuses the read where it stands. The message names the two spellings that work. Make the elements documents first (`$$ = $.items;`). Or read the collection outside the callback into a binding (`let ps = $$$.<coll>.filter(…);`) that the callback then uses.
 
 `Env.render` holds the gate. A `Located` of kind `var` carries the LEVEL it was
 bound on, and a read of one from a deeper level is the refusal.
 
-**A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let`
-against the outer document, then it optimises the sub-pipeline with the result
-substituted in. So an expression that dispatches on type there folds against that one
+**A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let` against the outer document. Then it optimises the sub-pipeline with the result substituted in. So an expression that dispatches on type there folds against that one
 value, branch by branch.
 
 A nested `$cond` folds the branch that does not apply, and the server refuses the
@@ -151,13 +145,11 @@ Each time, the refusal came from the branch for the other type.
 So every runtime type dispatch JSMQL writes is a `$switch`. A `$switch` drops a
 branch whose case folds to false, and needs no optimiser for it (`indexAccess` in
 [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts), and the family dispatch
-`select.ts` builds). The same hazard reaches a plain expression through any value the
-server holds as a constant — a `jsmql.compile` parameter inside `$literal` — so the
-shape is one shape everywhere, and no rule ever picks it by position.
+`select.ts` builds). The same hazard reaches a plain expression through any value the server holds as a constant — a `jsmql.compile` parameter inside `$literal`. So the shape is one shape everywhere, and no rule ever picks it by position.
 
 **The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll]`). MongoDB's `$lookup.from` takes no expression. The compiler refuses `$$$[$.name]`, a name that only the document holds, and `$$$[""]`, which names no collection.
 
-**Cross-database reads are refused.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`. That is Atlas Data Federation's form, not a MongoDB server's. The refusal tells the reader to drop the `$$$$.<db>.` prefix and run the pipeline against that database. It also states that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).
+**The compiler refuses cross-database reads.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`. That is Atlas Data Federation's form, not a MongoDB server's. The refusal tells the reader to drop the `$$$$.<db>.` prefix and run the pipeline against that database. It also states that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).
 
 ## Mode gates
 

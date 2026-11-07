@@ -8,8 +8,8 @@
 //   $$.push(...[{ a: 1 }, { b: 2 }])       → the same: a written list spreads into the same batch
 //   $$.concat([{ a: 1 }])                  → the same, and `.concat` takes the array itself, as JavaScript does
 //
-// JavaScript's spread rule holds: the compiler spreads in an array (a `.filter`,
-// a whole collection), does not spread one document (`.find`, a literal), and
+// JavaScript's spread rule holds. The compiler spreads in an array (a `.filter`,
+// a whole collection) and does not spread one document (`.find`, a literal). It
 // refuses the wrong one with the other spelling. `$unionWith` has no `let`, so
 // the compiler refuses a body that reads the outer document where it reads it
 // (Env.render). `$documents` runs with no input document at all, so it refuses

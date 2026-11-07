@@ -7,7 +7,7 @@
 //   - A `-0`: the server answers an int 0 where a double has `-0`. Refuse.
 //   - NaN and an infinity: MongoDB errors, or answers a value with no literal. Unspellable.
 // `$add` and `$multiply` fold from left to right, as JavaScript does, with any count of
-// fractions: a randomized test on the server gave the same bits. `$sum` and `$avg`
+// fractions. A randomized test on the server gave the same bits. `$sum` and `$avg`
 // do not: they use a compensated sum (see accumulate.ts).
 
 import type { Answer, Rule } from "./values.ts";
@@ -53,7 +53,7 @@ const subtract = numeric(2, 2, ([a, b]) => {
 });
 
 // `$divide` answers a double, so no integer is there to be exact about. A divisor of
-// zero gives an infinity or NaN, which the server refuses and no literal spells.
+// zero gives an infinity or NaN. The server refuses it, and no literal spells it.
 const divide = numeric(2, 2, ([a, b]) => spellable(a / b));
 
 const mod = numeric(2, 2, ([a, b]) => spellable(a % b));

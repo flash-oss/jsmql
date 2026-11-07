@@ -79,8 +79,8 @@ const SPEC_ROOT = resolve(ROOT, "vendor", "mql-specifications", "definitions");
 const OUT_PATH = resolve(ROOT, "src", "globals.ts");
 
 // MQL `timeUnit` enum. Date operators like $dateAdd, $dateDiff, and $dateTrunc use it,
-// as do all date methods that take a `unit`. It is narrowed to a literal union for autocomplete
-// and typo-check. It is derived from the same `TIME_UNIT` that the runtime validator checks, so
+// as do all date methods that take a `unit`. The script narrows it to a literal union for autocomplete
+// and typo-check. It derives the union from the same `TIME_UNIT` that the runtime validator checks, so
 // the two cannot drift.
 const TIME_UNIT_LITERAL = TIME_UNIT.map((u) => `"${u}"`).join(" | ");
 
@@ -89,7 +89,7 @@ const TIME_UNIT_LITERAL = TIME_UNIT.map((u) => `"${u}"`).join(" | ");
 // do not travel with the stage rows or the vendored YAML in a usable form. They matter only to
 // TypeScript completion, so they live here, keyed by stage name. The stages with no options
 // ($indexStats, $planCacheStats, $shardedDataDistribution) are absent: they take zero arguments.
-// The field sets are transcribed from the MongoDB manual (URLs below). Keep them in sync when
+// The field sets copy the MongoDB manual (URLs below). Keep them in sync when
 // the pinned server version changes.
 const DIAGNOSTIC_OPTION_SHAPES = {
   // https://www.mongodb.com/docs/manual/reference/operator/aggregation/collStats/
@@ -110,7 +110,7 @@ const DIAGNOSTIC_OPTION_SHAPES = {
 
 // Context-ref prefixes, in scope order. Each becomes an ambient declaration
 // (`var $$` (reassignable through `$$ = …`) plus `const $$$` and `const $$$$`). The named
-// members are the scope's diagnostic stages (derived from the STAGES `diagnostic` field).
+// members are the scope's diagnostic stages (the script derives them from the STAGES `diagnostic` field).
 // The `[key: string]: any` tail lets the rest of the reference's syntax type-check
 // (`$$.push(...)`, `$$$.coll.find(...)`, member access, stream methods). Trade-off: TypeScript
 // will not flag a typo in a non-diagnostic method. The jsmql parser still does. See
@@ -144,19 +144,19 @@ const CONTEXT_REFS = {
 
 // `$$.<method>(...)` completions beyond the diagnostic source stages: the
 // chainable / statement-level stream vocabulary on the root stream.
-// Names are asserted against `streamMethodNames()` (src/compiler/rows.ts, over
-// the rows in src/registry/names.ts) below, so the registry stays the source of
-// truth — a new stream method without a signature here is a build-time error.
-// `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
-// are listed by hand below. Only the stream ref (`$$`) gets these — `$$$` /
+// The generator checks each name against `streamMethodNames()` (src/compiler/rows.ts, over
+// the rows in src/registry/names.ts) below. So the registry stays the source of
+// truth: a new stream method without a signature here is a build-time error.
+// The code lists `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
+// by hand below. Only the stream ref (`$$`) gets these. `$$$` and
 // `$$$$` reach the same methods through member access on their permissive
 // `[key: string]: any` tail.
 //
 // Name of the ambient interface the `$$` stream ref is typed as. Stream
-// methods return it (not `any`) so chains keep their completion AND their
-// callback params stay contextually typed — `$$.filter(d => …).map(d => …)`
-// would otherwise trip `noImplicitAny` on the second lambda once the first call
-// collapsed to `any`.
+// methods return it (not `any`). So chains keep their completion AND their
+// callback params stay contextually typed. Otherwise `$$.filter(d => …).map(d => …)`
+// trips `noImplicitAny` on the second lambda, because the first call
+// collapses to `any`.
 const STREAM_REF_TYPE = "JsmqlStreamRef";
 
 // Name of the ambient interface a FOREIGN collection (`$$$.<coll>`) is typed as,
@@ -164,8 +164,8 @@ const STREAM_REF_TYPE = "JsmqlStreamRef";
 // share; the stream ref adds only what is unique to the root stream.
 const FOREIGN_REF_TYPE = "JsmqlForeignRef";
 
-// Each stream method's JSDoc + parameter list. The return type is appended by
-// `streamMethodMembers` (always the chainable ref) — kept out of the table so
+// Each stream method's JSDoc + parameter list. `streamMethodMembers` appends the
+// return type (always the chainable ref). The table omits it, so
 // the chaining contract lives in one place.
 const STREAM_METHOD_SIGNATURES = {
   filter: {
@@ -275,7 +275,7 @@ const NON_REGISTRY_STREAM_METHODS = ["filter", "reject"];
 const ROOT_STREAM_ONLY_METHODS = ["push"];
 
 // Emission order for the chainable stream methods (registry order, then the non-registry entries).
-// Drift-protected in BOTH directions: every registered stream method must have a signature, and
+// The generator checks drift in BOTH directions: every registered stream method must have a signature, and
 // every signature must be a live registry name. The second check removes a method that jsmql
 // dropped, so it does not stay here as a false completion.
 function streamMethodMembers(returnType, names) {
@@ -305,14 +305,14 @@ function streamMethodMembers(returnType, names) {
 }
 
 // `.$<stage>(body)` chain links. Every stage in the registry is a legal link
-// EXCEPT the diagnostic source stages: those are source stages, so a link form
-// can never be first, and they already appear under their own non-`$` spelling
+// EXCEPT the diagnostic source stages. Those are source stages, so a link form
+// can never be first. They already appear under their own non-`$` spelling
 // (`$$.indexStats()`) with a different arity. The body is typed `any`, not
 // the stage's args object: some stages accept a bare string as well
-// (`.$unwind("$items")`, `.$merge("coll")`), and a named member has no `any`
+// (`.$unwind("$items")`, `.$merge("coll")`). A named member has no `any`
 // escape hatch, so a narrower type would reject valid JSMQL. Argument-key
-// completion lives on the statement form (`$group({ … })`), which is generated
-// from the spec.
+// completion lives on the statement form (`$group({ … })`). The generator builds
+// that form from the spec.
 function stageLinkMembers(spec, returnType) {
   const members = [];
   for (const name of Object.keys(STAGES).sort()) {
@@ -469,8 +469,8 @@ const VALUE_METHOD_SKIP = {
 // Per-method augmentation signature. `recv` is the interface to augment; `sig`
 // the `(params): Return` text (Array sigs may reference the element type `T`);
 // `doc` a one-line JSDoc. Return types are chosen to keep chains typed. The
-// element-typed iteratee/predicate params below are permissive on purpose —
-// jsmql validates the real argument at compile time; the TS type only needs to
+// element-typed iteratee/predicate params below are permissive on purpose.
+// jsmql validates the real argument at compile time. The TS type only needs to
 // not *reject* valid jsmql (so optional/loose beats strict).
 const ITER = "iteratee: string | number | ((value: T) => any)";
 // Optional-iteratee form for the collapse methods whose default is the identity
@@ -755,7 +755,7 @@ const VALUE_METHOD_SIGNATURES = {
   // ── Date → Date / number / string / boolean ─────────────────────────────────
   // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter list
   // mirrors the `args` that the method's row states (src/registry/names.ts). Every `unit`
-  // is the MQL timeUnit union, not `string`, so a typo is caught in the editor by the
+  // is the MQL timeUnit union, not `string`, so the editor catches a typo with the
   // same closed set that the row's `slotEnums` enforces at compile time (src/compiler/emit/check.ts).
   plus: {
     recv: "Date",
@@ -844,9 +844,9 @@ const VALUE_METHOD_INTERFACES = {
 };
 
 // Emit the `interface Array<T> { … } interface String { … } interface Number { … }`
-// augmentation blocks. Drift-protected against the `METHODS` registry: every
+// augmentation blocks. The generator checks drift against the `METHODS` registry. Every
 // non-skipped registry method must have a signature, and every signature must be
-// a real, non-skipped registry method — so a new value method in jsmql without
+// a real, non-skipped registry method. So a new value method in jsmql without
 // a signature (or a skip-set entry) fails the build here, exactly like
 // `streamMethodMembers()` does for the stream vocabulary.
 function valueMethodAugmentationBlock() {
@@ -885,7 +885,7 @@ function valueMethodAugmentationBlock() {
 
   // Return-category drift guard. Where the METHODS registry declares an invariant result category
   // (`returns`), the augmentation's TypeScript return type must stay in that category. A registry change
-  // (for example, a method's result becomes an object) that is not mirrored in the ambient signature fails
+  // (for example, a method's result becomes an object) that the ambient signature does not mirror fails
   // the build, and does not silently drift. Methods with no registry `returns` (result depends on the
   // receiver and arguments: `.head` → element `T`, `.groupBy` value or stream) are skipped. There is no
   // invariant to enforce.
@@ -1237,11 +1237,11 @@ function expressionOpCallableType(spec, opDef) {
   }
 }
 
-// A `$op(…)` or `$stage(…)` call is the developer's own MQL (HR2), and the compiler
+// A `$op(…)` or `$stage(…)` call is the developer's own MQL (HR2). The compiler
 // takes it with any arguments: the positional form of an object-form operator
 // (`$trim($.name, " ")`), a string body (`$unwind("$items")`), or a count that the
 // server refuses (`$size(1, 2)`). So each name gains one catch-all overload after
-// its documented signatures, and the types never refuse a `$` call. The documented
+// its documented signatures. The types never refuse a `$` call. The documented
 // signatures come first, so completion and hover still read them.
 const CATCH_ALL = "(...args: any[]): any";
 
@@ -1262,9 +1262,9 @@ function emitBlock(name, jsdoc, callableSigs) {
 }
 
 // Emit the `$$`, `$$$`, and `$$$$` ambient declarations. `$$` is `var` (it is reassigned
-// by `$$ = …`). The other two are `const`: only their members are written. Diagnostic methods
-// are derived from each stage row's `diagnostic` fact (the scope tier and whether it takes options).
-// The sugar's own lowering is stated on the same row. Each method reuses the same JSDoc that the
+// by `$$ = …`). The other two are `const`: only their members are written. The generator derives the
+// diagnostic methods from each stage row's `diagnostic` fact (the scope tier and whether it takes options).
+// The same row states the sugar's own lowering. Each method reuses the same JSDoc that the
 // stage's own block gets, so descriptions stay consistent.
 function contextRefBlock(spec) {
   const methodsByScope = { collection: [], database: [], cluster: [] };
@@ -1290,7 +1290,7 @@ function contextRefBlock(spec) {
     `/**\n * ${CONTEXT_REFS[scope].doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
 
   // Everything a chain link can be: the stream vocabulary plus the `.$<stage>()` links.
-  // This is emitted once per reference with that reference as the return type, because a chain
+  // The generator emits this once per reference with that reference as the return type, because a chain
   // keeps the identity of its ROOT. That is the rule jsmql enforces. `.find` is legal at ANY
   // position of a foreign chain and at NO position of a current-stream chain. So
   // `$$$.<coll>.filter(p).find(q)` compiles and `$$.filter(p).find(q)` does not.
@@ -1325,8 +1325,8 @@ function contextRefBlock(spec) {
   // and the `$out` write target. TypeScript resolves a target's named members against the source's
   // declared members, and never through its index signature. So `$$$.<coll> = $$` needs `$$` to
   // actually declare them. Re-declare every chainable to return the stream reference. Add what
-  // only the root stream has: the diagnostic source stages of the current collection, and the statement-level `.push`
-  // (the `$unionWith` operator).
+  // only the root stream has. These are the diagnostic source stages of the current collection and the
+  // statement-level `.push` (the `$unionWith` operator).
   const streamRefMembers = [
     ...diagnosticMembers("collection"),
     ...streamMethodMembers(STREAM_REF_TYPE, ROOT_STREAM_ONLY_METHODS),
@@ -1359,10 +1359,10 @@ function contextRefBlock(spec) {
 
 // The BSON value constructors. Each has a JavaScript-shaped name, not a
 // `$`-prefixed operator. The arrow form needs an ambient declaration to type-check.
-// These are DERIVED from the global rows that list the value position. A new constructor
+// The generator DERIVES these from the global rows that list the value position. A new constructor
 // is one row in src/registry/names.ts, and nothing here needs an edit.
 //
-// Each is emitted as an interface with a call signature only, because JSMQL has no
+// The generator emits each as an interface with a call signature only, because JSMQL has no
 // `new` keyword (HR8): `Decimal128("1.50")` is the one spelling.
 // `Date` is excluded: TypeScript's own library already declares it, and a second
 // `var Date` would collide. Its mongosh spelling `ISODate` is not in that library,
@@ -1383,8 +1383,8 @@ function constructionFormsBlock() {
     .join("\n");
 }
 
-// The statement-form built-ins that are not `$`-prefixed operators or stages and so
-// have no registry entry, but still need an ambient declaration for the arrow form to
+// The statement-form built-ins that are not `$`-prefixed operators or stages.
+// They have no registry entry, but they still need an ambient declaration for the arrow form to
 // type-check. `assert(condition[, message])` is a pipeline-statement guard with no value.
 // It lowers to a `$match`, so its return type is `void`. A use of it in expression
 // position is a compile error in jsmql too. See the `assert` row in src/registry/names.ts

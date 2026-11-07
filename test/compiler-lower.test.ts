@@ -38,7 +38,7 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("$.a.b")).toBe("$a.b");
     expect(expr("$")).toBe("$$ROOT");
     expect(expr('$["a.b"]')).toBe("$a.b");
-    // a `?.` read is JavaScript's `undefined` when the path is not there, and a document written
+    // a `?.` read is JavaScript's `undefined` when the path is not there. A document written
     // with it holds the key — so it is null, never missing
     expect(expr("$.a?.b.c")).toEqual({ $ifNull: ["$a.b.c", null] });
   });

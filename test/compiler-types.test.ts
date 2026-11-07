@@ -1,9 +1,9 @@
 // The type tracker: what the compiler proves about a written field, a `let`, a
 // possible-kinds value — and what the server does with the document it emits.
 //
-// Each case states the MQL, and the live half runs that MQL on the project's own
-// mongod, so the claim "this shape is valid and answers X" is measured, never
-// assumed (HR3). The suite skips its live half when no mongod listens.
+// Each case states the MQL. The live half runs that MQL on the project's own
+// mongod. So the test measures the claim "this shape is valid and answers X" and never
+// assumes it (HR3). The suite skips its live half when no mongod listens.
 // See docs/specs/types.md.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -69,7 +69,7 @@ describe("types — a written field carries what its value proved", () => {
 describe("types — a value of more than one possible kind", () => {
   it("a method of one family takes that family's operator when the value may be of that kind", () => {
     // `.length()` is a string length. The value may be a string, so the string form runs, and the
-    // server judges an array at run time. A value that can NEVER be a string is refused.
+    // server judges an array at run time. The compiler refuses a value that can NEVER be a string.
     expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.len = $.v.length();')[1]).toEqual({
       $set: { len: { $strLenCP: "$v" } },
     });
@@ -91,8 +91,8 @@ describe("types — the write rules", () => {
   });
 
   it("a dotted write keeps the parent's other properties and makes the parent present", () => {
-    // `address` was never written whole, so it may be an array: each property is then
-    // the string written, or the list of strings the array form carries (measured below).
+    // `address` was never written whole, so it may be an array. Each property is then
+    // the string written, or the list of strings that the array form carries (measured below).
     const doc = written(written(DOCUMENT, "address.country", of("string")), "address.full", of("string"));
     expect(kindsOf(at(doc, "address.country"))?.sort()).toEqual(["array", "string"]);
     expect(kindsOf(at(doc, "address.full"))?.sort()).toEqual(["array", "string"]);
@@ -573,8 +573,8 @@ describe("types — a `$match` narrows the document for the statements after it"
     expect(jsmql('$$.filter({ status: "a" }); $.s = $.status.toUpper();')[1]).toEqual({
       $set: { s: { $toUpper: "$status" } },
     });
-    // `n` is a number, or an array that holds one (the query language reads an array element by element):
-    // a number owes only the zero test, an array none, and neither can be missing.
+    // `n` is a number, or an array that holds one (the query language reads an array element by element).
+    // A number owes only the zero test. An array owes none. Neither can be missing.
     expect(jsmql("$match($.n > 5); $.x = $.n ? 1 : 2;")[1]).toEqual({
       $set: { x: { $cond: [{ $ne: ["$n", 0] }, 1, 2] } },
     });
@@ -638,7 +638,7 @@ describe.skipIf(up === null)("types — the server agrees with the narrowing", (
 
 describe("types — a refusal reads the whole kind set", () => {
   // "Possible" is not "proven": a value that MAY be a document passes, and the server judges.
-  // A value that can NEVER be one is refused, and the message names every kind it can be.
+  // The compiler refuses a value that can NEVER be one, and the message names every kind it can be.
   it("a root write, a stream source, a spread, a union and a merge refuse a value that cannot fit", () => {
     expect(jsmql("$.x = $.f ? { a: 1 } : 5; $ = $.x;")[1]).toEqual({ $replaceWith: "$x" });
     expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("but got a string or a number.");
@@ -845,7 +845,7 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'$.items.z' reads a field that the elements of '$.items' do not have. They hold 'q'.",
       "$.items.z",
     ],
-    // a shorthand's parameter is named by what it stands for
+    // the compiler names a shorthand's parameter by what it stands for
     [
       "pipeline",
       '$$.map(o => ({ id: o.id })).filter({ type: "a" });',

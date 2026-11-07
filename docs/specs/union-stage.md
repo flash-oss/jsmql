@@ -33,7 +33,11 @@ inline batch whenever a collection-sourced argument arrives.
 
 ### Predicate translation
 
-An expression-body predicate lowers through the filter road ([filter-mode.md § The filter road](filter-mode.md)) with the parameter as the document, so the inner `$match` is the same index-friendly query document `$match` gets everywhere; a clause with no native form rides in `$expr` beside the translated ones:
+An expression-body predicate lowers through the filter road ([filter-mode.md §
+The filter road](filter-mode.md)) with the parameter as the document, so the
+inner `$match` is the same index-friendly query document `$match` gets
+everywhere; a clause with no native form rides in `$expr` beside the translated
+ones:
 
 | Predicate body | Inner stage |
 |---|---|
@@ -50,30 +54,40 @@ only what differs — the stage's shape and its missing `let`.
 
 ### A written list of documents, and only a written one
 
-`$documents` takes a list the program spells out. MEASURED on the server, a field path
-there is refused, because it does not give an array. `{ coll, pipeline: [{ $documents }] }`
-is refused too, because `$documents` runs only in an aggregation on a database or a
-cluster. So the appendable forms are: another collection (`coll`, with or without
-a sub-pipeline), one written document, and a written list of them — `$$.push({ … })`,
-`$$.push(...[{ … }, { … }])` and `$$.concat([{ … }])` all batch into one `$documents`,
-consecutive arguments together, kept in source order. An array the data decides has no
+`$documents` takes a list the program spells out. MEASURED on the server, the
+server refuses a field path there, because it does not give an array. The server
+refuses `{ coll, pipeline: [{ $documents }] }` too, because `$documents` runs
+only in an aggregation on a database or a cluster. So the appendable forms are:
+another collection (`coll`, with or without a sub-pipeline), one written
+document, and a written list of them — `$$.push({ … })`, `$$.push(...[{ … }, { …
+}])` and `$$.concat([{ … }])` all batch into one `$documents`, consecutive
+arguments together, kept in source order. An array the data decides has no
 append form at all; `$$ = <array>` makes the stream from it instead.
 
-JSMQL lowers the list inside the `$unionWith` body, where the server evaluates it —
-`noStageInDocuments` in [src/compiler/emit/union.ts](../../src/compiler/emit/union.ts)
-holds the other half of that. Nothing there can read the outer document (the body has
-no `let`, below), and `$documents` is the FIRST stage of that body, so nothing can
-stand ahead of it to produce a value either: JSMQL refuses a field whose value would need
-a stage of its own — a `$$$.<coll>` read's `$lookup`, the root count's `$setWindowFields` —
-and names the collection append (`$$.push(...$$$.<coll>.filter(…))`) and the
-constant / `jsmql.compile` parameter as the two ways out. Both spellings of the list
-go through the same gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]`
-answer alike; lowered outside the boundary the second one emitted a field path the
+JSMQL lowers the list inside the `$unionWith` body, where the server evaluates
+it — `noStageInDocuments` in
+[src/compiler/emit/union.ts](../../src/compiler/emit/union.ts) holds the other
+half of that. Nothing there can read the outer document (the body has no `let`,
+below), and `$documents` is the FIRST stage of that body, so nothing can stand
+ahead of it to produce a value either: JSMQL refuses a field whose value would
+need a stage of its own — a `$$$.<coll>` read's `$lookup`, the root count's
+`$setWindowFields` — and names the collection append
+(`$$.push(...$$$.<coll>.filter(…))`) and the constant / `jsmql.compile`
+parameter as the two ways out. Both spellings of the list go through the same
+gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]` answer alike.
+Lowered outside the boundary, the second one emitted a field path that the
 server answered `{}` for, in silence.
 
 ### `$unionWith` has no `let`
 
-`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it. It does not silently misread it. The message names two fixes. One is a statement before the union that filters or reshapes the outer stream. The other is a join (`$.<field> = $$$.<coll>.filter(…)`), whose `$lookup` carries the value. The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
+`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The compiler
+enters the body with a null capture
+([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`),
+so JSMQL refuses a read of the outer document, or of an outer binding, inside
+it. It does not silently misread it. The message names two fixes. One is a
+statement before the union that filters or reshapes the outer stream. The other
+is a join (`$.<field> = $$$.<coll>.filter(…)`), whose `$lookup` carries the
+value. The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
 
 ## AST and parser
 

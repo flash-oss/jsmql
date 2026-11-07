@@ -1,9 +1,9 @@
 // Phase 5 — EMIT. This file names every MongoDB variable the compiler writes.
 // It also holds the scope that says what a JavaScript name means.
 //
-// MongoDB variables live in ONE flat scope. The developer's lambda parameters, a
-// `$let` the developer wrote, and every variable a lowering binds for itself all
-// share this scope. Three problems can happen there. A TYPE here closes each one,
+// MongoDB variables live in ONE flat scope. The developer's lambda parameters and a
+// `$let` the developer wrote share this scope. Every variable a lowering binds for
+// itself shares it too. Three problems can happen there. A TYPE here closes each one,
 // instead of care at each site:
 //
 //   * a name the server refuses. MEASURED on mongod, `$let: { vars: { <name>: 7 } }`:
@@ -12,7 +12,7 @@
 //       x-y, x$                          refused: a later character is not allowed
 //     so only `mongoVarName` mints a `MongoVar`, and it is total.
 //   * two JavaScript names that become one variable. A scheme that only
-//     prepended a letter made `_id` and `v_id` the same variable, `v_id`, and a
+//     prepended a letter made `_id` and `v_id` the same variable, `v_id`. Then a
 //     body that read both read one. `mongoVarName` is INJECTIVE: a plain name is
 //     itself and never starts with `v_`; every other name is `v_` plus an escape in
 //     which `_` only ever opens an escape.
@@ -163,10 +163,11 @@ export type Binding = {
   /** Where the binding was made, for the message that names it. */
   readonly pos: number;
   /**
-   * The LEVEL of documents the binding lives on: 0 for the root pipeline, one
-   * more for each sub-pipeline over another collection crossed to reach the
+   * The LEVEL of documents the binding lives on. It is 0 for the root pipeline,
+   * and one more for each sub-pipeline over another collection crossed to reach the
    * declaration. A read from a deeper level cannot see the field. The compiler
-   * captures it into that level's `$lookup.let` — see Capture. Env sets this field; a caller never does.
+   * captures it into that level's `$lookup.let` — see Capture. Env sets this field;
+   * a caller never does.
    */
   readonly level: number;
 };
@@ -176,11 +177,12 @@ export type Declared = Omit<Binding, "level">;
 
 /**
  * A value on one level of documents, as a READ on a possibly deeper level sees
- * it. `var` is a MongoDB variable, lexically scoped: its level is the level it
+ * it. `var` is a MongoDB variable, lexically scoped. Its level is the level it
  * was BOUND on, because an expression that binds one does not cross into the
  * sub-pipeline of a stage hoisted out of it. The rest name a document level and a
- * path on it — "" for the whole document — and the letter that names the variable
- * that carries it across a `$lookup`: `f` a field, `v` a `let` binding, `s` a system value.
+ * path on it ("" for the whole document). Each also carries a letter. The letter
+ * names the variable that carries the value across a `$lookup`: `f` a field,
+ * `v` a `let` binding, `s` a system value.
  */
 export type Located =
   | { readonly kind: "var"; readonly level: number; readonly ref: string; readonly hint: string }
@@ -189,10 +191,11 @@ export type Located =
 /**
  * The `let` of one `$lookup`, filled as its body is lowered. Every read of a
  * value on the level the stage runs over is interned here under a name that
- * carries that level, and the body reads it as `$$<name>`. The name is
- * `jsmql_<f|v|s><level>_<hint>` (single source of truth: src/namespace.ts), sanitised. Two raw
- * values that sanitise alike take `_2`, `_3`. The compiler holds this BY REFERENCE on the boundary,
- * like a Chain, because it lowers the body before it writes the stage.
+ * carries that level. The body reads it as `$$<name>`. The name is
+ * `jsmql_<f|v|s><level>_<hint>` (single source of truth: src/namespace.ts), sanitised.
+ * Two raw values that sanitise alike take `_2`, `_3`. The compiler holds this BY
+ * REFERENCE on the boundary, like a Chain, because it lowers the body before it
+ * writes the stage.
  */
 export class Capture {
   /** The level of documents this stage's `let` evaluates against. */
@@ -230,8 +233,8 @@ export class Capture {
 
 /**
  * A variable and the scope under which the compiler lowers its body. The compiler
- * can lower a body only under `binder.scope`, so it cannot forget that "the mint must
- * be visible to the body" and "the body's own names must stay clear".
+ * can lower a body only under `binder.scope`, so it cannot forget two facts. The mint
+ * must be visible to the body. The body's own names must stay clear.
  */
 export type Binder = { readonly as: MongoVar; readonly ref: VarRef; readonly scope: Scope };
 
@@ -250,8 +253,8 @@ export class Scope {
   }
 
   /**
-   * The root scope. `introduced` is every name the program binds anywhere — the
-   * parameters and declarations `namesIn` collects — so a mint made before a
+   * The root scope. `introduced` is every name the program binds anywhere: the
+   * parameters and declarations that `namesIn` collects. So a mint made before a
    * deeper lambda binds its parameter still steps aside from that parameter.
    */
   static root(introduced: Iterable<string>): Scope {
@@ -288,8 +291,8 @@ export class Scope {
   }
 
   /**
-   * Every binding carried in a document FIELD, turned into a name whose read says
-   * what dropped it — the scope after a stage that replaced the document.
+   * The scope after a stage that replaced the document. Every binding carried in a
+   * document FIELD becomes a name whose read says what dropped it.
    */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Scope {
     const bound = new Map(this.bound);

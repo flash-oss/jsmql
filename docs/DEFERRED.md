@@ -31,7 +31,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-012 — Index-pitfall warning channel via `validate()`
 
-- **What is blocked.** A `let` binding before an indexable `$match` prevents the use of the index by the match. The compiler could show a warning, but `validate()` has only an error channel, not a warning channel.
+- **What is blocked.** A `let` binding before an indexable `$match` stops the match from using the index. The compiler could show a warning, but `validate()` has only an error channel, not a warning channel.
 - **Target lowering.** No change to the MQL output. `validate()` gains a `warnings` array next to `errors`. Each warning carries `.pos`, `.severity: "warning"`, and a message that names the binding and the index it blocks.
 - **Why blocked.** The `ValidationResult` shape needs a new `warnings` array. The project is pre-1.0, so the API is not fixed, and the change is safe. But the project must also decide which other warnings it needs. Candidates include unused bindings, unreachable stages, and deprecated patterns.
 - **Attempted approaches.** None.
@@ -55,7 +55,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-014 — Optimised chained terminals on lookups
 
-- **What is blocked.** A chain that reads a lookup's array as a VALUE materialises the `$lookup` in a scratch slot. It leaves a `$set` stage plus the `$unset` stage that clears the slot. The result is two stages where a specialised recogniser could emit one.
+- **What is blocked.** A chain that reads a lookup's array as a VALUE materialises the `$lookup` in a scratch slot. It leaves a `$set` stage plus the `$unset` stage that clears the slot. The result is two stages. A specialised recogniser could emit one.
 - **Target lowering.** A recogniser on the join road (`joinValue` in `src/compiler/emit/join.ts`) folds the slot read into the `$lookup`, for the shapes where it can.
 - **Why blocked.** This is a performance optimisation, not a correctness fix. It needs careful pattern enumeration, so the change does not break the generic path.
 - **Attempted approaches.** None.
@@ -79,7 +79,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-022 — `Number.isFinite($.x)` (Infinity / NaN comparison)
 
-- **What is blocked.** `Number.isFinite($.x)` is rejected. JSMQL has no syntax for an `Infinity` or `NaN` literal to compare against.
+- **What is blocked.** The compiler rejects `Number.isFinite($.x)`. JSMQL has no syntax for an `Infinity` or `NaN` literal to compare against.
 - **Target lowering.** The fix needs both a literal-Infinity and a literal-NaN escape hatch in the parser, plus a translation table for the resulting comparisons.
 - **Why blocked.** JSMQL source has no `Infinity` or `NaN` literal, and the lowering would touch every numeric comparison helper. JSMQL's output must stay JSON-serialisable, so an emitted literal cannot be a real BSON `NaN` or `±Infinity`. `JSON.stringify(NaN)` is `null`, and that would silently change the comparison. The server must synthesise the value instead.
 - **Attempted approaches.** The project verified the comparison half on a live mongod. `{$toDouble: "NaN"}` gives a genuine double NaN. MongoDB's `$eq` treats `NaN == NaN` as true, unlike JavaScript. So `{$eq: [x, {$toDouble: "NaN"}]}` is an exact NaN test. It is true for a `double` or `decimal` NaN, and false for ±Infinity, ±0, the string `"NaN"`, null, a missing field, `[]`, and `{}`. `{$toDouble: "-Infinity"}` gives the other bound, because NaN sorts below it, so `{$gt: [x, -Infinity]}` also isolates NaN among numbers.
@@ -93,7 +93,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-031 — Function-aware Filters via textual inline
 
-- **What is blocked.** A reusable function cannot run inside a **bare Filter** (no `;`, for example `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, and that flips the source into Pipeline mode. So a Filter cannot declare or call a function today.
+- **What is blocked.** A reusable function cannot run inside a **bare Filter** (no `;`, for example `db.coll.find(jsmql("isAdult($)"))`). A function declaration needs a `;`, and that flips the source into Pipeline mode. So a Filter cannot declare or call a function.
 - **Target lowering.** A function used in a Filter would need **textual inline** into the predicate. The Filter has no pipeline scope and no `$let` stage to host the binding. The compiler would translate the body into the query language, as if the developer wrote it in place.
 - **Why blocked.** A Filter is a single expression with no statement list. To thread a declaration into it, JSMQL needs a separate declaration channel, or a textual-inline pass apart from the pipeline `$let` expansion. The output shape differs from the pipeline form — an inlined body instead of a `$let` — so the design stays separate on purpose.
 - **Attempted approaches.** None. The developer asked to record this as the likely next step for Filters.
@@ -105,7 +105,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-032 — Higher-order functions (function passed as a value)
 
-- **What is blocked.** A reusable function cannot act as a **value** instead of a call. Examples are `$ = { fn: double }`, and passing a function reference to another function, such as `arr.map(double)` for higher-order composition.
+- **What is blocked.** A reusable function cannot act as a **value** instead of a call. Examples are `$ = { fn: double }`, and a function reference that you pass to another function, such as `arr.map(double)` for higher-order composition.
 - **Target lowering.** There is no direct MQL analogue, because MongoDB has no first-class functions. Support would have to inline the function at its eventual call site, which needs the compiler to track the function value through the expression tree.
 - **Why blocked.** An MQL expression cannot carry a function value. The common `arr.map(double)` case is already served by `arr.map(x => double(x))`, an explicit lambda whose body calls the function. A clear rejection message already points to that form.
 - **Attempted approaches.** None. The developer's decision left this out of the first cut.
@@ -117,9 +117,9 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-038 — A `document` layout for the stages whose output fields are not their body's keys
 
-- **What is blocked.** After `$bucket`, `$bucketAuto` or `$sortByCount` the compiler knows nothing about the document: the three rows state `document: "unknown"`. Their output fields — `_id` and the `output` keys of a bucket, `_id` and `count` of `$sortByCount` — are real and typed, but they are not the keys of the stage's body, so `documentAfter` (`src/compiler/emit/prove.ts`) cannot read them the way it reads a `$group` body. A read after one of them takes the runtime dispatch and the null guard it would take on a field nothing wrote.
+- **What is blocked.** After `$bucket`, `$bucketAuto` or `$sortByCount` the compiler knows nothing about the document: the three rows state `document: "unknown"`. Their output fields — `_id` and the `output` keys of a bucket, `_id` and `count` of `$sortByCount` — are real and typed. They are not the keys of the stage's body, so `documentAfter` (`src/compiler/emit/prove.ts`) cannot read them the way it reads a `$group` body. A read after one of them takes the runtime dispatch and the null guard it would take on a field nothing wrote.
 - **Target lowering.** A `document` effect that names WHERE the output fields come from, stated on the row: for a bucket, `_id` plus the keys under `output` (each typed by its accumulator, the way `$group` keys are); for `$sortByCount`, `_id` typed by the body expression and `count` as a number. `documentAfter` then builds the closed object from that layout. `$sortByCount($.k); $.n = $.count + 1;` proves `count` a number.
-- **Why blocked.** The `DocumentEffect` vocabulary is a closed set of words. A layout is a small structure, and the right shape — one word per stage, or a `{ fields: … }` object — deserves a decision of its own instead of a special case per name.
+- **Why blocked.** The `DocumentEffect` vocabulary is a closed set of words. A layout is a small structure. The right shape, one word per stage or a `{ fields: … }` object, deserves a decision of its own instead of a special case per name.
 - **Attempted approaches.** None.
 - **Success criteria.** The three rows state a layout; `$sortByCount($.k); $.t = $.count ? 1 : 2;` emits `{ $cond: { if: "$count", … } }`; [test/compiler-types.test.ts](../test/compiler-types.test.ts) runs each stage on the fixture and asserts the typed read.
 - **Rejection site(s).** None. The compiler emits valid MQL after each stage. The live `[DEF-038]` tags are on the three rows in [src/registry/names.ts](../src/registry/names.ts), on the `DocumentEffect` comment in [src/registry/vocabulary.ts](../src/registry/vocabulary.ts), and in [docs/specs/types.md](specs/types.md) § The document after a stage.
@@ -129,9 +129,9 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ### DEF-039 — `.shuffle()` on an ARRAY value
 
-- **What is blocked.** `.shuffle()` is a stream link: `$$.shuffle();` stamps a `$rand` key, sorts on it and drops it. On an array value — `$.a.shuffle()`, lodash's `_.shuffle(array)` — the row states no value cell, so the call is refused, and the message names `.sampleSize(n)`, which shuffles and then takes `n`.
+- **What is blocked.** `.shuffle()` is a stream link: `$$.shuffle();` stamps a `$rand` key, sorts on it and drops it. On an array value — `$.a.shuffle()`, lodash's `_.shuffle(array)` — the row states no value cell, so the compiler refuses the call. The message names `.sampleSize(n)`, which shuffles and then takes `n`.
 - **Target lowering.** The `.sampleSize()` cell without the `$slice`: `{ $map: { input: { $sortArray: { input: { $map: { input: <arr>, as: "x", in: { k: { $rand: {} }, v: "$$x" } } }, sortBy: { k: 1 } } }, as: "x", in: "$$x.v" } }`. HR5 reads a missing array as `[]`.
-- **Why blocked.** The value form is a small cell, and the developer wants it, but it has not been asked for by a program yet; the stream form covers the sampled read through `.sampleSize(n)`.
+- **Why blocked.** The value form is a small cell, and the developer wants it. No program has asked for it yet; the stream form covers the sampled read through `.sampleSize(n)`.
 - **Attempted approaches.** None.
 - **Success criteria.** `$.a.shuffle()` compiles to the lowering above; a case in [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) runs it on the fixture and checks that the answer holds the same elements.
 - **Rejection site(s).** The `expr` cell of the `shuffle` row in [src/registry/names.ts](../src/registry/names.ts), tagged `[DEF-039]`.
@@ -150,7 +150,7 @@ This section records features the project considered and **rejected**. Each entr
 This was DEF-007. The idea was to make `.slice()` / `.some()` lower to the *projection-form* `$slice` (single argument) and `$elemMatch`, inside `$project({ … })`. The premise is wrong. JSMQL's `$project` is the **aggregation pipeline stage**, not a `find()` projection. The projection-form operators work only in a `find()` projection, and the aggregation stage rejects them. Verified against a running mongod (2026-06-11):
 
 - `{ $slice: N }` (single argument) fails, because the expression `$slice` needs two or more operands. In an aggregation `$project`, `$slice` is always the expression operator.
-- `{ $elemMatch: { … } }` fails, because the aggregation stage does not accept `$elemMatch`. `$elemMatch` is not an aggregation operator at all. Even where it is valid, in a `find()` projection, it returns the *matched element*, not a boolean, so it would break the JavaScript meaning of `.some()`.
+- `{ $elemMatch: { … } }` fails, because the aggregation stage does not accept `$elemMatch`. `$elemMatch` is not an aggregation operator at all. Even where it is valid, in a `find()` projection, it returns the *matched element*, not a boolean. So it would break the JavaScript meaning of `.some()`.
 
 The expression forms that JSMQL already emits run correctly in `$project`: `$.items.slice(0, 3)` becomes `{ $slice: ["$items", 3] }`, and `$.items.some(i => i.x > 5)` becomes `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships as a row in `src/registry/names.ts`. It is a normal aggregation expression, reachable through `$op($meta("textScore"))`. So nothing valid remained to build. A build of it would make JSMQL knowingly emit invalid MQL, an HR3 violation.
 
@@ -166,7 +166,7 @@ The only possible design is also the argument against the feature. All four meth
 
 **Not** rejected in value position. `$.items.takeRight(3)` becomes `$slice`, `$.items.toReversed()` becomes `$reverseArray`, and the rest of that family still ships. A stored array carries its own order, so there each method means exactly what it means in JavaScript. The distinction is the receiver, not the method.
 
-The stream rewrite is to state the order and take from the front: `$$.toSorted({ createdAt: -1 }).take(3)`. Each row's own stream refusal in `src/registry/names.ts` names this rewrite. The refusal reaches every chain-assembly site, and a foreign chain too, so a developer cannot fall back quietly to value mode and slice the tail of an array whose order came from the foreign scan.
+The stream rewrite is to state the order and take from the front: `$$.toSorted({ createdAt: -1 }).take(3)`. Each row's own stream refusal in `src/registry/names.ts` names this rewrite. The refusal reaches every chain-assembly site, and a foreign chain too. So a developer cannot fall back quietly to value mode and slice the tail of an array whose order came from the foreign scan.
 
 Reconsider this only if MongoDB adds a stage that reverses a stream. A new implementation over the existing `$sort` machinery would land back on the same two defects.
 
@@ -180,7 +180,7 @@ Negation has subtle null/missing interactions in MongoDB. A silent flip between 
 
 ### `in` as JavaScript's key test (`"k" in $.o`, `$.x in { a: 1 }`)
 
-The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an element test, and that is the meaning a query reads. JavaScript's `in` tests a key, and an operator that means an element test with a list on the right and a key test with an object on the right has two meanings. The compiler accepts one right side, a list spelled in the source, and refuses every other one with the spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. Both spellings emit the same MQL the key test did (`{ "o.k": { $exists: true } }` in a filter, `$objectToArray` over the keys for a computed key).
+The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an element test, and that is the meaning a query reads. JavaScript's `in` tests a key. An operator that means an element test with a list on the right, and a key test with an object on the right, has two meanings. The compiler accepts one right side, a list spelled in the source, and refuses every other one with the spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. Both spellings emit the same MQL the key test did (`{ "o.k": { $exists: true } }` in a filter, `$objectToArray` over the keys for a computed key).
 
 ### `Set` is not part of JSMQL (`new Set(…)`, `Set(…)`)
 
@@ -202,7 +202,7 @@ The developer rejected this. `.random()` has one rule for the form of its answer
 
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
-The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[…].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)`, the single-array form that already exists. It could also become `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[…].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
 
 ### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
 
@@ -244,7 +244,7 @@ The compiler checks the MQL that it makes from JSMQL code, and the place of each
 - read concern
 - Atlas availability of `$search`, `$searchMeta`, `$vectorSearch`, and `$listSearchIndexes`
 
-JSMQL emits the MQL unchanged for all of these, and lets the server decide. A check of them at compile time would need a model of deployment and data state, and would force a throw on a pipeline that is perfectly valid in another context. Rule #1 forbids exactly this: a throw on the *probable*, not the *certain*. Position rules that happen to involve an Atlas-only stage still apply — for example, `$search` must come first. Only the availability check is skipped.
+JSMQL emits the MQL unchanged for all of these, and lets the server decide. A check of them at compile time would need a model of deployment and data state. It would also force a throw on a pipeline that is valid in another context. Rule #1 forbids exactly this: a throw on the *probable*, not the *certain*. Position rules that happen to involve an Atlas-only stage still apply — for example, `$search` must come first. The compiler skips only the availability check.
 
 ### `$replaceRoot` verbose-form knob on `$ = …`
 
@@ -267,4 +267,4 @@ Value mode covers the lodash array vocabulary that maps cleanly to MQL: the posi
 
 ### Ambient completion for object-receiver value methods
 
-The `@koresar/jsmql/globals` value-method augmentations (developer-approved 2026-07-21) type the lodash value methods onto the built-in `Array<T>` / `String` / `Number` interfaces, so they autocomplete on a concretely-typed receiver. The project deliberately **leaves the object-receiver methods without completion**. The only interface to hang them on is `Object`, the base of *every* type, and augmenting it would advertise them, misleadingly, on numbers, strings, arrays, and every other value in a file that imports the module. The `VALUE_METHOD_SKIP.object` set in `scripts/generate-globals.mjs` names them. The methods themselves work in JSMQL exactly as documented; they simply do not surface in IDE completion. Revisit this only if a narrower "plain object" carrier type emerges. For example, once schema threading (DEF-013) can type a document field as a specific object shape, `.pick` / `.omit` on *that* field could complete without the global-`Object` blast radius. See `docs/LANGUAGE.md` § Operator autocomplete and `docs/specs/globals-generation.md` § Value-method augmentations.
+The `@koresar/jsmql/globals` value-method augmentations (developer-approved 2026-07-21) type the lodash value methods onto the built-in `Array<T>` / `String` / `Number` interfaces. So they autocomplete on a concretely-typed receiver. The project deliberately **leaves the object-receiver methods without completion**. The only interface to hang them on is `Object`, the base of *every* type. An augmentation of it would advertise them, misleadingly, on numbers, strings, arrays, and every other value in a file that imports the module. The `VALUE_METHOD_SKIP.object` set in `scripts/generate-globals.mjs` names them. The methods themselves work in JSMQL exactly as documented; they simply do not surface in IDE completion. Revisit this only if a narrower "plain object" carrier type emerges. For example, once schema threading (DEF-013) can type a document field as a specific object shape, `.pick` / `.omit` on *that* field could complete without the global-`Object` blast radius. See `docs/LANGUAGE.md` § Operator autocomplete and `docs/specs/globals-generation.md` § Value-method augmentations.

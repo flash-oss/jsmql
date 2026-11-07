@@ -52,8 +52,8 @@ export function filter(source: string): Record<string, unknown> {
 export function pipeline(source: string): unknown[] {
   const parsed = parse(source);
   // Which DOCUMENT the program becomes is phase 4's other answer, and no single
-  // step can see it. The compiler asks it of the WRITTEN program: a folded constant
-  // array — `[1,2].slice(2,2)` settles to `[]` — is a value, and `[]` as written is
+  // step can see it. The compiler asks it of the WRITTEN program. A folded constant
+  // array is a value: `[1,2].slice(2,2)` settles to `[]`. But `[]` as written is
   // the empty pipeline.
   if (shapeOf(parsed) !== "pipeline") throw notAPipeline((parsed as { pos: number }).pos);
   refuseNew(parsed);

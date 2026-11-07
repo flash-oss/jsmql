@@ -13,7 +13,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 ## Two pipeline forms
 
-JSMQL accepts two surface forms, and both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material. [LANGUAGE.md](../LANGUAGE.md#canonical-form--between-stages) recommends it, the README's tour uses it, and `test/realistic.test.ts` is written in it.
+JSMQL accepts two surface forms, and both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material. [LANGUAGE.md](../LANGUAGE.md#canonical-form--between-stages) recommends it, the README's tour uses it, and the author wrote `test/realistic.test.ts` in it.
 
 1. **`;`-separated (canonical)** — the parser returns a `Pipeline` whose `stmts` are the `;`-separated statements. `lowerProgram` lowers each in turn, and it threads the scope: a `let` declared in one statement is a name the next one reads, and a stage that replaced the document takes it away again.
 2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The decision](filter-mode.md)) reads it as a pipeline, whatever it holds, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
@@ -22,7 +22,7 @@ The two forms agree on stage shapes, the `$match` body rule, and sub-pipeline lo
 
 ## Chained stage calls
 
-A stage may also be written as a **chain link** on a stream: `<stream>.$match(<body>)`.
+A developer may also write a stage as a **chain link** on a stream: `<stream>.$match(<body>)`.
 This is the chain-position spelling of the `$match(<body>);` statement — same row
 registry, same body lowering, same placement rules.
 
@@ -44,10 +44,10 @@ nesting an `.aggregate((o) => { … })` block.
 - **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. An unknown `$`-name is the developer's own MQL, so it passes through as a stage (`$$.$mtach({ a: 1 })` → `[{ $mtach: { a: 1 } }]`), with no suggestion. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Date.noww(…);` names `Date.now`), or a global (`assertt(…);` names `assert(...)`).
 - **Arity** — one argument, the stage body. A `$`-named link is the developer's own MQL, so any other count takes HR2's plain form: `$$.$limit(5, 6)` → `{ $limit: [5, 6] }`.
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse errors; see [grammar.md](grammar.md).
-- Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link, because a value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).
-- **Placement reads a chain link as a stage.** A link carries the same `position` fact as the statement it stands for, and `place` checks it per link against what the chain has emitted. This is what makes `.$out("a").$limit(1)` fail exactly like `$out("a"); $limit(1);` does.
+- Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link. A value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).
+- **Placement reads a chain link as a stage.** A link carries the same `position` fact as the statement it stands for. `place` checks it per link against what the chain has emitted. This is what makes `.$out("a").$limit(1)` fail exactly like `$out("a"); $limit(1);` does.
 
-**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` (and `refStatement`, for a link spelled directly on `$$`) hands it to the same `statement` cell that its statement form uses, in whichever chain it stands in: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
+**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` (and `refStatement`, for a link spelled directly on `$$`) hands it to the same `statement` cell that its statement form uses. This holds in whichever chain the link stands: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
 
 ```js
 $$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
@@ -92,7 +92,7 @@ The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape
 
 `stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers in the positions that the row's `bodyPositions` states ([emit-pass.md § stage bodies](emit-pass.md)). A stage that the developer names is the developer's own MQL (HR2), and HR3 does not apply to it. So the compiler checks no key, count or value of its body, and the server checks it: `$limit(0)` → `[{ $limit: 0 }]`. The compiler checks the place of every stage through the row's `position` fact.
 
-The server limits a sort spec to `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). A JavaScript sort spelling is the compiler's lowering, so the stream sort methods refuse a longer sort through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md). A `$sort` stage that the developer writes passes through, and the server checks its keys.
+A sort spec has at most `SORT_KEY_LIMIT` keys on the server ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). A JavaScript sort spelling is the compiler's lowering, so the stream sort methods refuse a longer sort through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md). A `$sort` stage that the developer writes passes through, and the server checks its keys.
 
 The one stage-aware body rule is `$match`'s. An object literal is a query document, and it passes through verbatim (the escape hatch: `$match({ $expr: … })` forces the aggregation form). Anything else lowers through the filter road ([filter-mode.md § The filter road](filter-mode.md)), so `find()` and `$match` produce the same document for the same input. Other bodies lower through the value road, where accumulators, operators, field references and method chains compose.
 
@@ -100,25 +100,25 @@ The one stage-aware body rule is `$match`'s. An object literal is a query docume
 
 Under **HR1** (see [docs/LANG_RULES.md](../LANG_RULES.md)), a `$`-prefixed string literal typed in raw MQL passes through verbatim in **every** stage context: a stage path (`$unwind("$items")`), a stage-spec value (`$project({ x: "$y" })`), an array body (`$documents([{ a: "$x" }])`), a nested operator argument (`$project({ t: $concat("$a", "$b") })`). So pasted raw MQL (`[{ $unwind: "$items" }]`) round-trips, and the compiler never mangles it into the un-runnable `{ $unwind: { $literal: "$items" } }`. The `StringLiteral` case of the value road ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)) emits the value unchanged. A `"$…"` string in JSMQL is text, and the HR6 pass marks it (`text: true`); see [raw-mql-boundary.md](raw-mql-boundary.md). A marked string takes the placement below, the same as a run-time value.
 
-The `$literal` the compiler adds is HR1's gate for a value that arrives at RUN TIME — a `jsmql.compile` parameter, a template `${…}` — and for a text string of JSMQL. Such a value is a value, never syntax. The two forms share the `inject` pass, so they give one answer. A value that reads as MQL — a string that starts with `$`, a document with a `$` key — stays an `Injected` node. A DBRef is such a document, because the driver sends it as `{ $ref, $id, $db }`. MEASURED: in `$set`, the server reads that document as an operator call with two names, and refuses it. For such a node, `injectedPlacement` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) gives one of three answers:
+The `$literal` that the compiler adds is HR1's gate for two kinds of value. One kind arrives at RUN TIME, for example a `jsmql.compile` parameter or a template `${…}`. The other kind is a text string of JSMQL. Such a value is a value, never syntax. The two forms share the `inject` pass, so they give one answer. A value that reads as MQL — a string that starts with `$`, a document with a `$` key — stays an `Injected` node. A DBRef is such a document, because the driver sends it as `{ $ref, $id, $db }`. MEASURED: in `$set`, the server reads that document as an operator call with two names, and refuses it. For such a node, `injectedPlacement` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) gives one of three answers:
 
 - **`$literal`** — a slot that the server evaluates as an expression. In a stage body, the stage row's `evaluates` names these paths: `$set`'s and `$project`'s values, `$group`'s `_id`, `$lookup`'s and `$merge`'s `let`, `$replaceWith` and `$documents` as a whole, and the others the row states. MEASURED: each one takes `{ $literal: … }` and gives the literal value.
 - **as written** — a place that evaluates nothing: a query slot, an update document, and the inside of a `$literal(…)` that the developer writes. That `$literal` sets the Env's `envelope`, and under the envelope nothing is an operator or a field reference.
 - **refused** — every other slot, because there the value becomes part of the MQL. This covers a stage slot that the server reads as written (`$unwind`'s path, `$count`'s name, `$lookup`'s `from`, `$sort`'s order: MEASURED, each one refuses `{ $literal: … }`), an accumulator, a window function, and a statement. The message names the spelling to write in the source, with `…` in place of each value to pass.
 
-The position pass carries the stage and the path to such a slot as `written` on the value's `Where`, and every node below the slot carries it too. See [position-pass.md](position-pass.md).
+The position pass carries the stage and the path to such a slot as `written` on the value's `Where`. Every node below the slot carries it too. See [position-pass.md](position-pass.md).
 
-The query road applies the same rule to a raw query document ([filter.ts](../../src/compiler/emit/filter.ts), `injectedInQuery`). A field compares the value (`{ a: v }` becomes `{ a: { $eq: v } }` when `v` holds an operator). The operand of a comparison operator, one whose row states `liftsTo`, is the value as written. Every other operator reads its operand as a query or as MQL syntax (`$and`, `$not`, `$elemMatch`, `$near`), so the value is refused there. The same refusal applies to a whole predicate: `$match(${q})` and the whole filter `${q}`.
+The query road applies the same rule to a raw query document ([filter.ts](../../src/compiler/emit/filter.ts), `injectedInQuery`). A field compares the value (`{ a: v }` becomes `{ a: { $eq: v } }` when `v` holds an operator). The operand of a comparison operator, one whose row states `liftsTo`, is the value as written. Every other operator reads its operand as a query or as MQL syntax (`$and`, `$not`, `$elemMatch`, `$near`), so the compiler refuses the value there. The same refusal applies to a whole predicate: `$match(${q})` and the whole filter `${q}`.
 
 The compiler accepts `$ = "$sub"`, a field path that resolves to a document at run time, the same as `$ = $.sub` does, and it lowers to `{ $replaceWith: "$sub" }`. The compiler refuses `$ = "sub"`, because a string is not a document.
 
 ## Sub-pipelines
 
-`pipelineBody` lowers a stage body with a pipeline slot — `$lookup.pipeline`, `$unionWith.pipeline`, every value of `$facet` — as the statements it holds, in an Env that has crossed the stage's boundary (`Env.enter`). The row's `pipelineOver` fact says whether the body runs over the SAME documents (`$facet`: outer bindings readable, `$$.size()` the stamped field) or over ANOTHER collection (`$lookup`: the outer document reaches the body through `let`, which the row states as `takesLet`; `$unionWith`: nothing reaches it). A slot whose value is not a pipeline (`pipeline: $.someVar`) lowers as a value. Nested sub-pipelines nest the boundaries.
+`pipelineBody` lowers a stage body with a pipeline slot — `$lookup.pipeline`, `$unionWith.pipeline`, every value of `$facet` — as the statements it holds. It does this in an Env that has crossed the stage's boundary (`Env.enter`). The row's `pipelineOver` fact says whether the body runs over the SAME documents (`$facet`: outer bindings readable, `$$.size()` the stamped field) or over ANOTHER collection (`$lookup`: the outer document reaches the body through `let`, which the row states as `takesLet`; `$unionWith`: nothing reaches it). A slot whose value is not a pipeline (`pipeline: $.someVar`) lowers as a value. Nested sub-pipelines nest the boundaries.
 
 ## Accumulator / window operator positions
 
-An operator's row says where it may stand (`where`), and it states the lowering for each of those positions. A `$op(…)` call is the developer's own MQL, so a call in a position that the row does not list takes HR2's plain form, and the server judges it:
+An operator's row says where it may stand (`where`), and it states the lowering for each of those positions. A `$op(…)` call is the developer's own MQL. A call in a position that the row does not list takes HR2's plain form, and the server judges it:
 
 - A **window** operator (`$rank`, `$derivative`, …) stands in a `$setWindowFields` output slot. Elsewhere it passes through: `jsmql.expr("$rank()")` → `{ $rank: {} }`, and mongod refuses it, because `$rank` is not an expression operator.
 - An **accumulator-only** operator (`$push`, `$addToSet`, `$top`, …) stands in a `$group` field slot, a `$setWindowFields` output slot, or as an update operator in `jsmql.update`. Elsewhere it passes through the same way.
@@ -139,7 +139,7 @@ One input shape narrows that union. A **block-bodied arrow** (`({ $ }) => { $mat
 - **An array return type** does not settle it either. `[$match(…)]` is a Pipeline, but `[$.a, $.b]` is an array-valued Filter, and both are `any[]`. The stage-candidate test that separates them is an AST check, not a type-level one.
 - A **string** and a **template tag** are opaque by construction.
 
-Those keep the full union. A caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`, which are typed to their shape outright.
+Those keep the full union. A caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`. These two have types that state their shape exactly.
 
 `validate()` reports pipeline errors as `CODEGEN_ERROR` (not `SYNTAX_ERROR`). It catches them at the codegen stage, after the AST parses cleanly.
 

@@ -1,13 +1,11 @@
 // test/fold-consistency.test.ts — the HR3 gate for constant folding.
 //
 // A folded method (the constant engine, src/compiler/passes/evaluate.ts) has TWO readings of the same
-// semantics: the compile-time JS fold, and the server-side MQL lowering that a
-// runtime receiver would take. If they disagree, folding would emit a value the
-// server never would. This suite proves they agree: for each foldable method ×
-// a battery of inputs it compares the compile-time fold to the MQL lowering run
-// on a real mongod (through `$documents`, so no collection write). Any method/shape
-// that cannot be proven equal must be refused by the interpreter (→ runtime
-// fallback), never shipped.
+// semantics. One is the compile-time JS fold. The other is the server-side MQL lowering that a runtime receiver
+// would take. If they disagree, folding would emit a value the server never would. This suite proves that they
+// agree. For each foldable method × a battery of inputs, it compares the compile-time fold to the MQL lowering.
+// The lowering runs on a real mongod (through `$documents`, so no collection write). The interpreter must
+// refuse any method/shape that cannot be proven equal (→ runtime fallback), and never ship it.
 //
 // It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
 // SKIPS ITSELF (green) when it is not reachable, so `npm test` stays green without
@@ -322,9 +320,9 @@ for (const v of [
 ]) {
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".compact()" });
 }
-// A predicate whose value is falsy-but-MQL-truthy ("" / 0) on every predicate-run
-// method — the case where raw MQL truthiness and JS truthiness disagree, so the
-// fold and the server lowering have to be checked against each other.
+// A predicate whose value is falsy-but-MQL-truthy ("" / 0) on every predicate-run method. This is the case
+// where raw MQL truthiness and JS truthiness disagree. So the test must check the fold and the server lowering
+// against each other.
 const FALSY_PRED_ARRAY = [{ ok: "y" }, { ok: "" }, { ok: 0 }, { ok: false }, { ok: 1 }];
 for (const call of [
   '.filter("ok")',
@@ -340,10 +338,9 @@ for (const call of [
   arrayCases.push({ lit: JSON.stringify(FALSY_PRED_ARRAY), val: FALSY_PRED_ARRAY, call });
 }
 
-// Distinguishes "folded to a value" from "was not folded" (stayed a runtime
-// binding). A non-fold is a safe outcome — the server runs its own lowering —
-// so the test skips it; it only asserts on folds, which is where divergence
-// would be a real bug.
+// Distinguishes "folded to a value" from "was not folded" (stayed a runtime binding). A non-fold is a safe
+// outcome, because the server runs its own lowering. So the test skips it. It asserts only on folds, where a
+// divergence would be a real bug.
 const NOT_FOLDED = Symbol("not-folded");
 
 /** The compile-time folded value of `<lit><call>`, or NOT_FOLDED if it stayed runtime. */
@@ -378,11 +375,10 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   // The contract is a VALUE contract: wherever the MQL lowering yields a value, the
   // fold must yield the same value.
   //
-  // A case the server REFUSES has no value to disagree with — but it is also a document
-  // jsmql emitted and the server would not run, which HR3 forbids, so it cannot simply
-  // be skipped. Eight `.concat("!", "?")` cases hid behind that skip for exactly as long
-  // as it was silent. Each refusal is therefore named here, with the reason it is
-  // allowed to stand, and a shape that is not on this list turns the suite red.
+  // A case that the server REFUSES has no value to disagree with. But it is also a document that jsmql emitted
+  // and the server would not run, which HR3 forbids. So the test cannot simply skip it. Eight `.concat("!",
+  // "?")` cases hid behind that skip for exactly as long as it was silent. Each refusal is therefore named here
+  // with the reason it is allowed to stand. A shape that is not on this list turns the suite red.
   const SERVER_REFUSES: Readonly<Record<string, string>> = {};
   const SERVER_ERROR = Symbol("server-error");
   /**
@@ -399,9 +395,8 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
   }
 
-  // A case that early-returns asserts NOTHING and still reads as green. A count of the
-  // ones that actually compared is what stops the suite from an empty result as cases are
-  // added — see the floor below.
+  // A case that early-returns asserts NOTHING and still reads as green. A count of the ones that actually
+  // compared stops the suite from an empty result as cases are added. See the floor below.
   let compared = 0;
   const refused: string[] = [];
   const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases, ...dateCases];
@@ -444,14 +439,13 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
       expect(compared).toBe(0);
       return;
     }
-    // Some early-returns are legitimate — a method whose fold is deliberately withheld,
-    // or an input its lowering rejects. A large share of them is not, and would mean the
-    // gate stopped its work, and nothing went red.
-    // Every remaining non-fold is withheld ON PURPOSE, and each one names its reason: a
-    // read that can find nothing (.at / .head / .last / .nth / .find), a zipWith or a
-    // zipObject over lists of unequal length, a fold whose answer is -0 (which has no
-    // literal spelling), and a `.flat()` or a `.min()` over a receiver whose elements are
-    // not one comparable type. Measured 2026-09-09: 756 of 785 compare.
+    // Some early-returns are legitimate — a method whose fold is deliberately withheld, or an input its
+    // lowering rejects. A large share of them is not, and would mean the gate stopped its work, and nothing
+    // went red. Every remaining non-fold is withheld ON PURPOSE, and each one names its reason. The reasons
+    // are: a read that can find nothing (.at / .head / .last / .nth / .find); a zipWith or a zipObject over
+    // lists of unequal length; a fold whose answer is -0 (which has no literal spelling); a `.flat()` or a
+    // `.min()` over a receiver whose elements are not one comparable type. Measured 2026-09-09: 756 of 785
+    // compare.
     expect(compared).toBeGreaterThanOrEqual(Math.floor(ALL_CASES.length * 0.95));
   });
 

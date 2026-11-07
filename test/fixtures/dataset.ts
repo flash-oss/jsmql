@@ -7,9 +7,9 @@
 // every run. `DATASET_HASH` fingerprints the content; the seeder re-injects only
 // when the hash changes (see test/fixtures/instance.ts).
 //
-// Order line-item prices and order totals are COMPUTED from the product catalogue
-// (see `buildOrders`), not hand-typed, so they can never drift out of sync. A
-// `validateDataset()` cross-check runs at seed time as a final guard.
+// The code COMPUTES order line-item prices and order totals from the product catalogue (see `buildOrders`), not
+// by hand, so they can never drift out of sync. A `validateDataset()` cross-check runs at seed time as a final
+// guard.
 //
 // EXPAND THIS FREELY. The dataset is meant to grow as new queries need realistic
 // data. After any edit you MUST re-insert it into mongod (`npm run fixture:seed`)
@@ -20,13 +20,11 @@ import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
 
 // ── Deterministic ObjectIds ────────────────────────────────────────────────
-// 24-hex id with a fixed, PLAUSIBLE timestamp prefix (0x65000000 = 2023-09-12)
-// followed by a collection tag (a=users b=products c=orders d=shipments
-// e=reviews) and the index, for example id("a", 1) -> 650000000000000000000a1.
-// The plausible prefix matters: jsmql's `0x…` ObjectId literal rejects ids
-// whose embedded timestamp predates 2009 (MongoDB's first release), so an
-// all-zero prefix would make "find by _id through the 0x literal" impossible
-// to query. Readable in output and stable forever.
+// A 24-hex id has a fixed, PLAUSIBLE timestamp prefix (0x65000000 = 2023-09-12). A collection tag follows
+// the prefix (a=users b=products c=orders d=shipments e=reviews), then the index, for example id("a", 1) ->
+// 650000000000000000000a1. The plausible prefix matters: jsmql's `0x…` ObjectId literal rejects ids whose
+// embedded timestamp predates 2009 (MongoDB's first release). So an all-zero prefix would make "find by _id
+// through the 0x literal" impossible to query. Readable in output and stable forever.
 const TS_PREFIX = "65000000";
 const id = (tag: string, n: number) => new ObjectId(TS_PREFIX + (tag + n).padStart(16, "0"));
 export const ID = {
@@ -179,12 +177,10 @@ export const users = [
     tags: ["vip", "beta"],
     visits: 77,
   },
-  // Boundary user: `email` is ABSENT (u5's is present-but-null, so the two
-  // the missing path and the null path both have a document). String methods derive lengths
-  // through `$strLenCP`, which aborts the query on a missing input, so this
-  // document is what proves the coercion actually holds on a real server.
-  // Deliberately archived + inactive, and with no email at all, so it falls
-  // outside every existing active/non-null-email assertion.
+  // Boundary user: `email` is ABSENT (u5's is present-but-null, so the two the missing path and the null path
+  // both have a document). String methods derive lengths through `$strLenCP`, which aborts the query on a
+  // missing input. So this document proves that the coercion holds on a real server. Deliberately archived +
+  // inactive, and with no email at all, so it falls outside every existing active/non-null-email assertion.
   {
     _id: ID.user(9),
     name: "Karen Spärck Jones",
@@ -594,16 +590,15 @@ function buildOrders() {
       shippedAt: o.shippedAt === null ? null : D(o.shippedAt),
       items,
       total,
-      // Nested field with a HYPHENATED key — an external-system reference id.
-      // A correlation on `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces
-      // the `$lookup.let` var name to be derived from the segment `ext-id`, whose
-      // hyphen is illegal in a MongoDB variable name — the regression this exercises
-      // end-to-end on a real server. See integration test "hyphenated correlated let".
+      // Nested field with a HYPHENATED key — an external-system reference id. A correlation on
+      // `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces the `$lookup.let` var name to derive from
+      // the segment `ext-id`. The hyphen of that segment is illegal in a MongoDB variable name. This test
+      // exercises that regression end-to-end on a real server. See integration test "hyphenated correlated
+      // let".
       meta: { "ext-id": `X-${o.n}` },
-      // TOP-LEVEL bracket-accessed field. `$["ext-code"]` in a correlated filter
-      // exercises a DIFFERENT code path than the nested `meta["ext-id"]`: the bare
-      // root `$` must contribute no path segment, else the field path comes out as
-      // `.ext-code` (leading dot) which mongod rejects. See integration test
+      // TOP-LEVEL bracket-accessed field. `$["ext-code"]` in a correlated filter exercises a DIFFERENT code
+      // path than the nested `meta["ext-id"]`. The bare root `$` must contribute no path segment. Otherwise the
+      // field path comes out as `.ext-code` (leading dot), which mongod rejects. See integration test
       // "top-level bracket-accessed correlated field".
       "ext-code": `EC-${o.n}`,
     };

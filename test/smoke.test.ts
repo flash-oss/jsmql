@@ -4,25 +4,25 @@
  *
  *   1. The `src/` tree stays in TypeScript's strippable subset, so the source
  *      runs as-is on Node 22.18+ / 24.3+ through native type stripping (no flag,
- *      no transpiler — type stripping was unflagged in Node 22.18.0 LTS and
- *      in 24.3.0, and marked stable in 25.2.0) — required for Deno/Bun
- *      parity. Vitest transforms TS through Vite's loader, which happily
- *      compiles `enum`, `namespace`, parameter properties, decorators and the like
- *      — exactly the constructs the strippable subset bans. The only honest
- *      test is to invoke the real Node stripper.
+ *      no transpiler. Node 22.18.0 LTS and 24.3.0 unflagged type stripping,
+ *      and Node 25.2.0 marked it stable). Deno/Bun parity requires this.
+ *      Vitest transforms TS through the loader of Vite. This loader compiles
+ *      `enum`, `namespace`, parameter properties, decorators and the like
+ *      without complaint. These are the constructs that the strippable subset
+ *      bans. The only honest test is to invoke the real Node stripper.
  *
  *   2. The built `dist/index.js` actually loads as ESM and produces correct
  *      MQL. Vitest tests resolve `src/index.ts` directly, never the built
- *      output, so a broken `tsconfig` or `exports` field can ship despite a
- *      green `npm test`. Skipped when `dist/` is absent (the default during
- *      local development) or older than `src/` (a build that tests old code
- *      proves nothing); active in CI / `npm run smoke:dist` after a build.
+ *      output. So a broken `tsconfig` or `exports` field can ship despite a
+ *      green `npm test`. The test skips when `dist/` is absent (the default during
+ *      local development) or older than `src/` (a build of old code proves
+ *      nothing). It is active in CI / `npm run smoke:dist` after a build.
  *
  *   3. The built `dist/cjs/index.cjs` loads through `require()` and produces the
  *      same MQL across all three call shapes. This is the `require` half of
- *      the dual ESM/CJS package — Node 14+ CJS consumers depend on it, and
- *      the bundle step in `scripts/build-cjs.mjs` is easy to break, and
- *      tsc does not see it. Same skip rule as the ESM case.
+ *      the dual ESM/CJS package. Node 14+ CJS consumers depend on it.
+ *      The bundle step in `scripts/build-cjs.mjs` is easy to break, and
+ *      tsc does not see it. The same skip rule applies as for the ESM case.
  */
 
 import { describe, it, expect } from "vitest";
@@ -91,15 +91,15 @@ describe("smoke: strippable-TS invariant", () => {
     // The mongoose plugin is a separate published entry point, so it gets
     // the same strippable-TS guarantee as src/index.ts. The `import type {}
     // from "mongoose"` anchor and the `declare module "mongoose"` block
-    // below it are both type-only constructs that the Node stripper drops
-    // — this case proves it.
+    // below it are both type-only constructs. The Node stripper drops them.
+    // This case proves it.
     const result = spawnSync(process.execPath, ["src/mongoose.ts"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
 
   it("`node src/cli.ts` (the bin source) strips and runs without errors", () => {
-    // The CLI is bundled to dist/cjs/cli.cjs for shipping, but the source must
-    // also satisfy the strippable-TS invariant so contributors can run it
+    // The build bundles the CLI to dist/cjs/cli.cjs for shipping. The source must
+    // also satisfy the strippable-TS invariant, so contributors can run it
     // directly. `--help` exercises the full module load + arg parse and exits 0.
     const result = spawnSync(process.execPath, ["src/cli.ts", "--help"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
@@ -145,9 +145,9 @@ describe("smoke: built dist", () => {
     () => {
       // Mirrors the ESM case above but exercises the CommonJS bundle that
       // ships under the `require` condition of `package.json#exports`.
-      // This targets `node14`. The script stays syntax-conservative (no
-      // template literals besides the outer one, no optional chaining),
-      // so the same script can also run on the lowest engine this project
+      // This targets `node14`. The script uses conservative syntax (no
+      // template literals except the outer one, no optional chaining).
+      // So the same script can also run on the lowest engine that this project
       // supports.
       const script = `
         const { jsmql } = require(${JSON.stringify(cjsPath)});
@@ -178,13 +178,13 @@ describe("smoke: built dist", () => {
   it.skipIf(!DIST_FRESH || !existsSync(cliCjs))(
     "dist/cjs/cli.cjs runs as the jsmql bin (stdin → MQL) and reports its version",
     () => {
-      // Exercises the built executable end-to-end: the esbuild bundle, the
-      // preserved shebang, and the version `define`. spawnSync drives `node
-      // dist/cjs/cli.cjs` (not the bare path) so the test is independent
-      // of the file's exec bit.
+      // This exercises the built executable end-to-end: the esbuild bundle, the
+      // preserved shebang, and the version `define`. spawnSync runs `node
+      // dist/cjs/cli.cjs` (not the bare path), so the test does not depend
+      // on the exec bit of the file.
       const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
       expect(compiled.status, compiled.stderr).toBe(0);
-      // The bin writes JAVASCRIPT, so the output is read the way a developer reads it —
+      // The bin writes JAVASCRIPT, so the test reads the output as a developer reads it:
       // by an evaluation of it. The printer exists to stop a parse of it as JSON.
       expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
 
@@ -204,13 +204,13 @@ describe("smoke: built dist", () => {
     "mongoose module augmentation in src/mongoose.ts compiles against real mongoose types",
     () => {
       // Type-only validation: make sure that the `declare module "mongoose"` block at
-      // the bottom of src/mongoose.ts merges with mongoose's real `Model<...>`
-      // interface and accepts a JSMQL string / arrow at every patched slot.
-      // mongoose is pinned at `"*"` in devDependencies, so every fresh
-      // `npm install` pulls the latest published mongoose and this case
+      // the bottom of src/mongoose.ts merges with the real `Model<...>` interface of
+      // mongoose and accepts a JSMQL string / arrow at every patched slot.
+      // The devDependencies pin mongoose at `"*"`, so every fresh
+      // `npm install` pulls the latest published mongoose. This case
       // catches augmentation drift against new mongoose generics before
       // users hit it. The skip guard stays for degraded environments where
-      // node_modules/mongoose is not there for some reason.
+      // node_modules/mongoose is absent.
       const result = spawnSync(
         resolve(ROOT, "node_modules/.bin/tsc"),
         ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.json")],
@@ -230,9 +230,9 @@ describe("smoke: built dist", () => {
     () => {
       // Type-only validation of the ambient-globals completion surface: the
       // Array<T> / String / Number prototype augmentations complete and chain on
-      // concretely-typed receivers, value-method typos error (this proves the
+      // concretely-typed receivers. Value-method typos error (this proves the
       // surface is not silently `any`), and a bare `any` receiver stays
-      // permissive. It has its own tsconfig (no mongoose), so it runs whenever
+      // permissive. It has its own tsconfig (no mongoose), so it runs when
       // tsc is present, whether or not mongoose is installed. See
       // docs/specs/globals-generation.md.
       const result = spawnSync(tscBin, ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.globals.json")], {

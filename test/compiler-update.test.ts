@@ -1,5 +1,5 @@
 // The update-document target: the object form of an update,
-// `updateOne(filter, { $set: … })`. Each document is asserted as MQL. When a mongod
+// `updateOne(filter, { $set: … })`. The suite asserts each document as MQL. When a mongod
 // is reachable, the suite applies the update to a fixture with `updateMany` and
 // compares the result with what JavaScript would leave behind. This suite self-skips
 // (reports green) without a server, with the all-or-nothing guard. See

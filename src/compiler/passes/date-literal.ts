@@ -1,6 +1,6 @@
-// A DATE LITERAL: a date that the source spells with literal parts. The constant engine
-// reads it before any lowering, because the server cannot compute some of these:
-// `{ $toDate: 0 }` fails there (the driver sends an integer as an int), so the lowering of
+// A DATE LITERAL is a date that the source spells with literal parts. The constant engine
+// reads it before any lowering. The server cannot compute some of these:
+// `{ $toDate: 0 }` fails there (the driver sends an integer as an int). So the lowering of
 // `Date(0)` has no value that the interpreter can give.
 //
 //   Date(0)                              the instant at millisecond 0
@@ -8,10 +8,10 @@
 //   Date(2026, 1, 1)                     the parts, in UTC
 //   Date.UTC(2026, 1, 1)                 the same instant, as a number of milliseconds
 //
-// The calendar-parts form counts months from ZERO and rolls an out-of-range part over,
-// exactly as JavaScript does: `Date(2020, 1, 1)` is February, and `Date(2024, 12, 1)`
-// is January 2025. The runtime cell adds one for `$dateFromParts`, which counts from one
-// and rolls over the same way. See docs/specs/constant-engine.md.
+// The calendar-parts form counts months from ZERO, as JavaScript does. It rolls an out-of-range
+// part over: `Date(2020, 1, 1)` is February, and `Date(2024, 12, 1)` is January 2025. The runtime
+// cell adds one for `$dateFromParts`. That operator counts from one and rolls over the same way.
+// See docs/specs/constant-engine.md.
 
 import type { Expr } from "../../registry/ast.ts";
 import { canonicalBsonName } from "../../bson.ts";

@@ -29,10 +29,10 @@ export class UnknownIdentifierError extends CodegenError {
 }
 
 /**
- * Throw a `CodegenError` flagged as a jsmql bug. Use for invariants the parser is supposed
- * to uphold. If a user ever sees one of these messages, an error got past the
- * parser's validation, and the user must report it. The helper keeps the wording consistent across
- * every internal-only throw site, so a search finds them easily.
+ * Throw a `CodegenError` flagged as a jsmql bug. Use for invariants that the parser must
+ * uphold. If a user ever sees one of these messages, an error got past the
+ * validation of the parser, and the user must report it. The helper keeps the wording
+ * consistent across every internal-only throw site, so a search finds them easily.
  */
 export function internalError(detail: string, pos: number = 0): never {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);

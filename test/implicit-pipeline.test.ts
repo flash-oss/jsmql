@@ -105,13 +105,11 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
 });
 
 describe("implicit pipeline — single-statement update-filter inputs always wrap as pipelines", () => {
-  // `jsmql()` always returns an aggregation-pipeline array for update-filter
-  // inputs — and single-statement ones without a trailing `;` too — so the
-  // output is safe to pass directly to `db.coll.updateOne(filter, update)`.
-  // Bare-document form would silently treat RHS expressions as literals; the
-  // pipeline form evaluates them as aggregation expressions. Callers who want
-  // the bare-doc shape (for example to embed it in a hand-written stage body) use
-  // `jsmql.expr()` — see test/update-filter.test.ts's `lex regression checks`.
+  // `jsmql()` always returns an aggregation-pipeline array for update-filter inputs, and for single-statement
+  // ones without a trailing `;` too. So the output is safe to pass directly to `db.coll.updateOne(filter,
+  // update)`. Bare-document form would silently treat RHS expressions as literals; the pipeline form evaluates
+  // them as aggregation expressions. Callers who want the bare-doc shape (for example to embed it in a
+  // hand-written stage body) use `jsmql.expr()` — see test/update-filter.test.ts's `lex regression checks`.
   it("bare assignment without `;` wraps as a one-stage pipeline", () => {
     expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
   });

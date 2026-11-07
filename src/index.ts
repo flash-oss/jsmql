@@ -1,7 +1,7 @@
-// The public API: the `jsmql` callable and its properties, polymorphic over the
-// three call shapes — a string, an arrow, a template tag — and over the four
-// shapes MQL takes: a Filter (`find`), a Pipeline (`aggregate`), a bare expression
-// (`jsmql.expr`) and an update document (`jsmql.update`). Every entry runs the
+// The public API: the `jsmql` callable and its properties. It is polymorphic over the
+// three call shapes — a string, an arrow, a template tag. It is also polymorphic over
+// the four shapes MQL takes: a Filter (`find`), a Pipeline (`aggregate`), a bare
+// expression (`jsmql.expr`) and an update document (`jsmql.update`). Every entry runs the
 // compiler in `src/compiler/` over the registry in `src/registry/`; this file
 // only turns the caller's input into source and values, and the compiler's
 // errors into `validate()` results. See docs/LANGUAGE.md and
@@ -30,9 +30,9 @@ import { CodegenError, UnknownIdentifierError } from "./errors.ts";
 import { stringify } from "./stringify.ts";
 
 export { CodegenError, UnknownIdentifierError, ParseError, LexError };
-// The nine types the language can spell, re-exported from the peer `bson` so a caller
-// who writes `import { ObjectId } from "@koresar/jsmql"` provably gets the copy jsmql
-// resolved. See docs/specs/bson-types.md.
+// The nine types the language can spell. This file re-exports them from the peer `bson`.
+// A caller who writes `import { ObjectId } from "@koresar/jsmql"` thus provably gets the
+// copy that jsmql resolved. See docs/specs/bson-types.md.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "./bson.ts";
 import { bsonTagOf, isBytes, isDate, isMap, isPlainObject, isRegExp } from "./bson.ts";
 
@@ -95,7 +95,7 @@ const fnSource = (fn: (...args: never[]) => unknown): string => Function.prototy
 
 /**
  * Run `run`. A compile error that it throws gets the line, the column and the source line
- * of its `.pos` at the end of its message, so a test runner shows where the fault is.
+ * of its `.pos` at the end of its message. So a test runner shows where the fault is.
  */
 function framed<T>(src: string, run: () => T): T {
   try {
@@ -127,7 +127,7 @@ function framed<T>(src: string, run: () => T): T {
  * same conversions, so the compiler and `jsmql.stringify` see the value that the
  * server gets. A mongoose document, subdocument, array or Buffer each has a
  * `toBSON()`. The walk refuses a built-in object that the driver sends as `{}` or
- * as index keys — a Set, an Error, an ArrayBuffer — because that is never its data.
+ * as index keys (a Set, an Error, an ArrayBuffer). That is never its data.
  * See docs/specs/function-form-params.md § The value the driver sends.
  *
  * The walk RECURSES, because a value with no MQL representation has no MQL
@@ -355,10 +355,9 @@ function received(program: Program): { what: string; hint: string } {
 /**
  * The defect inside a program that is a FILTER, found by lowering it as one.
  *
- * A program is judged for its shape only once it is correct. A value such as
+ * The compiler judges the shape of a program only once the program is correct. A value such as
  * `Date("nope")` is wrong under every entry. A message that tells the developer only to
- * call a different entry would just send the developer to meet the same error
- * on the next run. This function returns null when the only thing wrong is the
+ * call a different entry would send the developer to the same error on the next run. This function returns null when the only thing wrong is the
  * shape.
  *
  * The function searches only the filter reading, because that is the shape a
@@ -446,8 +445,8 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
       // A BRACKETED program is a pipeline the developer wrote as one, whatever it holds
       // (`shapeOf`). The lowering names a wrong element, not the entry.
       if (shapeOf(injected) !== "pipeline") {
-        // A program is judged for its SHAPE only once it is correct: this reports a
-        // defect the developer must fix under every entry before the entry mismatch.
+        // The compiler judges the SHAPE of a program only once the program is correct.
+        // This reports a defect that the developer must fix under every entry before the entry mismatch.
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);

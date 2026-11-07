@@ -29,7 +29,7 @@ mkdirSync(OUT_DIR, { recursive: true });
 // The CLI bundle (`cli` entry → dist/cjs/cli.cjs) inlines the package version
 // through `define`, so the shipped binary reports it and never reads package.json at runtime.
 // src/cli.ts guards the identifier with `typeof` so the unbundled `node src/cli.ts` run
-// (no define) still works, returning a development fallback.
+// (no define) still works and returns a development fallback.
 const pkgVersion = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
 
 await build({

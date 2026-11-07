@@ -3001,15 +3001,16 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
-    // collection, and refuses it in every other body. jsmql writes that one shape
-    // from `$$.push(…)`, so the refusal names the sugar, not a stage
-    // position the server would refuse in its turn.
+    // collection, and refuses it in every other body. JSMQL writes that one shape
+    // from `$$.push(…)`. So the refusal names the sugar, not a stage
+    // position that the server would refuse in its turn.
     placement: {
       container: "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];')."
     },
     // The `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars are JSMQL code, and they read this
     // rule (`documentsStages` in statement.ts): a written element that is not a document
-    // has no MQL in them. A `$documents(…)` call is the developer's own, and is not checked.
+    // has no MQL in them. A `$documents(…)` call is the developer's own. The compiler
+    // does not check it.
     stream: {
       args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
@@ -3028,7 +3029,7 @@ var NAMES = {
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
-    // `$unionWith` accepts — both run — and a facet branch refuses it at any depth.
+    // `$unionWith` accepts. Both run. A facet branch refuses it at any depth.
     // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
     // literal-documents form alone.
     bansNested: ["$documents"],
@@ -3848,19 +3849,20 @@ var NAMES = {
     on: "string",
     returns: "bool",
     where: ["value", "filter"],
-    // A field against a regex LITERAL → a live RegExp the driver sends as a BSON regex, which
-    // is what an index reads. A string pattern or a computed regex keeps the expression fallback.
+    // A field against a regex LITERAL gives a live RegExp that the driver sends as a BSON
+    // regex, which is what an index reads. A string pattern or a computed regex keeps the
+    // expression fallback.
     //
     // `{ s: { $regex: /re/ } }`, not the shorter `{ s: /re/ }`. Both select the same
-    // documents at every query site, MEASURED on mongod 8.3.7 — find, $match, $not,
-    // $nor, a $lookup / $unionWith / $facet sub-pipeline, $graphLookup's
-    // restrictSearchWithMatch, an update filter, distinct, a view. The operator form
-    // is the one that survives where they differ, and both differences are positions
-    // jsmql emits into: a SIBLING operator on the same field
-    // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object. An element of `$in` takes the bare form
-    // instead, because the server refuses an operator document there. `queryOrMissing`
-    // in src/registry/vocabulary.ts writes that form.
+    // documents at every query site, MEASURED on mongod 8.3.7: find, $match, $not,
+    // $nor, a $lookup / $unionWith / $facet sub-pipeline, the restrictSearchWithMatch of
+    // $graphLookup, an update filter, distinct and a view. The operator form
+    // is the one that survives where they differ. Both differences are positions
+    // that JSMQL emits into. One is a SIBLING operator on the same field
+    // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for).
+    // The other is `$elemMatch`, which needs an object. An element of `$in` takes the
+    // bare form instead, because the server refuses an operator document there.
+    // `queryOrMissing` in src/registry/vocabulary.ts writes that form.
     filter: {
       args: { sig: "regexp", exact: 1, slotType: { 0: "regex" } },
       emit: ({ recv, args, pathOf: pathOf3, literal: literal2, orMissing }) => {
@@ -4093,9 +4095,9 @@ var NAMES = {
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
-    // A regex with no anchor — indexable where the planner can use one, and unlike
-    // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
-    // run-time needle cannot go into a pattern.
+    // A regex with no anchor. The planner can use an index for it where one applies.
+    // Unlike `$indexOfCP`, it does not abort on a non-string value. It takes a literal
+    // needle only, because a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1, slotType: { 0: "string" }, slotHint: { 0: ` ${MEMBERSHIP_IN_AN_ARRAY}` } },
       emit: ({ recv, args, pathOf: pathOf3, orMissing }) => {
@@ -4263,8 +4265,8 @@ var NAMES = {
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(\u2026);')."
         ),
         // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
-        // other one; `$concatArrays` takes arrays only. Each argument takes the shape its
-        // proof allows (`concatOperand`), and each element of a spread argument follows
+        // other one. `$concatArrays` takes arrays only. Each argument takes the shape that
+        // its proof allows (`concatOperand`). Each element of a spread argument follows
         // the same rule (`concatSpread`). MEASURED: the server folds a run of ADJACENT
         // constant operands during the optimisation and raises there on a wrong type. So
         // a constant without the `[x]` wrap stops the pipeline before any branch runs.
@@ -4531,8 +4533,8 @@ var NAMES = {
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
         rest: "any",
-        // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
-        // typo far more often than an intent, so the count stays closed but the start opens.
+        // JavaScript reads a negative deleteCount as 0. `.toSpliced(1, -1)` is a
+        // typo far more often than an intent. So the count stays closed, but the start opens.
         slotRange: { 1: [0, Infinity] }
       },
       emit: ({ recv, args, value, bind }) => {
@@ -4548,8 +4550,8 @@ var NAMES = {
             vars: { [arr.as]: recv },
             in: {
               // A `$let` variable cannot see a sibling in its own `vars` block (measured:
-              // the server refuses the read), and a start counted from the end reads the
-              // receiver's length, so each binding sits one level inside the last.
+              // the server refuses the read). A start counted from the end reads the
+              // receiver's length. So each binding sits one level inside the last.
               $let: {
                 vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size2) },
                 in: {
@@ -4686,8 +4688,8 @@ var NAMES = {
     stream: {
       args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string"] } },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
-      // Its elements are what the links after it work on — a later callback's
-      // parameter is the unwound field, and the documents keep their other fields.
+      // Its elements are what the links after it work on. The parameter of a later
+      // callback is the unwound field, and the documents keep their other fields.
       emit: ({ args, fieldPath: fieldPath3, unwound }) => {
         const path = fieldPath3(args[0]);
         unwound(path.slice(1));
@@ -4740,7 +4742,7 @@ var NAMES = {
     call: true,
     passesNull: true,
     on: ["array", "stream"],
-    // MEASURED: three parameters as a value, exactly one as a chain link — the
+    // MEASURED: three parameters as a value, exactly one as a chain link. The
     // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
     params: { value: ["value", "index", "receiver"], stream: ["value"] },
     iterateeSlots: {
@@ -7541,9 +7543,9 @@ var NAMES = {
     returns: "number",
     neverNull: true,
     where: ["value"],
-    // Per family, because one answer for both states a legality the stream form
-    // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
-    // at all. A flat `viaFallback` would promise that the second merely scans.
+    // The cell is per family. One answer for both would state a legality that the stream form
+    // does not have: `$.tags.size() < 5` scans, but `$$.size() > 1` does not compile
+    // at all. A flat `viaFallback` would promise that the second only scans.
     filter: {
       perFamily: {
         array: viaFallback,
@@ -7554,7 +7556,7 @@ var NAMES = {
     },
     expr: {
       perFamily: {
-        // `_.size(undefined)` is 0: a receiver that may be missing is read as the empty
+        // `_.size(undefined)` is 0: the cell reads a receiver that may be missing as the empty
         // array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
@@ -8837,8 +8839,8 @@ var NAMES = {
     returns: "bool",
     neverNull: true,
     where: ["value", "filter"],
-    // A field against two constant bounds is a range on one field — the clause an
-    // index answers, and the document a MongoDB developer writes by hand.
+    // A field against two constant bounds is a range on one field. An index answers this clause.
+    // A MongoDB developer writes the same document by hand.
     filter: {
       args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, pathOf: pathOf3, constant, orMissing }) => {
@@ -9437,11 +9439,11 @@ var NAMES = {
     doc: "Performs text search.",
     category: "text",
     where: ["filter"],
-    // MEASURED: the server refuses a '$match' with '$text' anywhere in its body — at the
-    // top or under an '$and' — unless that '$match' is the pipeline's FIRST stage. Inside a
-    // '$facet' branch it refuses the stage outright, because the branch gets no text score.
-    // Both facts are the stage's, so `place` reads them off the body's keys, not the
-    // stage name's row.
+    // MEASURED: the server refuses a '$match' with '$text' anywhere in its body, at the
+    // top or under an '$and'. The one exception is a '$match' that is the pipeline's FIRST stage.
+    // Inside a '$facet' branch the server refuses the stage outright, because the branch gets no
+    // text score. Both facts belong to the stage, so `place` reads them off the keys of the body,
+    // not off the row of the stage name.
     only: ["stageFirst"],
     forbiddenIn: ["$facet"],
     placement: {
@@ -10622,10 +10624,9 @@ var NAMES = {
     token: "DoubleDollar",
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
-    // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot gets a refusal, so `expr` is a refusal even though `$$.size()` IS a
-    // value: that value is the `length` row, reached through `family: "stream"`, not
-    // this root.
+    // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). The compiler refuses bare `$$` in a
+    // value slot, so `expr` is a refusal. `$$.size()` IS a value, but that value is
+    // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => \u2026)'."),
     expr: unsupported(
@@ -10708,8 +10709,8 @@ var NAMES = {
   // One factory, because the nine differ in three cells and agree on every other.
   // Each has the SAME three-way meaning `ObjectId` has. No argument mints a value where
   // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
-  // builds, and the cell refuses a value that the type CANNOT hold. A value of the
-  // document is refused, because its own conversion method says the same thing
+  // builds. The cell refuses a value that the type CANNOT hold. The cell also refuses a value
+  // of the document, because its own conversion method says the same thing
   // (`.toLong()`). JSMQL writes `X(…)`, with no `new` (HR8); jsmql.stringify writes the
   // driver's `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
@@ -10870,8 +10871,8 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
-    // JavaScript method does, and the cell counts one that is there as it is.
+    // `$strLenCP` aborts on null. A receiver that may be missing answers null, as a
+    // JavaScript method does. The cell counts a receiver that is there as it is.
     expr: {
       args: { sig: "", none: true },
       emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
@@ -10927,8 +10928,8 @@ var NAMES = {
     group: unsupported("'Date.UTC()' is not an accumulator."),
     window: unsupported("'Date.UTC()' is not a window function.")
   }),
-  // The parser accepts the name so it gets an answer, and every position refuses it: the
-  // range operator says the same thing in fewer characters, and one capability gets one spelling.
+  // The parser accepts the name so it gets an answer, and every position refuses it.
+  // The range operator says the same thing in fewer characters. One capability gets one spelling.
   from: name({
     doc: "'Array.from(\u2026)' is not part of jsmql. See its refusal.",
     call: true,
@@ -11381,7 +11382,7 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. A proven date is refused, because a date
+    // src/compiler/emit/prove.ts proves a string. The compiler refuses a proven date, because a date
     // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
     // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
     // or an error. `$add` of a date and 1000 is the date one second later.
@@ -11407,11 +11408,11 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // A proven date is refused, because a date takes `.minus()` and `.diff()`. A field of
-    // unknown kind can still hold a date, so the result can be a date. MEASURED: `$subtract`
-    // over each pair of operand kinds gives a number, a date, null or an error. A date minus
-    // a date is a long, the milliseconds between them (86400000 for one day). A date minus
-    // 1000 is the date one second earlier. A number minus a date is an error.
+    // The compiler refuses a proven date, because a date takes `.minus()` and `.diff()`. A
+    // field of unknown kind can still hold a date, so the result can be a date. MEASURED:
+    // `$subtract` over each pair of operand kinds gives a number, a date, null or an error.
+    // A date minus a date is a long, the milliseconds between them (86400000 for one day).
+    // A date minus 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -17342,11 +17343,11 @@ function refuseWholeTarget(target2, op, pos) {
 var Parser = class _Parser {
   constructor(toks, src) {
     /**
-     * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
-     * pipeline STAGES, minus the ones that a callee which takes stages claimed. Whatever
-     * is left when the parse ends is a JavaScript block that forgot its `return`,
-     * and the parser refuses it with the callee-independent wording. This is a set,
-     * not a flag threaded through every expression method, because the parser
+     * Every lambda whose `{ … }` body had no `return`. The parser read each one as
+     * pipeline STAGES. A callee that takes stages claims some of them, and the parser
+     * removes those. Whatever is left when the parse ends is a JavaScript block that
+     * forgot its `return`. The parser refuses it with the callee-independent wording.
+     * This is a set, not a flag threaded through every expression method. The parser
      * builds the body many calls below the callee that decides what it means.
      */
     this.unclaimedStages = /* @__PURE__ */ new Map();
@@ -17607,7 +17608,7 @@ var Parser = class _Parser {
     const lambda = this.lambdaOf(params, kw.pos, false);
     return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
-  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
+  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's. The parser allows a trailing comma. */
   paramList() {
     this.c.expect("LParen");
     const out = [];
@@ -17699,10 +17700,10 @@ var Parser = class _Parser {
   }
   /**
    * Does the expression that starts here end in an assignment? This is a SCAN of
-   * the tokens to the end of the expression, the first `,` / `;` / closing
-   * bracket at depth zero, that looks for an assignment operator at depth zero.
+   * the tokens. It runs to the end of the expression: the first `,` / `;` / closing
+   * bracket at depth zero. It looks for an assignment operator at depth zero.
    * It is a scan, not a speculative parse. A speculative parse here doubled the
-   * work at every nesting level, exponential on `[[[…]]]`, and swallowed every
+   * work at every nesting level, exponential on `[[[…]]]`. It also swallowed every
    * error that the speculation raised.
    */
   startsAWrite() {
@@ -18333,8 +18334,8 @@ var Parser = class _Parser {
     return null;
   }
   /**
-   * Skips to the end of one refused pattern part, past a default's expression, a
-   * rest element, or a nested pattern, so the reader can tell whether an arrow
+   * Skips to the end of one refused pattern part. The part is a default's expression, a
+   * rest element, or a nested pattern. The skip lets the reader tell whether an arrow
    * follows the whole list. This returns false when the tokens run out first.
    */
   skipPatternPart() {
@@ -18354,7 +18355,7 @@ var Parser = class _Parser {
    * The lambda that a parameter list and its body make. A destructured parameter
    * is one parameter under a fresh name, and each name it binds is that
    * parameter's part wherever the body reads it. So `([id, count]) => -count` IS
-   * `x => -x[1]`. The parts are substituted, never declared. So the body keeps
+   * `x => -x[1]`. The parser substitutes the parts and never declares them. So the body keeps
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
@@ -20488,7 +20489,7 @@ var compoundAssign = {
       target: { ...n2.target },
       op: "=",
       // The target appears twice: once as the destination, once as the left
-      // operand. Each copy is FRESH, so no node object sits in two slots — the
+      // operand. Each copy is FRESH, so no node object sits in two slots. The
       // walk in walk.ts compares nodes by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n2.target, right: n2.value, pos: n2.pos },
       pos: n2.pos
@@ -23373,8 +23374,8 @@ var Scope = class _Scope {
     this.taken = taken;
   }
   /**
-   * The root scope. `introduced` is every name the program binds anywhere — the
-   * parameters and declarations `namesIn` collects — so a mint made before a
+   * The root scope. `introduced` is every name the program binds anywhere: the
+   * parameters and declarations that `namesIn` collects. So a mint made before a
    * deeper lambda binds its parameter still steps aside from that parameter.
    */
   static root(introduced) {
@@ -23406,8 +23407,8 @@ var Scope = class _Scope {
     return new _Scope(bound, this.taken);
   }
   /**
-   * Every binding carried in a document FIELD, turned into a name whose read says
-   * what dropped it — the scope after a stage that replaced the document.
+   * The scope after a stage that replaced the document. Every binding carried in a
+   * document FIELD becomes a name whose read says what dropped it.
    */
   dropFields(by, message) {
     const bound = new Map(this.bound);
@@ -23751,17 +23752,17 @@ var Chain = class {
     this.dirty = false;
     /**
      * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
-     * and does not emit it, so nothing can land after it, and the cleanup
-     * always precedes it. `spelled` is how the source wrote it — `$out`, or the
-     * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
+     * and does not emit it. So nothing can land after it, and the cleanup
+     * always precedes it. `spelled` is how the source wrote it: `$out`, or the
+     * sugar `$$$.<coll> = …`. So a message names what the developer wrote.
      */
     this.terminal = null;
     /**
-     * Where the stream's ELEMENT lives on its documents: `""` when the element IS
-     * the document, or the unwound field's path after `.flatMap("items")` — a
+     * Where the stream's ELEMENT lives on its documents. It is `""` when the element IS
+     * the document. After `.flatMap("items")` it is the unwound field's path. A
      * callback's parameter then stands for that field, and its fields stand for
      * `items.<field>`. The documents themselves still carry their other fields
-     * (`$unwind` preserves them); a stage that replaces the document makes the
+     * (`$unwind` keeps them). A stage that replaces the document makes the
      * document the element again. See docs/specs/stream-methods.md § The element
      * after `.flatMap`.
      */
@@ -23802,12 +23803,12 @@ var Chain = class {
   /**
    * A mark for a lowering that the compiler may TAKE BACK. A chain that goes on
    * after a join lowers the body twice, and it discards the first attempt's
-   * hoists — so the stamps from that attempt must go too, or the second attempt
-   * reuses a field the discarded stage would have written.
+   * hoists. So the stamps from that attempt must go too. Otherwise the second
+   * attempt reuses a field that the discarded stage would have written.
    *
    * The scratch counter goes back too. Only the stages that went with a slot
-   * name it, so if the compiler kept the discarded attempt's number, it would leave a gap — and
-   * the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * name it. If the compiler kept the discarded attempt's number, it would
+   * leave a gap, and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
    * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
    * `__jsmql.tmp.0`. One lowering, one output.
    */
@@ -23831,7 +23832,7 @@ var Chain = class {
   }
   /**
    * A statement's stages land. A stage that does not state `preservesCount`
-   * changes how many documents there are, or what fields they carry, so every
+   * changes how many documents there are, or what fields they carry. So every
    * stamp taken before it now states something that is no longer true.
    */
   advance(stages) {
@@ -23846,12 +23847,12 @@ var Chain = class {
    * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
    * stages of the lowering that hoisted them.
    *
-   * A hoisted stage reads the same documents as the stage it was written for, so
-   * it must land beside that stage and not at the front of the statement:
+   * A hoisted stage reads the same documents as the stage it was written for. So
+   * it must land beside that stage and not at the front of the statement.
    * MEASURED, the `$lookup` of `$$.$sortByCount($.productIds).map(g =>
    * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
-   * joined on the SOURCE document's `_id`, and `$sortByCount` then replaced the
-   * document and dropped the slot — so every row came back without its joined
+   * joined on the SOURCE document's `_id`. Then `$sortByCount` replaced the
+   * document and dropped the slot. So every row came back without its joined
    * field, and the server reported nothing wrong. A road that makes more than one
    * stage out of one statement therefore drains at each of them. See
    * docs/specs/lookup-stage.md § Where a hoisted stage lands.
@@ -23918,7 +23919,7 @@ var Env = class _Env {
   }
   /**
    * The Env a program starts in. The compiler reserves every name the program
-   * introduces anywhere for the whole of it, so a compiler mint never shadows a
+   * introduces anywhere for the whole of it. So a compiler mint never shadows a
    * parameter bound deeper in.
    */
   static root(program, root2, chain2 = new Chain(root2 === "statement"), settling = false) {
@@ -23935,9 +23936,9 @@ var Env = class _Env {
     return this.foreign().length;
   }
   /**
-   * A located value as THIS level reads it: a variable as itself; a path on this
-   * level as the path; a path on a shallower level through the `let` of the
-   * boundary that starts the level below it, as `$$<var>`.
+   * A located value as THIS level reads it. A variable reads as itself. A path on
+   * this level reads as the path. A path on a shallower level reads as `$$<var>`,
+   * through the `let` of the boundary that starts the level below it.
    */
   render(loc, pos) {
     if (loc.kind === "var") {
@@ -23961,8 +23962,8 @@ var Env = class _Env {
     return boundaries[boundaries.length - 1].stage;
   }
   /**
-   * The Env after a stage that replaced the document: every field-carried
-   * binding is gone, and so is every proof about the document — the document
+   * The Env after a stage that replaced the document. Every field-carried
+   * binding is gone, and so is every proof about the document. The document
    * that held those paths is not the document the next stage sees.
    */
   dropFields(by, message) {

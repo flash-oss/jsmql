@@ -1,11 +1,11 @@
 // The array operators.
 //
-// A read that finds no element is MISSING on the server, and no literal spells
-// missing, so such a read is a refusal. A null array gives a null answer for most
+// A read that finds no element is MISSING on the server. No literal spells
+// missing, so the interpreter refuses such a read. A null array gives a null answer for most
 // operators. Where the measured server answer for a null is an error, the rule
-// refuses. A set operator gives each value once, at its first position: the
+// refuses. A set operator gives each value once, at its first position. The
 // server does not specify the order of a set, so the interpreter keeps the order of first
-// occurrence, and one input then always gives one answer.
+// occurrence. One input then always gives one answer.
 
 import type { Answer, Rule, Walk } from "./values.ts";
 import {
@@ -90,8 +90,8 @@ const slice = positional(2, 3, ([xs, a, b]) => {
 // ── a new array ────────────────────────────────────────────────────────
 
 // A list of sets has the unspecified order of each set. So the result is a set answer when every
-// operand is one, or is empty. A set beside a list that holds elements is a refusal: the position of
-// each element then depends on the set.
+// operand is one, or is empty. The interpreter refuses a set beside a list that holds elements, because the
+// position of each element then depends on the set.
 const concatArrays = positional(
   0,
   Infinity,
@@ -174,7 +174,7 @@ function elementName(parts: Record<string, unknown>): string | null {
 
 /**
  * Evaluate `input`: a null gives a null answer, and an array gives its elements. An operator that
- * reads no position of the array sets `anyOrder`, and may then be given a set answer.
+ * reads no position of the array sets `anyOrder`. The input may then be a set answer.
  */
 function inputOf(walk: Walk, node: unknown, anyOrder = false): Answer {
   const input = anyOrder ? walk.raw(node) : walk.at(node);
@@ -349,7 +349,7 @@ const extremes = (greatest: boolean): Rule =>
 /**
  * A set operator over lists: every operand is an array, or one is null and the answer is null.
  * The order of an operand does not matter, but the order inside an element does.
- * An operator that answers a list answers a set, so the answer is recorded as one.
+ * An operator that answers a list answers a set, so the rule records the answer as a set.
  */
 function overSets(
   min: number,

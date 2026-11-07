@@ -567,13 +567,13 @@ describe("compiler/parse — the operators a row consumes are the operators the 
    * The parser builds a BinaryExpr / UnaryExpr / AssignExpr from the token's own
    * TEXT — no table maps a token type back to a spelling. So the one thing that
    * must hold is that every operator lexeme such a row consumes is a member of
-   * the AST's operator set. A type-level version of this check was vacuous:
-   * `becomes` is not threaded through a const generic, so a conditional on it
+   * the AST's operator set. A type-level version of this check was vacuous.
+   * A const generic does not thread `becomes`, so a conditional on it
    * sees `NodeName` and matches nothing. Runtime data cannot collapse that way.
    */
   // An operator-role token anywhere in the row, or a keyword only as the row's
-  // TRIGGER (`in`, `typeof`): `foreignJoin` also consumes `const` and `let` on
-  // the way to its `=`, and neither is the operator it builds.
+  // TRIGGER (`in`, `typeof`). `foreignJoin` also consumes `const` and `let` on
+  // the way to its `=`. Neither is the operator it builds.
   const operatorRole = (lexeme: string): boolean =>
     (TOKENS as Record<string, { role?: string } | undefined>)[lexeme]?.role === "operator";
   const consumedBy = (node: string): string[] =>
@@ -689,8 +689,8 @@ describe("compiler/parse — one statement loop", () => {
   it("reads a declaration list as the declarations it stands for, all marked as ONE declaration", () => {
     // `const a = …, b = …;` is N declarations in JavaScript, and the parser builds
     // the same N nodes it builds for N statements. The ONE thing a list adds is
-    // `group` — the keyword's offset, shared by every declarator of that
-    // declaration, which the emit phase reads to give them one stage. Erase it
+    // `group`, the keyword's offset. Every declarator of that declaration
+    // shares it, and the emit phase reads it to give them one stage. Erase it
     // and the trees are equal.
     for (const [list, separate] of [
       ["let x = 1, y = 2; $.a = x + y;", "let x = 1; let y = 2; $.a = x + y;"],

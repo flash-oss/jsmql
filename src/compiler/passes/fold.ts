@@ -1,4 +1,4 @@
-// Phase 3 — FOLD. A `const` whose value can be computed is computed, and every
+// Phase 3 — FOLD. Fold computes each `const` whose value it can compute, and every
 // reference to it becomes the value.
 //
 //   const msInDay = 24 * 60 * 60 * 1000;  $.elapsedMs > msInDay
@@ -79,10 +79,10 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
     for (const name of freeNamesIn(stmt as Any)) readSoFar.add(name);
   }
 
-  // A function whose body reads its OWN name, or a name declared only later, is
-  // not settled here: a substitution of it would never end (recursion) or would carry
-  // a name that has no value yet. It stays a binding, inlined where it is called,
-  // and the recursion is refused there. A call of an EARLIER function folds.
+  // Fold does not settle a function whose body reads its OWN name, or a name declared only
+  // later. A substitution of it would never end (recursion), or would carry a name that has
+  // no value yet. It stays a binding, and the compiler inlines it where it is called.
+  // The compiler refuses the recursion there. A call of an EARLIER function folds.
   const order = declaredIn(stmts);
   for (const stmt of stmts) {
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
@@ -96,8 +96,8 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
     // that IS a statement mutates its receiver: `a.sort();` is the whole
     // statement, and nothing reads its result. The same call in value position
     // returns a new array and leaves the binding alone. The node's shape alone
-    // cannot tell this apart: it would read `[xs.slice(1)]` in a value slot as a
-    // bracketed pipeline of mutations, and would keep a constant that fold should
+    // cannot tell this apart. It would read `[xs.slice(1)]` in a value slot as a
+    // bracketed pipeline of mutations. It would then keep a constant that fold should
     // replace.
     for (const [node, where] of everyNodeWithPosition(stmt as Any)) {
       // A write, however deep the path it writes through.
@@ -172,7 +172,7 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
   return mapTreeIn(node, known, step, (inner, env) => {
     const n = inner as Any;
     // `{ [k]: 1 }` with a constant `k` is `{ "<k>": 1 }` — the key JavaScript would
-    // compute. Settled here so the stage rules that take only a written key
+    // compute. Fold settles it here so the stage rules that take only a written key
     // (`$sort({ [field]: 1 })`) see one, and a document literal stays a document.
     if (n.type === "KeyValueEntry") {
       const key = n.key as { kind: string; expr?: Expr };
@@ -182,7 +182,7 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
         ? ({ ...n, key: { kind: "static", name: computed.value } } as object)
         : inner;
     }
-    // a regex node is a constant already, and re-spelling it would lose whether the call supplied it
+    // a regex node is a constant. A new spelling of it would lose whether the call supplied it
     if (!EVALUABLE.has(n.type) || n.type === "RegexLiteral") return inner;
     const result = evaluate(n as unknown as Expr, env);
     if (!result.ok) {
@@ -210,10 +210,10 @@ const EMPTY: Constants = new Map();
 
 /**
  * The node types worth a question. Every other type either cannot be constant
- * or is one already, and a question anyway would rebuild the tree for nothing.
+ * or is one already. A question about it would rebuild the tree for nothing.
  *
  * `OperatorCall` is deliberately absent: `$add(1, 2)` is the escape hatch, and
- * raw MQL the developer wrote is emitted as written. A fold of it would break the
+ * the compiler emits raw MQL as the developer wrote it. A fold of it would break the
  * property that a pasted pipeline round-trips.
  */
 const EVALUABLE_TYPES = [
@@ -228,13 +228,12 @@ const EVALUABLE_TYPES = [
 ] as const;
 /**
  * The expression types deliberately NOT asked about, each for a stated reason. A
- * literal is already the answer, and re-spelling it would rebuild the node every
- * round, so the fixpoint would never settle. A reference, a lambda and a block
- * are not values. `OperatorCall` is the escape hatch above. A `NewExpression` is
- * refused (HR8), and the emit phase gives the refusal. Together with
- * `EVALUABLE_TYPES` this must cover every `Expr` type. The two lines below turn a
- * new node type into a compile error here, instead of a subexpression that fold
- * silently never folds.
+ * literal is already the answer. A new spelling of it would rebuild the node every
+ * round, and the fixpoint would never settle. A reference, a lambda and a block
+ * are not values. `OperatorCall` is the escape hatch above. The emit phase refuses
+ * a `NewExpression` (HR8). Together with `EVALUABLE_TYPES` this must cover every
+ * `Expr` type. The two lines below make a new node type a compile error here.
+ * Without them, fold would silently never fold a subexpression of that type.
  */
 const NOT_ASKED_TYPES = [
   "NumberLiteral",
@@ -271,9 +270,9 @@ const EVALUABLE: ReadonlySet<string> = new Set(EVALUABLE_TYPES);
 /**
  * Fold every declaration that can be folded, and drop it.
  *
- * Statements are walked IN ORDER. Fold substitutes each one with what is known
- * at the point it stands. That is not tidiness: a name read before it is
- * declared is a `ReferenceError` in JavaScript, and the later value would give
+ * The pass walks the statements IN ORDER. Fold substitutes each one with what is known
+ * at the point it stands. That is not tidiness. A name read before it is
+ * declared is a `ReferenceError` in JavaScript. The later value would give
  * it a meaning the language does not have.
  */
 export function fold(program: Program): Program {
@@ -292,7 +291,7 @@ export function fold(program: Program): Program {
   const root = program as Any;
   if (root.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested) as object) as Program;
 
-  // The root is folded BELOW, by the pass that also decides whether the program
+  // The pass below folds the root. That pass also decides whether the program
   // collapses to one expression. A walk of it here as well would do that work
   // first, and would leave the pass below with nothing to report. The collapse
   // — the whole reason `const a = 1; $.x === a` is a Filter — would never happen.
@@ -324,7 +323,7 @@ export function fold(program: Program): Program {
   return rewritten as unknown as Program;
 }
 
-/** One scope's worth of folding: the statements that survive, and whether any went. */
+/** The fold of one scope: the statements that survive, and whether any went. */
 function foldStatements(stmts: readonly PipelineStmt[]): {
   stmts: readonly PipelineStmt[];
   changed: boolean;
@@ -332,8 +331,8 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
 } {
   const excluded = unfoldable(stmts);
   const folded = new Map<string, unknown>();
-  // Declared functions live HERE and not in `folded`: a call to one may be
-  // evaluated, but the function itself is never substituted into the tree, where
+  // Declared functions live HERE and not in `folded`. Fold may evaluate a call to one.
+  // Fold never substitutes the function itself into the tree, where
   // a lambda would sit in an expression's place.
   const env = new Map<string, unknown>();
   const survivors: PipelineStmt[] = [];

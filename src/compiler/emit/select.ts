@@ -1,15 +1,15 @@
 // Phase 5 — EMIT. This module picks which rule of a row runs, and how, once the
 // receiver and the arguments are known.
 //
-// consult.ts reads a row and answers for a NAME in a POSITION. Two axes remain,
-// and both need facts a row cannot see: the receiver's FAMILY (a proof the
+// consult.ts reads a row and answers for a NAME in a POSITION. Two axes remain.
+// Both need facts that a row cannot see: the receiver's FAMILY (a proof that the
 // lowering of the receiver produced) and the arguments' SHAPE (a partition over
 // the call's argument list). This module resolves both and hands back one closed
 // answer. Nothing here builds a document.
 //
-// The kinds of the arguments are PROVEN or they are not, in the same way (HR7). A
-// value proven to have a kind that its slot never takes is refused, even where the
-// server accepts the MQL. A value of unknown kind passes. See docs/specs/types.md
+// The kinds of the arguments are PROVEN or they are not, in the same way (HR7).
+// The compiler refuses a value that it proves to have a kind that its slot never takes, even where
+// the server accepts the MQL. A value of unknown kind passes. See docs/specs/types.md
 // § The kind check.
 //
 // The receiver's family is PROVEN or it is not. A literal proves it. A producing
@@ -94,7 +94,10 @@ export function shapeOf(args: readonly Expr[]): Shaped {
 
 /** The one answer. Every variant is final, except `rule`, which names what to run. */
 export type Selected =
-  /** `family` is the FIELD family the rule runs on, when a per-family cell chose it: the receiver's proof, or the row's one lowering family. */
+  /**
+   * `family` is the FIELD family the rule runs on, when a per-family cell chose it:
+   * the receiver's proof, or the row's one lowering family.
+   */
   | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule; readonly family?: FieldFamily }
   | { readonly kind: "refused"; readonly name: string; readonly message: string; readonly needsSubject: boolean }
   | { readonly kind: "fallback"; readonly name: string }
@@ -196,8 +199,8 @@ function receiverGate(name: string, receiver: Receiver): Selected | null {
     return receiver.kind === "namespace" ? { kind: "wrongReceiver", name, got: receiver.name, accepts: on } : null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== undefined) return { kind: "wrongReceiver", name, got: receiver.proved, accepts: on };
-    // A receiver that can be more than one family passes when the row takes one of them; one
-    // whose every possible family the row refuses is refused, and the message names them all.
+    // A receiver that can be more than one family passes when the row takes one of them.
+    // The compiler refuses one whose every possible family the row refuses, and the message names them all.
     if (receiver.possible !== undefined && !receiver.possible.some((f) => on.includes(f))) {
       return { kind: "wrongReceiver", name, got: receiver.possible.join(" or "), accepts: on };
     }
@@ -271,7 +274,7 @@ function fromPerFamily(
     return { kind: "wrongReceiver", name, got: possible.join(" or "), accepts: on ?? "any" };
   }
   // A family the row REFUSES cannot be the family of a receiver in a program that
-  // compiles, so `.keys()` on an unproven field is a call on an object. The refused
+  // compiles. So `.keys()` on an unproven field is a call on an object. The refused
   // families stay only when nothing else is left, so that the refusal is what answers.
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
   const families = lowering.length > 0 ? lowering : listed;
@@ -303,10 +306,10 @@ export function select(
     case "unknown":
       return { kind: "unknown", name };
     case "refused": {
-      // A row's own refusal is the better answer, and it wins — EXCEPT for a mutator,
-      // whose refusal is advice about arrays: `.sort()` says to write `.toSorted()`,
-      // which is sound for an array and wrong for `$.s.trim()`, a string that has
-      // neither. There the receiver answers first, the same as it does for `inCode` below.
+      // A row's own refusal is the better answer, and it wins — EXCEPT for a mutator.
+      // The refusal of a mutator is advice about arrays: `.sort()` says to write `.toSorted()`.
+      // That is sound for an array and wrong for `$.s.trim()`, a string that has
+      // neither. There the receiver answers first, as it does for `inCode` below.
       const gate = isMutator(name) ? receiverGate(name, receiver) : null;
       return gate ?? { kind: "refused", name, message: verdict.message, needsSubject: verdict.needsSubject };
     }

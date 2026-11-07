@@ -1,10 +1,10 @@
 // An ObjectId the SOURCE spells — `0x…`, `ObjectId("…")` — must be one that
 // could exist. The first 4 bytes of an ObjectId are a Unix timestamp in seconds,
-// and MongoDB's first public release was 2009: an id whose timestamp is older
-// cannot be real and is a typo — a dropped digit, an all-zeros placeholder, a
+// and MongoDB's first public release was 2009. An id whose timestamp is older
+// cannot be real. It is a typo, such as a dropped digit, an all-zeros placeholder, or a
 // sequential test value. A lowercase 24-hex string compares as its 96-bit value,
-// so a plain string `<` against the floor is exact. One function, read by the
-// parser for the literal and by the emit phase for the call form.
+// so a plain string `<` against the floor is exact. The parser calls this one function for the
+// literal, and the emit phase calls it for the call form.
 
 export const OBJECTID_MIN_HEX = "4a0000000000000000000000";
 

@@ -1,11 +1,14 @@
 # System / diagnostic stages (`$$.indexStats()`, `$$$$.currentOp()`, …)
 
 This sugar encodes scope in a method call, for MongoDB's *diagnostic / system*
-source stages. Implementation: [`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts).
-Scope metadata: the `diagnostic` fact on the stage's row in [`src/registry/names.ts`](../../src/registry/names.ts).
-Connections: [`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) and the dispatch auto-wrap in
-[`src/index.ts`](../../src/index.ts). User-facing reference:
-[LANGUAGE.md → System and diagnostic stages](../LANGUAGE.md#system-and-diagnostic-stages-indexstats-currentop-).
+source stages. Implementation:
+[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts). Scope
+metadata: the `diagnostic` fact on the stage's row in
+[`src/registry/names.ts`](../../src/registry/names.ts). Connections:
+[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) and the
+dispatch auto-wrap in [`src/index.ts`](../../src/index.ts). User-facing
+reference: [LANGUAGE.md → System and diagnostic
+stages](../LANGUAGE.md#system-and-diagnostic-stages-indexstats-currentop-).
 
 ## What and why
 
@@ -62,14 +65,15 @@ $$$$.shardedDataDistribution()           → [{ $shardedDataDistribution: {} }]
 ```
 
 The options-object argument is optional. It lowers as the stage's body, in the
-position that the stage's `bodyPositions` states, like every other stage body. The
-sugar checks that the argument is a document, and the server checks its keys. With
-no argument, the body is an empty `{}`. The options are literal config — booleans, strings, `{user, db}`
-arrays. The compiler does not translate a `$.field` reference here.
+position that the stage's `bodyPositions` states, like every other stage body.
+The sugar checks that the argument is a document, and the server checks its
+keys. With no argument, the body is an empty `{}`. The options are literal
+config — booleans, strings, `{user, db}` arrays. The compiler does not translate
+a `$.field` reference here.
 
 `options: false` in the `diagnostic` metadata marks the three stages that take
 *no* options: `$indexStats`, `$planCacheStats`, and `$shardedDataDistribution`.
-An argument to one of these stages is rejected.
+The compiler rejects an argument to one of these stages.
 
 ## Detection and disambiguation
 
@@ -108,9 +112,9 @@ The `index.ts` auto-wrap also uses this gate, so a bare top-level
 
 A diagnostic produces the stream. So any stage emitted before it is a
 contradiction. The stage's row states the placement. The statement road checks
-this against what the chain has emitted so far. A diagnostic that is not the
-first statement is refused at the call-site position, and the message asks to
-move it to the top of the program.
+this against what the chain has emitted so far. The compiler refuses a
+diagnostic that is not the first statement, at the call-site position. The
+message asks the developer to move it to the top of the program.
 
 ## Error catalog
 

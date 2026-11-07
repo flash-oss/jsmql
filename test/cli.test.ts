@@ -1,9 +1,8 @@
 /**
- * CLI tests for the `jsmql` bin. These spawn `node src/cli.ts` directly. This
- * runs the real un-bundled source through Node's native type stripping (the
- * same path the strippable-TS smoke test relies on), so no build step is
- * needed. The built `dist/cjs/cli.cjs` (shebang, exec bit, version `define`)
- * is covered separately by the dist-gated cases in smoke.test.ts.
+ * CLI tests for the `jsmql` bin. These spawn `node src/cli.ts` directly. This runs the real un-bundled source
+ * through Node's native type stripping. The strippable-TS smoke test relies on the same path, so no build step
+ * is needed. The dist-gated cases in smoke.test.ts cover the built `dist/cjs/cli.cjs` (shebang, exec bit,
+ * version `define`) separately.
  */
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -22,9 +21,8 @@ function run(args: string[], input?: string) {
 }
 
 /**
- * The CLI writes JAVASCRIPT, so the output is read the way a developer reads it —
- * by a paste into a place that has the driver's BSON classes in scope. An evaluation,
- * not a parse, is itself the assertion the printer exists for: text the driver
+ * The CLI writes JAVASCRIPT. A developer reads the output by a paste into a place that has the driver's BSON
+ * classes in scope. An evaluation, not a parse, is itself the assertion the printer exists for: text the driver
  * would refuse fails here first.
  */
 const BSON_GLOBALS: Record<string, unknown> = {
@@ -101,10 +99,9 @@ describe("cli: output shapes", () => {
 });
 
 describe("cli: formatting", () => {
-  // The output is JAVASCRIPT, not JSON — a Date, an ObjectId, a Decimal128 and a regular
-  // expression have no JSON spelling, and a JSON string of one is WRONG, not lossy.
-  // A document is written on one line when it fits in 80 columns and broken once it
-  // does not, because MQL nests deeply and narrowly.
+  // The output is JAVASCRIPT, not JSON. A Date, an ObjectId, a Decimal128 and a regular expression have no JSON
+  // spelling, and a JSON string of one is WRONG, not lossy. The CLI writes a document on one line when it fits
+  // in 80 columns, and breaks it once it does not, because MQL nests deeply and narrowly.
   it("writes a short document on one line", () => {
     expect(run(["$.age > 18"]).stdout).toBe("{ age: { $gt: 18 } }\n");
   });
@@ -144,8 +141,8 @@ describe("cli: formatting", () => {
     expect(run(["-c", "$.name.match(/^a/i)"]).stdout).toBe("{ name: { $regex: /^a/i } }\n");
   });
 
-  // A quoted "__proto__" key sets the prototype when the text is pasted, so the field
-  // would vanish on the way back in. The computed form is the only one that survives.
+  // A quoted "__proto__" key sets the prototype when a developer pastes the text, so the field would vanish on
+  // the way back in. The computed form is the only one that survives.
   it("writes a __proto__ key as a computed key", () => {
     expect(run(["-c", "$.__proto__ === 1"]).stdout).toBe('{ ["__proto__"]: 1 }\n');
     const back = asPasted(run(["-c", "$.__proto__ === 1"]).stdout) as Record<string, unknown>;

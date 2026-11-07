@@ -1,4 +1,4 @@
-// HR7: a value that is PROVEN to have another kind than its slot takes is refused, even
+// HR7: the compiler refuses a value PROVEN to have another kind than its slot takes, even
 // where the server accepts the MQL. A value of unknown kind passes. The `$op(…)` escape
 // hatch passes every value as written. See docs/LANG_RULES.md and docs/specs/types.md.
 

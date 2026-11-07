@@ -96,8 +96,8 @@ function extOf(name: string): string {
 
 function parseDeferred(): {
   rows: Map<string, { title: string; status: string; section: string }>;
-  /** Every §A id in file order, duplicates INCLUDED — `rows` is a Map, so a repeated
-   *  id silently overwrites and both the forward and reverse gates still pass. */
+  /** Every §A id in file order, duplicates INCLUDED. `rows` is a Map, so a repeated id silently
+   *  overwrites, and both the forward and reverse gates still pass. */
   idsInOrder: string[];
 } {
   const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");

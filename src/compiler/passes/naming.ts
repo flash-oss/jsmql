@@ -2,8 +2,8 @@
 //
 // "Which row does this node name?" and "which node types bind a name?" each get
 // ONE answer, in ONE place. Spread across the passes that ask them, each answer
-// would become a node-type list of its own: right on the day it was written,
-// and silently wrong the day a node type is added. The walk in walk.ts is
+// would become a node-type list of its own. Such a list is right on the day it is
+// written, and silently wrong the day a node type is added. The walk in walk.ts is
 // reflective for exactly this reason, so that no pass enumerates node types.
 // A scattered list would reintroduce that enumeration. So this file states
 // each fact once.
@@ -84,7 +84,7 @@ export function readsAContextRef(node: object): boolean {
  * This lists all of them, not the obvious two. A `Pipeline` binds every name
  * declared anywhere in it: `$$.aggregate(() => { const a = 2; … })` is a scope
  * of its own. A block binds its declarations for the later declarations, as
- * well as for the result. Missing either case lets an outer constant push
+ * well as for the result. If a pass misses either case, an outer constant pushes
  * through an inner declaration of the same name. That answers with the wrong
  * value, and leaves the inner declaration in place, unread, one line above.
  */
@@ -119,7 +119,7 @@ export function introducedNames(node: object): readonly string[] {
 /**
  * Two places where an identifier NAMES something, and holds no value:
  * the left of a write, and the callee of a call. A value in place of either
- * produces something that is not a program — `1 = 9`, or `3(1)` — and neither
+ * produces something that is not a program, such as `1 = 9` or `3(1)`. Neither
  * is a position a row can be legal in.
  */
 export function namesSomething(node: object, key: string): boolean {
@@ -163,9 +163,9 @@ export function writtenField(node: object): AstNode | null {
  * fresh array is a VALUE, whatever the row says the name does.
  *
  * This answers yes wherever the fold MIGHT reach a path, which is wider than
- * the set the fold really reaches. That direction is the safe one: the
- * statement road refuses by name a receiver that is admitted here and
- * declined there, but the reverse would read a whole program as the wrong document.
+ * the set the fold really reaches. That direction is the safe one. The
+ * statement road refuses by name a receiver that this function admits and
+ * `writtenField` declines. The reverse would read a whole program as the wrong document.
  */
 export function couldWriteItsReceiver(node: object): boolean {
   const start = (node as Any).object;

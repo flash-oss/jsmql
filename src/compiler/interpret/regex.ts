@@ -19,8 +19,8 @@
 //     that began before the end found it there. See `findAll`.
 //   - Case folding: with the `i` option, the characters U+017F and U+212A fold to an ASCII
 //     letter. The rule refuses a string that holds either one.
-// A pattern with a deep or a long form, and a string that is too long for the form of its
-// pattern, are refusals too, because a backtracking engine has no bound on its time.
+// A pattern with a deep or a long form is a refusal. So is a string that is too long for the
+// form of its pattern. A backtracking engine has no bound on its time.
 // See src/compiler/interpret/CLAUDE.md.
 
 import type { Answer, Rule } from "./values.ts";
@@ -252,8 +252,8 @@ function parseSeq(r: Reader, depth: number, inLook: boolean): Node {
     }
     if (!quantifiable) outside();
     if (atom.t === "group" && q.max > 1) {
-      // A group that repeats may not hold what makes PCRE2 and JavaScript part: a capture, a
-      // second quantifier or an alternation (a runaway backtrack), or a body that can match the empty string.
+      // A group that repeats may not hold what makes PCRE2 and JavaScript differ. It may hold no capture, no
+      // second quantifier and no alternation (a runaway backtrack). Its body may not match the empty string.
       const i = inspect(atom);
       if (i.capture || i.quant || i.alt || i.min === 0) outside();
     }
@@ -370,8 +370,8 @@ const insidePair = (s: string, at: number): boolean => {
 
 /**
  * Every match. A search starts at the end of the last non-empty match, or one code point past an
- * empty match. The search that begins at the end of the string does not run, so an empty match
- * there is lost, unless the search before it found the match there. This is the measured server rule.
+ * empty match. The search that begins at the end of the string does not run. So the answer lacks an empty match
+ * there, unless the search before it found that match. This is the measured server rule.
  */
 function findAll(re: RegExp, s: string): Match[] | undefined {
   const found: Match[] = [];
@@ -392,7 +392,7 @@ const FOLDS_TO_ASCII = /[ſK]/;
 
 /**
  * The three operators share their operand: `input`, `regex` and `options`. A null `input` gives
- * the empty answer of the operator, and the pattern is read first, so a pattern outside the syntax always refuses.
+ * the empty answer of the operator. The rule reads the pattern first, so a pattern outside the syntax always refuses.
  * An answer of `undefined` is a refusal.
  */
 function regexRule(answer: (re: RegExp, subject: string | null) => unknown): Rule {

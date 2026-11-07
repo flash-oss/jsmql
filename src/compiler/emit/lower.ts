@@ -1,13 +1,13 @@
 // Phase 5 — EMIT. An expression to its MQL.
 //
-// One function per reading — `lowerValue` and `lowerTruth` — over every node
-// type the tree has, held exhaustive by the `switch` on `node.type`. Each case
-// does one of three things: builds a document a single node determines (a
-// literal, a path), consults the registry for a NAME and runs the rule select.ts
-// chooses, or reads its neighbours where a row cannot — the operand types of
-// `+`, the truth of the left side of `&&`, the receiver's shape under `x[0]`.
-// Those neighbour-reading cases are the ones whose production row says
-// `inCode`, and this file is the file it names.
+// One function per reading, `lowerValue` and `lowerTruth`, covers every node
+// type of the tree. The `switch` on `node.type` keeps the cover exhaustive.
+// Each case does one of three things. It builds a document that a single node
+// determines (a literal, a path). Or it consults the registry for a NAME and
+// runs the rule that select.ts chooses. Or it reads its neighbours where a row
+// cannot: the operand types of `+`, the truth of the left side of `&&`, the
+// receiver's shape under `x[0]`. The production row says `inCode` for each
+// neighbour-reading case, and this file is the file it names.
 
 import type { Expr, FieldFamily, Position, Truth, Type } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
@@ -77,10 +77,10 @@ const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlyS
 // ── the value reading ────────────────────────────────────────────────────────
 
 /**
- * The join road, lent by statement.ts at load: a chain on another collection in a
- * value position hoists its `$lookup` ahead of the stage that reads it. Registered, not
- * imported, because the road needs the statement target's link walker and
- * the statement target imports this file.
+ * The join road. statement.ts lends it at load. A chain on another collection in a
+ * value position hoists its `$lookup` ahead of the stage that reads it. This file
+ * registers the road and does not import it, because the road needs the link walker
+ * of the statement target and the statement target imports this file.
  */
 let joinRoad: ((node: Expr, env: Env) => unknown) | null = null;
 export function provideJoin(road: (node: Expr, env: Env) => unknown): void {
@@ -109,7 +109,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
   // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
-  // there, and a document written with it holds `null`. So `$.o?.[k]` and `$.o[k]?.q` answer
+  // there. A document written with it holds `null`. So `$.o?.[k]` and `$.o[k]?.q` answer
   // as `$.o?.p` does: the reads run as plain reads, and one `$ifNull` stands on top.
   if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
@@ -132,9 +132,9 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "RegexLiteral":
       // A RegExp the CALL supplied is a value in its own right.
       if (node.injected !== undefined) return node.injected;
-      // Inside MQL the developer wrote — an argument of a `$`-named call, a value under a
-      // `$` key — a regex literal is a BSON regex, as HR1 says. JavaScript code reads a
-      // regex only through the regex methods.
+      // Inside MQL the developer wrote, a regex literal is a BSON regex, as HR1 says. This
+      // covers an argument of a `$`-named call and a value under a `$` key. JavaScript code
+      // reads a regex only through the regex methods.
       if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
@@ -150,7 +150,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "FieldRef": {
       readablePath(node, env);
       const path = reachable(env.render(locate(node, env) as Located, node.pos));
-      // `$.user?.name` is JavaScript's `undefined` when `user` is not there, and a document
+      // `$.user?.name` is JavaScript's `undefined` when `user` is not there. A document
       // written with it holds the key: `x: null`. A bare path would leave the key out.
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
@@ -237,9 +237,9 @@ function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: 
 }
 
 /**
- * `{ $ifNull: [v, neutral] }` — and when `v` is itself the `{ $ifNull: [x, null] }` a bare
- * `?.` read lowers to, the one wrap `{ $ifNull: [x, neutral] }`: the same value, without a
- * layer that says nothing.
+ * Builds `{ $ifNull: [v, neutral] }`. When `v` is itself the `{ $ifNull: [x, null] }` that a
+ * bare `?.` read lowers to, it builds the one wrap `{ $ifNull: [x, neutral] }`. This is the
+ * same value, with no layer that says nothing.
  */
 function ifNull(v: unknown, neutral: unknown): unknown {
   if (typeof v === "object" && v !== null && !Array.isArray(v)) {
@@ -256,14 +256,14 @@ function ifNull(v: unknown, neutral: unknown): unknown {
  * The value a `?.` guards, when something COMPUTED runs after it. Null when nothing does.
  *
  * JavaScript stops a chain at a `?.`: `o?.keys().length` is `undefined` when `o` is
- * nullish, and jsmql answers null, which is the nearest thing MongoDB holds. The test
- * goes at the TOP of the chain, so the links below run only when the field is there,
- * and the `$ifNull` each of them would put on that field is not needed.
+ * nullish. JSMQL answers null, which is the nearest thing MongoDB holds. The test
+ * goes at the TOP of the chain. So the links below run only when the field is there,
+ * and they need no `$ifNull` on that field.
  *
- * A plain property read after the `?.` needs no test. `$.user?.name` reads a path, and
- * MongoDB already answers missing for a path through a missing field — so the document
- * is the one it is today, and the consumer's own neutral still describes it. Only a
- * call turns that missing value into something else, and only a call is stopped here.
+ * A plain property read after the `?.` needs no test. `$.user?.name` reads a path.
+ * MongoDB already answers missing for a path through a missing field. So the document
+ * is the one it is today, and the neutral of the consumer still describes it. Only a
+ * call turns that missing value into something else, and this function stops only a call.
  * See docs/LANGUAGE.md § Optional Chaining.
  */
 function stoppedChain(node: Expr): Expr | null {
@@ -271,14 +271,14 @@ function stoppedChain(node: Expr): Expr | null {
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
     // a plain read — a field `.p` or an index `[k]` — passes a missing value through as
-    // missing. A call, or a property row such as `Math.PI`, does not, and is stopped
+    // missing. A call, or a property row such as `Math.PI`, does not, so the walk stops it
     if (!isRead(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
   // `$.user?.name.trim()` — the fold puts the `?.` on the PATH, so the walk above never
-  // meets it. The call still runs after it, and the path the `?.` TESTS is the value it
-  // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
+  // meets it. The call still runs after it. The path that the `?.` TESTS is the value it
+  // guards: `user` for `$.user?.name`. So `name` reads as any other path inside.
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
 }
@@ -371,11 +371,12 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
       // HR5 reads a missing array as the empty one: `[...$.a, 1]` is `[1]` when `a`
-      // is not there. `$concatArrays` answers null for a null operand, and the mutator
+      // is not there. `$concatArrays` answers null for a null operand. The mutator
       // templates (`.pop()`, `.fill()`) spread the receiver into a `$size`, which aborts
-      // on a missing value. A value the proof shows present takes no wrap. The list the
-      // desugar PACKS from a call's spread arguments (`$op(...$.a)`) is the operator's own
-      // operand list, raw MQL under HR2, and takes none either.
+      // on a missing value. A value that the proof shows present takes no wrap. The list
+      // that the desugar pass PACKS from the spread arguments of a call (`$op(...$.a)`)
+      // is the operand list of the operator itself. It is raw MQL under HR2, and it
+      // takes no wrap either.
       const packed = (node as { packed?: boolean }).packed === true;
       const v = lowerValue(el.argument, inner);
       operands.push(t.absent && !packed ? ifNull(v, []) : v);
@@ -387,7 +388,7 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
 
 /**
  * HR1: a value the call supplied is a VALUE — never an operator or a field reference.
- * One that reads as MQL takes `$literal` where the server evaluates the slot, and the
+ * One that reads as MQL takes `$literal` where the server evaluates the slot. The
  * compiler refuses it where the value becomes part of the MQL. See `injectedPlacement`.
  */
 function injectedValue(node: Extract<Expr, { type: "Injected" }>, env: Env): unknown {
@@ -498,8 +499,8 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
-  // A global read without a call: a refused one answers with its row's refusal, which
-  // names the way out (`String`), and any other one names its call (`ObjectId`).
+  // A global read without a call: a refused one answers with the refusal of its row, which
+  // names the way out (`String`). Any other one names its call (`ObjectId`).
   if (isGlobalName(node.name)) {
     const verdict = consult(node.name, positionIn(env));
     if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
@@ -555,11 +556,11 @@ function pathOf(node: Expr, env: Env): unknown {
 }
 
 /**
- * A rendered path the server can follow. A segment that starts with `$` — the
- * field `$gt` in `{ qty: { $gt: 5 } }` read as `o.qty.$gt` — is refused in a
- * field path (measured), and is read by `$getField` with the name as a literal
- * instead. Every segment after it is a `$getField` too, because a path cannot
- * continue from an expression.
+ * A rendered path that the server can follow. The server refuses a segment that starts
+ * with `$` in a field path (measured). The field `$gt` in `{ qty: { $gt: 5 } }` read as
+ * `o.qty.$gt` is an example. `$getField` reads it instead, with the name as a literal.
+ * Every segment after it is a `$getField` too, because a path cannot continue from an
+ * expression.
  */
 function reachable(path: string): unknown {
   const root = path.startsWith("$$") ? 2 : 1;
@@ -580,9 +581,9 @@ function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
 }
 
 /**
- * A folded path `$.a.b.c` reads each segment off the one before. The first segment
- * that the document's proof shows can give no value is refused: a field of a string,
- * of an array, or one that a closed document does not hold. See `unreadable` in type.ts.
+ * A folded path `$.a.b.c` reads each segment off the one before. The compiler refuses the first segment
+ * that the proof of the document shows can give no value. Such a segment is a field of a string, a field
+ * of an array, or a field that a closed document does not hold. See `unreadable` in type.ts.
  * A QUERY keeps MongoDB's path through an array (`throughArrays`): `{ "items.sku": "a" }`.
  */
 export function readablePath(node: Extract<Expr, { type: "FieldRef" }>, env: Env, throughArrays = false): void {
@@ -615,9 +616,9 @@ function spelledRead(e: Expr): string | null {
 }
 
 /**
- * How a message names the value before a read. A name that the desugar pass wrote
- * for a short spelling (`{ type: "a" }`) is named by what it stands for: the
- * document, or the element.
+ * How a message names the value before a read. The message names a name that the desugar
+ * pass wrote for a short spelling (`{ type: "a" }`) by what it stands for: the document,
+ * or the element.
  */
 export function holderOf(e: Expr, env: Env): string | null {
   if (e.type === "FieldRef" && e.path === "") return "the document";
@@ -647,8 +648,8 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
   const path = pathOf(node, env);
   if (path !== null) return path;
   // A field read after a value that is not a path binds the value once. The field reads
-  // above it are a path off the variable, so they read as a field path does: missing over
-  // null, a scalar or a missing value, and each element's field over an array.
+  // above it are a path off the variable. So they read as a field path does. A path gives
+  // missing over null, a scalar or a missing value, and gives each element's field over an array.
   // MEASURED: `{ $let: { vars: { v: "$x" }, in: "$$v.q" } }` answers as `"$x.q"` on each of them.
   const names = [node.name];
   let base = node.object;
@@ -663,7 +664,7 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
   return letOne(bound.as, lowerValue(base, baseEnv), `${bound.ref}.${names.join(".")}`);
 }
 
-/** A field read that the proof shows gives no value is refused. See `unreadable` in type.ts. */
+/** The compiler refuses a field read that the proof shows gives no value. See `unreadable` in type.ts. */
 function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): void {
   const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
   if (why === null) return;
@@ -672,20 +673,19 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
 }
 
 /**
- * `x[i]` — the three meanings JavaScript gives an integer key, in the ONE the
- * receiver proves, or a runtime dispatch over all three.
+ * `x[i]` — the three meanings JavaScript gives an integer key. The code lowers it in the
+ * ONE meaning that the receiver proves, or as a runtime dispatch over all three.
  *
- * The dispatch is a `$switch` and never a nested `$cond`, because the server
- * OPTIMISES a `$cond`'s branches before it reads the test: MEASURED, a receiver
- * the server holds as a constant — a `$lookup.let` variable, an injected value
- * inside `$literal` — folds the branch that does not apply and the whole pipeline
- * is refused before a document is read. For example, `$.o = $$$.c.find({ _id: $.arr[0] })`
- * over an array failed in the string branch. A string receiver failed in the
- * array branch. A `$switch` drops a
- * branch whose case folds to false, with no optimiser, so every receiver type
- * — array, string, document, number, null, missing — answers as it always did
- * (measured, the two shapes agree on each). It is the flatter document too, and
- * the reading every other runtime family dispatch here already uses.
+ * The dispatch is a `$switch` and never a nested `$cond`. The server OPTIMISES the branches
+ * of a `$cond` before it reads the test. MEASURED: a receiver that the server holds as a
+ * constant folds the branch that does not apply. Examples are a `$lookup.let` variable and
+ * an injected value inside `$literal`. Then the server refuses the whole pipeline before it
+ * reads a document. For example, `$.o = $$$.c.find({ _id: $.arr[0] })` over an array failed
+ * in the string branch. A string receiver failed in the array branch. A `$switch` drops a
+ * branch whose case folds to false, with no optimiser. So every receiver type answers as it
+ * always did: array, string, document, number, null, missing (measured, the two shapes agree
+ * on each). It is the flatter document too. Every other runtime family dispatch here
+ * already uses this reading.
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
@@ -758,8 +758,8 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   if (src !== null && NAMESPACES.has(src))
     return { kind: "namespace", name: src as Receiver extends { name: infer N } ? N : never };
   if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
-  // A regex has no value of its own: its row reads the pattern and flags off the
-  // source node, so the node itself is handed over.
+  // A regex has no value of its own. Its row reads the pattern and flags off the
+  // source node, so the code hands over the node itself.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   const t = typeOf(recv, env);
@@ -850,14 +850,15 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     );
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the SAFE value of its kind: `[]`, `{}`, `""`, or the value its row states. The
-    // operator answers on that value, so the cell sees a receiver that is present. A receiver the proof shows present takes no wrap. A `?.` never reaches
+    // operator answers on that value, so the cell sees a receiver that is present.
+    // A receiver that the proof shows present takes no wrap. A `?.` never reaches
     // here with an absent receiver: the chain stopped above and proved the path.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
     const empty = emptyValueOf(name, family);
-    // Only where the receiver is a VALUE of the document: inside `$group` or a window
-    // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
-    // each document's `a` as it is.
+    // This applies only where the receiver is a VALUE of the document. Inside `$group` or
+    // a window the receiver is the per-document operand of the accumulator. `$sum: "$a"`
+    // reads each document's `a` as it is.
     const inExpression = position === "value" || position === "filter";
     const needsEmpty =
       inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
@@ -927,9 +928,9 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
 }
 
 /**
- * `new X(…)` that passes/no-new.ts leaves to this phase (HR8): a name the program
- * binds, which needs the scope, and a row that every position refuses, whose own
- * refusal names the way.
+ * `new X(…)` that passes/no-new.ts leaves to this phase (HR8). Two cases remain: a name
+ * that the program binds, which needs the scope, and a row that every position refuses,
+ * whose own refusal names the way.
  */
 function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env): unknown {
   const { callee } = node;
@@ -960,7 +961,7 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   throw E.refusalFor(sel, spelled, "", position, node.pos, [], undefined, { args: args as readonly Expr[] });
 }
 
-/** `((x) => …)(a)` and `f(a)`: each parameter bound once by `$let`, the body lowered under them. */
+/** `((x) => …)(a)` and `f(a)`: `$let` binds each parameter once, and the body lowers under them. */
 function applyLambda(
   lambda: Extract<Expr, { type: "Lambda" }>,
   args: readonly CallArg[],
@@ -980,7 +981,7 @@ function applyLambda(
     bodyEnv = bound.env;
   });
   if (fnName !== null) {
-    // Recursion is refused: a MongoDB expression cannot call itself. Inside the
+    // The compiler refuses recursion: a MongoDB expression cannot call itself. Inside the
     // body the function's own name reads as the refusal.
     bodyEnv = bodyEnv.bind(fnName, {
       ref: { kind: "dropped", message: E.recursiveFunction(fnName, pos).message, replaced: false },
@@ -1001,7 +1002,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // judges it. A position where the row states no lowering, and a count that its
   // lowering does not take, give HR2's plain form. The compiler checks nothing here.
   if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return plainOperator(node, env);
-  // The operand LIST of a list-only operator may be written as one array literal:
+  // The developer may write the operand LIST of a list-only operator as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone operand that is not an array
   // literal is ONE operand (HR1, HR2): `$add($.x)` is `{ $add: "$x" }`, as the server
   // reads it. The operand shape is the EXPRESSION form's. In an update document the
@@ -1010,8 +1011,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   // HR2: one array literal IS the operand list, as written — `$eq([$.n, 4])` is
-  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED by its
-  // elements, and emitted as the developer spelled it.
+  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. The compiler COUNTS it by
+  // its elements, and emits it as the developer spelled it.
   let args: readonly CallArg[] = node.args;
   let count = node.args.length;
   const overrides = new Map<Expr, unknown>();
@@ -1029,7 +1030,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   if (sel.kind !== "rule") return plainOperator(node, env);
   // A body of named keys: a JavaScript spread or computed key has no lowering there.
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
-  // An operator that BINDS variables: an arrow in a visible slot is lowered under
+  // An operator that BINDS variables: the compiler lowers an arrow in a visible slot under
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
@@ -1063,9 +1064,9 @@ function boundArrowOverrides(
   const varsArg = args[varsAt];
   if (varsArg === undefined || varsArg.type !== "ObjectLiteral") return out;
   const names = varsArg.entries.map(staticKey).filter((k): k is string => k !== null);
-  // The variables are spelled by the same encoder that spells the parameters
-  // reading them — `v_x` becomes `v_v_5fx` on BOTH sides, so the body's `$$v_v_5fx`
-  // finds its variable, and a name the server refuses (`ROOT`) becomes one it takes.
+  // The same encoder spells the variables and the parameters that read them: `v_x`
+  // becomes `v_v_5fx` on BOTH sides. So the `$$v_v_5fx` of the body finds its variable,
+  // and a name that the server refuses (`ROOT`) becomes one that it takes.
   const inner = childEnv(env, node, "args");
   const vars: Record<string, unknown> = {};
   for (const e of varsArg.entries) {
@@ -1141,8 +1142,8 @@ export const slotProof = (env: Env): SlotProof => ({
 
 /**
  * A kind refusal is the final check on a call. An error inside an operand has a message
- * of its own, and that one comes first: this lowers each operand and drops the result.
- * An arrow is not a value, so it is left alone.
+ * of its own, and that one comes first: this function lowers each operand and drops the
+ * result. It leaves an arrow alone, because an arrow is not a value.
  */
 export function operandsFirst(operands: readonly Expr[], env: Env): void {
   for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
@@ -1199,8 +1200,8 @@ function chainOf(node: Expr, op: string): Expr[] {
 
 /**
  * The truth of `x` as a value: true or false. A condition reads a number, and a boolean
- * that may be missing, as its own truth (`truthOf`), so such a truth takes a `$cond`. A
- * constant folds. A boolean that is there is its own value, and so is the answer of an
+ * that may be missing, as its own truth (`truthOf`). So such a truth takes a `$cond`. A
+ * constant folds. A boolean that is there is its own value. So is the answer of an
  * operator whose row states a boolean for every operand (`returns: "bool"` and
  * `neverNull: "always"`, as `$gt` and `$and` do).
  */
@@ -1254,7 +1255,7 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
     case "===":
     case "!==": {
       // `x === undefined` is a PRESENCE test: `$type` answers "missing" for an absent field
-      // and "null" for a present null, the same line `$exists` draws in a query.
+      // and "null" for a present null. `$exists` makes the same distinction in a query.
       const operand = orientUndefined(node.left, node.right);
       if (operand !== null)
         return { [node.op === "!==" ? "$ne" : "$eq"]: [{ $type: lowerValue(operand, inner) }, "missing"] };
@@ -1313,8 +1314,8 @@ function orientUndefined(left: Expr, right: Expr): Expr | null {
 /**
  * `a && b` / `a || b` as a VALUE keeps JavaScript's operand-preserving rule:
  * `$cond` on the truth of the left, which returns the operand. An all-boolean
- * chain is a boolean either way and keeps the flat `$and` / `$or`. A left
- * side that is not a plain reference is bound once, so it is not evaluated twice.
+ * chain is a boolean either way and keeps the flat `$and` / `$or`. The compiler binds
+ * a left side that is not a plain reference once. So the server evaluates it one time.
  */
 function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown {
   const op = node.op as "&&" | "||";
@@ -1341,10 +1342,10 @@ function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): un
 
 /**
  * `x in [ … ]` is MongoDB's own `$in`: true when the value is an element of the
- * list. The right side is a list spelled in the source; a constant, a parameter
+ * list. The right side is a list that the source spells. A constant, a parameter
  * and a `${…}` interpolation arrive as that literal. A passed list that reads as
- * MQL arrives as an `Injected` node, and so does a `validate()` parameter, of no
- * known kind. Every other right side is refused, and the message names the
+ * MQL arrives as an `Injected` node. So does a `validate()` parameter, of no
+ * known kind. The compiler refuses every other right side, and the message names the
  * JavaScript spelling that does the job. See docs/LANGUAGE.md § Comparison.
  */
 function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown {
@@ -1359,16 +1360,16 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
 // ── blocks ───────────────────────────────────────────────────────────────────
 
 /**
- * `{ const y = …; return … }`: one `$let` per declaration the fold could not
- * inline, innermost last — and ONE `$let` for the declarators a `,` joined, the
- * same rule the `$set` road follows. `$let` evaluates every var in the ENCLOSING
- * scope (mongod refuses a var that reads a sibling), so a joined declarator that
+ * `{ const y = …; return … }` lowers to one `$let` per declaration that the fold could
+ * not inline, innermost last. It lowers the declarators that a `,` joined to ONE `$let`,
+ * by the same rule as the `$set` road. `$let` evaluates every var in the ENCLOSING
+ * scope (mongod refuses a var that reads a sibling). So a joined declarator that
  * reads one bound beside it opens a new `$let` there. See docs/specs/let-bindings.md.
  */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
   // Each declarator lowers ONCE. One that breaks its group is already lowered, so
-  // it goes to the next `$let`, not through `lowerValue` a second time —
-  // a second call would mint a second compiler name for the same value.
+  // it goes to the next `$let` and does not pass through `lowerValue` again.
+  // A second call would mint a second compiler name for the same value.
   const step = (i: number, e: Env, carried: { value: unknown } | null): unknown => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
     const vars: Record<string, unknown> = {};
@@ -1397,15 +1398,15 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
   return step(0, env, null);
 }
 
-/** The callback parameter kinds a row states, for a caller binding them. Unused parameters bind as "unknown". */
+/** The callback parameter kinds a row states, for a caller that binds them. Unused parameters bind as "unknown". */
 export { callbackParamsOf };
 
 // ── the lowering that the constant engine asks for ───────────────────────────
 
 /**
- * A closed expression as MQL, so the interpreter can give its value. The declared functions
- * are bound as a declaration binds them (statement.ts), and each call inlines its body. The
- * lowering only asks for a value, so `settling` is set: see `Site.settling`. The engine
+ * A closed expression as MQL, so the interpreter can give its value. The code binds the
+ * declared functions as a declaration binds them (statement.ts), and each call inlines its body.
+ * The lowering only asks for a value, so `settling` is set: see `Site.settling`. The engine
  * reads a throw as "not constant", and the real emit pass reports the error at the real site.
  */
 provideLowering((node, functions) => {

@@ -2,14 +2,14 @@
 //
 // A date here is a number of milliseconds since the epoch, and every rule works in
 // UTC. The server runs a named time zone through a table that the interpreter does
-// not hold, so a `timezone` operand runs only when it names UTC: `utcOnly` is the one
+// not hold. So a `timezone` operand runs only when it names UTC. `utcOnly` is the one
 // place that states this. Every other value for it is a refusal.
 //
 // The calendar arithmetic uses integers only (`daysFromCivil`), so it is exact for
 // every year that a JavaScript Date holds. The rules agree with the server on these
 // points, each one measured and not assumed:
 //   - `$dateAdd` clamps a day of month to the last day of the target month.
-//   - `$dateTrunc` bins from 2000-01-01, and a week bin starts on `startOfWeek`
+//   - `$dateTrunc` bins from 2000-01-01. A week bin starts on `startOfWeek`
 //     (Sunday by default), at the first such day on or after that anchor.
 //   - `$dateDiff` counts the unit BOUNDARIES crossed, not the elapsed units.
 //   - `$dateFromParts` carries a part out of range into the next part, and refuses a
@@ -18,9 +18,9 @@
 //   - A date string runs only in the few ISO 8601 spellings below. The server parser
 //     accepts far more forms, and some of its answers differ, so every other string
 //     is a refusal.
-//   - `$toDate` of a number fails on the server when the number is an int. The kind
-//     of a computed number is not known, so only a fraction or an integer beyond
-//     32 bits runs.
+//   - `$toDate` of a number fails on the server when the number is an int. The
+//     interpreter does not know the kind of a computed number, so only a fraction
+//     or an integer beyond 32 bits runs.
 // A result outside the range of a JavaScript Date is a refusal.
 //
 // See src/compiler/interpret/CLAUDE.md.
@@ -178,10 +178,10 @@ type Check = (v: unknown) => boolean;
 const nullWeekStart = (v: Record<string, unknown>): boolean => v.startOfWeek === null && v.unit !== "week";
 
 /**
- * A keyed date operator. Every operand is evaluated, and the first one with no value
+ * A keyed date operator. The rule evaluates every operand, and the first one with no value
  * stops the walk. A null operand makes the answer null, but only when every other operand
- * is valid, because the server fails on an invalid operand beside a null one in some
- * cases and not in others. `shape` judges the written keys before any operand is read.
+ * is valid. The server fails on an invalid operand beside a null one in some
+ * cases and not in others. `shape` judges the written keys before the rule reads any operand.
  * `unread` names a case where a null operand is not the one that the server reads.
  */
 function dated(
@@ -300,8 +300,8 @@ const dateFromParts = dated(
 // ── a date moved, counted, and cut ───────────────────────────────────────────
 
 /**
- * The instant `amount` units after `ms`. A calendar unit keeps the day of month, and the
- * last day of the target month is the limit of it. A fixed unit moves the instant.
+ * The instant `amount` units after `ms`. A calendar unit keeps the day of month, up to the
+ * last day of the target month. A fixed unit moves the instant.
  */
 function shift(ms: number, unit: Unit, amount: number): Answer {
   const months = MONTHS_IN[unit];
@@ -441,7 +441,7 @@ const DEFAULT_FORMAT = "%Y-%m-%dT%H:%M:%S.%LZ";
 
 /**
  * The text of the instant in the format. The server fails on a specifier it does not
- * know, on a `%` at the end, and on a year specifier for a year outside 0 to 9999.
+ * know and on a `%` at the end. It also fails on a year specifier for a year outside 0 to 9999.
  */
 function formatInstant(ms: number, format: string): string | undefined {
   const f = fieldsOf(ms);
@@ -489,9 +489,9 @@ const dateToString = keyed(["date"], ["format", "timezone", "onNull"], (parts, w
 const ISO_STRING = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?)?$/;
 
 /**
- * What the server does with a string: the instant for a string that it reads and that the
- * rule reads the same way, `fails` for a string in the shape above with a part out of
- * range, and undefined for every other string.
+ * What the server does with a string. The value is the instant for a string that the server
+ * reads and that the rule reads the same way. It is `fails` for a string in the shape above
+ * with a part out of range. It is undefined for every other string.
  */
 type Parsed = number | "fails" | undefined;
 

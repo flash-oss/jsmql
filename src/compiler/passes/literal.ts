@@ -2,8 +2,8 @@
 //
 // Constant folding computes values. A value must go back into the tree before
 // any later phase can see it. This code puts it back as a LITERAL, not as a
-// built carrier node. So every later phase works on a tree the
-// surface could have produced, and it lets a folded constant reach a rule
+// built carrier node. So every later phase works on a tree that the
+// surface could have produced. A folded constant can then reach a rule
 // that matches on literals:
 //
 //   const k = "name"; $.items.map(k)   folds to   $.items.map("name")
@@ -11,9 +11,9 @@
 //
 // Not every value has a literal SPELLING. A Date does not. It goes back into
 // the tree as the value itself: an `Injected` node, the same carrier a `${…}`
-// slot uses. So a constant date is inlined exactly as a constant number is,
-// and a `$match` on it stays a query the index can serve. A value with no node
-// at all (`undefined`, a non-finite number) gets the answer null, and the
+// slot uses. So a constant date is inlined exactly as a constant number is.
+// A `$match` on it stays a query that the index can serve. A value with no node
+// at all (`undefined`, a non-finite number) gets the answer null. The
 // declaration KEEPS ITS BINDING. See `fold.ts` for why an inline of the source
 // expression instead would carry its free names to every use site.
 
@@ -149,8 +149,8 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
     return { type: "ObjectLiteral", entries, pos };
   }
 
-  // A Date has no spelling, and rides as the value it is. The query road compares
-  // it as written, and the value road passes it through, the same as a `${date}` slot.
+  // A Date has no spelling, so it goes in as the value it is. The query road compares it as written.
+  // The value road passes it through, the same as a `${date}` slot.
   if (isDate(value)) return { type: "Injected", value, pos };
   // A Binary, a Decimal128 or a Long has no spelling here. `nodeOf` carries it as a value.
   return null;
@@ -159,7 +159,7 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
 /**
  * The node that carries a computed `value`, with no exception: the literal that spells
  * it, or an `Injected` node that holds it. The fold writes back every value it computes
- * through this function, so a Date, an ObjectId, a Decimal128 or a Long goes back into
+ * through this function. So a Date, an ObjectId, a Decimal128 or a Long goes back into
  * the tree as itself.
  */
 export function nodeOf(value: unknown, pos: number, text = false): Expr {
@@ -170,8 +170,8 @@ export function nodeOf(value: unknown, pos: number, text = false): Expr {
  * An element of an injected structure: its literal where it has one, otherwise
  * the value itself as an `Injected` node. A Date inside `{ startDate, endDate }`
  * keeps the object's keys readable (`$dateDiff(${parts})` is the body it
- * spells), and the Date stays the value it is. `undefined` has no spelling
- * and stops the structure. So does a nested structure that `asLiteral` itself refused.
+ * spells). The Date stays the value it is. `undefined` has no spelling
+ * and stops the structure. A nested structure that `asLiteral` itself refused also stops it.
  */
 function leafOf(value: unknown, pos: number, text: boolean): Expr | null {
   if (value === undefined) return null;

@@ -30,9 +30,9 @@ export type SortSpec = Record<string, 1 | -1>;
 
 /**
  * What a sort argument asks for: keys by NAME; a key COMPUTED from the document
- * — `d => d.cat.toLower()` — which MongoDB cannot sort by directly, so the
- * caller writes it to a scratch field and sorts by that field; or the WHOLE element,
- * which carries a direction and no name.
+ * — `d => d.cat.toLower()`. MongoDB cannot sort by such a key directly, so the
+ * caller writes it to a scratch field and sorts by that field. The third ask is the
+ * WHOLE element, which carries a direction and no name.
  */
 export type SortAsk =
   | { readonly kind: "keys"; readonly spec: SortSpec }
@@ -85,7 +85,10 @@ function wrongSlotKind(
 /** The hint of a direction slot: the directions that a sort takes. */
 const DIRECTIONS = ' Write 1, -1, "asc" or "desc".';
 
-/** A direction of the wrong kind, for example `{ age: null }`. A number or a string keeps the message that names each direction. */
+/**
+ * A direction of the wrong kind, for example `{ age: null }`. A number or a string keeps the
+ * message that names each direction.
+ */
 const wrongDirection = (e: Expr, method: string, slot: string, kind: KindOf): CodegenError | null =>
   wrongSlotKind(e, method, slot, "a direction", ["number", "string"], DIRECTIONS, kind);
 
@@ -343,10 +346,10 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
  * by field NAME. MEASURED, the server refuses `{ $sort: 1 }`, because the spec is not a
  * document. It refuses `{ $sort: { $literal: 1 } }`, because `$literal` is not a valid
  * field name. So an element that IS the document has nowhere to go as a key.
- * An unwound element has a name — `.flatMap("tags").sort((a, b) => a - b)` sorts
- * by `tags` — and its fields sit under that name: `.flatMap("items").sortBy("qty")` sorts
- * by `items.qty`. A `$sort` stage takes at most `SORT_KEY_LIMIT` keys; `pos` is the
- * sort argument, where a longer spec is refused.
+ * An unwound element has a name. `.flatMap("tags").sort((a, b) => a - b)` sorts
+ * by `tags`, and its fields sit under that name. `.flatMap("items").sortBy("qty")` sorts
+ * by `items.qty`. A `$sort` stage takes at most `SORT_KEY_LIMIT` keys. `pos` is the
+ * sort argument, where the compiler refuses a longer spec.
  */
 export function streamSortAsk(ask: SortAsk, method: string, element: string, pos: number): StageSortAsk {
   if (ask.kind === "keys") {

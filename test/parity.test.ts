@@ -1,17 +1,16 @@
 // test/parity.test.ts — the value/stream parity gate.
 //
-// A method name the value and the stream registries both list carries TWO lowerings: a value form (an array inside a document,
-// `$.rows.take(2)`) and a stream form (the pipeline's documents, `$$ = $$.take(2)`).
-// The two live in different files and share no code, so nothing structural keeps them
-// meaning the same thing. This suite runs both against the same documents on a real
-// mongod and compares the results.
+// A method name that both the value and the stream registries list carries TWO lowerings. The value form works
+// on an array inside a document (`$.rows.take(2)`). The stream form works on the documents of the pipeline (`$$
+// = $$.take(2)`). The two live in different files and share no code, so nothing structural keeps them meaning
+// the same thing. This suite runs both against the same documents on a real mongod and compares the results.
 //
-// What IS contracted: which elements survive, and what shape they come back in. A
-// sort also contracts the ORDER, because the order is what the developer wrote.
-// What is NOT contracted: the order of any other method's result. Where a JavaScript or lodash runtime carries an
-// ordering guarantee the developer never wrote, jsmql takes MongoDB's behaviour and the
-// smaller MQL — see SR2 in docs/LANG_RULES.md. `.uniqBy` is the worked example: the value
-// form preserves input order through `$reduce`, the stream form uses `$group` and does not.
+// What IS contracted: which elements survive, and what shape they come back in. A sort also contracts the
+// ORDER, because the order is what the developer wrote. What is NOT contracted: the order of any other method's
+// result. A JavaScript or lodash runtime may carry an ordering guarantee that the developer never wrote. In
+// that case jsmql takes MongoDB's behaviour and the smaller MQL (see SR2 in docs/LANG_RULES.md). `.uniqBy` is
+// the worked example: the value form preserves input order through `$reduce`, the stream form uses `$group` and
+// does not.
 //
 // Connects to a local mongod and SKIPS ITSELF (green) when none is reachable, matching
 // fold-consistency.test.ts. A coverage floor below prevents a self-skip that silently

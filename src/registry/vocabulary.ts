@@ -72,7 +72,7 @@ export const escapeForRegex = (needle: string): string => needle.replace(/[.*+?^
  *
  * The MongoDB query language satisfies a field comparison when any ELEMENT of an
  * array value satisfies it. It also goes through an array in the middle of a path.
- * jsmql emits the query that a MongoDB developer writes by hand, and the rules of
+ * JSMQL emits the query that a MongoDB developer writes by hand. The rules of
  * the server then apply. `$.age > 18` is `{ age: { $gt: 18 } }`, the document that
  * every index plan and every code review speaks about. A comparison that must read
  * one value, and not an element, has its own JavaScript spelling: `.includes(x)`
@@ -192,7 +192,7 @@ export type ArgType =
    *   String(null)   → refused: a conversion of null has no meaning (HR7)
    */
   | "value"
-  /** The slot takes a callback: an arrow. A value that is proven to be a plain value does not fit. */
+  /** The slot takes a callback: an arrow. A value that the compiler proves to be a plain value does not fit. */
   | "callback"
   /** The slot takes a regular expression, or a string as the pattern. The row's other rules say which string. */
   | "regex"
@@ -200,7 +200,7 @@ export type ArgType =
    * The slot takes a value of the kind of ONE element of the row's element source.
    * The source is the receiver for a method, and the last operand for a production:
    * `x in [ … ]` takes an `x` of the kind of the list's elements. The compiler
-   * refuses a value that is proven to be a kind the elements cannot be.
+   * refuses a value that it proves to be a kind the elements cannot be.
    */
   | "element";
 
@@ -384,7 +384,7 @@ export const BSON_KIND: Readonly<Record<string, Kind>> = {
 export function bsonTagOf(v: unknown): string | undefined {
   if (typeof v !== "object" || v === null) return undefined;
   const tag = (v as { _bsontype?: unknown })._bsontype;
-  // bson 1.x spells the tag of ObjectId with an upper-case D, and jsmql reads both.
+  // bson 1.x spells the tag of ObjectId with an upper-case D, and JSMQL reads both.
   return typeof tag === "string" ? (tag === "ObjectID" ? "ObjectId" : tag) : undefined;
 }
 
@@ -577,8 +577,8 @@ export type Type = {
 /**
  * The result type a row STATES, as data. The compiler evaluates it against the
  * receiver's `Type` and the arguments' types (src/compiler/emit/type.ts). It is a
- * closed grammar, so a test can measure every term on mongod, and the globals
- * generator can turn it into a TypeScript signature. A row whose result no term
+ * closed grammar, so a test can measure every term on mongod. The globals
+ * generator can also turn it into a TypeScript signature. A row whose result no term
  * describes states `"unknown"`, and a test lists those rows.
  *
  *   Kind                    a fixed kind — `.trim()` is a string
@@ -724,8 +724,8 @@ export type Arity = {
    * The kind a slot takes, or the SET of kinds where a slot takes more than one
    * shape. `$unionWith` takes a collection NAME or a body document, and the server
    * refuses everything else, for example an int. One type is the common case, and it
-   * stays a bare `ArgType`. HR7 reads it: the compiler refuses a value that is
-   * PROVEN to have another kind, even where the server accepts the MQL. A value of
+   * stays a bare `ArgType`. HR7 reads it: the compiler refuses a value that it
+   * PROVES to have another kind, even where the server accepts the MQL. A value of
    * unknown kind passes. The index keys it, so a slot beyond the named ones takes
    * `rest`.
    */
@@ -743,11 +743,11 @@ export type Arity = {
   slotHint?: Readonly<Record<number, string>>;
   /**
    * Every operand has one kind. The first operand with a PROVEN kind sets it. A later
-   * operand with another proven kind is refused. This is the rule of `===` (the test
+   * operand with another proven kind is a refusal. This is the rule of `===` (the test
    * is always false for two kinds) and of `+` (a number and a string never add). An
-   * operand of unknown kind, or of two or more possible kinds, sets no kind and is never
-   * refused by this rule. A literal `null` is not compared, because `x === null` is
-   * the test for a null or missing value.
+   * operand of unknown kind, or of two or more possible kinds, sets no kind, and this
+   * rule never refuses it. The rule does not compare a literal `null`, because `x === null`
+   * is the test for a null or missing value.
    */
   homogeneous?: true;
   /**
@@ -763,7 +763,7 @@ export type Arity = {
    */
   slotRange?: Readonly<Record<number, readonly [number, number]>>;
   /**
-   * Slots that refuse a literal zero, which is to say a divisor. The server refuses
+   * Slots that refuse a literal zero because the slot is a divisor. The server refuses
    * `$divide($.a, 0)` and `$.a % 0`, and the NaN answer of JavaScript has no
    * MongoDB value.
    */
@@ -886,7 +886,7 @@ export type BodyRule = {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * A condition that the compiler ALREADY read for truth: the MQL that `$cond.if`,
+ * A condition that the compiler reads for truth BEFORE the slot gets it: the MQL that `$cond.if`,
  * `$filter.cond` and `$match.$expr` take as it stands. Only the mode module of the
  * compiler mints one, and the type of every slot that reads a boolean takes one.
  * So a VALUE cannot land in a condition slot by mistake, and the type error names
@@ -1069,9 +1069,9 @@ export type ExprIn = {
   type: (e: Expr) => Type;
   /**
    * Is the receiver certainly THERE — never null, and never missing? It is true for
-   * the array of a `$lookup`, a literal, `$range(…)`, the keys of the root document,
-   * a chain of `neverNull` rows over one of those, and a runtime family dispatch
-   * whose `$type` test already proved the branch. A cell whose operator stops on
+   * the array of a `$lookup`, a literal, `$range(…)` and the keys of the root document.
+   * It is also true for a chain of `neverNull` rows over one of those. It is true too
+   * for a runtime family dispatch whose `$type` test proves the branch. A cell whose operator stops on
    * null (`$size`, `$in`, the input of `$map`) guards its receiver with `$ifNull`,
    * unless this is true. MEASURED: `{ $size: null }` stops the whole command, and
    * every array operator answers null for a missing field.
@@ -1237,11 +1237,11 @@ export type StageIn = {
  * and writes it back to the receiver:
  *   $.a.pop();        { 0: "[..._r].slice(0, -1)" }   → $.a = [...$.a].slice(0, -1);
  * The form spreads the receiver into an array literal on purpose. `.pop()` exists
- * on an array alone, so the form states what the spelling proves, and the value
- * cells take the array branch with no runtime type dispatch (`[...$.a]` lowers to
+ * on an array alone, so the form states what the spelling proves. The value
+ * cells then take the array branch with no runtime type dispatch (`[...$.a]` lowers to
  * `"$a"`, so the proof costs nothing).
- * The row states the form as source, so a reader sees exactly what the statement
- * means, and so the form reaches the same value cells as the spelling that a
+ * The row states the form as source. A reader then sees exactly what the statement
+ * means. The form also reaches the same value cells as the spelling that a
  * developer writes.
  */
 export type MutatorForm = { readonly sig: string; readonly by: Readonly<Record<number, string>> };
@@ -1411,9 +1411,9 @@ type ByArgs<In, Out> = {
   /**
    * A constant that REACHES a row is one that the fold did not settle. It is a
    * value with no source spelling (a Date, an ObjectId, which the evaluator
-   * settles at the call), or a value that the server refuses (`ObjectId("nothex")`,
-   * which becomes a refusal in the terms of the developer), or one whose TYPE the
-   * server decides, which a rule sends to the server to convert.
+   * settles at the call). It can also be a value that the server refuses (`ObjectId("nothex")`,
+   * which becomes a refusal in the terms of the developer). Or it can be a value whose
+   * TYPE the server decides, which a rule sends to the server to convert.
    */
   constant?: Rule<In, Out> | Refusal;
   /** A value that the document holds: a rule, or a refusal that names the conversion method. */
@@ -1424,8 +1424,8 @@ type ByArgs<In, Out> = {
 
 /**
  * A renderer. It holds one rule for every family, or one rule PER family. The
- * count of arguments can differ by receiver as well as by position: `$.n.round(2)`
- * takes a precision, the compiler refuses `Math.round(x)`, and both are the `round` entry. Every
+ * count of arguments can differ by receiver as well as by position. `$.n.round(2)`
+ * takes a precision, and the compiler refuses `Math.round(x)`. Both are the `round` entry. Every
  * family that `on` lists must appear, with a rule or with a refusal that says why.
  * No family that `on` omits can appear. A receiver whose family the compiler cannot
  * prove is the one field family that holds a rule (test/compiler-select.test.ts).
@@ -1497,9 +1497,9 @@ export type On = Family | readonly Family[] | "any";
  * with the operand as the developer wrote it. This is HR2. `$size([$.a])` is the
  * operand list of the developer, and it round-trips as `{ $size: ["$a"] }`, which
  * the server reads as one operand. This function adds no wrap. A JavaScript
- * lowering that hands an ARRAY LITERAL to such an operator (`[$.a, 2].length`)
- * adds the wrap itself, because there the array is the value and not a list. See
- * the `length` row.
+ * lowering can hand an ARRAY LITERAL to such an operator (`[$.a, 2].length`).
+ * That lowering adds the wrap itself, because there the array is the value and not
+ * a list. See the `length` row.
  *
  * An accumulator slot (`$group`, `$setWindowFields.output`) renders the same way:
  * `$push([$.x, $.y])` is `{ $push: ["$x", "$y"] }`, as its raw spelling is.

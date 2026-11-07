@@ -1,6 +1,5 @@
-// Tests for the callback-block rule: a `{ … }` body on a JavaScript or lodash
-// method is JavaScript — `const`/`let` bindings plus one `return <expr>` — and
-// pipeline stages belong to `.aggregate(pipeline)` alone.
+// Tests for the callback-block rule. A `{ … }` body on a JavaScript or lodash method is JavaScript:
+// `const`/`let` bindings plus one `return <expr>`. Pipeline stages belong to `.aggregate(pipeline)` alone.
 //
 // See docs/specs/grammar.md § Statement block and docs/specs/lookup-stage.md § Block bodies.
 
@@ -71,8 +70,8 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   });
 
   it("says which of the three it is: a stage with a return, a stage without one, a declaration", () => {
-    // A block that also RETURNS cannot become a stage block if the reader moves it: the
-    // reader has to drop one of the two, and the message names both positions.
+    // A block that also RETURNS cannot become a stage block if the reader moves it. The reader has to drop one
+    // of the two, and the message names both positions.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });`)).toThrow(
       /is a pipeline stage\. The 'return' at position \d+ makes this block a value callback/,
     );
@@ -177,8 +176,8 @@ describe("a stage-free callback block is the JavaScript value form", () => {
   });
 
   it("`const`/`let` bindings become the `$let` the predicate's `$expr` rides in", () => {
-    // A `$let` has no query form, so the whole predicate goes to `$expr` — but the
-    // bindings work, and a `$.<field>` read still hoists into the `$lookup.let`.
+    // A `$let` has no query form, so the whole predicate goes to `$expr`. But the bindings work, and a
+    // `$.<field>` read still hoists into the `$lookup.let`.
     expect(jsmql(`$.r = $$$.orders.filter(o => { const t = o.total; return t > 5; });`)).toEqual([
       {
         $lookup: {
@@ -217,12 +216,11 @@ describe("in-document array callbacks are untouched", () => {
   });
 });
 
-// The `$$ =` source switch reaches a lookup through the same `lookupOf` every other
-// join road takes (src/compiler/emit/join.ts), and whether the chain correlates is what
-// its body captured — never a separate reading of the predicate. So a `{ return <pred> }`
-// block classifies exactly as the bare expression does. A spelling that lost the
-// predicate would leave an empty sub-pipeline matching every foreign document, which is
-// valid MQL and therefore silent.
+// The `$$ =` source switch reaches a lookup through the same `lookupOf` as every other join road
+// (src/compiler/emit/join.ts). Whether the chain correlates is what its body captured, never a separate reading
+// of the predicate. So a `{ return <pred> }` block classifies exactly as the bare expression does. A spelling
+// that lost the predicate would leave an empty sub-pipeline matching every foreign document, which is valid MQL
+// and therefore silent.
 describe("the `$$ =` source switch folds a callback block before it classifies", () => {
   const PAIRS: [string, string, string][] = [
     [
@@ -258,9 +256,9 @@ describe("the `$$ =` source switch folds a callback block before it classifies",
   });
 });
 
-// A `const`/`let` block predicate is a `$let` expression. A `$let` has no query form,
-// so the whole predicate rides in `$expr` — but every predicate position accepts it,
-// and the bindings behave exactly as they do in any other block-bodied arrow.
+// A `const`/`let` block predicate is a `$let` expression. A `$let` has no query form, so the whole predicate
+// rides in `$expr`. But every predicate position accepts it, and the bindings behave exactly as they do in any
+// other block-bodied arrow.
 describe("`const`/`let` bindings work in every predicate position", () => {
   const LET = { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } };
   const cases: [string, string, unknown][] = [

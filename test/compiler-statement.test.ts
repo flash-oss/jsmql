@@ -19,24 +19,24 @@ import { jsmql } from "../src/index.ts";
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
  * the reason. A sort by text score needs a text index and a `$text` query to
- * produce the score; the shape itself is what the stage's row states.
+ * produce the score. The shape itself is what the stage's row states.
  */
 const NEEDS_MORE_THAN_A_SERVER: Readonly<Record<string, string>> = {
   '$sort({ s: $meta("textScore") });': "a text score exists only under a $text query against a text index",
 };
 
 /**
- * Sources whose pipeline the server refuses because of THIS deployment, not the
- * shape: a collection-level aggregate cannot start from `$documents`, and
- * `$geoNear` needs an index the fixture has no reason to carry. See test/CLAUDE.md.
- * Each entry must be asserted above and must be refused with its own message.
+ * Sources whose pipeline the server refuses because of THIS deployment, not the shape.
+ * A collection-level aggregate cannot start from `$documents`.
+ * `$geoNear` needs an index that the fixture has no reason to carry. See test/CLAUDE.md.
+ * A case above must assert each entry, and the server must refuse it with its own message.
  */
 const REFUSED_BY_ENVIRONMENT: Readonly<Record<string, RegExp>> = {
   "$documents([{ a: 1 }]); $.b = 2;": /database or cluster-level aggregation/,
   '$geoNear({ near: [0, 0], distanceField: "d", query: $.k === "a" });': /2d or 2dsphere index/,
 };
 
-/** Is the project's mongod running? Settled once, for the blocks that need it. */
+/** Is the project's mongod running? The suite checks once, for the blocks that need it. */
 const up = await liveUp();
 
 /** Every source the unit cases below assert, so the server sees all of them too. */
@@ -59,9 +59,9 @@ describe("compiler/emit/statement — the writes", () => {
   });
 
   it("assigns a document WHOLE, as JavaScript does", () => {
-    // `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server, and leaves the other
-    // sub-fields behind; `$mergeObjects` makes the document a value, so the field
-    // takes it whole — and an expression inside it still evaluates. Both measured.
+    // `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server, and leaves the other sub-fields behind.
+    // `$mergeObjects` makes the document a value, so the field takes it whole.
+    // An expression inside it still evaluates. The author measured both.
     expect(compiled("$.n = { x: 1 };")).toEqual([{ $set: { n: { $mergeObjects: [{ x: 1 }] } } }]);
     expect(compiled("$.n = { x: $.a };")).toEqual([{ $set: { n: { $mergeObjects: [{ x: "$a" }] } } }]);
     expect(compiled("$.n = {};")).toEqual([{ $set: { n: { $mergeObjects: [{}] } } }]);
@@ -81,8 +81,8 @@ describe("compiler/emit/statement — the writes", () => {
     // A write of what an earlier value READ needs no split: one `$set` evaluates
     // every value against the document it received.
     expect(compiled("$.a = $.b, $.b = 1;")).toEqual([{ $set: { a: "$b", b: 1 } }]);
-    // A `"$a"` in raw MQL IS a read of `a`, so the group ends there too:
-    // one `$set` would give `b` the value `a` held BEFORE the stage.
+    // A `"$a"` in raw MQL IS a read of `a`, so the group ends there too.
+    // One `$set` would give `b` the value that `a` held BEFORE the stage.
     expect(compiled('$.a = 1, $.b = $toString("$a");')).toEqual([
       { $set: { a: 1 } },
       { $set: { b: { $toString: "$a" } } },
@@ -91,7 +91,7 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled('$.a = 1, $.b = "$a";')).toEqual([{ $set: { a: 1, b: { $literal: "$a" } } }]);
     // The same path twice means that the source says two things.
     expect(compiled("$.a = 1, $.a = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
-    // A parent beside its own child is refused by the server outright.
+    // The server refuses a parent beside its own child outright.
     expect(compiled("$.a = 1, $.a.b = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { "a.b": 2 } }]);
     expect(compiled("$.a.b = 1, $.a = 2;")).toEqual([{ $set: { "a.b": 1 } }, { $set: { a: 2 } }]);
   });
@@ -103,12 +103,11 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled("delete $.a, $.b = 1;")).toEqual([{ $unset: "a" }, { $set: { b: 1 } }]);
     expect(compiled("$ = { x: $.a };")).toEqual([{ $replaceWith: { x: "$a" } }]);
     expect(compiled("$ = $.sub;")).toEqual([{ $replaceWith: "$sub" }]);
-    // A root replacement has to BE a document. The server refuses every other
-    // value, and a literal — or a name whose measured return type says so — is
-    // known at compile time.
+    // A root replacement has to BE a document. The server refuses every other value.
+    // A literal — or a name whose measured return type says so — is known at compile time.
     expect(() => pipeline("$ = 5;")).toThrow(/takes a document, but got a number\./);
     expect(() => pipeline('$ = "x";')).toThrow(/but got a string\./);
-    // `$` is ONE document and `$$` is the stream, so an array names the wrong
+    // `$` is ONE document and `$$` is the stream. An array names the wrong
     // destination whatever it holds: a list of documents, scalars, or nothing.
     for (const src of ["$ = [{ a: 1 }, { a: 2 }];", "$ = [1, 2];", "$ = [];", "$ = $.items.map(x => ({ v: x }));"]) {
       expect(() => pipeline(src)).toThrow(/takes a document, but got an array\./);
@@ -118,8 +117,8 @@ describe("compiler/emit/statement — the writes", () => {
   });
 
   it("`$ = $.method(…)` is the stage that root-replacing object methods emit", () => {
-    // A row spelled on both the object and the stream says of ONE document what it
-    // says of every document, so the two spellings are one lowering — the lean `$project`.
+    // A row spelled on both the object and the stream says of ONE document what it says of every document.
+    // So the two spellings are one lowering: the lean `$project`.
     expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
     expect(compiled('$ = $.omit(["a"]);')).toEqual([{ $project: { a: 0 } }]);
     expect(compiled("$ = $.pick([]);")).toEqual([{ $replaceWith: {} }]);
@@ -144,8 +143,8 @@ describe("compiler/emit/statement — the writes", () => {
       { $project: { qty: 1, _id: 0 } },
     ]);
     // A link on the object family only, or an optional one, is the value road over `$$ROOT`.
-    // `.mapValues` is lodash's and reads its receiver bare: the `pick` before it always
-    // answers an object (the row's measured `neverNull`), so no `{}` neutral is needed.
+    // `.mapValues` is lodash's and reads its receiver bare.
+    // The `pick` before it always answers an object (the row's measured `neverNull`), so no `{}` neutral is needed.
     expect(compiled('$ = $.pick(["a"]).mapValues(v => v);')).toMatchObject([
       {
         $replaceWith: {
@@ -161,9 +160,9 @@ describe("compiler/emit/statement — the writes", () => {
         },
       },
     ]);
-    // A key list only the server knows cannot be a `$project`'s field list: the value cell
-    // reads the document's own keys at query time, under `$replaceWith`. A spelled list
-    // beside it still takes the stage.
+    // A key list only the server knows cannot be a `$project`'s field list.
+    // The value cell reads the document's own keys at query time, under `$replaceWith`.
+    // A spelled list beside it still takes the stage.
     expect(compiled("$ = $.pick($.keys);")).toEqual([
       {
         $replaceWith: {
@@ -300,8 +299,8 @@ describe("compiler/emit/statement — the writes", () => {
         },
       },
     ]);
-    // What a stage cannot say stays on the value road, as for `$`: a `?.`, a list that only
-    // the server knows, a link on the object family only, and a field of the parameter.
+    // What a stage cannot say stays on the value road, as for `$`.
+    // These are a `?.`, a list that only the server knows, a link on the object family only, and a field of the parameter.
     for (const reshape of [
       'o?.pick(["a"])',
       "o.pick(o.keys)",
@@ -371,7 +370,7 @@ describe("compiler/emit/statement — the stage calls", () => {
 
   it("reads each body key in the position its row states", () => {
     // `$geoNear`'s row states `filter` for its `query` key, so the predicate there
-    // becomes a query document — an aggregation expression is refused by the server.
+    // becomes a query document. The server refuses an aggregation expression.
     expect(compiled('$geoNear({ near: [0, 0], distanceField: "d", query: $.k === "a" });')).toEqual([
       { $geoNear: { near: [0, 0], distanceField: "d", query: { k: "a" } } },
     ]);
@@ -404,11 +403,11 @@ describe("compiler/emit/statement — the stage calls", () => {
   });
 });
 
-// A stage that you call by name is your own MQL (HR2), so HR3 does not apply to its
-// body: the compiler checks no key, count or value there. The expected documents in the
-// "passes through" tests below are DELIBERATELY invalid, and each comment says why
-// mongod refuses the document. A JavaScript spelling that lowers to the
-// same stage keeps its check, because the compiler owns that lowering.
+// A stage that you call by name is your own MQL (HR2), so HR3 does not apply to its body.
+// The compiler checks no key, count or value there.
+// The expected documents in the "passes through" tests below are DELIBERATELY invalid.
+// Each comment says why mongod refuses the document.
+// A JavaScript spelling that lowers to the same stage keeps its check, because the compiler owns that lowering.
 describe("compiler/emit/statement — a stage body that you write passes through", () => {
   it("takes every key combination as written", () => {
     // `$lookup` joins by the localField/foreignField PAIR, by a `pipeline`, or by both.
@@ -473,7 +472,7 @@ describe("compiler/emit/statement — a stage body that you write passes through
 
   it("takes a sort of 33 keys that you write, and refuses 33 in a JavaScript sort", () => {
     // MEASURED on :27018: each slot runs 32 keys, and refuses a 33rd key.
-    // The server run below proves the 32-key half; `$sortArray` takes more, so it is not here.
+    // The server run below proves the 32-key half. `$sortArray` takes more, so it is not here.
     const spec = (n: number): string => `{ ${Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ")} }`;
     const names = (n: number): string => `[${Array.from({ length: n }, (_, i) => `"k${i}"`).join(", ")}]`;
     // Each of these slots is your own MQL, so 33 keys pass through. DELIBERATELY invalid.
@@ -703,9 +702,9 @@ describe("compiler/emit/statement — bindings between stages", () => {
   it("starts the stream from a literal list of documents", () => {
     // MEASURED: the server refuses `db.coll.aggregate([{ $documents: […] }])`, because
     // `$documents` runs only in a database-level or cluster-level aggregate. jsmql's
-    // pipelines go to a collection. So the list arrives the way a source switch arrives — every
-    // document dropped, the new ones unioned in — and it reads the same anywhere in
-    // the program, not only first.
+    // pipelines go to a collection. So the list arrives the way a source switch arrives.
+    // Every document drops, and the compiler unions the new ones in.
+    // The list reads the same anywhere in the program, not only first.
     const fanOut = (docs: unknown[]) => [
       { $match: { $expr: false } },
       { $unionWith: { pipeline: [{ $documents: docs }] } },
@@ -1018,8 +1017,8 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("refuses a value, and a program that would do nothing", () => {
-    // A folded constant array is a VALUE, not the empty pipeline: `[1,2].slice(2,2)`
-    // settles to `[]`, which read as a program would compile to no stages at all.
+    // A folded constant array is a VALUE, not the empty pipeline.
+    // `[1,2].slice(2,2)` settles to `[]`, which read as a program would compile to no stages at all.
     expect(() => pipeline("[1, 2, 3].slice(3, 2)")).toThrow(/A pipeline is one or more statements/);
     expect(() => pipeline("const x = 5;")).toThrow(/produces no stages/);
     // A bracketed literal as written is a pipeline, and `[]` is the empty one (HR1).
@@ -1027,9 +1026,9 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("keeps a stage inside the body it was written in", () => {
-    // `$.` is the OUTER document at every depth, so a body over another
-    // collection can only be stated without it until the join road carries the
-    // capture; a raw query document names the foreign field directly.
+    // `$.` is the OUTER document at every depth.
+    // The developer can state a body over another collection only without `$.`, until the join road carries the capture.
+    // A raw query document names the foreign field directly.
     expect(compiled('$lookup({ from: "o", pipeline: [$match({ a: { $gt: 1 } }), $limit(2)], as: "r" });')).toEqual([
       { $lookup: { from: "o", pipeline: [{ $match: { a: { $gt: 1 } } }, { $limit: 2 }], as: "r" } },
     ]);
@@ -1114,9 +1113,9 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
-    // A chain's last LINK is a name the registry knows, so without this the join
-    // road would emit a bare stage — a filter on the wrong collection.
-    // a read of another collection with nowhere to go is refused, not a bare stage on the wrong collection
+    // A chain's last LINK is a name the registry knows. Without this, the join road would emit a bare stage:
+    // a filter on the wrong collection.
+    // a read of another collection with nowhere to go gets a refusal, not a bare stage on the wrong collection
     expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(/gives it no destination/);
     expect(compiled("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
       { $match: { a: 1 } },
@@ -1139,8 +1138,8 @@ beforeAll(async () => {
   coll = c.db("jsmql_compiler_statement").collection("t");
   await coll.deleteMany({});
   await coll.insertMany([
-    // `a.b` and `k` hold documents: a reshape to a field that is not one is
-    // refused by the server, and two asserted reshapes read them.
+    // `a.b` and `k` hold documents: the server refuses a reshape to a field that is not one,
+    // and two asserted reshapes read them.
     { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1, deep: { v: 1 } }, items: [1, 2] },
     { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2, deep: { v: 2 } }, items: [] },
   ]);
@@ -1315,8 +1314,8 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
 describe("compiler/emit/statement — the update spec's closed set, against the server's own answer", () => {
   // `$merge.whenMatched` is an UPDATE, not a pipeline: the server runs a closed set of
   // stages there and refuses the rest outright. jsmql reads that set off the `$merge`
-  // row (`statementBody`), and this is the gate that keeps the row honest — it asks
-  // the server, one stage per run, and compares the two sets.
+  // row (`statementBody`). This is the gate that keeps the row honest.
+  // It asks the server, one stage per run, and compares the two sets.
   const ALLOWED = statementBodyOf("$merge");
   /**
    * The stages the server runs in `$merge.whenMatched`, MEASURED on 8.3.7 with
@@ -1369,7 +1368,7 @@ describe("compiler/emit/statement — the update spec's closed set, against the 
         serverAllows.push(name);
       } catch (e) {
         // Anything BUT the update refusal means the probe body was wrong, not that the
-        // stage is banned — a silent miscount is the one failure this gate must not have.
+        // stage is banned. A silent miscount is the one failure this gate must not have.
         const m = (e as Error).message;
         expect(m, `'${name}' was refused for a reason other than the update spec`).toMatch(
           /is not allowed to be used within an update/,

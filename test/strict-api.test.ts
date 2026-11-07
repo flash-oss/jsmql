@@ -1,6 +1,5 @@
-// The strict-shape entries: each accepts one shape and refuses the others by
-// name, so a source that would silently lower to the wrong document for the
-// driver method at hand is a compile-time error instead. See
+// The strict-shape entries: each accepts one shape and refuses the others by name. So a source that would
+// silently lower to the wrong document for the driver method at hand is a compile-time error instead. See
 // docs/specs/strict-shape-entries.md.
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -87,7 +86,7 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
     // `[]` is the empty pipeline that you wrote (HR1); mongod runs `aggregate([])`.
     expect(jsmql.pipeline("[]")).toEqual([]);
     expect(jsmql("[]")).toEqual([]);
-    // An element that is not a stage is refused by the lowering, not taken as an array value.
+    // The lowering refuses an element that is not a stage, and does not take it as an array value.
     expect(() => jsmql("[1, 2, 3]")).toThrow(/A pipeline statement writes something/);
     // The expression entry reads a list as an array value, and refuses a stage list.
     expect(jsmql.expr("[1, 2]")).toEqual([1, 2]);

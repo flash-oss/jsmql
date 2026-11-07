@@ -3,8 +3,8 @@
 **Status:** implemented.
 
 This spec states how `let <name> = <expr>;` lowers from a JavaScript-syntax
-pipeline statement to MongoDB `$set` / `$unset` stages, and how a later
-identifier reference is rewritten to the materialised field path.
+pipeline statement to MongoDB `$set` / `$unset` stages. It also states how the
+compiler rewrites a later identifier reference to the materialised field path.
 
 User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 
@@ -74,22 +74,23 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 
 ## Parser
 
-A leading `let` (or its `const` alias) opens a declaration wherever a
-statement stands — at the top level and inside a block body. The declaration reads `let <Ident> = <Expression>`. A missing
-identifier raises a position-marked `ParseError` that echoes the keyword as
-written. A missing initialiser raises the same kind of error: a binding is a
-value, and MQL has no `undefined` to hold the place of one. So the parser
-refuses `let x;`, and names the spelling that works, `let x = <expr>`.
+A leading `let` (or its `const` alias) opens a declaration wherever a statement
+stands — at the top level and inside a block body. The declaration reads `let
+<Ident> = <Expression>`. A missing identifier raises a position-marked
+`ParseError` that echoes the keyword as written. A missing initialiser raises
+the same kind of error: a binding is a value, and MQL has no `undefined` to hold
+the place of one. So the parser refuses `let x;`, and names the spelling that
+works, `let x = <expr>`.
 
 ### Declaration lists
 
-A `,` continues the declaration, exactly as JavaScript reads
-`const a = …, b = …;`. Each declarator is its OWN declaration: a later one
-reads the ones before it, a foldable declarator emits no stage, and a
-declarator whose initialiser is an arrow becomes a reusable function
+A `,` continues the declaration, exactly as JavaScript reads `const a = …, b =
+…;`. Each declarator is its OWN declaration. A later one reads the ones before
+it. A foldable declarator emits no stage. A declarator whose initialiser is an
+arrow becomes a reusable function
 ([reusable-functions.md](reusable-functions.md)). Each declarator needs an
-initialiser, and the parser refuses a trailing `,` — the same rules
-JavaScript enforces.
+initialiser, and the parser refuses a trailing `,` — the same rules JavaScript
+enforces.
 
 **The `,` is the merge; the `;` is the stage boundary.** [Update ops](update-filter.md)
 already follow this rule (`$.a = …, $.b = …` is one `$set`, `$.a = …; $.b = …;`
@@ -128,22 +129,22 @@ $.o = b + c;
 
 `c` reads neither `a` nor `b`, so it joins `b` instead of opening a third stage.
 
-Two more kinds of declarator end a run, both for the same reason: either one
-would put a stage on the wrong side of the shared `$set`.
+Two more kinds of declarator end a run. Both end it for the same reason: either
+one would put a stage on the wrong side of the shared `$set`.
 
 - **One whose lowering is not a plain `$set`** — for example a `$lookup` a
   foreign read writes into a binding's slot.
 - **One whose value HOISTS a stage of its own.** A foreign read in a VALUE
-  position (`let n = $$$.orders.filter(o => o.k === a).size()`) leaves a
-  `$set` behind and puts its `$lookup` on the chain's prologue, which the
-  chain flushes AHEAD of every stage the statement returns. Shared with the
+  position (`let n = $$$.orders.filter(o => o.k === a).size()`) leaves a `$set`
+  behind and puts its `$lookup` on the chain's prologue, which the chain flushes
+  AHEAD of every stage the statement returns. In a shared `$set` with the
   sibling it correlates on, that `$lookup` would run before the `$set` that
-  binds the sibling, and it would correlate on a field nothing has written
+  binds the sibling. It would then correlate on a field that nothing has written
   yet. Measured: `let a = $.x, b = $$$.c.filter(o => o.x === a).size() + 1;`
   answered `1` for every document, where the `;` spelling answered the real
-  counts, and the server REJECTED two chained joins. So the compiler takes
-  the declarator back (`Chain.rewind`) and lowers it again as its own
-  statement, where the per-statement flush lands its prologue correctly.
+  counts, and the server REJECTED two chained joins. So the compiler takes the
+  declarator back (`Chain.rewind`) and lowers it again as its own statement,
+  where the per-statement flush lands its prologue correctly.
 
 A declarator that emits no stage at all — a folded constant, a function —
 groups with anything.
@@ -191,7 +192,7 @@ let x = $.a + 1; $match(x > 5);
 //    { $unset: "__jsmql" }]
 ```
 
-A sub-pipeline takes its declarations in an `.aggregate` block, and the refusal
+A sub-pipeline takes its declarations in an `.aggregate` block. The refusal
 names the three forms: `$.<field> = $$$.<coll>.aggregate(() => { … })` for a
 `$lookup`, `$$.push(...$$$.<coll>.aggregate(() => { … }))` for a `$unionWith`,
 and `$ = { k: $$.aggregate(() => { … }) }` for a `$facet` branch:
@@ -201,10 +202,10 @@ $.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });
 // → [{ $lookup: { from: "orders", let: { jsmql_f0_b: "$b" }, pipeline: [{ $set: { "__jsmql.var.x": { $multiply: ["$$jsmql_f0_b", 2] } } }, { $match: { $expr: { $eq: ["$y", "$__jsmql.var.x"] } } }, { $unset: "__jsmql" }], as: "o" } }]
 ```
 
-The declaration's `pos` — the offset every codegen error about the binding
-forwards — is the KEYWORD for the first declarator, and the declarator's own
-NAME for each one after it. This lets an error underline the exact
-declarator it is about.
+The declaration's `pos` is the offset that every codegen error about the binding
+forwards. It is the KEYWORD for the first declarator. It is the declarator's own
+NAME for each one after it. This lets an error underline the exact declarator it
+is about.
 
 A declaration ALONE never stands as a Filter: `collapse()` keeps it in a
 `Pipeline`, because nothing would read it. A constant declaration that
@@ -252,11 +253,11 @@ message echoes the keyword the user wrote.
 
 ### Static typing
 
-A binding carries the kind the registry can prove of its initialiser
-(`kindOf`). A later read dispatches at compile time where the kind is known,
-and takes the row's form for an unproven receiver where it is not — the same rule every
-other value follows ([emit-pass.md](emit-pass.md)). A `const` and a `let`
-are typed alike at declaration; a reassignment writes the same slot.
+A binding carries the kind the registry can prove of its initialiser (`kindOf`).
+A later read dispatches at compile time where the kind is known. Where the kind
+is not known, it takes the row's form for an unproven receiver. Every other
+value follows the same rule ([emit-pass.md](emit-pass.md)). The compiler types a
+`const` and a `let` alike at declaration. A reassignment writes the same slot.
 
 ### Reassignment
 
@@ -284,55 +285,114 @@ there too.
 
 ### A merge written back to a binding
 
-`r = { ...r, ...sources }` writes the merge back to the binding's slot
-(`{ $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", …sources] } } }`).
-`.assign()` answers a new object and writes nothing, so a bare `r.assign(…);`
-statement is refused, and the error names this write. See
+`r = { ...r, ...sources }` writes the merge back to the binding's slot (`{ $set:
+{ "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", …sources] } } }`).
+`.assign()` answers a new object and writes nothing. So the compiler refuses a
+bare `r.assign(…);` statement, and the error names this write. See
 [update-filter.md § Mutators](update-filter.md).
 
 ## Lowering
 
 ### The binding
 
-`letStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers `let x = <expr>;` to `{ $set: { "__jsmql.var.x": <value> } }` and binds `x`, in the Env's scope, to that field slot. It marks the binding `mutable` for `let`, not for `const`, and types it with what the registry can prove of the value, so a later read is checked the way the value itself would be. Three values never reach a slot: a constant, because the fold already inlined it (`let x = 1; $.y = x` → `[{ $set: { y: 1 } }]`, with no slot and no cleanup); a lambda, because it is a name for a body (`const f = (x) => …`, inlined at each call like `function f`); and a complete join chain, whose `$lookup` writes the slot as its `as` ([lookup-stage.md](lookup-stage.md)). A second `let x` in one block is refused, as JavaScript refuses it. A binding a stage dropped stays declared, and `x = …` is the way back to it.
+`letStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers
+`let x = <expr>;` to `{ $set: { "__jsmql.var.x": <value> } }` and binds `x`, in
+the Env's scope, to that field slot. It marks the binding `mutable` for `let`,
+not for `const`, and types it with what the registry can prove of the value, so
+a later read is checked the way the value itself would be. Three values never
+reach a slot: a constant, because the fold already inlined it (`let x = 1; $.y =
+x` → `[{ $set: { y: 1 } }]`, with no slot and no cleanup); a lambda, because it
+is a name for a body (`const f = (x) => …`, inlined at each call like `function
+f`); and a complete join chain, whose `$lookup` writes the slot as its `as`
+([lookup-stage.md](lookup-stage.md)). The compiler refuses a second `let x` in
+one block, as JavaScript does. A binding a stage dropped stays declared, and `x
+= …` is the way back to it.
 
 ### Scope and resolution
 
-Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts), [src/compiler/emit/names.ts](../../src/compiler/emit/names.ts)). A callback body's Env is built from its parent's, so a body inherits every binding, and a callback parameter shadows a `let` of the same name only inside that body. A binding's `ref` states what a read becomes: a `field` slot is a path (`"$__jsmql.var.x"`, or a `let`-captured `$$` variable inside a `$lookup` body); a `var` is a `$$` variable (a callback parameter); a `constant` is its own value; a `function` is inlined at the call; a `streamHandle` is the callback's third parameter (the inner stream); and a `dropped` binding carries the refusal a read of it raises. An unknown name is refused, and the message names the nearest declared one.
+Every name lives in the Env's `Scope`
+([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts),
+[src/compiler/emit/names.ts](../../src/compiler/emit/names.ts)). The compiler
+builds the Env of a callback body from the Env of its parent, so a body inherits
+every binding. A callback parameter shadows a `let` of the same name only inside
+that body. A binding's `ref` states what a read becomes: a `field` slot is a
+path (`"$__jsmql.var.x"`, or a `let`-captured `$$` variable inside a `$lookup`
+body); a `var` is a `$$` variable (a callback parameter); a `constant` is its
+own value; a `function` is inlined at the call; a `streamHandle` is the
+callback's third parameter (the inner stream); and a `dropped` binding carries
+the refusal a read of it raises. The compiler refuses an unknown name, and the
+message names the nearest declared one.
 
 ### Stages that replace the document
 
-`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, and the message names the stage. It also names two fixes: write the binding again after the stage (`x = …`), or write the value as a field of the new document.
+`afterStages` reads each emitted stage's row. A stage whose `document` effect
+replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`,
+`$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in
+INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every
+field-carried binding and the scratch namespace with it. The compiler refuses a
+later read, and the message names the stage. It also names two fixes: write the
+binding again after the stage (`x = …`), or write the value as a field of the
+new document.
 
 ```
 let x = $.a; $group({ _id: null }); $.y = x
 // ✗ $group replaces the document, so x has no value after it
 ```
 
-`$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document alone, `__jsmql` included, so the bindings survive them. So does a chain link whose row states `restoresDocuments` (`.uniq()`): its `$group` and `$replaceWith` give the documents back as they were. The Env takes each group of stages once, in the order of the stages. So the same refusal holds for a write later in the same `,` run. See docs/specs/types.md § The document after a stage.
+`$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression
+mode) leave the rest of the document alone, `__jsmql` included, so the bindings
+survive them. So does a chain link whose row states `restoresDocuments`
+(`.uniq()`): its `$group` and `$replaceWith` give the documents back as they
+were. The Env takes each group of stages once, in the order of the stages. So
+the same refusal holds for a write later in the same `,` run. See
+docs/specs/types.md § The document after a stage.
 
 ### Blocks and sub-pipelines
 
-A block over the SAME documents — a `$facet` branch, a top-level callback — shares their fields: an outer binding is visible there (`let x = $.a; $ = { f: $$.filter(d => d.n > x) }` reads `"$__jsmql.var.x"` inside the branch), and the compiler refuses a shadowing `let`, because it would write the outer binding's slot. A body over ANOTHER collection — a `$lookup` — has documents of its own: an outer binding read there is carried through the stage's `let` as `jsmql_v<level>_<name>` and read as a `$$` variable, and the body can shadow freely. A `$unionWith` body has no `let`, so an outer read there is refused, with the join form that carries the value instead.
+A block over the SAME documents — a `$facet` branch, a top-level callback —
+shares their fields: an outer binding is visible there (`let x = $.a; $ = { f:
+$$.filter(d => d.n > x) }` reads `"$__jsmql.var.x"` inside the branch), and the
+compiler refuses a shadowing `let`, because it would write the outer binding's
+slot. A body over ANOTHER collection — a `$lookup` — has documents of its own:
+an outer binding read there is carried through the stage's `let` as
+`jsmql_v<level>_<name>` and read as a `$$` variable, and the body can shadow
+freely. A `$unionWith` body has no `let`, so the compiler refuses an outer read
+there. The message names the join form that carries the value instead.
 
 ### Cleanup
 
-The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot, and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so the cleanup never unsets a field that is already gone. A scratch field that a later stage writes sets the flag again: the flag follows the stages in the order they stand. A `$facet` branch is a pipeline over the documents that the `$facet` receives. So its chain starts with the flag of the chain around it (`Env.enter`). So each branch ends with its own cleanup, and the `$facet` output holds no scratch field. A program whose `let`s all folded emits no trace of the machinery.
+The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace
+still on the documents (`Chain.dirty`). A `let` slot, a join's scratch slot, and
+the stream count share the namespace and the one cleanup. A stage that replaced
+the document clears the flag, so the cleanup never unsets a field that is
+already gone. A scratch field that a later stage writes sets the flag again: the
+flag follows the stages in the order they stand. A `$facet` branch is a pipeline
+over the documents that the `$facet` receives. So its chain starts with the flag
+of the chain around it (`Env.enter`). So each branch ends with its own cleanup,
+and the `$facet` output holds no scratch field. A program whose `let`s all
+folded emits no trace of the machinery.
 
 ## Output stability
 
 A pipeline with no `let` declaration carries **no trace** of the binding
-machinery. The `__jsmql` field name and the trailing `$unset` appear only
-when at least one `let` is in scope at some point during lowering, or when
-at least one `$$$.<coll>.find/filter(...)` chained terminal materialises
-into an internal `__jsmql.tmp.<N>` slot (see
-[`lookup-stage.md`](./lookup-stage.md)). The two features share the
-`__jsmql` namespace and the single trailing `$unset` cleanup, so a pipeline
-that uses both still emits exactly one `$unset` stage at the end.
+machinery. The `__jsmql` field name and the trailing `$unset` appear only when
+at least one `let` is in scope at some point during lowering, or when at least
+one `$$$.<coll>.find/filter(...)` chained terminal materialises into an internal
+`__jsmql.tmp.<N>` slot (see [`lookup-stage.md`](./lookup-stage.md)). The two
+features share the `__jsmql` namespace and the single trailing `$unset` cleanup.
+A pipeline that uses both still emits exactly one `$unset` stage at the end.
 
 ## Lookup as a `let` RHS
 
-`let os = $$$.c.filter(p);` uses the binding's own slot as the `$lookup`'s `as` — one stage, no `$set` — and types the binding as the array (`.filter`, `.aggregate`) or the document (`.find`) the chain yields. A chain that goes on (`let n = $$$.c.filter(p).size()`, `let s = $$$.tx.filter(p).reduce(fn, init)`) is a VALUE: the compiler hoists the `$lookup` into a scratch slot ahead of the `let`, and the slot holds the rest of the chain as a value — see [lookup-stage.md § The join road](lookup-stage.md). `const` refuses reassignment on both routes.
+`let os = $$$.c.filter(p);` uses the binding's own slot as the `$lookup`'s `as`
+— one stage, no `$set` — and types the binding as the array (`.filter`,
+`.aggregate`) or the document (`.find`) the chain yields. A chain that goes on
+(`let n = $$$.c.filter(p).size()`, `let s = $$$.tx.filter(p).reduce(fn, init)`)
+is a VALUE: the compiler hoists the `$lookup` into a scratch slot ahead of the
+`let`, and the slot holds the rest of the chain as a value — see
+[lookup-stage.md § The join road](lookup-stage.md). `const` refuses reassignment
+on both routes.
 
 ## Deferred
 
@@ -348,11 +408,19 @@ that uses both still emits exactly one `$unset` stage at the end.
 
 ## Outer lets inside sub-pipelines
 
-[Blocks and sub-pipelines](#blocks-and-sub-pipelines) states this: a `$facet` branch reads the outer binding's field, a `$lookup` body reads it through the stage's `let`, and a `$unionWith` body cannot read it at all.
+[Blocks and sub-pipelines](#blocks-and-sub-pipelines) states this: a `$facet`
+branch reads the outer binding's field, a `$lookup` body reads it through the
+stage's `let`, and a `$unionWith` body cannot read it at all.
 
 ## Tests
 
-[test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) covers the binding, reassignment, the fold of a constant `let`, the reads a replacing stage refuses, shadowing, and the cleanup. [test/compiler-join.test.ts](../../test/compiler-join.test.ts) covers a `let` as a `$lookup` slot and the `let` capture inside a body. [test/compiler-env.test.ts](../../test/compiler-env.test.ts) covers the Env's scope rules. Every pipeline these suites assert on runs on `mongod`.
+[test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) covers
+the binding, reassignment, the fold of a constant `let`, the reads a replacing
+stage refuses, shadowing, and the cleanup.
+[test/compiler-join.test.ts](../../test/compiler-join.test.ts) covers a `let` as
+a `$lookup` slot and the `let` capture inside a body.
+[test/compiler-env.test.ts](../../test/compiler-env.test.ts) covers the Env's
+scope rules. Every pipeline these suites assert on runs on `mongod`.
 
 [test/realistic.test.ts](../../test/realistic.test.ts) carries the canonical
 order-pricing example under `pipeline: order pricing with let bindings +

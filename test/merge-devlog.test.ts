@@ -1,9 +1,7 @@
 /**
- * Unit tests for the structural-merge core of `scripts/merge-devlog.mjs`.
- * The CLI side (it reads git index stages and calls `git add`) is covered
- * indirectly by the script's smoke usage; here we exercise the pure
- * merge function directly so future regressions in the merge logic
- * surface in `npm test`.
+ * Unit tests for the structural-merge core of `scripts/merge-devlog.mjs`. The script's smoke usage covers the
+ * CLI side (it reads git index stages and calls `git add`) indirectly. Here we exercise the pure merge function
+ * directly, so future regressions in the merge logic surface in `npm test`.
  */
 
 import { describe, it, expect } from "vitest";
@@ -55,7 +53,7 @@ describe("merge-devlog: append-friendly merges", () => {
     const r = mergeDevlog(BASE, BASE, BASE);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // Output is normalised but content-equivalent to BASE.
+    // The merge normalises the output, but the content equals BASE.
     expect(parse(r.result)).toEqual(parse(BASE));
   });
 

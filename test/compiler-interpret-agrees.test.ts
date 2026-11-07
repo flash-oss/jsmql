@@ -1540,11 +1540,11 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
 
 /**
  * The one place where the interpreter answers and the server fails. The server folds
- * every constant part of an expression before it runs the whole, so a division by
+ * every constant part of an expression before it runs the whole. So a division by
  * zero in a branch that is not taken fails the whole. The interpreter evaluates
  * only the branch that the answer needs, as JavaScript does: a guard such as
  * `d === 0 ? 0 : 1 / d` is the idiom that every JavaScript developer writes. A case
- * stays here with its reason, and the test asserts that the server still fails, so a
+ * stays here with its reason. The test asserts that the server still fails. A
  * change of the server moves the row to BATTERIES.
  */
 const FAILS_ON_THE_SERVER = "the server folds the constant part that the answer does not need";

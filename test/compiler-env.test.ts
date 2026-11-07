@@ -23,7 +23,7 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
       .at({ at: "value" });
     const body = outer.param("x", "unknown", 3).env;
     expect(body.site.envelope).toBe("$literal");
-    // the boundary remembers the chain it was entered FROM — how `$$` reaches the root stream from inside
+    // the boundary remembers the chain it came FROM — how `$$` reaches the root stream from inside
     expect(body.site.boundaries).toEqual([{ stage: "$lookup", path: ["pipeline"], outer: chain }]);
     expect(body.site.where).toEqual({ at: "value" });
     expect(body.site.root).toBe("statement");
@@ -102,9 +102,9 @@ describe("compiler/emit/env — a chain closes in one order", () => {
     ]);
   });
 
-  // A statement that becomes MORE THAN ONE stage drains at each of them: the hoisted
-  // stage reads the documents the stage it was written for reads, so it stands
-  // beside it and not at the front of the statement.
+  // A statement that becomes MORE THAN ONE stage drains at each of them. The hoisted
+  // stage reads the documents that the stage it was written for reads. So it stands
+  // beside that stage and not at the front of the statement.
   it("hands the hoisted stages back so a road can place them between two of its own", () => {
     const c = new Chain();
     c.emitted.push({ $sortByCount: "$tag" });

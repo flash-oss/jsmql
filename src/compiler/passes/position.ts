@@ -49,9 +49,9 @@ export const WINDOW: Where = { at: "window" };
 export const UPDATE_DOC: Where = { at: "updateDoc" };
 /**
  * The left of `=`, the operand of `delete`, or the callee of `f(…)`. This is
- * named apart from `value` because none of them is evaluated: each one names a
+ * separate from `value`, because the compiler evaluates none of them: each one names a
  * place to write or a thing to call. If the pass called it a value, a rule meant
- * for expressions could fire on the destination of a write, or fold `f` away in
+ * for expressions could fire on the destination of a write. It could also fold `f` away in
  * `f(1)` to give `3(1)`.
  */
 export const TARGET: Where = { at: "target" };
@@ -73,7 +73,7 @@ function reached(stage: string, path: BodyPath, slot: BodySlot, child: unknown):
   // A slot reads a bracketed list one way, and reads everything else another way:
   // `whenMatched: [$set(…)]` is a pipeline, `whenMatched: "replace"` is a word.
   const at = type === "ArrayLiteral" ? slot.at : slot.otherwise;
-  // A value that the server does not evaluate is read as written: `$unwind`'s path, `$lookup`'s `from`.
+  // The server reads a value that it does not evaluate as written: `$unwind`'s path, `$lookup`'s `from`.
   return at === "value" && !slot.evaluated ? { at, written: { stage, path } } : { at };
 }
 
@@ -102,7 +102,7 @@ export function edge(node: object, key: string, here: Where): Where {
   // A stage's argument is its BODY, the same for `$match($.a > 1)` and
   // `$$.$match($.a > 1)`. The chained spelling is a MethodCall and names the
   // same row. This applies where a stage may stand, or as a link of a chain
-  // rooted in a context reference: the link `$$$.orders.filter(p).$group({…})`
+  // rooted in a context reference. The link `$$$.orders.filter(p).$group({…})`
   // is a stage wherever the chain lands, because its receiver is a stream. It
   // does not apply otherwise: `$count` is also an accumulator, and inside
   // `$group` its arguments belong to an operator, not to a body.
@@ -147,8 +147,8 @@ export function edge(node: object, key: string, here: Where): Where {
   // is never evaluated.
   if (namesSomething(n, key)) return TARGET;
 
-  // `$$ = <chain>` — the right-hand side REPLACES the stream, so its top link
-  // is a stream link: `$$ = $$.$group(…)` consults `$group`'s body layout the
+  // `$$ = <chain>` — the right-hand side REPLACES the stream. So its top link
+  // is a stream link. `$$ = $$.$group(…)` consults `$group`'s body layout the
   // same way `$group(…);` does. Every other parent puts a chain's top link
   // where it puts any value (`$.o = $$$.orders.find(p)` is a value read that
   // the join lowering hoists). The links BELOW the top are streams by the
@@ -159,8 +159,8 @@ export function edge(node: object, key: string, here: Where): Where {
   }
 
   // A chain that bottoms out in a context reference is a STREAM: `$$.filter(p)`,
-  // `$$$.orders.find(p)`, `$$$["archive"].find(p)`, wherever the chain stands —
-  // as the right of `$$ = …`, as a `$facet` branch, as the argument of `$$.push`.
+  // `$$$.orders.find(p)`, `$$$["archive"].find(p)`, wherever the chain stands.
+  // It can stand as the right of `$$ = …`, as a `$facet` branch, or as the argument of `$$.push`.
   // Every link back down the chain is a stream too. The context reference itself
   // is not a stream: `$$` IS the stream it names, but `$$$` and `$$$$` are
   // scopes, and a scope is never evaluated. The chain's arguments are not
@@ -178,7 +178,7 @@ export function edge(node: object, key: string, here: Where): Where {
   // under them. So `$each` inside `$push` is read by its update-document cell.
   if (here.at === "updateDoc") return here;
 
-  // Below a slot that the server reads as written, every value is read as written
+  // The server reads every value below such a slot as written
   // too. A key of a document adds itself to the path, so a message names the key.
   if (here.at === "value" && here.written !== undefined) {
     if (n.type !== "KeyValueEntry" || key !== "value") return here;

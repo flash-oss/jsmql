@@ -1,5 +1,5 @@
-// The template tag and the compile parameters take VALUES: nothing a caller
-// supplies is ever read as syntax, as an operator, or as a field reference (HR1).
+// The template tag and the compile parameters take VALUES. The compiler never reads anything a caller supplies
+// as syntax, as an operator, or as a field reference (HR1).
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
@@ -154,10 +154,9 @@ describe("a developer-authored field name survives to the output", () => {
   });
 });
 
-// A run-time value that reads as MQL — a string that starts with `$`, a document with a
-// `$` key — is a value in both forms. It takes `$literal` where the server evaluates the
-// slot, the query compares it as written, and every slot where it becomes part of the
-// MQL refuses it. See docs/LANG_RULES.md (HR1).
+// A run-time value that reads as MQL (a string that starts with `$`, a document with a `$` key) is a value in
+// both forms. Where the server evaluates the slot, it takes `$literal`. The query compares it as written. Every
+// slot where it becomes part of the MQL refuses it. See docs/LANG_RULES.md (HR1).
 describe("a run-time value that reads as MQL is a value, in both forms", () => {
   /** The template tag and a `jsmql.compile` parameter give ONE answer for the same value. */
   const both = (tag: (v: unknown) => unknown, compiled: (p: { v: unknown }) => unknown, v: unknown): unknown => {
@@ -363,7 +362,7 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
         { $gt: 1 },
       ),
     ).toThrow(query);
-    // A document with no `$` in it is written as the source could write it, and stays the query.
+    // The compiler writes a document with no `$` in it as the source could write it, and it stays the query.
     expect(jsmql`$match(${{ a: 1 }});`).toEqual([{ $match: { a: 1 } }]);
   });
 

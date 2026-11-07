@@ -1,7 +1,7 @@
 // Phase 4 of src/compiler/ — the position pass.
 //
 // A position is not a property of a node's SHAPE. `$sum($.x, $.y)` is a valid
-// two-operand expression and an invalid accumulator, and the only thing that
+// two-operand expression and an invalid accumulator. The only thing that
 // separates the two readings is where the call stands. So the test is a census:
 // walk a program, record where every node was reached, and assert the answers
 // against what mongod does with each slot.
@@ -117,8 +117,8 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
 
   it("lays out a chained stage link based on where the context chain stands", () => {
     // The chain's top link is a value to its parent, but `$group` on a stream is a
-    // stage: its body must reach the group slot, or `$sum($.x, $.y)` inside it
-    // is checked as a two-operand expression and emitted as one.
+    // stage. Its body must reach the group slot. Otherwise the pass checks `$sum($.x, $.y)` inside it
+    // as a two-operand expression and emits it as one.
     expect(positionOfNode("$.o = $$$.orders.filter(x => x.a).$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe(
       "group",
     );
@@ -139,8 +139,8 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
   });
 
   it("resolves a computed key through the wildcard alone", () => {
-    // `{ [k]: … }` cannot be known to be the key a row names, so a literal entry
-    // can never claim it — but `$group`'s `"*": "group"` covers any key at all.
+    // The compiler cannot know that `{ [k]: … }` is the key a row names, so a literal entry
+    // can never claim it. But `$group`'s `"*": "group"` covers any key at all.
     expect(positionOfNode("let k = 1; $group({_id: null, [k]: $sum($.x)});", "$sum(…)")).toBe("group");
     // $lookup names `pipeline` literally, so a computed key falls back to the
     // body's own default, and is not read as a sub-pipeline.
@@ -200,8 +200,8 @@ describe("compiler/rows — the body-layout resolver", () => {
   it("says `deeper` until the path is a leaf, and the position at every depth", () => {
     // Both facts at once: the position a leaf here would hold, and whether an
     // object here must continue to descend. `$merge("out")` needs the first with the
-    // second true — a string body under a layout that names `whenMatched` has no
-    // keys to descend into, and must still get a position.
+    // second true. A string body under a layout that names `whenMatched` has no
+    // keys to descend into. It must still get a position.
     expect(bodySlotAt("$setWindowFields", [])).toEqual({
       at: "value",
       otherwise: "value",
@@ -291,9 +291,9 @@ describe("registry — exactly the stages state a body layout", () => {
 
   /**
    * A stage's ARGUMENT is a body. A row that is not a stage has no body to lay
-   * out, so the two facts must agree in both directions — and a stage with no
-   * layout sends its whole body to `value`, which is where every slot bug this
-   * field fixes came from.
+   * out, so the two facts must agree in both directions. A stage with no
+   * layout sends its whole body to `value`. Every slot bug that this
+   * field fixes came from there.
    */
   it("gives a layout to every stage row and to no other row", () => {
     const wrong: string[] = [];

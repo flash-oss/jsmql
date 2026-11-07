@@ -1,10 +1,10 @@
 // test/permutations.test.ts — the lodash "chinese wall".
 //
-// A generative smoke test that CHAINS the lodash array/collection methods in
-// every ordered pair (reshaper × reshaper, reshaper × terminal) and asserts:
+// A generative smoke test. It CHAINS the lodash array/collection methods in every ordered pair (reshaper ×
+// reshaper, reshaper × terminal) and asserts:
 //   1. every chain COMPILES (no throw) — always runs, the primary regression net;
-//   2. every emitted MQL RUNS on a real mongod without a server error — connects to
-//      a local mongod by default and self-skips (green) when none is reachable.
+//   2. every emitted MQL RUNS on a real mongod without a server error. It connects to
+//      a local mongod and self-skips (green) when none is reachable.
 //
 // Why: chaining N methods is a combinatorial surface no hand-written case can
 // cover. This is where "method X breaks when chained after Y" gets caught. It has
@@ -14,9 +14,9 @@
 //
 // The mongod half runs on :27018 (see test/fixtures/config.ts); `npm run fixture:up` starts it.
 //
-// The server half MUST default to on. A gate behind an unset environment variable
-// would make every one of these chains compile-only in a normal `npm test`, so the half that
-// catches server rejections — the half that found the two bugs above — never ran.
+// The server half MUST default to on. A gate behind an unset environment variable would make every one of these
+// chains compile-only in a normal `npm test`. So the half that catches server rejections, the half that found
+// the two bugs above, would never run.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -141,9 +141,9 @@ const STREAM_RESHAPERS = [
 // below of terminals that collapse the stream to a value. A reshaper that removes
 // fields before them gives `$arrayToObject` a null key, and mongod refuses that key.
 // stream-mode reshapers over the `orders` lookup (doc-PRESERVING, on real order
-// fields) — so the value-terminals below still see `total`/`userId`. (The doc-
-// reshape ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
-// matrix; a pair of one of them with a terminal that reads a field is a nonsensical chain,
+// fields) — so the value-terminals below still see `total`/`userId`.
+// (The doc-reshape ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
+// matrix. A pair of one of them with a terminal that reads a field is a nonsensical chain,
 // not a lowering to test.)
 const STREAM_LOOKUP_RESHAPERS = [
   "filter(o => o.total > 5)",
@@ -181,12 +181,11 @@ const STREAM_TERMINALS = [
   "map('total')",
 ];
 
-// What each stream reshaper reads off the document. A reshaper that builds a
-// closed document also states the fields it keeps. A link that reads a field the
-// link before it did not keep gives no value, so the compiler refuses the chain:
-// `$$.map(o => ({ id: o.id, v: o.val })).filter(o => o.val > 2)` filters on `val`,
-// which no document holds after the `.map`. This table is written by hand, so the
-// refused pairs never come from the compiler under test.
+// What each stream reshaper reads off the document. A reshaper that builds a closed document also states the
+// fields it keeps. A link that reads a field the link before it did not keep gives no value, so the compiler
+// refuses the chain: `$$.map(o => ({ id: o.id, v: o.val })).filter(o => o.val > 2)` filters on `val`, which no
+// document holds after the `.map`. A person writes this table by hand, so the refused pairs never come from the
+// compiler under test.
 const STREAM_READS: Readonly<Record<string, readonly string[]>> = {
   "filter(o => o.val > 2)": ["val"],
   "filter({ type: 'a' })": ["type"],
@@ -397,10 +396,10 @@ describe("lodash chain permutations (chinese wall)", () => {
   });
 
   it("reports whether the server half ran, so a green run cannot hide a skip", () => {
-    // A compile of every chain proves jsmql does not throw. It says nothing about whether
-    // the emitted MQL RUNS, which is the half that caught the real bugs here. A
-    // suite that silently degrades to compile-only looks identical to one that passed,
-    // so state which happened: either every chain reached the server, or none did.
+    // A compile of every chain proves jsmql does not throw. It says nothing about whether the emitted MQL RUNS,
+    // which is the half that caught the real bugs here. A suite that silently degrades to compile-only looks
+    // identical to one that passed. So state which happened: either every chain reached the server, or none
+    // did.
     if (mainColl === null) {
       console.warn("\n[permutations] no mongod reachable — compile-only. Start one to exercise the runtime half.\n");
       expect(served).toBe(0);

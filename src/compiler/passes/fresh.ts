@@ -7,9 +7,9 @@
 // the element. The binding the developer meant becomes unreachable. The MQL is
 // valid, and the answer is wrong. This is the worst shape a bug can take.
 //
-// A shadow only matters for names the BODY mentions, and a built body
-// mentions exactly what the rewrite splices into it. So this code answers the
-// whole question from the arguments in hand — no scope, no gensym counter, no state.
+// A shadow only matters for names the BODY mentions. A built body mentions
+// exactly what the rewrite splices into it. So this code answers the whole
+// question from the arguments in hand. It needs no scope, no gensym counter and no state.
 
 import { introducedNames } from "./naming.ts";
 
@@ -42,8 +42,8 @@ export function namesIn(node: unknown, out: Set<string> = new Set()): Set<string
  * `base`, or `base` with the lowest suffix that nothing in `mentions` uses.
  *
  * The suffix starts at 2, so the common answer is the bare name. A shorthand
- * whose arguments name nothing — `$.items.map("name")` — reads as `x => x.name`
- * and its MQL reads as `$$x`, not as a mangled compiler name.
+ * whose arguments name nothing, such as `$.items.map("name")`, reads as `x => x.name`.
+ * Its MQL reads as `$$x`, not as a mangled compiler name.
  */
 export function freshParam(base: string, ...mentions: readonly unknown[]): string {
   const taken = new Set<string>();

@@ -47,9 +47,10 @@ $$$.metrics.push($.summary);
 The stages before `$merge` are the ones `$$ = <array>;` emits — one function
 builds both, so the two spellings cannot drift apart.
 
-The sugar covers the PLAIN merge only. `$merge`'s four settings — `on`,
-`whenMatched`, `whenNotMatched`, `let` — are written as the stage itself, and
-that needs no sugar: `$merge({ into: "metrics", on: "_id", whenMatched: "merge" });`.
+The sugar covers the PLAIN merge only. The developer writes the four settings of
+`$merge` — `on`, `whenMatched`, `whenNotMatched`, `let` — as the stage itself,
+and that needs no sugar: `$merge({ into: "metrics", on: "_id", whenMatched:
+"merge" });`.
 
 The LHS names *where* documents are written, with the existing context-ref
 prefixes (`$$$` = same-database, `$$$$` = cross-database / cluster). The RHS
@@ -59,28 +60,32 @@ unchanged. Chained methods — `.filter(<predicate>)`, any method with a
 (`$$.$sort({ … })`) — contribute their stages before the trailing `$out`.
 
 Statement-only and last-stage-only: nothing may follow the `$out` sugar in a
-pipeline. The compiler FILES the stage as the chain's terminal, and does not
-emit it, so the `__jsmql` cleanup precedes it, and it is still written
-last. The compiler refuses a later statement with a position-bearing error,
-and the message names the fix: move the statement above the write.
+pipeline. The compiler FILES the stage as the chain's terminal and does not emit
+it. So the `__jsmql` cleanup comes before it, and it is still written last. The
+compiler refuses a later statement with a position-bearing error, and the
+message names the fix: move the statement above the write.
 
 ## Convention: why a distinct LHS prefix?
 
 JSMQL reserves `$ = <expr>` exclusively for *root-replacing* sugar —
-`$replaceWith` and the `$facet` variant. The bare `$` LHS is the visual
-signal that the document itself is replaced. `$out` does **not**
-replace root; it writes the (filtered) stream elsewhere. To keep the
-asymmetry visible to readers, `$out` uses a different LHS prefix: the
-destination is on the left, and the source is on the right. Cross-cuts:
+`$replaceWith` and the `$facet` variant. The bare `$` LHS is the visual signal
+that the statement replaces the document itself. `$out` does **not** replace
+root; it writes the (filtered) stream elsewhere. To keep the asymmetry visible
+to readers, `$out` uses a different LHS prefix. The destination is on the left,
+and the source is on the right. Cross-cuts:
 
 - `$ = …` → `$replaceWith` / `$facet` (root replacement).
 - `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` (write destination).
 - `$$$.<coll>.find(…)` / `.filter(…)` → `$lookup` (read source).
 - `$$.push(…)` → `$unionWith` (stream union).
 
-See [`docs/specs/replace-root-stage.md`](replace-root-stage.md#convention-all-root-replacing-sugar-starts-with--) for the convention statement.
+See
+[`docs/specs/replace-root-stage.md`](replace-root-stage.md#convention-all-root-replacing-sugar-starts-with--)
+for the convention statement.
 
-See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#out-write-the-pipeline-to-a-collection) for the user-facing reference.
+See
+[`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#out-write-the-pipeline-to-a-collection)
+for the user-facing reference.
 
 ## Lowering table
 
@@ -105,19 +110,29 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 
 ## The target
 
-`outTarget` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads an `AssignExpr`. Its target is rooted at `$$$` (the current database) or `$$$$` (the cluster), through dot or string-literal-bracket steps:
+`outTarget` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads an
+`AssignExpr`. Its target is rooted at `$$$` (the current database) or `$$$$`
+(the cluster), through dot or string-literal-bracket steps:
 
 - `$$$.<coll>` / `$$$["<coll>"]` — exactly one step: the collection in the current database.
 - `$$$$.<db>.<coll>` (any bracket combination) — exactly two steps: a database and a collection.
-- A name may also be a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll] = $$`), because the value is known when the pipeline is built.
+- A name may also be a `jsmql.compile` parameter or template slot that holds a
+  string (`$$$[coll] = $$`), because the value is known when the pipeline is
+  built.
 
 The compiler refuses everything else, each with the form that works:
 
-- a computed bracket (`$$$[$.x] = $$`) — the compiler must know the name when it builds the pipeline. The message names the literal forms, and `jsmql.compile` for a name chosen at run time.
-- too many segments (`$$$.a.b = $$`) — the message names `$$$.<coll> = $$` for the current database, and `$$$$.<db>.<coll> = $$` for another.
+- a computed bracket (`$$$[$.x] = $$`) — the compiler must know the name when it
+  builds the pipeline. The message names the literal forms, and `jsmql.compile`
+  for a name chosen at run time.
+- too many segments (`$$$.a.b = $$`) — the message names `$$$.<coll> = $$` for
+  the current database, and `$$$$.<db>.<coll> = $$` for another.
 - a database alone (`$$$$.db = $$`) — the message asks for the collection too.
 
-The target's shape is unambiguous against its neighbours. `$ = …` has the bare-`$` target. A field write has a `$.`-rooted target. A join (`$$$.<coll>.find(…)`) is a value, never a target.
+The target's shape is unambiguous against its neighbours. `$ = …` has the
+bare-`$` target. A field write has a `$.`-rooted target. A join
+(`$$$.<coll>.find(…)`) is a value, never a target.
 
 ## Validation
 
@@ -154,11 +169,11 @@ states `sortBy` desugars server-side to a `$sort`, and the server refuses it
 there. JSMQL cannot see that desugar, so it emits the body as written, and the
 server names `$sort`.)
 
-A stage the row files as LAST does not emit where it stands. The compiler
-files it on the chain, so nothing can land after it, and the `__jsmql` cleanup
-always precedes it ([emit-pass.md](emit-pass.md)). That order is what the
-last row above enforces: a body that reads a scratch field would read one the
-`$unset` has already dropped, and MEASURED, the server refuses the read.
+A stage the row files as LAST does not emit where it stands. The compiler files
+it on the chain, so nothing can land after it, and the `__jsmql` cleanup always
+precedes it ([emit-pass.md](emit-pass.md)). The last row above enforces that
+order. A body that reads a scratch field would read one that the `$unset` has
+already dropped. MEASURED: the server refuses the read.
 
 All errors carry a meaningful `.pos` (target node's `pos` for LHS shape
 errors, RHS node's `pos` for chain errors, offending later statement's
@@ -166,11 +181,21 @@ errors, RHS node's `pos` for chain errors, offending later statement's
 
 ## The chain
 
-The stream road lowers the RHS (`streamStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)). Each link's `stream` cell appends its stages to the pipeline, in source order, and the compiler files the `$out` as the terminal.
+The stream road lowers the RHS (`streamStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)). Each
+link's `stream` cell appends its stages to the pipeline, in source order, and
+the compiler files the `$out` as the terminal.
 
-So a `$out` chain accepts exactly the links a bare `$$.<chain>;` accepts, and it lowers each to the same MQL: a stage link (`$$.$sort({ … })`) is the stage, `.filter(p)` / `.reject(p)` lower through the filter road with the parameter as the document (`$$$.live = $$.reject(p)` emits the same negated `$match` that `$$.reject(p);` does), and `.take(n)` is `$limit`. The compiler refuses a second write stage in the chain, because the `$out` always follows.
+So a `$out` chain accepts exactly the links a bare `$$.<chain>;` accepts, and it
+lowers each to the same MQL: a stage link (`$$.$sort({ … })`) is the stage,
+`.filter(p)` / `.reject(p)` lower through the filter road with the parameter as
+the document (`$$$.live = $$.reject(p)` emits the same negated `$match` that
+`$$.reject(p);` does), and `.take(n)` is `$limit`. The compiler refuses a second
+write stage in the chain, because the `$out` always follows.
 
-A new chain method is not a change specific to `$out`. Give the method's row a `stream` cell ([stream-methods.md § Add a method](stream-methods.md)), and every head — the bare stream, a join, a `$out` chain — reads it.
+A new chain method is not a change specific to `$out`. Give the method's row a
+`stream` cell ([stream-methods.md § Add a method](stream-methods.md)). Then
+every head — the bare stream, a join, a `$out` chain — reads it.
 
 ## Mode gates
 
@@ -185,9 +210,15 @@ A new chain method is not a change specific to `$out`. Give the method's row a `
 
 ## Parser interaction
 
-The parser ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)) accepts a write target rooted at `$$$` / `$$$$` through `MemberAccess` / `IndexAccess` steps. This is a shape check only; the segment-count and computed-bracket refusals belong to the emit phase. The parser also accepts a bare `$$` as a value, so `$$$.coll = $$` has its RHS.
+The parser
+([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)) accepts a
+write target rooted at `$$$` / `$$$$` through `MemberAccess` / `IndexAccess`
+steps. This is a shape check only; the segment-count and computed-bracket
+refusals belong to the emit phase. The parser also accepts a bare `$$` as a
+value, so `$$$.coll = $$` has its RHS.
 
-The parser still refuses the typo `$$foo` (no separator, an identifier next) at parse time, and bare `$$$` / `$$$$` have no meaning anywhere.
+The parser still refuses the typo `$$foo` (no separator, an identifier next) at
+parse time, and bare `$$$` / `$$$$` have no meaning anywhere.
 
 No new tokens, no new AST nodes.
 

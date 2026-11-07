@@ -19,8 +19,8 @@ const _pipeline: object[] = jsmql(({ $ }) => {
   $match($.age > 18);
   $limit(5);
 });
-// Everything else keeps the full union, because nothing else settles the shape:
-// an expression arrow may be either (`$.age > 18` is a Filter, `$$.filter(…)` is
+// Everything else keeps the full union, because nothing else settles the shape.
+// An expression arrow may be either (`$.age > 18` is a Filter, `$$.filter(…)` is
 // a Pipeline), and a string is opaque.
 const _either: object | object[] = jsmql(({ $ }) => $.age > 18);
 const _fromString: object | object[] = jsmql("$.age > 18");
@@ -37,11 +37,11 @@ const _stream = $$.filter((d) => d.active)
   .map("userId")
   .uniqBy("x");
 void _stream;
-// Note: a *typo* on a stream method (`$$.rejct(...)`) does NOT error here — the
-// ref interfaces end in a `[key: string]: any` permissive tail (they carry more
+// Note: a *typo* on a stream method (`$$.rejct(...)`) does NOT error here.
+// The ref interfaces end in a `[key: string]: any` permissive tail. They carry more
 // syntax than their named members — `$$ = …`, `$out` writes, member access on a
-// materialised result; see globals-generation.md), so unknown members resolve to
-// `any`. jsmql's parser catches the typo at compile time instead. Value-method
+// materialised result (see globals-generation.md). So unknown members resolve to
+// `any`. The parser of jsmql catches the typo at compile time instead. The value-method
 // interfaces below have no such tail, so their typo negatives DO fire.
 
 // ── Chained stage calls ──────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ $$.$sort({ score: -1 }).$out("archive");
 
 // ── A `$` call never errors ──────────────────────────────────────────────────
 // A `$op(…)` or `$stage(…)` call is your own MQL (HR2), so the compiler takes it with
-// any arguments, and each name carries a catch-all overload after its documented
+// any arguments. Each name carries a catch-all overload after its documented
 // signatures. The positional form of an object-form operator, a string stage body,
 // and a count that the server refuses all type-check.
 declare const input: any;
@@ -81,12 +81,12 @@ void [_count, _orderCount, _revenue, _newest];
 
 // ── The foreign ref: reads complete, and the `$out` write still assigns ──────
 // `$$$.<coll>` is both a read head and an `$out` write target. The collection ref
-// EXTENDS the foreign ref, which is what lets one index type serve both — TS
-// resolves a target's named members against the source's declared members, never
-// through its index signature, so the shared base is load-bearing, not cosmetic.
+// EXTENDS the foreign ref, which lets one index type serve both. TS
+// resolves the named members of a target against the declared members of the source, never
+// through its index signature. So the shared base is load-bearing, not cosmetic.
 const _user = $$$.users.find((u) => u.id === $._id);
 const _email = $$$.users.find((u) => u.id === $._id).email;
-// A chain keeps the identity of its ROOT, which is the rule jsmql enforces:
+// A chain keeps the identity of its ROOT. This is the rule that jsmql enforces.
 // `.find` is legal at ANY position of a foreign chain, and at NO position of a
 // current-stream chain (the negative for that is at the bottom of this file).
 const _biggest = $$$.orders.filter((o) => o.ok).find((o) => o.big);
@@ -154,8 +154,8 @@ const _seeded: Order[] = Object.values(byId).uniq().take(3);
 void _seeded;
 
 // ── Date: jsmql's non-native date vocabulary on a real `Date` receiver ───────
-// Every one of these was a TS2339 false positive before `interface Date` was
-// augmented — the code compiled in jsmql and was underlined in the editor.
+// Without the augmentation of `interface Date`, each of these is a TS2339 false
+// positive. jsmql compiles the code, but the editor underlines it.
 declare const placedAt: Date;
 const _month: string = placedAt.startOf("month").plus(3, "day").format("%Y-%m-%d");
 const _hours: number = placedAt.diff(new Date(), "hour");

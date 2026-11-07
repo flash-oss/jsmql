@@ -148,8 +148,8 @@ export type ProductionEntry<
 > = ProductionSpec<T, W, O, A, C, M, L> & { kind: "production" };
 
 // Every generic defaults to the EMPTY type, and never to its constraint. If it did
-// not, a rule with no `after` would widen `A` to `readonly string[]`, and the audit
-// below would pass but test nothing.
+// not, a rule with no `after` would widen `A` to `readonly string[]`. The audit
+// below would then pass but test nothing.
 const production = <
   const T extends readonly Lexeme[],
   const W extends readonly Position[],
@@ -691,7 +691,7 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. A proven date is refused, because a date
+    // src/compiler/emit/prove.ts proves a string. The compiler refuses a proven date, because a date
     // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
     // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
     // or an error. `$add` of a date and 1000 is the date one second later.
@@ -718,11 +718,11 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // A proven date is refused, because a date takes `.minus()` and `.diff()`. A field of
-    // unknown kind can still hold a date, so the result can be a date. MEASURED: `$subtract`
-    // over each pair of operand kinds gives a number, a date, null or an error. A date minus
-    // a date is a long, the milliseconds between them (86400000 for one day). A date minus
-    // 1000 is the date one second earlier. A number minus a date is an error.
+    // The compiler refuses a proven date, because a date takes `.minus()` and `.diff()`. A
+    // field of unknown kind can still hold a date, so the result can be a date. MEASURED:
+    // `$subtract` over each pair of operand kinds gives a number, a date, null or an error.
+    // A date minus a date is a long, the milliseconds between them (86400000 for one day).
+    // A date minus 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -1659,7 +1659,7 @@ type Mentioned<F extends string> = {
 
 // There is deliberately NO audit over `tokens`. `T extends readonly Lexeme[]` on
 // the row itself already applies the rule that every entry is a key of tokens.ts or
-// keywords.ts. It applies the rule BETTER, because the error lands on the row that
+// keywords.ts. It applies the rule BETTER. The error lands on the row that
 // breaks it, and not on a line at the foot of the file.
 //
 // An audit here cannot work. When the literal of a row breaks the constraint,
@@ -1685,9 +1685,6 @@ const _afterResolves: [DanglingAfter] extends [never] ? true : DanglingAfter = t
 type CellName = "filter" | "expr" | "stream" | "statement";
 
 type OwnersNamedBy<K extends ProductionKey> = {
-  // Extract FIRST. The type of a cell is a union, and a union never satisfies the
-  // object pattern on its own. A match against the union directly gives `never` for
-  // every row, which is an audit that always passes.
   // Extract FIRST. The type of a cell is a union, and a union never satisfies the
   // object pattern on its own. A match against the union directly gives `never` for
   // every row, which is an audit that always passes.

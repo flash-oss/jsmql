@@ -12,10 +12,10 @@
 //   $.n.round()          MethodCall { name: "round", object: FieldRef("n") }
 //
 // So there is no node type per NAME. A tree that knew particular names would need
-// one for each — MathCall, MathConst, ObjectCall, NumberStatic, NewSet, NewDate,
-// DateNow, DateUTC, TypeCast, TypeCastRef, MathCallRef, ObjectIdRef, ParamRef —
-// and no reader could tell the last of those from any other bare
-// name. `names.ts` resolves a name, in a later phase.
+// one node type for each of these: MathCall, MathConst, ObjectCall, NumberStatic,
+// NewSet, NewDate, DateNow, DateUTC, TypeCast, TypeCastRef, MathCallRef,
+// ObjectIdRef, ParamRef. No reader could tell the last of those from any other
+// bare name. `names.ts` resolves a name, in a later phase.
 //
 // `ObjectIdLiteral` stays, because `0x` with exactly 24 hex digits after it is a
 // re-reading of a NUMBER token — a syntactic fact, not a name.
@@ -28,7 +28,7 @@
  * `as const` lists, with the types derived from them, like the static name-sets
  * below. Thus the parser test can hold "every operator a row consumes is one of
  * these" as runtime data. A type-level version is empty of meaning, because
- * `becomes` does not pass through a const generic, so a conditional on it
+ * `becomes` does not pass through a const generic. A conditional on it
  * matches nothing.
  */
 /**
@@ -98,9 +98,9 @@ export type ObjectEntry = KeyValueEntry | SpreadElement;
  * parser. The parser only records what the developer wrote. A `let` or a
  * `const` is never an element: JavaScript refuses a declaration there.
  *
- * The write cases are what make a bracketed literal a PIPELINE, and a
- * `,`-joined run of them is one `UpdateFilter` — one element, one stage,
- * however many fields it writes.
+ * The write cases make a bracketed literal a PIPELINE. A `,`-joined run of
+ * them is one `UpdateFilter`: one element, one stage, however many fields it
+ * writes.
  */
 export type ArrayElement = Expr | SpreadElement | FuncDecl | UpdateOp | UpdateFilter;
 export type CallArg = Expr | SpreadElement;
@@ -128,8 +128,8 @@ export type Expr =
   | { type: "NumberLiteral"; value: number; pos: number }
   | { type: "BigIntLiteral"; value: string; pos: number }
   /**
-   * `text` is true for a string that starts with `$` where JSMQL reads it as text:
-   * the HR6 pass marks it in an operand or a whole value that JSMQL owns, and the
+   * `text` is true for a string that starts with `$` where JSMQL reads it as text.
+   * The HR6 pass marks it in an operand or a whole value that JSMQL owns. The
    * fold marks each string it computes. Without the mark, a `"$…"` string is a
    * field path (HR1). See docs/specs/raw-mql-boundary.md.
    */
@@ -141,8 +141,8 @@ export type Expr =
   /** `0x` and exactly 24 hex digits. A re-reading of a Number token. */
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
   /**
-   * A value a CALL supplied — a `jsmql.compile` parameter, a template slot — that the
-   * source cannot spell (a Date, a binary), or that MQL must not read (a string
+   * A value that a CALL supplied: a `jsmql.compile` parameter or a template slot.
+   * The source cannot spell it (a Date, a binary), or MQL must not read it (a string
    * with a dollar at the start, a document with a dollar-key). The injection pass
    * makes this node. The parser never makes it.
    */
@@ -152,7 +152,7 @@ export type Expr =
    * The desugar pass sets `packed` when it gathers a call's ARGUMENTS into this
    * list — `"a".concat(...xs)` becomes `"a".concat([...xs])`. The difference stays,
    * because JavaScript keeps it: `.concat(...xs)` passes each element as its own
-   * argument, and `.concat(xs)` passes one array, which a string receiver writes out
+   * argument. `.concat(xs)` passes one array. A string receiver writes it out
    * with commas between the elements.
    */
   | { type: "ArrayLiteral"; elements: readonly ArrayElement[]; pos: number; packed?: true }
@@ -172,8 +172,8 @@ export type Expr =
       optional?: true;
       /**
        * The path the LAST `?.` of a folded chain tests — `$.a?.b.c` tests `a`, so a
-       * call after it stops the chain on `a` alone, and `a.b.c` is read as any other
-       * path when `a` is there. Absent when the `?.` sits on the root.
+       * call after it stops the chain on `a` alone. The compiler reads `a.b.c` as any
+       * other path when `a` is there. Absent when the `?.` sits on the root.
        */
       optionalAt?: string;
       pos: number;
@@ -182,8 +182,8 @@ export type Expr =
    * `$$` — the root stream: the documents of the pipeline (HR4).
    *
    * Three spellings, three node types, never one node with a level. They are
-   * three different things: `$$` is a stream you can filter and replace, `$$$`
-   * names another collection to read or write, and `$$$$` reaches the cluster and
+   * three different things. `$$` is a stream you can filter and replace. `$$$`
+   * names another collection to read or write. `$$$$` reaches the cluster and
    * permits no read at all. A reader that had to test a number first, to learn
    * which of the three it held, would repeat that test everywhere.
    *
@@ -193,7 +193,7 @@ export type Expr =
   | { type: "StreamRef"; pos: number }
   /** `$$$` — database scope. `$$$.<coll>` names another collection. */
   | { type: "DatabaseRef"; pos: number }
-  /** `$$$$` — cluster scope. Writes work; cross-database reads are refused. */
+  /** `$$$$` — cluster scope. Writes work. The compiler refuses cross-database reads. */
   | { type: "ClusterRef"; pos: number }
   /**
    * A bare name. `Math`, `String`, a lambda's parameter, a `let` binding, a
@@ -227,7 +227,7 @@ export type Expr =
     }
   /**
    * `wrote` is the name in the SOURCE. It is present only when a pass rewrites this
-   * call to another name — `.reverse()` to its immutable twin `.toReversed()`. Every
+   * call to another name, as `.reverse()` to its immutable twin `.toReversed()`. Every
    * message names `wrote`, because a developer cannot find `.toReversed(` in a program
    * that says `.reverse(`.
    */
@@ -284,7 +284,7 @@ export type LetDecl = {
   kind: "let" | "const";
   /**
    * The source offset of the KEYWORD that opened this declaration. Every declarator
-   * of one `let`/`const` shares it. That is what lets them share a stage, and what
+   * of one `let`/`const` shares it. That lets them share a stage. It also
    * stops a folded-away neighbour from a bridge across a `;` the developer wrote.
    */
   group: number;
@@ -310,7 +310,10 @@ export type AssignExpr = {
   op: AssignOp;
   value: Expr;
   pos: number;
-  /** The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`). JavaScript allows that on a `const` binding, and the emitter allows it too. */
+  /**
+   * The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`).
+   * JavaScript allows that on a `const` binding, and the emitter allows it too.
+   */
   mutates?: true;
 };
 export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };

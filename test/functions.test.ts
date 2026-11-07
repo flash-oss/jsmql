@@ -141,8 +141,8 @@ describe("reusable functions — call sites in various contexts", () => {
 
 describe("reusable functions — output stability", () => {
   it("a declared-but-uncalled function emits no stage and no namespace", () => {
-    // Byte-identical to the same pipeline without the declaration: a function
-    // declaration is erased unless called.
+    // Byte-identical to the same pipeline without the declaration: the compiler erases a function declaration
+    // unless a call uses it.
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual(jsmql("$.y = $.z + 1;"));
   });
@@ -157,9 +157,9 @@ describe("reusable functions — output stability", () => {
     ]);
   });
 
-  // A param the server cannot spell as a `$$` variable has to be escaped at the call
-  // site's $let too, not just in the array-method binding sites — MongoDB refuses a
-  // user variable name that starts with `_`.
+  // The compiler must escape a param that the server cannot spell as a `$$` variable. It must escape the param
+  // at the call site's $let too, not just in the array-method binding sites. MongoDB refuses a user variable
+  // name that starts with `_`.
   it("a param name the server rejects is escaped at the call site", () => {
     expect(jsmql.expr("((_) => 1)(2)")).toEqual(1);
     expect(jsmql("const f = (_, n) => n + 1; $.y = f($.a, $.b);")).toEqual([
@@ -434,11 +434,10 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
   });
 
-  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). Every
-  // positional shape — a bare `$`, a bare doc identifier, the two-slot
-  // `($, { $op })`, and the three-slot `(params, $, { $op })` — is rejected.
-  // (String inputs route through the same `parseFunctionInput` path as live
-  // arrows, and do not trip the toolbox param type in this .ts file.)
+  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). The compiler rejects every
+  // positional shape: a bare `$`, a bare doc identifier, the two-slot `($, { $op })`, and the three-slot
+  // `(params, $, { $op })`. (String inputs route through the same `parseFunctionInput` path as live arrows, and
+  // do not trip the toolbox param type in this .ts file.)
   it("rejects the bare-`$` arrow entry form `($) => …`", () => {
     expect(() => jsmql.compile("($) => $.age > 18")).toThrow(/object destructure pattern/);
   });
@@ -491,18 +490,16 @@ describe("`function` keyword — parity with the arrow form", () => {
   });
 
   it("`function` is not a reserved keyword — object keys and field paths continue to work", () => {
-    // It lexes as an ordinary identifier and is intercepted only where a function
-    // expression/declaration can actually start, so `{ function: … }` (object
-    // key) and `$.function` (field path) are unaffected.
+    // It lexes as an ordinary identifier. The parser intercepts it only where a function expression/declaration
+    // can actually start, so `{ function: … }` (object key) and `$.function` (field path) are unaffected.
     expect(jsmql.expr("{ function: $.x }")).toEqual({ function: "$x" });
     expect(jsmql.expr("$.function")).toEqual("$function");
   });
 });
 
 describe("compile params resolve inside every higher-order callback", () => {
-  // The lambda contexts are spread from the caller's, so a binding reaches the
-  // body of every method that opens a scope — not only the ones whose context
-  // builder happened to list `bindings`.
+  // The compiler spreads the lambda contexts from the caller's, so a binding reaches the body of every method
+  // that opens a scope. It does not reach only the methods whose context builder happened to list `bindings`.
   it("resolves a param inside .reduce", () => {
     const build = jsmql.expr.compile<{ rate: number }>(({ rate }, { $ }) => $.items.reduce((a, x) => a + x * rate, 0));
     expect(build({ rate: 1.1 })).toEqual({

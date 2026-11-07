@@ -66,7 +66,7 @@ $trim({ input: $.name })        // → { $trim: { input: "$name" } }
 $trim($.name, " ", "x")         // → { $trim: ["$name", " ", "x"] }
 ```
 
-**HR3 — JSMQL never emits MQL that it knows is invalid.** HR3 does not apply to the escape hatches of HR1 and HR2. HR3 applies to the MQL that the compiler emits from JSMQL code. This is the lowering of each JavaScript construct, and each part that the compiler adds, for example a `$literal` or `$expr` wrapper, a stage, or a query document. When the compiler knows that the server rejects such MQL, it does not emit it. It throws an error that names the fix.
+**HR3 — JSMQL never emits MQL that it knows is invalid.** HR3 does not apply to the escape hatches of HR1 and HR2. HR3 applies to the MQL that the compiler emits from JSMQL code. This is the lowering of each JavaScript construct. It also covers each part that the compiler adds, for example a `$literal` or `$expr` wrapper, a stage, or a query document. When the compiler knows that the server rejects such MQL, it does not emit it. It throws an error that names the fix.
 
 ```js
 $.s.trim().map(x => x)          // ✗ a string has no .map() method
@@ -76,7 +76,7 @@ $divide(10)                     // → { $divide: 10 }   // one operand: the ser
 jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }
 ```
 
-The compiler also checks the place of each stage, and your stages are included. A source stage stands first. `$out` and `$merge` stand last. A sub-pipeline takes only the stages that the server allows there. `$text` stands in the first `$match`. An aggregation `$match` takes no `$near`, `$nearSphere` or `$where`:
+The compiler also checks the place of each stage, and this includes your stages. A source stage stands first. `$out` and `$merge` stand last. A sub-pipeline takes only the stages that the server allows there. `$text` stands in the first `$match`. An aggregation `$match` takes no `$near`, `$nearSphere` or `$where`:
 
 ```js
 $out("x"); $.a = 1;                            // ✗ $out must stand last
@@ -267,7 +267,7 @@ A value that your program passes in is JavaScript, not JSMQL. So a `jsmql.compil
 
 **SR1 — JSMQL guesses what you mean.** Sometimes a construct can lower in more than one way. Then JSMQL selects the meaning that a developer most probably intends. It accepts the short, idiomatic form, and does not ask for the most literal form. The guess is careful. The compiler does not guess when the meaning is not clear, or when the probable meaning gives invalid MQL. In these cases, it throws an error that names the fix.
 
-**SR2 — JSMQL gives you the JavaScript *syntax* you know, not the JavaScript *runtime* you know.** JSMQL accepts a JavaScript built-in, for example a method or a static call that you use in plain JavaScript. The compiler lowers the call to the MQL that a MongoDB developer writes by hand for the same task. The notation comes from JavaScript. The behaviour comes from MongoDB.
+**SR2 — JSMQL gives you the JavaScript *syntax* you know, not the JavaScript *runtime* you know.** JSMQL accepts a JavaScript built-in that you use in plain JavaScript, for example a method or a static call. The compiler lowers the call to the MQL that a MongoDB developer writes by hand for the same task. The notation comes from JavaScript. The behaviour comes from MongoDB.
 
 The rule separates what you **wrote** from what you **never wrote**:
 

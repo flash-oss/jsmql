@@ -703,7 +703,8 @@ describe("compiler/emit — object methods", () => {
     expect(compiled('$.team.findKey(["role", "admin"])', (d) => findKey(d.team, (v) => v.role === "admin"))).toEqual(
       first(pairs("$team"), { x: "$$jsmqlKv.v" }, { $eq: ["$$x.role", "admin"] }),
     );
-    // when no entry passes, when the object is empty or when the field is missing, the answer is `undefined`, a missing value on the server
+    // when no entry passes, when the object is empty or when the field is missing, the answer is `undefined`.
+    // On the server, `undefined` is a missing value.
     compiled("$.o.findKey(v => v > 9)", (d) => findKey(d.o, (v) => v > 9));
     compiled("({}).findKey(v => v > 1)", () => findKey({}, () => true));
     compiled("$.nope.findKey(v => v > 1)", () => findKey(undefined, () => true));
@@ -814,7 +815,7 @@ describe("compiler/emit — object methods", () => {
       },
     });
     // A key list the source does not SPELL — a field path, or an element read at run
-    // time — is one only the server knows, so both read the object's own keys instead.
+    // time — is one only the server knows. So both read the object's own keys instead.
     expect(
       compiled("$.o.pick($.keys)", (d) => Object.fromEntries(Object.entries(d.o).filter(([k]) => d.keys.includes(k)))),
     ).toEqual({
@@ -1658,8 +1659,8 @@ describe("compiler/emit — array methods", () => {
       $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, 2] }] }],
     });
     // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
-    // array it stands for, as JavaScript's `Array.prototype.concat` reads it. An argument
-    // the proof cannot place tests `$isArray` when it runs.
+    // array it stands for. JavaScript's `Array.prototype.concat` reads it the same way.
+    // An argument that the proof cannot place tests `$isArray` when it runs.
     expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({
       $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }],
     });
@@ -1695,7 +1696,7 @@ describe("compiler/emit — array methods", () => {
     expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
     expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
     // `$ifNull` wraps the reduce so an EMPTY array answers "", not the reduce's own
-    // `null` seed; that guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
+    // `null` seed. That guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
     // The seed is `null` so a leading "" element keeps its separator.
     expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toEqual({
       $ifNull: [
@@ -2684,7 +2685,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
 
   it("merges with .assign(): the receiver first, an empty receiver left out, a spread as the list of sources", () => {
     // `({}).assign(...list)` is the one spelling that merges an array of objects. The
-    // empty target means nothing is written into `docs[0]`. With no spread, one
+    // empty target means the call writes nothing into `docs[0]`. With no spread, one
     // argument is one source object, so the `{}` stays and keeps it an object operand.
     const merged = (...xs: object[]) => Object.assign({}, ...xs);
     expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
@@ -2891,8 +2892,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     // MongoDB has no set type. Each case is the array form of one Set operation, and
     // JavaScript's own Set gives the answer that the server must agree with. A set
     // operator promises no order, so the elements are compared, not their sequence.
-    // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an
-    // array, so a missing receiver runs on `[]` (HR5) and a missing list argument is `[]`.
+    // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an array.
+    // So a missing receiver runs on `[]` (HR5), and a missing list argument is `[]`.
     expect(unordered("$.dup.uniq()", (d) => [...new Set(d.dup)])).toEqual({ $setUnion: { $ifNull: ["$dup", []] } });
     expect(compiled("$.dup.uniq().size()", (d) => new Set(d.dup).size)).toEqual({
       $size: { $setUnion: { $ifNull: ["$dup", []] } },
@@ -3067,9 +3068,9 @@ const canonical = (v: unknown): string =>
  *
  * MEASURED: `$in`'s second operand, both of `$setIsSubset`'s and `$size`'s one refuse a
  * null or missing value, where `$map`, `$filter`, `$slice`, `$setUnion` and the rest
- * answer null in turn. A document that lacks the field would take the query down with
- * it, so each of these reads its list as the empty list — the list ARGUMENT through
- * the cell's own guard, the RECEIVER through HR5, which runs an array method on `[]`.
+ * answer null in turn. A document that lacks the field would take the query down with it.
+ * So each of these reads its list as the empty list. The list ARGUMENT reads it through
+ * the cell's own guard. The RECEIVER reads it through HR5, which runs an array method on `[]`.
  *
  * Each row: the source, what it answers over an EMPTY document, and what it answers
  * when only the LIST is missing. `undefined` means the row wrote no field at all.
@@ -3217,7 +3218,7 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
 
   it("a `?.` on a callback parameter reads as a `?.` on a field path", async () => {
     // `.trim()` answers null for null on its own, so the `?.` adds no test. `.size()` does
-    // not, so the test stays, and its second branch reads the proven parameter with no `$ifNull`.
+    // not, so the test stays. Its second branch reads the proven parameter with no `$ifNull`.
     const cases: readonly (readonly [string, unknown, unknown])[] = [
       [
         "$.v.map(x => x?.trim())",
@@ -4041,9 +4042,9 @@ describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the 
 /**
  * Each `$ifNull` the compiler emits changes an answer on some document.
  *
- * The test drops one guard at a time, keeps the value it guarded, and runs both documents
+ * The test drops one guard at a time and keeps the value it guarded. It runs both documents
  * over fields that are missing, null, empty, set, or of another type. When no answer
- * changes, the guard was dead: the presence proof, a row's `neverNull` or its
+ * changes, the guard was dead. Then the presence proof, a row's `neverNull` or its
  * `readsNullAsEmpty` did not know that the value is there. Each source is a case where a
  * value is there although a field it reads may be missing.
  */

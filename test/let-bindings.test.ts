@@ -31,7 +31,7 @@ describe("let bindings — basic shape", () => {
 
   it("multiple lets that build on each other emit one $set stage each", () => {
     // Canonical example from the plan + realistic test. Read-after-write splits
-    // each let into its own $set stage — that is required for the inner refs to
+    // each let into its own $set stage. The inner refs need this to
     // see the outer writes.
     expect(
       jsmql(`
@@ -158,9 +158,9 @@ describe("let bindings — declaration lists", () => {
 
   it("keeps a declarator that hoists a $lookup OUT of the shared $set", () => {
     // A foreign read in a value position puts its `$lookup` AHEAD of the statement
-    // it belongs to. Shared with the sibling it correlates on, that `$lookup` would
-    // run BEFORE the `$set` that binds the sibling and would join on a missing
-    // field — silently wrong data, and a server rejection when two joins chain.
+    // it belongs to. Suppose the `$lookup` shares a `$set` with the sibling it correlates on.
+    // Then it would run BEFORE the `$set` that binds the sibling, and it would join on a
+    // missing field. This gives silently wrong data, and a server rejection when two joins chain.
     // Such a declarator therefore ends the run and takes a stage of its own.
     expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
@@ -202,8 +202,8 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("shares ONE $let across the declarators a `,` joined inside a block", () => {
-    // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds:
-    // independent vars share one `$let`, a dependent one opens the next.
+    // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds.
+    // Independent vars share one `$let`, and a dependent one opens the next.
     expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });")).toEqual([
       {
         $set: {
@@ -375,9 +375,9 @@ describe("let bindings — context rules", () => {
   });
 
   it("a single runtime let with trailing `;` is valid (pipeline of one binding + auto-unset)", () => {
-    // Useless but legal — the parser flips to pipeline mode at the `;`. Runtime
-    // RHS (`$.a`) so it stays a `$set`; a constant `const x = 5;` on its own
-    // instead errors (nothing reads it — see the const-folding suite).
+    // Useless but legal. The parser flips to pipeline mode at the `;`. The RHS
+    // is a runtime value (`$.a`), so it stays a `$set`. A constant `const x = 5;` on its own
+    // errors instead, because nothing reads it (see the const-folding suite).
     expect(jsmql("let x = $.a;")).toEqual([{ $set: { "__jsmql.var.x": "$a" } }, { $unset: "__jsmql" }]);
   });
 
@@ -413,9 +413,9 @@ describe("let bindings — sub-pipeline boundaries", () => {
   });
 
   it("outer lets are NOT visible inside a sub-pipeline", () => {
-    // The outer `cutoff` does not reach into the $lookup pipeline. (Runtime RHS
-    // `$.start`, so it is a per-document `$set` binding — those do not cross a
-    // sub-pipeline boundary; a compile-time constant would inline everywhere.)
+    // The outer `cutoff` does not reach into the $lookup pipeline. (The RHS `$.start`
+    // is a runtime value, so it is a per-document `$set` binding. Such bindings do not cross a
+    // sub-pipeline boundary. A compile-time constant would inline everywhere.)
     expect(
       jsmql(`
         let cutoff = $.start;
@@ -476,7 +476,7 @@ describe("let bindings — parser errors", () => {
     const named = "'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'let x = <expr>'.";
     expect(() => jsmql("let x 5;")).toThrow(named);
     expect(() => jsmql("let x;")).toThrow(named);
-    // A later declarator is refused the same way, at its OWN name.
+    // The compiler refuses a later declarator the same way, at its OWN name.
     expect(() => jsmql("let a = 1, x;")).toThrow(
       "'let x' binds no value at position 11. jsmql has no 'undefined' to bind — write 'let x = <expr>'.",
     );
@@ -550,8 +550,8 @@ describe("let bindings — RHS expression coverage", () => {
   });
 
   it("$op-call RHS — accumulator inside a let value is fine syntactically", () => {
-    // The accumulator runs at the surrounding stage's context; the $set wrapper
-    // is what is actually emitted, and Mongo evaluates accumulators per-document
+    // The accumulator runs in the context of the surrounding stage. The compiler emits
+    // the $set wrapper, and Mongo evaluates accumulators per document
     // in normal $set context (effectively as the first element of an array).
     expect(jsmql("let avg = $avg($.scores); $project({ avg })")).toEqual([
       { $set: { "__jsmql.var.avg": { $avg: "$scores" } } },
@@ -621,8 +621,8 @@ describe("let bindings — member / method / index access", () => {
   });
 
   it("index access on a let resolves the receiver to its field path", () => {
-    // A `let` is never statically typed (it can be reassigned), and `$.items`
-    // is not provable anyway, so `xs[0]` emits the runtime three-way dispatch for
+    // The compiler never types a `let` statically, because the program can reassign it.
+    // `$.items` is not provable anyway. So `xs[0]` emits the run-time three-way dispatch for
     // an integer key: array position, string character, field named "0".
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
       { $set: { "__jsmql.var.xs": "$items" } },
@@ -932,8 +932,8 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
   });
 
   it("the stage body itself can still read the let — only later stages cannot", () => {
-    // $group is the canonical reshape stage; its body runs *with* the scope
-    // intact (so accumulators can reference the let), and only the *next*
+    // $group is the canonical reshape stage. Its body runs *with* the scope
+    // intact, so accumulators can reference the let. Only the *next*
     // stage sees the cleared scope.
     expect(jsmql("let weighted = $.x * $.weight; $group({ _id: $.cat, total: $sum(weighted) })")).toEqual([
       { $set: { "__jsmql.var.weighted": { $multiply: ["$x", "$weight"] } } },
@@ -959,8 +959,8 @@ describe("let bindings — $project in inclusion mode clears the let scope", () 
 
 describe("let bindings — reassignment", () => {
   it("re-`$set`s a `let`'s materialised slot on reassignment", () => {
-    // The second statement reads the binding's current value and writes back to
-    // the same `__jsmql.var.<name>` slot — exactly how `let x = 1; x = x + 1` reads
+    // The second statement reads the current value of the binding and writes back to
+    // the same `__jsmql.var.<name>` slot. This is how `let x = 1; x = x + 1` reads
     // in JavaScript.
     expect(
       jsmql(`
@@ -1091,7 +1091,7 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
   });
 
   it("`const` is still usable as a field name and object key", () => {
-    // The keyword token must not regress `const` as a plain identifier in
+    // The keyword token must keep `const` valid as a plain identifier in
     // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
@@ -1103,10 +1103,10 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 });
 
 describe("a let tombstone survives every lambda depth", () => {
-  // A lambda body is inside everything its surroundings are inside, so the scope
-  // travels with the Env, and is not listed again field by field: a binding
-  // declared before the switch is captured at every nesting depth, not only the
-  // first, and the actionable message holds just as deep.
+  // A lambda body is inside everything that its surroundings are inside. So the scope
+  // travels with the Env, and the Env does not list it again field by field.
+  // The Env captures a binding that the program declares before the switch at every
+  // nesting depth, not only the first. The actionable message holds just as deep.
   const SWITCH = /replaces the stream with a different collection/;
 
   it("reports the source switch at depth 1", () => {

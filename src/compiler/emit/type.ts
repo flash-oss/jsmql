@@ -224,9 +224,9 @@ export function at(t: Type, path: string): Type {
 }
 
 /**
- * The document after `path` is written with `value`. A whole-field write
+ * The document after a write of `value` at `path`. A whole-field write
  * replaces the field's proof. A dotted write keeps the parent's other
- * properties: `$.address.full = s` makes `address` a present object, open when it
+ * properties. For example `$.address.full = s` makes `address` a present object, open when it
  * was not known, with `full` set inside it. MEASURED, `{ $set: { "a.b": 1 } }`:
  * a scalar, null or missing `a` becomes `{ b: 1 }`; an object `a` keeps its
  * other fields; an ARRAY `a` gets `b` written into every element, so
@@ -267,7 +267,7 @@ function into(t: Type, write: (parent: Type) => Type): Type {
   return join(asObj, asArr);
 }
 
-/** The document after `path` is removed. */
+/** The document after a removal of `path`. */
 export function removed(doc: Type, path: string): Type {
   const dot = path.indexOf(".");
   const head = dot === -1 ? path : path.slice(0, dot);

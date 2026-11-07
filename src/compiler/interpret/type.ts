@@ -1,9 +1,9 @@
 // The type operators.
 //
 // A number has two BSON kinds, int and double, and a JavaScript number holds
-// neither. A number that the query WRITES has the kind that the driver gives it: an
+// neither. A number that the query WRITES has the kind that the driver gives it. An
 // integer that a 32-bit integer holds is an int, and every other number is a double. A
-// number that an operator COMPUTES has the kind that the server gives it: a
+// number that an operator COMPUTES has the kind that the server gives it. A
 // `$divide` is always a double, and a sum that overflows 32 bits is a long. So `$type`
 // answers for a written number only, and refuses a computed one.
 

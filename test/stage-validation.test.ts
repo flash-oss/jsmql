@@ -6,10 +6,10 @@ import { jsmql } from "../src/index.ts";
 // checks no stage body, and the server judges the document. The compiler still checks
 // where each stage stands, and the query operators that an aggregation `$match` refuses.
 //
-// Most expected documents in the first block are DELIBERATELY invalid. Each one is the
-// developer's MQL, passed through as written, and the server refuses it (the note
-// beside it gives the reason). They pin the pass-through; the suite does not endorse them
-// as valid shapes (test/CLAUDE.md § Never assert MQL that the MongoDB server rejects).
+// Most expected documents in the first block are DELIBERATELY invalid. Each one is the developer's MQL. The
+// compiler passes it through as written, and the server refuses it (the note beside it gives the reason). They
+// pin the pass-through; the suite does not endorse them as valid shapes (test/CLAUDE.md § Never assert MQL that
+// the MongoDB server rejects).
 
 describe("a stage body is your own MQL, and it passes through as written", () => {
   const sortKeys = (n: number): string => Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ");
@@ -172,8 +172,8 @@ describe("a pipeline stage name used where a value is expected", () => {
   }
 
   it("is rejected in `jsmql.expr`, which yields an expression and never a stage", () => {
-    // The bare `jsmql(...)` entry auto-wraps a lone stage call into a pipeline, so the
-    // same source is a legitimate statement there — only the expression entry rejects.
+    // The bare `jsmql(...)` entry auto-wraps a lone stage call into a pipeline, so the same source is a
+    // legitimate statement there. Only the expression entry rejects it.
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$match' stage call instead. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );

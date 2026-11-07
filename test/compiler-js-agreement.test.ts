@@ -1,15 +1,15 @@
 // Where the filter target agrees with JAVASCRIPT, and where it does not.
 //
 // A query document is the one a MongoDB developer writes by hand, so MongoDB's own
-// rules apply to it: a field comparison is satisfied by any ELEMENT of an array
-// value, and a path TRAVERSES an array in the middle. JavaScript does neither.
-// This suite is the oracle for the whole boundary. Each source is EVALUATED as
-// JavaScript over the fixture — the source with `$.` read as the document — and the
-// ids that come back are compared with the ids the emitted query selects on a live
+// rules apply to it. Any ELEMENT of an array value satisfies a field comparison,
+// and a path TRAVERSES an array in the middle. JavaScript does neither.
+// This suite is the oracle for the whole boundary. The suite EVALUATES each source as
+// JavaScript over the fixture — the source with `$.` read as the document. It
+// compares the ids that come back with the ids that the emitted query selects on a live
 // mongod.
 //
-// The sources JavaScript answers differently sit in a table with a reason each, and
-// are asserted to STILL differ, so a change cannot land silently: it moves the row.
+// The sources JavaScript answers differently sit in a table with a reason each. The
+// suite asserts that they STILL differ, so a change cannot land silently: it moves the row.
 // Three reasons cover them. MongoDB reads an ARRAY element-wise where JavaScript
 // reads one value. JavaScript COERCES under a relational operator (`[2] > 1` is
 // true). And JavaScript THROWS when a path walks through a missing intermediate.

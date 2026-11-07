@@ -1,8 +1,8 @@
 // The BSON value constructors: `ObjectId`, `Decimal128`, `Long`, `Int32`,
 // `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, each written without `new` (HR8).
 //
-// Every document here is asserted as MQL and, when a mongod is reachable, RUN —
-// because a `toEqual` proves what jsmql emits and never that the server accepts it
+// The suite asserts every document here as MQL. When a mongod is reachable, the suite also RUNS
+// each document, because a `toEqual` proves what jsmql emits and never that the server accepts it
 // (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -35,8 +35,8 @@ const HEX = "507f1f77bcf86cd799439011";
 const bsonType = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsontype;
 const UUID_TEXT = "6ac24965-7917-4323-8d44-920ad1d69b94";
 
-// Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`, and a
-// Decimal128 as a plain object makes the server refuse `$multiply`, because an
+// Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`.
+// A Decimal128 as a plain object makes the server refuse `$multiply`, because an
 // object is not a number — MEASURED.
 const doc = () => ({
   _id: 1,
@@ -292,8 +292,8 @@ describe.skipIf(!up)("compiler — each constant finds the stored document", () 
 
 // The driver sends a DBRef as the document `{ $ref, $id, $db }`. An expression slot
 // reads that document as an operator call, and the server refuses it — MEASURED.
-// So a passed-in DBRef reads as MQL (HR1): `$literal` where the server evaluates the
-// slot, and the value as written in a query and in an update document.
+// So a passed-in DBRef reads as MQL (HR1). The compiler writes `$literal` where the server evaluates the
+// slot. It writes the value as given in a query and in an update document.
 describe("compiler — a passed-in DBRef is a value in every slot", () => {
   const ref = new DBRef("users", new ObjectId(HEX));
 

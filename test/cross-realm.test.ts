@@ -1,14 +1,12 @@
 /**
  * A value from another realm is the value it is.
  *
- * `instanceof Date` is false for a real Date made in another realm — a `vm` context, a
- * test runner's sandbox, a worker — because each realm has its own `Date`, `RegExp`,
- * `Uint8Array` and `Object.prototype`. A parameter value can arrive from any of them,
- * and a value that failed the test would take a road it should not: a Date compared on
- * the `$expr` road loses the index, a `$`-keyed object skips the `$literal` gate. The
- * compiler recognises a value by what it IS, never by which realm made it, so the
- * document it emits is the same one. See docs/specs/bson-types.md § Recognition across
- * realms.
+ * `instanceof Date` is false for a real Date made in another realm: a `vm` context, a test runner's sandbox, a
+ * worker. Each realm has its own `Date`, `RegExp`, `Uint8Array` and `Object.prototype`. A parameter value can
+ * arrive from any of them. A value that failed the test would take a road it should not. For example, a Date
+ * compared on the `$expr` road loses the index, and a `$`-keyed object skips the `$literal` gate. The compiler
+ * recognises a value by what it IS, never by which realm made it, so the document it emits is the same one. See
+ * docs/specs/bson-types.md § Recognition across realms.
  */
 import { describe, it, expect } from "vitest";
 import vm from "node:vm";
@@ -21,9 +19,9 @@ import { jsmql } from "../src/index.ts";
 const far = <T>(src: string): T => vm.runInNewContext(src) as T;
 
 /**
- * A document with every Uint8Array written as its bytes. `toEqual` compares a Date or a
- * RegExp from another realm by value, but holds two typed arrays equal only when they
- * share a constructor — which two realms never do. The bytes are what the driver sends.
+ * A document with every Uint8Array written as its bytes. `toEqual` compares a Date or a RegExp from another
+ * realm by value. It holds two typed arrays equal only when they share a constructor, and two realms never do.
+ * The bytes are what the driver sends.
  */
 const bytesAsArrays = (v: unknown): unknown => {
   if (Object.prototype.toString.call(v) === "[object Uint8Array]") return { bytes: Array.from(v as Uint8Array) };

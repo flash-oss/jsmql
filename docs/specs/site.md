@@ -73,12 +73,11 @@ so one text shows in an example, its "Open in playground" link and the terminal
 alike.
 
 Two consequences follow for the page's layout. The output is JavaScript, not
-JSON, so the MQL pane is highlighted with CodeMirror's JavaScript mode and not
-its JSON mode. And the printer breaks a line at 80 columns, which is where the
-panel width below comes from: a node stays on one line when it fits, so a
-reader sees one stage per line, not one brace per line. A pane is
-narrower than 80 columns at the page's 1080px column, so the widest lines
-scroll inside their own `pre`.
+JSON, so CodeMirror's JavaScript mode highlights the MQL pane, not its JSON
+mode. And the printer breaks a line at 80 columns, which is where the panel
+width below comes from: a node stays on one line when it fits, so a reader sees
+one stage per line, not one brace per line. A pane is narrower than 80 columns
+at the page's 1080px column, so the widest lines scroll inside their own `pre`.
 
 The module script also builds each "Open in playground" link. It encodes
 `{ v: 1, input, vars, mode }` as base64url into a `#s=` fragment — the share
@@ -91,9 +90,8 @@ inputs and every link stay readable with JavaScript off.
 
 ## The page paints both languages with the playground's highlighter
 
-A JSMQL input and an MQL document carry the same colours here as they do in the
-editor, because the same three files from the pinned CodeMirror release do the
-work:
+A JSMQL input and an MQL document carry the same colours here as in the editor.
+The same three files from the pinned CodeMirror release do the work:
 
 | File | Role |
 | --- | --- |
@@ -105,7 +103,7 @@ The markup holds each JSMQL source as plain text, and the script rewrites the
 block in place, so the source stays readable with JavaScript off, stays
 selectable as text, and stays in the one shape both the page and the drift guard
 below read. The script paints the inputs before it imports the bundle, because
-their text is already on the page, and it paints each MQL document as it compiles
+their text is already on the page. It paints each MQL document as it compiles
 it.
 
 Two cases stay plain text. Where the CDN does not answer, `paint` writes the
@@ -135,9 +133,9 @@ entry its `data-mode` names, and asserts:
   Without the domain, no URL shows the site for review;
 - `_config.yml` publishes both pages, and the page imports the bundle.
 
-These guards can see only what the compiler emits, never what the server
-returns, so they cannot see whether an example's MQL *does the right thing* on
-real data. An example whose behaviour matters belongs in
+These guards see only what the compiler emits, never what the server returns. So
+they cannot show whether an example's MQL *does the right thing* on real data.
+An example whose behaviour matters belongs in
 [test/integration.test.ts](../../test/integration.test.ts) as well.
 
 The extraction fails loudly when the markup changes shape, so the cases cannot
@@ -155,5 +153,5 @@ in its own repository. The entry is:
 
 Entries are alphabetical, double-quoted, one per line, comma-terminated. The
 service requires a working GitHub Pages site with real content behind the
-`CNAME` before it accepts the request, and it rejects placeholder pages, automatic
+`CNAME` before it accepts the request. It rejects placeholder pages, automatic
 redirects off the js.org domain, and content unrelated to JavaScript.

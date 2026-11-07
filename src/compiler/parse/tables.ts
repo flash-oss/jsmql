@@ -29,7 +29,10 @@ export type Rule = {
   leftOperandNot: readonly ProductionKey[];
   /** The node this rule builds cannot be the left of `=` or the operand of `delete`. */
   neverAWriteTarget: boolean;
-  /** The compound write that means the same as a statement (`+= 1`), when the rule is a write JavaScript also reads as a value. See the row field. */
+  /**
+   * The compound write that means the same as a statement (`+= 1`). It applies when JavaScript also
+   * reads the write as a value. See the row field.
+   */
   asStatement: string | null;
 };
 

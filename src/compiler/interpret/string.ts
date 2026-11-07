@@ -4,8 +4,8 @@
 // because no UTF-8 encoding exists for one. The server counts and cuts a string
 // in code points (`CP`) or in bytes (`Bytes`), and JavaScript counts UTF-16 units. So
 // every rule here works on code points or on UTF-8 bytes, never on `.length`.
-// A string operator that accepts a null or a number on the server (and
-// answers a coerced value) is refused for that operand: HR7 refuses it before the interpreter.
+// A string operator can accept a null or a number on the server and answer a coerced value.
+// The rule refuses that operand, and HR7 refuses it before the interpreter runs.
 
 import type { Rule } from "./values.ts";
 import {

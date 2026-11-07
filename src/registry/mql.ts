@@ -128,8 +128,8 @@ export const clampNonNegativeIndex = (node: Expr, lowered: unknown): unknown => 
 
 /**
  * The length of a string value. A literal counts its code points. A value takes
- * `$strLenCP` over "" for a missing one, because `$strLenCP` refuses null — unless the
- * caller knows it is there (`present`), as the body of a null test does.
+ * `$strLenCP` over "" for a missing one, because `$strLenCP` refuses null. The exception is a
+ * caller that knows the value is there (`present`), as the body of a null test does.
  */
 export function strLenOf(value: unknown, present = false): unknown {
   const text = constantText(value);
@@ -152,8 +152,8 @@ export function negativeLiteralValue(node: Expr): number | null {
 
 /**
  * The string operand of `$substrCP`. That operator reads a null string as `""`, so the
- * dot rule's `{ $ifNull: [s, ""] }` (HR5) is not necessary there, and this removes it. A `$strLenCP`
- * beside it keeps the wrap, because `$strLenCP` stops the command on null.
+ * dot rule's `{ $ifNull: [s, ""] }` (HR5) is not necessary there. This function removes it.
+ * A `$strLenCP` beside it keeps the wrap, because `$strLenCP` stops the command on null.
  * MEASURED: `{ $substrCP: [null, 1, 2] }` is "".
  */
 export const substrOperand = (s: unknown): unknown => {
@@ -308,10 +308,10 @@ export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $rever
  * A JavaScript aggregate in an ACCUMULATOR slot — a `$group` output, a
  * `$setWindowFields.output` entry. The receiver is the accumulator's operand:
  * `$.a.sum()` is `{ $sum: "$a" }`. A receiver that renders as an array LITERAL holds
- * one array on each document, and the slot reads `{ $sum: [ … ] }` as an operand LIST.
+ * one array on each document. The slot reads `{ $sum: [ … ] }` as an operand LIST.
  * MEASURED: a `$group` slot refuses it, because the accumulator takes one operand
  * there. A window slot answers 0. So `perDocument` reduces the array on each document
- * first, as `.sumBy` does, and the slot accumulates that value:
+ * first, as `.sumBy` does. The slot then accumulates that value:
  *   [$.n, $.m].sum()     → { $sum: { $sum: ["$n", "$m"] } }          → Σ (n + m)
  *   [$.n, $.m].first()   → { $first: { $first: [["$n", "$m"]] } }    → n of the first document
  */

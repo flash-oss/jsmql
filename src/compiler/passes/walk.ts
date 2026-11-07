@@ -75,8 +75,8 @@ export function mapTree<T extends object>(root: T, fn: (n: object) => object): T
 //
 // A rule that must know WHERE a node sits cannot look the node up in a
 // recorded set. This walk rebuilds a parent as soon as one of its children
-// changes, so by the time the rule runs, the object it holds is not the object
-// anyone recorded. The position must arrive with the node, computed on the way down.
+// changes. So when the rule runs, the object it holds is not the object
+// that anyone recorded. The position must arrive with the node, computed on the way down.
 
 /** What edge the walk is about to take: from `node`, along its property `key`. */
 export type Edge<C> = (node: object, key: string, here: C) => C;

@@ -3,9 +3,9 @@
 // `$group` they mean, followed by the `$replaceWith` that drops `_id`.
 //
 // `.reduce` folds the stream to one value, and a stream must stay documents, so
-// the fold is written INSIDE a document — one key per accumulator. Each key's
-// body is read as the MongoDB accumulator it spells. A body that spells none is
-// refused, and the message names the shapes that do. The init is JavaScript's own value. It is
+// the source writes the fold INSIDE a document — one key per accumulator. The compiler
+// reads each key's body as the MongoDB accumulator it spells. The compiler refuses a body
+// that spells none, and the message names the shapes that do. The init is JavaScript's own value. It is
 // required and unread, because MongoDB's accumulators have their own neutral elements.
 //
 //   acc + d.total          → { $sum: "$total" }      acc + 1            → { $sum: 1 }
@@ -189,7 +189,8 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
   // `({ ...acc, [d.k]: d.v })` from `{}` — one document keyed by a field. The compiler
   // pushes every pair, then applies `$arrayToObject`. The key is a field of the document.
   const keyed = keyedEntry(r.body, r.acc, r.param);
-  // `({ [d.k]: d.v })` without `...acc` replaces the accumulator at every step. JavaScript keeps only the LAST document.
+  // `({ [d.k]: d.v })` without `...acc` replaces the accumulator at every step.
+  // JavaScript keeps only the LAST document.
   if (
     keyed === null &&
     r.body.entries.length === 1 &&

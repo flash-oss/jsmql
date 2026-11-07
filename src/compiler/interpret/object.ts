@@ -4,7 +4,7 @@
 // would move in a JavaScript object. `spellable` refuses such a document, so no
 // rule here checks that. `$arrayToObject` is the one rule that answers it, as an
 // `OrderedDocument`, which no other rule reads. A field that the answer needs and the document lacks is
-// MISSING, and no literal spells missing, so such a read is a refusal.
+// MISSING. No literal spells missing, so the interpreter refuses such a read.
 
 import type { Answer, Rule } from "./values.ts";
 import { NO, OrderedDocument, isIndexKey, isPlain, ok, spellable } from "./values.ts";
@@ -46,7 +46,7 @@ function pairsOf(list: unknown[]): [string, unknown][] | null {
 }
 
 // The pairs of a list in unspecified order give a document in that order. A key that repeats keeps the
-// value of its last pair, so the list may be in unspecified order only when no key repeats.
+// value of its last pair. So the list may be in unspecified order only when no key repeats.
 const arrayToObject = positional(
   1,
   1,

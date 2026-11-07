@@ -14,7 +14,7 @@
 //
 // The last line states the rule: `||` lowers PER BRANCH. If the compiler wraps
 // the whole disjunction in `$expr` as soon as one side needs it, this changes
-// the OTHER side's answer: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+// the OTHER side's answer. `{ $expr: { $eq: ["$tags", "red"] } }` does not match
 // `tags: ["red", "blue"]`, where `{ tags: "red" }` does match.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
@@ -51,9 +51,9 @@ const NAMESPACES = namespaceNames();
 
 /**
  * A predicate's query document. It includes `$expr` where a leaf has no
- * native form. The caller of `nativeOnly` gets null instead of an `$expr` —
- * this is how a `.some` body or an `||` branch learns it cannot use an index
- * as a whole.
+ * native form. The caller of `nativeOnly` gets null instead of an `$expr`.
+ * This is how a `.some` body or an `||` branch learns that it cannot use an
+ * index as a whole.
  *
  * `jsRead` says that a JavaScript spelling reads the predicate's truth: a
  * lambda body, or an operand of `&&`, `||` and `!`. That spelling checks
@@ -92,7 +92,7 @@ function translate(node: Expr, env: Env, nativeOnly: boolean, jsRead: boolean): 
   if (node.type === "UnaryExpr" && node.op === "!") {
     // `!p` is the COMPLEMENT of p's own clause. The query language states it
     // exactly where an expression does not: `$expr` orders values across BSON
-    // types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and
+    // types. So `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and
     // for `v: "x"`, where JavaScript answers true for both. The compiler
     // complements only a clause with no `$expr` inside it. Anything else keeps
     // the truth road below, whose `$not` over one expression already gives
@@ -131,7 +131,7 @@ function translate(node: Expr, env: Env, nativeOnly: boolean, jsRead: boolean): 
  * A bare field read as a predicate — `$.active`, `u.deleted` — in the QUERY
  * language, where the proof rules an array out. The query language reads an
  * array field element by element, so `{ f: { $nin: [0] } }` drops `f: [0, 1]`,
- * which JavaScript keeps; a value that may be an array stays on the `$expr`
+ * which JavaScript keeps. A value that may be an array stays on the `$expr`
  * road. Otherwise the check is the same subtractive rule `truthOf` applies:
  * one excluded value per part of the proof that can be falsy.
  *
@@ -280,11 +280,12 @@ const NOT_INJECTED = Symbol("not injected");
 /**
  * HR1 in a query document: a run-time value that reads as MQL is a value, never
  * syntax. A field compares it (`{ a: v }` → `{ a: { $eq: v } }` when `v` holds an
- * operator), and the operand of a comparison operator is it: the operators whose
+ * operator). The operand of a comparison operator is it too: the operators whose
  * row states `liftsTo` compare the field with their operand. `$expr` takes an
- * expression, where the value road gives the value `$literal`. Every other operator
- * reads its operand as a query or as MQL syntax (`$and`, `$not`, `$elemMatch`,
- * `$near`), so the value is refused there. Anything else is `NOT_INJECTED`.
+ * expression, where the value road gives the value `$literal`. Every other
+ * operator reads its operand as a query or as MQL syntax (`$and`, `$not`,
+ * `$elemMatch`, `$near`), so the compiler refuses the value there.
+ * Anything else is `NOT_INJECTED`.
  */
 function injectedInQuery(key: string, value: Expr): unknown {
   if (value.type !== "Injected" || !isMqlShaped(value.value)) return NOT_INJECTED;
@@ -355,9 +356,9 @@ function rawValue(e: Expr, env: Env): unknown {
   const value = lowerValue(e, env);
   // The server refuses an aggregation operator in a query document outright.
   // Measured: the server refuses `{ a: { $trim: … } }`. The
-  // compiler checks this HERE, and not on a raw document's keys, because a
-  // document the developer TYPED is their own MQL and passes through — a query
-  // operator newer than this build must still round-trip. This value is one
+  // compiler checks this HERE and not on a raw document's keys. A document the
+  // developer TYPED is their own MQL and passes through, so a query operator
+  // newer than this build still round-trips. This value is one
   // the developer wrote as JavaScript. A `$`-named call is the developer's own MQL.
   if (e.type !== "OperatorCall" && isObj(value) && !Array.isArray(value)) {
     for (const key of Object.keys(value)) {
@@ -555,7 +556,7 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
     if (b.ref.kind !== "document" || b.level !== env.level) return null;
-    // The innermost element ITSELF is the path "": inside `$elemMatch` a test with no field
+    // The innermost element ITSELF is the path "". Inside `$elemMatch` a test with no field
     // name tests the element — `{ $elemMatch: { $gt: 2 } }` — so `.some(n => n > 2)` has a
     // query form. A whole document, and an outer element, have no query path.
     if (b.ref.path === "") return innermost !== null && innermost.element === e.name ? "" : null;
@@ -662,8 +663,8 @@ function isQueryConstant(x: unknown): boolean {
 /**
  * Two query documents as one conjunction. A key that appears once stays at the
  * top level, where the planner reads it. A key that collides goes into ONE
- * `$and`, placed where the first collision stood, with an existing `$and`
- * flattened into it. Two `$expr` residuals become one `$expr: { $and: [...] }`.
+ * `$and`. The function places it where the first collision stood and flattens an
+ * existing `$and` into it. Two `$expr` residuals become one `$expr: { $and: [...] }`.
  *
  * A collision on a field whose two clauses are OPERATOR documents that name
  * different operators is not a collision at all. The server reads every
@@ -724,8 +725,8 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 
 /**
  * A value spelled so that two spellings are equal only when the values are
- * equal. `JSON.stringify` does not do this: it writes every RegExp as `{}`, so
- * `/^a/` and `/z$/` would read as one value, and a merge would drop a
+ * equal. `JSON.stringify` does not do this. It writes every RegExp as `{}`, so
+ * `/^a/` and `/z$/` would read as one value. Then a merge would drop a
  * condition.
  */
 function spell(v: unknown): string {

@@ -2,26 +2,27 @@
 
 ## Overview
 
-`$$.size()` is the number of documents in the current stream **at the point it
-is used** — `.size()`, as `Set.size` names a count, on the stream (`$$` is the root
-stream). It is a **value**. You can use it in any place that takes
-an expression: a field RHS (`$.n = $$.size()`), arithmetic (`$.share = 1 / $$.size()`), an
-`assert` condition (`assert($$.size() <= 1, …)`), a stage body (`$project`,
-`$group`), or a top-level `$match` `$expr`.
+`$$.size()` is the number of documents in the current stream **at the point
+where the code uses it**. `.size()` names a count, as `Set.size` does, and `$$`
+is the root stream. It is a **value**. You can use it in any place that takes an
+expression: a field RHS (`$.n = $$.size()`), arithmetic (`$.share = 1 /
+$$.size()`), an `assert` condition (`assert($$.size() <= 1, …)`), a stage body
+(`$project`, `$group`), or a top-level `$match` `$expr`.
 
 See [`docs/LANGUAGE.md#length`](../LANGUAGE.md#size-count-the-current-stream) for the user-facing
 reference.
 
 ## Mechanism
 
-MQL has no inline "count of the current stream" operator, because cardinality is a
-stream aggregate, not a per-document value. So JSMQL **materialises**
-`$$.size()`: a `$setWindowFields` with a full-partition `$count` stamps the count onto every
-document under the reserved system slot `__jsmql.size` (see
+MQL has no inline "count of the current stream" operator, because cardinality is
+a stream aggregate, not a per-document value. So JSMQL **materialises**
+`$$.size()`: a `$setWindowFields` with a full-partition `$count` stamps the
+count onto every document under the reserved system slot `__jsmql.size` (see
 [`src/namespace.ts`](../../src/namespace.ts)). After this, the read is the field
-path `"$__jsmql.size"`. The `length` row's cell in [`src/registry/names.ts`](../../src/registry/names.ts)
-places the stamp through the `hoist` service. This puts the stamp ahead of the STAGE that holds the
-read, on the ROOT chain, and it answers with the path the Env renders for it.
+path `"$__jsmql.size"`. The `length` row's cell in
+[`src/registry/names.ts`](../../src/registry/names.ts) places the stamp through
+the `hoist` service. This puts the stamp ahead of the STAGE that holds the read,
+on the ROOT chain, and it answers with the path the Env renders for it.
 
 ```json
 { "$setWindowFields": { "output": { "__jsmql.size": { "$count": {} } } } }
@@ -34,7 +35,7 @@ stage and the trailing `{ $unset: "__jsmql" }`.
 
 ## Compute-once / reuse / recompute
 
-The materialiser is hoisted **lazily** and cached:
+The compiler hoists the materialiser **lazily** and caches it:
 
 - On the first read of `$$.size()`, JSMQL emits a `$setWindowFields` directly ahead
   of the stage that reads it. This is the stage the read's own lowering makes, not the
@@ -47,11 +48,11 @@ The materialiser is hoisted **lazily** and cached:
   **recomputes** (it emits a fresh `$setWindowFields`).
 
 **Freshness-preserving stages** are the ones whose row states `preservesCount`
-(`src/registry/names.ts`): the stage leaves the stream's COUNT and its documents'
-FIELDS both untouched, so a count already stamped into a field is still the
-count afterwards. A stage that states nothing invalidates the count. The rule is
-**conservative**: a recount is always correct, and a reuse of a stale count is a
-bug, so a read reuses a count only where a row proves it safe.
+(`src/registry/names.ts`): the stage leaves the stream's COUNT and its
+documents' FIELDS both untouched, so a count already stamped into a field is
+still the count afterwards. A stage that states nothing invalidates the count.
+The rule is **conservative**. A recount is always correct, and a reuse of a
+stale count is a bug. So a read reuses a count only where a row proves it safe.
 
 Inside a callback, JSMQL refuses the third parameter altogether in a body that runs
 any stage without `preservesCount`. The count is a FIELD stamped onto the body's
@@ -63,7 +64,7 @@ answers it once for the whole body, which is the conservative answer; its messag
 names the stage.
 
 Detection is a **complete** AST walk (`someExpr` / `containsStreamLength` in
-`pipeline.ts`, and it covers every child-bearing `Expr` node), because a missed node
+`pipeline.ts`). It covers every child-bearing `Expr` node, because a missed node
 would let `$$.size()` slip through un-materialised and emit a loose
 `$__jsmql.size`.
 
@@ -110,27 +111,29 @@ its document count — the same `$setWindowFields` `$count` → `__jsmql.size` s
 chain of the body that BOUND the handle, ahead of the stage that reads it.
 
 **The binding carries that chain**, not the read: `Ref.streamHandle` in
-[`src/compiler/emit/names.ts`](../../src/compiler/emit/names.ts) holds the `Chain` the
-body assembles, and `Binding.level` holds its document level. `streamHandleOf` in
-[`src/compiler/emit/inputs.ts`](../../src/compiler/emit/inputs.ts) reads both back
-when the `hoist` service places the stamp. So a DEEPER body that reads an ANCESTOR's handle
-stamps the ancestor's own pipeline, and it reads the value back down through
-each `$lookup.let` on the way — `jsmql_s<level>_length`, the same hop an outer field
-takes. If a read took the level from the READ instead, it would collapse the two counts onto one
-`$__jsmql.size` field, so `shpmntsColl.size() < ordersColl.size()` would compare a value
-with itself. Nothing about that document is invalid MQL, so the server answers it
-without a word. A `$facet` branch is the same trap by another route: it assembles a
-chain of its own at the SAME level, so the chain, and not the level, decides. The parameter is
-a `streamHandle` binding in the body's Env, and its `.size()` is that inner count.
-Placement is automatic: the chain appends each link's stages in order, so the count
-reflects the sub-stream *at that chain point* (post-filter, post-`.slice`, …), and the
-body's own trailing `{ $unset: "__jsmql" }` keeps the scratch field out of the `as`
-array. Verified on mongod.
+[`src/compiler/emit/names.ts`](../../src/compiler/emit/names.ts) holds the
+`Chain` the body assembles, and `Binding.level` holds its document level.
+`streamHandleOf` in
+[`src/compiler/emit/inputs.ts`](../../src/compiler/emit/inputs.ts) reads both
+back when the `hoist` service places the stamp. So a DEEPER body that reads an
+ANCESTOR's handle stamps the ancestor's own pipeline, and it reads the value
+back down through each `$lookup.let` on the way — `jsmql_s<level>_length`, the
+same hop an outer field takes. If a read took the level from the READ instead,
+it would collapse the two counts onto one `$__jsmql.size` field. Then
+`shpmntsColl.size() < ordersColl.size()` would compare a value with itself.
+Nothing about that document is invalid MQL, so the server answers it without a
+word. A `$facet` branch is the same trap by another route. It assembles a chain
+of its own at the SAME level, so the chain, and not the level, decides. The
+parameter is a `streamHandle` binding in the body's Env, and its `.size()` is
+that inner count. Placement is automatic: the chain appends each link's stages
+in order, so the count reflects the sub-stream *at that chain point*
+(post-filter, post-`.slice`, …), and the body's own trailing `{ $unset:
+"__jsmql" }` keeps the scratch field out of the `as` array. Verified on mongod.
 
 Only `.size()` and a chain are available on the handle. A stream has no
-materialised array to index, and the **index** (2nd) param is never available
-(MongoDB streams have no per-document index; it may be present but unused only to
-reach the 3rd param). Neither has an HR3-safe lowering.
+materialised array to index, and the **index** (2nd) param is never available.
+MongoDB streams have no per-document index. The param may be present but unused,
+only to reach the 3rd param. Neither has an HR3-safe lowering.
 
 ## `$$.size()` (ROOT count) inside a `$lookup` — captured into `$lookup.let`
 
@@ -144,17 +147,18 @@ read is carried ([lookup-stage.md § The join road](lookup-stage.md)). Verified 
 mongod (counts correct, no leak).
 
 Distinct paths, no collision: a count read from a SHALLOWER level rides a
-`$$`-**variable** (`jsmql_s<level>_length`), and the count of the body that reads
-rides the `$__jsmql.size` **field**. So one body can read its own and every ancestor's
-count at once (`totalUsers: $$.size()`, `ordersForUser: ordersColl.size()`, `shipmentsHere:
-shpmntsColl.size()`), each with its own name, each taken from the right documents. The root
-stream is level 0 by the same rule: `$$` is the ROOT stream wherever it is written (HR4)
-and belongs to the top-most chain, which is not the chain of whatever body reads it.
+`$$`-**variable** (`jsmql_s<level>_length`), and the count of the body that
+reads rides the `$__jsmql.size` **field**. So one body can read its own and
+every ancestor's count at once (`totalUsers: $$.size()`, `ordersForUser:
+ordersColl.size()`, `shipmentsHere: shpmntsColl.size()`), each with its own
+name, each taken from the right documents. The root stream is level 0 by the
+same rule. `$$` is the ROOT stream wherever the developer writes it (HR4). It
+belongs to the top-most chain, which is not the chain of whatever body reads it.
 
 **Every depth.** `$$` is the root stream wherever it is written (see
-[LANG_RULES.md](../LANG_RULES.md)). A `$facet` branch and a declared function body
-run over the stamped documents, so they read the field directly; a `$lookup` body
-reads it through the `let` capture, one hop per lookup level.
+[LANG_RULES.md](../LANG_RULES.md)). A `$facet` branch and a declared function
+body run over the stamped documents, so they read the field directly. A
+`$lookup` body reads it through the `let` capture, one hop per lookup level.
 
 **Empty sub-stream + `assert`.** An in-block `assert(stream.size() > 0, …)` is a
 per-document `$match` *inside* the `$lookup.pipeline`. On a foreign sub-stream
@@ -177,11 +181,11 @@ function body. JSMQL rejects it here:
 
 ## Empty stream
 
-`$setWindowFields` over 0 input documents produces 0 output, so a
-statement on an empty stream yields an empty result (no rows, no count to
-report). Note for the `assert` use: an upper-bound assertion (`<= n`) holds
-vacuously on an empty stream, but a lower-bound one (`>= n`) cannot fire there —
-that semantics belongs to the assertion, not to `$$.size()` itself.
+`$setWindowFields` over 0 input documents produces 0 output, so a statement on
+an empty stream yields an empty result (no rows, no count to report). Note for
+the `assert` use: an upper-bound assertion (`<= n`) holds vacuously on an empty
+stream, but a lower-bound one (`>= n`) cannot fire there. That semantics belongs
+to the assertion, not to `$$.size()` itself.
 
 ## Cleanup & namespace
 

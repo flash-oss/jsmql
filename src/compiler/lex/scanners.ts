@@ -175,8 +175,8 @@ export function scanRegex(src: string, start: number): RegexScan {
     pattern += ch;
     i++;
   }
-  // A token that runs off the end is not a token. An unterminated regex that
-  // reaches the end of the input is refused here, not answered in silence.
+  // A token that runs off the end is not a token. The lexer refuses an unterminated regex
+  // that reaches the end of the input. It never answers in silence.
   if (!closed) throw new LexError("Unterminated regex literal", start);
   let flags = "";
   while (i < src.length && /[gimsuy]/.test(src[i])) {

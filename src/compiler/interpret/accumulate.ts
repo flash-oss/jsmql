@@ -1,9 +1,9 @@
 // The accumulators in their expression form: `{ $sum: [a, b] }` and `{ $sum: <list> }`.
 //
 // One operand that is a list reads as the list of values. Any other operand list is the
-// values themselves. A value that is not a number is ignored by `$sum` and `$avg`, and
-// a null is ignored by `$max` and `$min`. A value that the interpreter does not read
-// could be a value of another BSON type, so such a list is a refusal.
+// values themselves. `$sum` and `$avg` ignore a value that is not a number. `$max` and
+// `$min` ignore a null. The interpreter refuses a list with a value that it does not read,
+// because that value could be of another BSON type.
 //
 // The server adds a list of fractions in a way that the documentation does not
 // specify. Two operands give one addition, and one addition is exact. A list of

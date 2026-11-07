@@ -4,7 +4,7 @@
 // and also the empty string and the empty array. A condition that holds a
 // value the interpreter does not read (a Long, a Decimal128) is a refusal.
 //
-// A branch that the answer does not need is never evaluated. So `$cond: [true, 1, { $divide: [1, 0] }]`
+// The interpreter never evaluates a branch that the answer does not need. So `$cond: [true, 1, { $divide: [1, 0] }]`
 // is 1, as in JavaScript. The server folds every constant branch before it runs
 // the expression, so it fails on the division in the branch that is not taken. This is
 // the one place where the interpreter answers and the server does not.

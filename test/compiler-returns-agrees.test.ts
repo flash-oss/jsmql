@@ -119,7 +119,7 @@ type Call = Partial<Record<Slot, unknown>>;
 /**
  * Operators whose operands are constrained beyond their declared TYPE — a
  * required enum, an input that must be a JSON string, a domain of [-1,1], a
- * window that needs bounds. Each entry is the call that was measured.
+ * window that needs bounds. The measurement of each entry used the call that the entry holds.
  */
 const BY_HAND: Readonly<Record<string, Call>> = {
   $hash: { value: { $hash: { input: "$str", algorithm: "sha256" } } },
@@ -191,8 +191,8 @@ const BY_HAND: Readonly<Record<string, Call>> = {
 
 /**
  * Operators the SERVER cannot be asked about, with the reason. Not a filter: the
- * last test sends each one the call in PROBE and fails when the server answers,
- * so an entry that goes stale shows up at once. An operator that the first test
+ * last test sends each one the call in PROBE and fails when the server answers.
+ * So an entry that goes stale shows up at once. An operator that the first test
  * cannot measure and that this table does not name fails that test.
  */
 const CANNOT_MEASURE: Readonly<Record<string, string>> = {
@@ -205,7 +205,7 @@ const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $case: "not an operator on its own — a branch key inside $switch",
 };
 
-/** The call the last test sends for each CANNOT_MEASURE name. Each one was measured to fail. */
+/** The call the last test sends for each CANNOT_MEASURE name. The server failed each one when measured. */
 const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
   $encStrContains: { slot: "value", call: { $encStrContains: { input: "$str", substring: "a" } } },
   $encStrEndsWith: { slot: "value", call: { $encStrEndsWith: { input: "$str", suffix: "c" } } },
@@ -307,8 +307,8 @@ function loadSpecs(): Map<string, Spec> {
     for (const file of readdirSync(resolve(root, folder))) {
       if (!file.endsWith(".yaml")) continue;
       let txt = readFileSync(resolve(root, folder, file), "utf8");
-      // The tests: block carries custom BSON tags js-yaml's schema rejects, and
-      // only the metadata above it is read here.
+      // The tests: block carries custom BSON tags that the schema of js-yaml rejects.
+      // The suite reads only the metadata above it.
       const i = txt.indexOf("\ntests:");
       if (i >= 0) txt = txt.slice(0, i);
       const doc = yaml.load(txt) as Spec | undefined;
@@ -447,7 +447,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     // not ask about must be a NAMED environment limitation, never a surprise.
     expect(unmeasured).toEqual([]);
     // 149 of the 159 invariant rows are measurable on a mongod at FCV 8.0; the
-    // rest need a newer one. Tightened until it failed, so a real degradation
+    // rest need a newer one. The bound is the tightest one that holds, so a real degradation
     // cannot pass as a version difference.
     expect(checked).toBeGreaterThanOrEqual(145);
     if (gated.length > 0) {
@@ -458,9 +458,9 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("states `unknown` exactly where the kind follows the operands", async () => {
-    // Checked from the PAIRS, not from the rows: the question "does every `unknown` row
-    // vary" leaves the other direction open, and a row that quietly claims to be
-    // invariant is the more dangerous of the two — it makes the type check reject
+    // This check starts from the PAIRS, not from the rows. The question "does every `unknown` row
+    // vary" leaves the other direction open. A row that quietly claims to be
+    // invariant is the more dangerous of the two, because it makes the type check reject
     // valid code. So each pair decides what its row must say.
     const wrong: string[] = [];
     const refused: string[] = [];
@@ -560,7 +560,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   it("counts an array literal as mongod does, whatever its elements hold", async () => {
     // `.size()` of an array literal is written as its element count, with no `$size`
     // at run time. That is safe only if the server counts the same way, a missing
-    // field and a null included. So each count is held against the server's own.
+    // field and a null included. So the test holds each count against the server's own.
     const LITERALS = ["[$.nope, $.int]", "[null, $.nope.deeper]", "[[1, 2], $.str]", "[{ a: $.nope }]", "[]"];
     const disagree: string[] = [];
     for (const literal of LITERALS) {

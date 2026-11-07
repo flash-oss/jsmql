@@ -17,8 +17,8 @@
 //   - A `?.` read with no method after it answers null where the value is missing.
 //
 // The oracle never calls the compiler, so each answer that it gives can fail. A chain
-// whose method meets a value of the wrong kind is left to the server, as the language
-// says, and the oracle skips that document. See docs/LANG_RULES.md HR5 and
+// whose method meets a value of the wrong kind belongs to the server, as the language
+// says. The oracle skips that document. See docs/LANG_RULES.md HR5 and
 // docs/LANGUAGE.md § Optional Chaining.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

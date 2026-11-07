@@ -3,18 +3,18 @@
 // positional argument, `--file`, or stdin. MQL comes out on stdout as JSON, except
 // for a live BSON value, which prints as the JavaScript that builds it (see
 // `render`). This file is a thin wrapper over the public API in ./index.ts. Every
-// shape it can emit already exists there as an entry point, so this file has no
-// compiler logic, only argument routing, output formatting, and compiler-style
-// error rendering.
+// shape it can emit already exists there as an entry point. So this file has no
+// compiler logic. It only routes arguments, formats output and renders errors in
+// the compiler style.
 //
 // This file stays in TypeScript's strippable subset (see src/CLAUDE.md) and
 // carries a classic Node shebang. esbuild bundles it to dist/cjs/cli.cjs
 // (Node 14 target, shebang kept), and package.json#bin maps that bundle to `jsmql`.
-// The reference below pulls @types/node into scope for tsc only: this is the one
-// src/ file that touches Node globals (`process`) and the `node:` builtins, and
-// the project's tsconfig leaves node types out of the default src build on
-// purpose. The directive is a comment, so the native type-stripper, esbuild, and
-// Node all ignore it at run time.
+// The reference below pulls @types/node into scope for tsc only. This is the one
+// src/ file that touches Node globals (`process`) and the `node:` builtins. The
+// project's tsconfig leaves node types out of the default src build on purpose.
+// The directive is a comment, so the native type-stripper, esbuild, and Node all
+// ignore it at run time.
 /// <reference types="node" />
 import { jsmql } from "./index.ts";
 import { stringify } from "./stringify.ts";
@@ -187,7 +187,7 @@ function resolveSource(opts: Options): string {
 
 // Route the source to the matching entry point. With params present the source
 // is a parameterised arrow, so each shape routes through its `*.compile()`
-// builder (`jsmql.compile` for the default polymorphic shape); without params
+// builder (`jsmql.compile` for the default polymorphic shape). Without params
 // it goes through the one-shot entry. `main()` handles `--validate` separately
 // (it produces a structured result, and does not throw).
 function compile(mode: Mode, source: string, params: Record<string, unknown> | undefined): unknown {
@@ -208,7 +208,7 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
 // Compiler-style error output: the message, then the source line at fault with
 // a caret under the column derived from the error's `.pos`. Every jsmql compile
 // error (LexError / ParseError / CodegenError / UnknownIdentifierError /
-// FunctionInputError) carries `pos: number`; when it is absent we print the
+// FunctionInputError) carries `pos: number`. When it is absent, the CLI prints the
 // message alone.
 function renderError(err: unknown, source: string): string {
   const e = err as { message?: string; pos?: number };

@@ -12,8 +12,9 @@ Statement-only: `assert(...)` emits one pipeline stage and has **no value**.
 The compiler rejects it on a RHS, as an expression operand, inside a ternary
 branch, or in a Filter / `jsmql.expr` (see *Rejections* below).
 
-See [`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks) for the user-facing
-reference.
+See
+[`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks)
+for the user-facing reference.
 
 ## Why this mechanism (and not `$function`)
 
@@ -77,7 +78,7 @@ fires. The server's message also ends with the bad type name, so the user's
 text comes last in that message.
 
 The dynamic branch wraps the message in `$toString`, so a non-string
-expression (`assert($.ok, $.count)`) is coerced, so `$concat` does not
+expression (`assert($.ok, $.count)`) gets coerced. So `$concat` does not
 fail.
 
 ## Why the gating is robust

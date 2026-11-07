@@ -72,8 +72,8 @@ import { FILTER } from "../passes/position.ts";
 
 /**
  * The reading a position asks for, in ONE place. A cell's `value` service
- * lands here. So `$match`'s body — whose row states `filter` — becomes a
- * query document, and a sub-pipeline's elements become stages. Neither
+ * lands here. So the body of `$match` becomes a query document, because its
+ * row states `filter`. The elements of a sub-pipeline become stages. Neither
  * cell needs to know which reading it asked for.
  */
 export function readIn(node: Expr, env: Env): unknown {
@@ -95,8 +95,8 @@ export function readIn(node: Expr, env: Env): unknown {
 }
 
 /**
- * A stage body whose row states a layout: each key is read in the position
- * the row gives it. This is how `$geoNear`'s `query` becomes a query
+ * A stage body whose row states a layout: the compiler reads each key in the
+ * position the row gives it. This is how `$geoNear`'s `query` becomes a query
  * document, and `$lookup`'s `pipeline` becomes stages. The walk is here,
  * not in `lowerValue`, because only these two readings are not values. A
  * value lowering that could answer a query document would need to know
@@ -132,7 +132,7 @@ function stageBody(node: Expr, env: Env): unknown {
     );
   }
   // What the body read of the outer document goes into the stage's `let`, beside
-  // whatever the developer wrote there; the `jsmql_` names cannot collide with theirs.
+  // whatever the developer wrote there. The `jsmql_` names cannot collide with theirs.
   const captured = captures.filter((c) => c.any);
   if (captured.length > 0) {
     const own = typeof out.let === "object" && out.let !== null ? (out.let as Record<string, unknown>) : {};
@@ -168,7 +168,7 @@ function subPipeline(node: Expr, env: Env): Stage[] {
  * refuses a write stage in a sub-pipeline.
  */
 function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captures: Capture[] = []): Stage[] {
-  // A body over another collection starts a new level of documents; what
+  // A body over another collection starts a new level of documents. What
   // it reads of the levels above goes through the stage's `let`, which
   // `capture` fills. A stage over another collection with NO `let`
   // states that as null, and the compiler refuses a read of the outer
@@ -192,7 +192,7 @@ const READ = {
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages: Pipeline, env: Env): Stage[] => {
-    // The block was opened where its parameters were bound.
+    // The compiler opened the block where it bound its parameters.
     let scope = childEnv(env, stages, "stmts");
     const out: Stage[] = [];
     for (const stmt of stages.stmts) {
@@ -213,12 +213,12 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
   }
   const stmts: readonly PipelineStmt[] =
     program.type === "Pipeline" ? (program as Pipeline).stmts : [program as PipelineStmt];
-  // The scope THREADS: a `let` declared in one statement is a name the next one
-  // reads, and a stage that replaced the document takes it away again.
+  // The scope THREADS. A `let` declared in one statement is a name the next one
+  // reads. A stage that replaced the document takes it away again.
   let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   for (let i = 0; i < stmts.length; i++) {
     const stmt = stmts[i];
-    // The stage that writes the output is FILED, not emitted. So the
+    // The compiler FILES the stage that writes the output; it does not emit it. So the
     // `__jsmql` cleanup precedes it, but the compiler must still write it
     // last.
     if (env.chain.terminal !== null) {
@@ -241,8 +241,8 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
 }
 
 /**
- * Stages, and the Env after them: the Env that the NEXT statement, link or write
- * is lowered under.
+ * Stages, and the Env after them: the Env under which the compiler lowers the
+ * NEXT statement, link or write.
  *
  * The Env records each group of stages ONCE, where the group lands: a chain
  * link, a write of a run, a stage call. So it holds what the stages did, in the
@@ -303,14 +303,14 @@ function declRun(stmts: readonly PipelineStmt[], i: number): (LetDecl | FuncDecl
  * `let a = …, b = …;` — the declarators of one declaration, in ONE `$set`
  * where that says what the source says. A `$set` evaluates every field
  * against the stage's INPUT document. So a declarator that reads a
- * sibling bound beside it would read nothing, and the run breaks into a
+ * sibling bound beside it would read nothing. The run breaks into a
  * new stage exactly there. MEASURED on `{ x: 10 }`: `let a = $.x, b = a +
  * 1;` answers `b: null` when merged, and `b: 11` when split. See
  * docs/specs/let-bindings.md.
  *
  * `consumed` states how many declarators this stage took. A value that
- * needs a stage of its OWN ahead of the `$set` — a `$lookup` a foreign
- * read hoists — cannot join a stage that already holds fields. The chain
+ * needs a stage of its OWN ahead of the `$set` cannot join a stage that
+ * already holds fields. An example is a `$lookup` that a foreign read hoists. The chain
  * flushes that prologue ahead of every stage returned here, and the
  * declarator would then correlate on a sibling slot nothing has written
  * yet. So such a declarator ends the run. The compiler lowers it again
@@ -371,11 +371,11 @@ function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): (Step & { c
  * document, `__jsmql.var.x`, which the chain's trailing cleanup drops. A
  * constant `let` never reaches here: the fold inlined it. The binding is
  * `mutable` for `let`, and not for `const`. Its type is what the registry
- * can prove of the value. So a later read is checked the same way the
- * value would be.
+ * can prove of the value. So the compiler checks a later read the same way
+ * it checks the value.
  */
 function letStages(decl: LetDecl, env: Env): Step {
-  // A block over the SAME documents shares their fields: a shadowing `let` would
+  // A block over the SAME documents shares their fields. A `let` that shadows would
   // write the outer binding's slot, and the outer read after the block would see it.
   // A body over another collection has documents of its own, and shadows freely.
   const innermost = env.site.boundaries[env.site.boundaries.length - 1];
@@ -386,8 +386,8 @@ function letStages(decl: LetDecl, env: Env): Step {
   const slot = fieldSlot(bindingSlot(decl.name));
   const bind = (type: Type): Env =>
     env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
-  // `const f = (x) => …` the fold did not settle — its body reads another declared
-  // name — is a function like `function f(x) { … }`: a name for a body, no stage.
+  // A `const f = (x) => …` that the fold did not settle is a function. Its body reads
+  // another declared name. It is like `function f(x) { … }`: a name for a body, no stage.
   if (decl.value.type === "Lambda") {
     return {
       stages: [],
@@ -413,7 +413,7 @@ function letStages(decl: LetDecl, env: Env): Step {
 }
 
 /**
- * The Env after `stages` ran: a stage whose row says it replaces the
+ * The Env after `stages` ran. A stage whose row says it replaces the
  * document takes every field-carried binding with it, and the scratch
  * namespace too. So the cleanup owes nothing for what is already gone.
  */
@@ -422,8 +422,8 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
   let out = env;
   for (const stage of stages) {
     const name = Object.keys(stage)[0];
-    // What the stage made of the document, read off the stage itself — the row's
-    // `document` effect over the emitted body, against the document it ran over.
+    // What the stage made of the document. The compiler reads it off the stage itself:
+    // the row's `document` effect over the emitted body, against the document it ran over.
     // See docs/specs/types.md.
     const after = documentAfter(stage, out.documents[out.level]);
     if (replacesDocument(name, stage)) {
@@ -465,9 +465,8 @@ const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
  * `$documents` is the stage that makes them. MEASURED, it runs only on a
  * database-level aggregation: the server refuses
  * `db.coll.aggregate([{ $documents: […] }])`. JSMQL's pipelines go to
- * `db.coll.aggregate`. So the list
- * arrives the way the source switch already arrives: every document
- * dropped, then the new ones unioned in. The empty list is that first
+ * `db.coll.aggregate`. So the list takes the road of the source switch:
+ * the compiler drops every document, then unions in the new ones. The empty list is that first
  * half on its own. A list that holds a `$$.reduce` is the reducer WRAP, a
  * different road.
  */
@@ -490,9 +489,9 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   checkSlots(written, sel.rule.args, [list], false);
   // The documents run inside the `$unionWith`, with NO input document.
   // So the compiler lowers the list under that boundary — the same one
-  // `unionStages` enters. Lowered outside it, `$$ = [{ n: $.a }]` read
-  // `"$a"`, and the server answered `{}`, where the `$$.push({ n: $.a })`
-  // spelling of the same stage refused it: one lowering, two answers.
+  // `unionStages` enters. Outside it, `$$ = [{ n: $.a }]` read `"$a"`, and the
+  // server answered `{}`. The `$$.push({ n: $.a })` spelling of the same stage
+  // refused it. That was one lowering with two answers.
   // The boundary states no `let`, so either spelling now refuses alike.
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
   const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
@@ -501,9 +500,10 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
 }
 
 /**
- * Every registry name that appears as a KEY anywhere inside an emitted
- * stage's body, and whether it sits in a PIPELINE OF ITS OWN inside it —
- * a body key the row files as `statement` and states `statementBody:
+ * Every registry name that appears as a KEY anywhere inside the body of an
+ * emitted stage. Each name has a flag: whether it sits in a PIPELINE OF ITS
+ * OWN inside the body. That is a body key that the row files as `statement`
+ * and states `statementBody:
  * "pipeline"` for. Such a name is a stage of another pipeline. Its own
  * `place` call already judged where it stands. Every other name is part
  * of THIS stage, and stands where this stage does — an update spec's
@@ -534,8 +534,8 @@ function namesWithin(
  * server enforces them, and no renderer implies either. MEASURED: the
  * server refuses `$out("o"); $.b = 2;`, because `$out` must be the last
  * stage. It refuses `$.b = 2; $documents([…]);`, because `$documents` must
- * be the first stage. A stage that must
- * be LAST is filed on the chain, not emitted. So nothing can land after
+ * be the first stage. The compiler files a stage that must
+ * be LAST on the chain; it does not emit it. So nothing can land after
  * it, and the `__jsmql` cleanup always precedes it. `spelled` is how the
  * source wrote the stage, for the message of a statement after it.
  */
@@ -544,21 +544,21 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   // A value in this stage's own body can hoist a stage of its own, which
   // then stands AHEAD of it. So the stage is no longer first, whatever
   // `first` said before the compiler lowered the body. The hoist applies
-  // to this chain only: a `$$.size()` read inside a sub-pipeline stamps
+  // to this chain only. A `$$.size()` read inside a sub-pipeline stamps
   // the ROOT pipeline, and it leaves this pipeline's order alone.
   const hoisted = env.chain.hoisted[0];
   const noPlacement = (held: string): never => {
     throw E.firstStageNeedsHoist(held, Object.keys(hoisted as Stage)[0], pos, held === name ? null : name);
   };
   // A placement rule can belong to an OPERATOR the stage's body holds,
-  // not to the stage itself: `$text` may only appear in the first
+  // not to the stage itself. For example, `$text` may only appear in the first
   // `$match` of a pipeline, at any depth of its body. So the compiler
   // judges every registry name the emitted document mentions, not just
   // the stage's own.
   for (const [held, nested] of [[name, false] as const, ...namesWithin(name, stage[name])]) {
-    // The containers a name may not stand in: every sub-pipeline boundary
-    // crossed to get here, and — for a name the BODY holds — the stage
-    // that carries it. MEASURED: `$where` runs in a `find` filter, and the
+    // The containers a name may not stand in are every sub-pipeline boundary
+    // that the compiler crossed to get here. For a name the BODY holds, the stage
+    // that carries it is also one. MEASURED: `$where` runs in a `find` filter, and the
     // compiler refuses it in an aggregation `$match` at any depth of the
     // body. This is a fact about the pair, and about nothing else.
     const containers =
@@ -598,7 +598,7 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
     const already = env.chain.terminal;
     if (already !== null) throw E.twoTerminalStages(spelled, already.spelled, pos);
     // The `__jsmql` cleanup is the stage BEFORE the one that writes the
-    // output. Nothing may run after that one. So a body reading a
+    // output. Nothing may run after that one. So a body that reads a
     // scratch field reads one that is already gone. MEASURED: the server
     // refuses the read of `v` in `$merge({ let: { v: $$.size() } })`.
     if (readsScratch(stage)) throw E.terminalReadsScratch(name, pos);
@@ -629,8 +629,8 @@ const STREAM_TARGET = "$$";
 /** A write's destination: the field path it names, `""` for the document root. */
 function targetPath(op: UpdateOp, env: Env): string {
   const t = op.target;
-  // Inside a body over another collection the outer document is out of reach;
-  // the body's own document is its parameter, and `o.x = …` writes that.
+  // Inside a body over another collection the outer document is out of reach.
+  // The body's own document is its parameter, and `o.x = …` writes that.
   if (t.type === "FieldRef") {
     if (env.level > 0) throw E.outerWriteInForeign(op.pos);
     return t.path;
@@ -649,7 +649,7 @@ function targetPath(op: UpdateOp, env: Env): string {
   if (t.type === "Ident" && env.scope.has(t.name)) {
     const b = env.lookup(t.name, t.pos);
     if (b.ref.kind === "field" || (b.ref.kind === "dropped" && b.ref.replaced)) {
-      // A `let` a stage dropped is written again into its slot, and `writeStages` binds it again.
+      // The compiler writes a `let` that a stage dropped into its slot again, and `writeStages` binds it again.
       if (!b.mutable && !("mutates" in op && op.mutates === true)) throw E.constReassigned(t.name, op.pos);
       return fieldSlot(bindingSlot(t.name)).path;
     }
@@ -680,11 +680,11 @@ function rootAsWritten(target: Expr): string {
  * `$$ = <value>;` is this, and so is every write into a collection from a
  * value. So the two spellings emit the same stages by construction, not
  * by coincidence. A chain on the stream, on the callback's own stream, or
- * on another collection is the STREAM road, whatever kind its last link
- * returns: a `$lookup` yields an array, and `$$ = $$$.orders.filter(p)`
+ * on another collection is the STREAM road. This holds whatever kind its
+ * last link returns. A `$lookup` yields an array, and `$$ = $$$.orders.filter(p)`
  * is still a source switch, not a value.
  *
- * Any value that is not a chain is read as the ARRAY it must be. `$.items`,
+ * The compiler reads any value that is not a chain as the ARRAY it must be. `$.items`,
  * `[...$.items]` and `$.scores.entries()` are one road, because
  * they say one thing: the stream is these elements, one document each.
  * `$unwind` needs a field path, so the compiler stores the array in a
@@ -712,8 +712,8 @@ function becomeStream(
   // `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`,
   // because the replacement is not an object.
   const t = typeOf(value, env);
-  // A value proven a stream that is not a chain (`c ? $$.filter(p) : $$.filter(q)`) hears
-  // the chain road's own refusal, which names the forms a stream takes.
+  // The chain road refuses a value that is not a chain but is proven a stream
+  // (`c ? $$.filter(p) : $$.filter(q)`). The refusal names the forms a stream takes.
   if (streamRoad || isOnly(t, "stream")) return streamStages(value, env, first);
   if (cannotBe(t, "array")) throw E.notAStreamChain(value.pos, E.nounOfKinds(t), lead, how);
   // A stream holds DOCUMENTS. Where the registry shows what ONE element
@@ -766,12 +766,12 @@ function targetSpelling(target: string | { db: string; coll: string }): string {
 }
 
 /**
- * The stream's stages, then the stage that writes it — filed as the
- * pipeline's last.
+ * The stream's stages, then the stage that writes it, which the compiler
+ * files as the last of the pipeline.
  *
  * `=` REPLACES the collection, and `+=` ADDS to it. This is the
  * difference between `$out` and `$merge`: `$out` drops whatever the
- * collection held, and `$merge` updates the documents whose `_id`
+ * collection held. `$merge` updates the documents whose `_id`
  * matches and inserts the rest. When the settings change — `on`,
  * `whenMatched`, `whenNotMatched`, `let` — the developer writes the
  * stage itself, `$merge({ into: …, on: … })`. The sugar covers the
@@ -909,8 +909,8 @@ function pathsRead(node: unknown, into: Set<string>): Set<string> {
 }
 
 /**
- * A JavaScript assignment REPLACES the field, and `$set` handed a plain
- * document MERGES into it. MEASURED: `{ $set: { n: { x: 1 } } }` over
+ * A JavaScript assignment REPLACES the field, and `$set` MERGES a plain
+ * document into it. MEASURED: `{ $set: { n: { x: 1 } } }` over
  * `n: { x: 11, y: 22 }` leaves `y` behind, where `$.n = { x: 1 }` says it
  * is gone. The compiler wraps the document in `$mergeObjects`, which
  * makes it the value of an expression, not a nested field spec.
@@ -945,8 +945,8 @@ const touches = (x: string, y: string): boolean =>
  * next write would write into.
  *
  * ONE Env threads the run, and each group of stages lands on it in the
- * order the groups stand. It takes what each write proved about its path,
- * each `let` that a write carries again, and what each stage that
+ * order the groups stand. It takes what each write proved about its path
+ * and each `let` that a write carries again. It also takes what each stage that
  * replaced the document took with it. So a write after `$ = …` lands on
  * what that stage made, and it cannot read a `let` that the stage took.
  * The next statement reads the Env that the last group left.
@@ -972,14 +972,14 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     unsets = null;
   };
   /**
-   * One op's stages, with whatever its lowering hoisted placed
+   * One op's stages. The compiler places whatever its lowering hoisted
    * directly ahead of them. So the ops already emitted run first, and a
    * `$lookup` a value wrote reads the document its own `$set` reads.
    * The caller passes nothing when the op joins the group `flush`
    * pushes, which still stands ahead of it.
    *
-   * The op's stages land here. A road that walked a chain gives a Step,
-   * and the run goes on with the Env that the chain's last link left.
+   * The op's stages land here. A road that walked a chain gives a Step.
+   * The run goes on with the Env that the chain's last link left.
    * A hoisted stage keeps the document, and its `hoist` marked the chain
    * for the cleanup already.
    */
@@ -1027,8 +1027,8 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       // `$$ = <array>` starts the stream from the array's elements, one
       // document each (`becomeStream`).
       // A chain on the stream, on the callback's own stream, or on
-      // another collection is the STREAM road, whatever kind its last
-      // link returns: a `$lookup` yields an array, and
+      // another collection is the STREAM road. This holds whatever kind its last
+      // link returns. A `$lookup` yields an array, and
       // `$$ = $$$.orders.filter(p)` is still a source switch, not a
       // value.
       emit(becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0));
@@ -1076,7 +1076,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         emit(joinRoot(op.value, rootAsWritten(op.target), valueEnv, JOIN));
         continue;
       }
-      // `$.o = $$$.c.filter(p)` — the target IS the stage's `as`; a chain that goes
+      // `$.o = $$$.c.filter(p)` — the target IS the stage's `as`. A chain that goes
       // on after the `$lookup` materialises through the value road instead.
       const w = joinWrite(op.value, path, valueEnv, JOIN);
       if (w !== null) {
@@ -1096,8 +1096,8 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       }
       const t = typeOf(op.value, childEnv(inner, op, "value"));
       // `$` is ONE document and `$$` is the stream, so an array names the wrong
-      // destination. The message says which spelling takes it. A value that can
-      // NEVER be a document is refused; one that may be passes, and the server judges.
+      // destination. The message says which spelling takes it. The compiler refuses a
+      // value that can NEVER be a document. One that may be passes, and the server judges.
       if (isOnly(t, "array")) throw E.rootIsArray(root, op.pos);
       if (cannotBe(t, "object")) throw E.rootMustBeDocument(root, E.nounOfKinds(t), op.pos);
       flush();
@@ -1139,13 +1139,13 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
  * A write whose value reads a COLLECTION lowers to a join. A write whose
  * value reads the STREAM lowers to a `$facet` or a `$unionWith`. This
  * function builds neither. Without this guard, each would surface as
- * the value road's refusal of a scope — a true sentence about an
- * expression, but the wrong sentence about this statement.
+ * the value road's refusal of a scope. That sentence is true about an
+ * expression, but it is the wrong sentence about this statement.
  */
 function refuseUnbuiltSugar(value: Expr): void {
   const base = chainBase(value) as { type: string };
-  // `$$.size()` is a VALUE the stream carries — its row states a stream cell in the value
-  // position — where a chain on the stream is documents, not a value.
+  // `$$.size()` is a VALUE the stream carries, because its row states a stream cell in the
+  // value position. A chain on the stream is documents, not a value.
   if (base.type === "StreamRef" && value.type === "MethodCall") {
     const direct = value.object.type === "StreamRef" && hasStreamValueCell(value.name);
     if (!direct) throw E.streamAsValue(value.pos);
@@ -1184,8 +1184,8 @@ function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
     if (link.optional || on === undefined || on === "any" || !on.includes("object") || !on.includes("stream"))
       return null;
     // A stage reads its field list before any document, so the stream cell takes a list
-    // the SOURCE spells. `$ = $.pick($.keys)` names a list only the server knows, and
-    // the value cell reads it at query time — under `$replaceWith`, as any root value.
+    // the SOURCE spells. `$ = $.pick($.keys)` names a list only the server knows. The
+    // value cell reads it at query time, under `$replaceWith`, as any root value.
     if (!link.args.every((a) => a.type !== "SpreadElement" && constantOf(a).ok)) return null;
   }
   return links;
@@ -1221,8 +1221,8 @@ function streamStages(chain: Expr, env: Env, first: boolean): Step {
   }
   // `$$ = $$$.orders.…` switches the stream to another collection — the join road.
   if (readsAnotherCollection(cur)) return landed(joinStream(chain, env, first, JOIN), env);
-  // `$$` is the ROOT stream at every depth; a body over another collection cannot
-  // reach it, and names its own stream through the callback's third parameter.
+  // `$$` is the ROOT stream at every depth. A body over another collection cannot
+  // reach it. It names its own stream through the callback's third parameter.
   if (cur.type === "StreamRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
   if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw E.notAStreamChain(chain.pos);
   return linkStages(links, env, first);
@@ -1245,8 +1245,8 @@ function linkStages(links: readonly Link[], env: Env, first: boolean): Step {
       throw E.notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
     // What this link's own callbacks hoisted stands directly ahead of the link, not
-    // ahead of the chain: `g` in `.$sortByCount(k).map(g => …)` is the document
-    // `$sortByCount` MADE, and a `$lookup` placed before it would read the other one.
+    // ahead of the chain. `g` in `.$sortByCount(k).map(g => …)` is the document
+    // `$sortByCount` MADE. A `$lookup` placed before it would read the other one.
     const made = [...env.chain.ahead(), ...stages];
     out.push(...made);
     here = afterLink(link, made, here);
@@ -1335,16 +1335,16 @@ function streamLink(
   if (env.chain.terminal !== null) throw E.afterTerminalStage(env.chain.terminal.spelled, link.pos);
   const name = row;
   // A diagnostic stage reports on the deployment, so it is a SOURCE stage and has
-  // no link form. Without this, `$$.$indexStats({})` would compile and
+  // no link form. Without this, `$$.$indexStats({})` would compile.
   // `$$.$currentOp({})` would put a CLUSTER stage on a collection's chain, which
   // the scope gate never sees from here.
   if (diagnosticOf(name) !== undefined) throw E.diagnosticIsNotALink(name, link.pos);
   // `.concat(…)` — documents unioned into this stream, wherever the chain stands.
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name, "stream", "stream");
-  // A `$`-named link is the developer's own MQL (HR3 does not apply to it): a name
+  // A `$`-named link is the developer's own MQL (HR3 does not apply to it). A name
   // that no row knows, a name with no link form, or a count that its form does not
-  // take, gives HR2's plain form, and no body is checked. Its place stays checked.
+  // take gives HR2's plain form. The compiler checks no body. Its place stays checked.
   const escape = link.name.startsWith("$");
   if ((verdict.kind === "unknown" || verdict.kind === "noCell") && !escape) return null;
   // A cell that reads the ELEMENT has nothing to read on a stream of whole documents.
@@ -1393,7 +1393,7 @@ function streamLink(
 /**
  * Does the row behind this link have a stream RULE — is it a chain link at all? Given
  * the chain's Env, a cell that reads the ELEMENT is no link on a stream of whole
- * documents: the join road then reads the joined array as a value instead.
+ * documents. The join road then reads the joined array as a value instead.
  */
 function peels(link: Extract<Expr, { type: "MethodCall" }>, env?: Env): boolean {
   const name = namedRow(link) ?? link.name;
@@ -1477,8 +1477,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
         return landed(unionStages(node.args, env, node, JOIN), env);
       }
       const says = isContextRef(node.object) ? consult(row, "statement") : null;
-      // A statement cell a PASS owns is the FIELD form — the desugar
-      // rewrites '$.a.sort("k");' — and a stream receiver never reaches
+      // A statement cell a PASS owns is the FIELD form. The desugar
+      // rewrites '$.a.sort("k");'. A stream receiver never reaches
       // it. Where the row also states a chain rule, the bare
       // '$$.sort("k");' is that chain link, the way '$$.toSorted("k");'
       // is. Without a chain rule, the statement road words the refusal.
@@ -1503,10 +1503,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
         }
         throw E.noDestination(node.pos);
       }
-      // A statement spelled on a context reference is a source stage:
-      // the row's cell, with the receiver checked against the scope the
-      // row states (`$$.indexStats()`, `$$$$.currentOp()`), and placed
-      // as the row says.
+      // A statement spelled on a context reference is a source stage.
+      // The compiler runs the row's cell. It checks the receiver against the
+      // scope the row states (`$$.indexStats()`, `$$$$.currentOp()`).
+      // It places the stage as the row says.
       return landed(refStatement(node, base.type, env, first), env);
     }
   }
@@ -1522,8 +1522,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   }
   if (name === null) throw E.notAStatement(node.pos);
 
-  // A `$`-named stage — a call, or the raw document `{ $match: … }` that HR1 lets the
-  // developer paste — is the developer's own MQL, and HR3 does not apply to it. The
+  // A `$`-named stage is the developer's own MQL, and HR3 does not apply to it. It is
+  // a call, or the raw document `{ $match: … }` that HR1 lets the developer paste. The
   // compiler checks no body. A name with no statement form, or a count that the form
   // does not take, gives HR2's plain form. The place of each stage stays checked
   // (`place`), as docs/LANG_RULES.md says.

@@ -14,8 +14,8 @@
  *      hand-authored UI source: markup, CSS, behaviour) with one region injected.
  *      The script extracts the realistic-examples manifest. It lists every top-level
  *      `describe()` and first-`it()` pair in `test/realistic.test.ts`, and reads
- *      the first `jsmql(...)` or `jsmql.expr(...)` call inside. It is embedded
- *      as a JSON-script tag between the `<!-- jsmql-examples:start … -->` and
+ *      the first `jsmql(...)` or `jsmql.expr(...)` call inside. The script embeds
+ *      the manifest as a JSON-script tag between the `<!-- jsmql-examples:start … -->` and
  *      `<!-- jsmql-examples:end -->` markers.
  *
  * This script reads the skeleton and only WRITES `playground.html`
@@ -25,11 +25,10 @@
  * The example-discovery uses a Node loader hook (`sync-playground-loader.mjs`)
  * to map `import { describe, it } from "vitest"` onto a mock
  * (`sync-playground-vitest-shim.mjs`) that records every call into a tree.
- * This code then dynamically `import()` the test file. `describe` bodies run (so
- * the full tree registers), but `it` bodies do not execute. Their source is
- * captured through `Function.prototype.toString`. Compared to the prior pure-AST
- * approach, this catches every test exactly as vitest sees it, and
- * dynamically generated `describe()` blocks if we ever add them. It stays robust
+ * The script then loads the test file with a dynamic `import()`. `describe` bodies run (so
+ * the full tree registers), but `it` bodies do not execute. The script captures their source
+ * through `Function.prototype.toString`. This approach catches every test exactly as vitest
+ * sees it. It also catches a dynamically generated `describe()` block. It stays robust
  * to new entry-point names (`jsmql.expr`, future `jsmql.update`).
  *
  * It skips the `validate(): realistic error cases` block (queries do not compile)
@@ -43,7 +42,7 @@
  *
  *   npm run sync:playground
  *
- * Idempotent per file: each artefact is (re)written and staged only when its
+ * Idempotent per file: the script (re)writes and stages each artefact only when its
  * contents actually change. If neither changed, the script exits 0 silently.
  */
 
@@ -60,8 +59,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
 const ENTRY = path.join(ROOT, "src/index.ts");
 // The hand-authored UI source. Everything in `playground.html` except the two
-// injected regions lives here, so an edit of src/ or realistic.test.ts (which only
-// drive those two regions) can never clobber playground UI work. UI development
+// injected regions lives here. An edit of src/ or realistic.test.ts only drives
+// those two regions, so it can never clobber playground UI work. UI development
 // edits the skeleton; `playground.html` is a pure build artifact.
 const SKELETON = path.join(ROOT, "playground_skeleton.html");
 const HTML = path.join(ROOT, "playground.html");
@@ -85,10 +84,10 @@ const SHIM_URL = pathToFileURL(
 ).href;
 
 // ── Stage detection (for the kind label) ──────────────────────────────────────
-// Stage names from the registry — used by the AST-based kind detector to
+// Stage names from the registry. The AST-based kind detector uses them to
 // distinguish pipelines (any `$stage(...)` call or `{ $stage: ... }` key)
-// from filters / expressions. Read off the registry rows the compiler reads, so
-// the heuristic cannot drift from the language definition.
+// from filters / expressions. The script reads them off the registry rows the compiler
+// reads, so the heuristic cannot drift from the language definition.
 const { everyStageName } = await import(pathToFileURL(path.join(ROOT, "src/compiler/rows.ts")).href);
 const STAGE_NAMES = new Set(everyStageName());
 
@@ -117,9 +116,7 @@ function makeSlug(title, used) {
   return candidate;
 }
 
-// `deriveCategory` was a string-prefix parser ("Filters: …") that the
-// metadata-driven shape replaces — categories are now declared explicitly
-// through `describe(name, { features: [...] }, fn)`.
+// Categories come from explicit metadata: `describe(name, { features: [...] }, fn)`.
 
 // ── Query / kind / usage extraction from an `it()` body source ────────────────
 
@@ -256,10 +253,10 @@ function dedent(text) {
   };
   const min = measure(lines);
   // Pipeline-style templates like `jsmql\`[\n  $match(...)\n]\`` start with
-  // a lone `[` (or `{`, `(`) at column 0, which drags the global minimum
+  // a lone `[` (or `{`, `(`) at column 0. This drags the global minimum
   // down to zero, so `dedent` cannot strip the body's
   // test-file indent. When that happens, treat the first line as the
-  // outer anchor and dedent the body lines against their own minimum so
+  // outer anchor. Dedent the body lines against their own minimum, so
   // the playground shows a canonical 2-space pipeline shape instead of
   // the raw 6-space test-file indent.
   if ((!Number.isFinite(min) || min === 0) && /^[\[({][ \t]*$/.test(lines[0])) {
@@ -355,8 +352,7 @@ function extractUsage(itSource) {
 //   ]
 //
 // `it.meta.kind` / `it.meta.usage` take precedence; missing values fall back
-// to the AST-based detector and the in-body `// → …` comment heuristic from
-// the previous schema.
+// to the AST-based detector and the in-body `// → …` comment heuristic.
 
 async function extractExamples() {
   // The import of the test file triggers the loader → vitest shim → tree
@@ -429,8 +425,8 @@ async function bundleJsmql() {
   const result = await build({
     entryPoints: [ENTRY],
     // `bson` IS bundled here, unlike in the CJS build. A browser cannot resolve a
-    // bare specifier, and the page has no driver to interoperate with — so the one
-    // copy in the bundle is the only copy, and a second CDN would only add a way for
+    // bare specifier, and the page has no driver to interoperate with. So the one
+    // copy in the bundle is the only copy. A second CDN would only add a way for
     // the playground to go dark. `platform: "browser"` picks bson's browser build.
     bundle: true,
     format: "esm",
@@ -459,9 +455,9 @@ function replaceRegion(html, startMarker, endMarker, replacement) {
 function buildExamplesRegion(describes) {
   const json = JSON.stringify(describes);
   // Identifies this exact example set. The playground stores it alongside a
-  // saved session and drops the session when the two disagree, so a visitor
+  // saved session. It drops the session when the two disagree. So a visitor
   // who came here before still sees a new example, and not a
-  // restored copy of the old one. Derived from the manifest, so it changes
+  // restored copy of the old one. The script derives it from the manifest, so it changes
   // when — and only when — an example's slug, title, query or metadata does.
   const stamp = createHash("sha256").update(json).digest("hex").slice(0, 12);
   return [
@@ -482,7 +478,7 @@ const itCount = describes.reduce((sum, d) => sum + d.its.length, 0);
 const inGitRepo = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: ROOT, stdio: "ignore" }).status === 0;
 
 // Write `file` only when its contents change (avoids needless mtime churn and
-// git-staging), then stage it. Returns true if it was (re)written.
+// git-staging), then stage it. Returns true when it writes the file.
 function writeAndStage(file, contents) {
   let existing = null;
   try {

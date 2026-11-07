@@ -2,8 +2,8 @@
 // answers with a VALUE or with "not a constant".
 //
 // A constant is an expression whose LOWERED MQL reads nothing from the document and
-// nothing from the environment. So the engine does not compute: it lowers the closed
-// subtree with the real emitter, gives the MQL to the interpreter, and answers with the
+// nothing from the environment. So the engine does not compute. It lowers the closed
+// subtree with the real emitter and gives the MQL to the interpreter. Then it answers with the
 // value. One semantics per JavaScript method (its lowering) and one rule per MQL
 // operator (src/compiler/interpret/) replace a hand-written twin of each method.
 //
@@ -36,9 +36,9 @@ export type Constants = ReadonlyMap<string, unknown>;
 /**
  * A declared function, held so a CALL to it can be evaluated.
  *
- * The wrapper exists so this is never mistaken for a value: a function has no
- * MongoDB literal, and a substitution of one into the tree would put a lambda where
- * an expression belongs. For this reason, `fold` keeps these in the
+ * The wrapper exists so nothing mistakes this for a value. A function has no
+ * MongoDB literal. A substitution of one into the tree would put a lambda where
+ * an expression belongs. So `fold` keeps these in the
  * environment and out of the substitution map.
  */
 export type DeclaredFunction = { readonly lambda: object };
@@ -98,9 +98,9 @@ export function writeBack(value: unknown, pos: number): Expr {
 }
 
 /**
- * `node` with its constant settled. The fold settles every node of the program. A node that
- * a lowering builds itself, such as `list.map(key)` from the arguments of a cell, is a node that
- * the fold does not visit, so the services that hand a node to the lowering call this function.
+ * `node` with its constant settled. The fold settles every node of the program. A lowering can
+ * build a node itself, such as `list.map(key)` from the arguments of a cell. The fold does not
+ * visit such a node. So the services that hand a node to the lowering call this function.
  */
 export function settled(node: Expr): Expr {
   if (constantOf(node).ok) return node;
@@ -120,7 +120,7 @@ const MAX_SIZE = 1_000_000;
  * Refuse a value too large to belong in a query.
  *
  * `"x".padStart(500000000)` computes in a millisecond and yields half a gigabyte
- * of string, which goes into the AST, then into the document, then past BSON's
+ * of string. That string goes into the AST, then into the document, then past BSON's
  * 16 MB limit. Nothing about that is a constant worth folding.
  */
 function withinSize(value: unknown): boolean {
@@ -132,8 +132,8 @@ function withinSize(value: unknown): boolean {
 // ── reading a constant that is already in the tree ───────────────────────────
 
 /**
- * The value that a tree of literals holds, with no lowering and no environment: a
- * literal, an `Injected` node that does not read as MQL, and a list or a document of such
+ * The value that a tree of literals holds, with no lowering and no environment. The tree can
+ * hold a literal, an `Injected` node that does not read as MQL, and a list or a document of such
  * values. The fold writes every constant it computes back as one of these, so a reader
  * after the fold asks this function. A `"$…"` string below the top is a field path
  * (HR1), so it holds no value.
@@ -198,8 +198,8 @@ type Scope = { bound: ReadonlySet<string>; declaring: boolean; depth: number };
 
 /**
  * Does the subtree read something that a constant never reads? The document and the
- * streams (`$`, `$$`, `$$$`, `$$$$`), a name that nothing binds, and an operator call: it is the
- * developer's own MQL, and HR2 says it never folds, even inside. A declaration, a write
+ * streams (`$`, `$$`, `$$$`, `$$$$`), a name that nothing binds, and an operator call. An operator
+ * call is the developer's own MQL, and HR2 says it never folds, even inside. A declaration, a write
  * and a pipeline are statements, and none of them is a value.
  *
  * A name counts as bound when `env` holds it, a lambda in the subtree binds it, or it is a

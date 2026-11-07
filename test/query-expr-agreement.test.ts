@@ -1,15 +1,14 @@
 // test/query-expr-agreement.test.ts — the two targets must select the same documents.
 //
-// A predicate can reach MQL by two different roads. In Filter position (or a `$match` body)
-// it becomes the QUERY language: `{ age: { $gt: 18 } }`. Anywhere else it becomes the
-// aggregation-EXPRESSION language: `{ $gt: ["$age", 18] }`. Those are two lowerings of one
-// source, written in two files, with no shared code — which is precisely the shape that lets
-// them drift apart, and nobody sees it.
+// A predicate can reach MQL by two different roads. In Filter position (or a `$match` body) it becomes the
+// QUERY language: `{ age: { $gt: 18 } }`. Anywhere else it becomes the aggregation-EXPRESSION language: `{ $gt:
+// ["$age", 18] }`. Those are two lowerings of one source, written in two files, with no shared code. This shape
+// lets them drift apart, and nobody sees it.
 //
-// They already had: `typeof $.a === "boolean"` selected documents as a filter and matched
-// NOTHING as an expression, for months, because the query side carried a BSON alias table
-// and the expression side compared `$type` against JavaScript's own spelling. No unit test
-// could see it, because each side was individually self-consistent.
+// They already had: `typeof $.a === "boolean"` selected documents as a filter and matched NOTHING as an
+// expression, for months. The query side carried a BSON alias table, and the expression side compared `$type`
+// against JavaScript's own spelling. No unit test could see it, because each side was individually
+// self-consistent.
 //
 // So this suite asks the only question that catches that class: run BOTH lowerings of the
 // same source over the SAME documents on a real mongod, and compare which documents come
@@ -20,9 +19,8 @@
 // docs/specs/emit-pass.md § The filter target for the documented divergences. A
 // divergence without a row fails the suite.
 //
-// Self-skips (green) when no mongod is reachable, like the other server-backed suites, and
-// carries the coverage guard that goes with that: a suite that quietly stops its comparisons is
-// worse than no suite.
+// Self-skips (green) when no mongod is reachable, like the other server-backed suites. It carries the coverage
+// guard that goes with that: a suite that quietly stops its comparisons is worse than no suite.
 
 import { MongoClient, type Collection } from "mongodb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -73,7 +71,7 @@ const AGREE: readonly string[] = [
   '$.s.endsWith("lo")',
   '$.s.startsWith("H")',
   '$.s.endsWith("o")',
-  // A needle that carries regex metacharacters must be escaped, not interpreted.
+  // The compiler must escape a needle that carries regex metacharacters, and must not interpret it.
   '$.s.startsWith("h.")',
   // RegexMatch — a `$regex` clause as a query, `$regexMatch` as an expression.
   "$.s.match(/^he/)",
@@ -86,9 +84,9 @@ const AGREE: readonly string[] = [
   "$.s.match(/^HE/gi)",
   // Membership
   '["hello", "Hi"].has($.s)',
-  // Substring — an escaped `$regex` as a query, `$indexOfCP` as an expression. Both must
-  // select the same documents, and a needle with a regex metacharacter must be escaped:
-  // an unescaped `l.` would select "hello" as a query and nothing as an expression.
+  // Substring — an escaped `$regex` as a query, `$indexOfCP` as an expression. Both must select the same
+  // documents. The compiler must escape a needle with a regex metacharacter: an unescaped `l.` would select
+  // "hello" as a query and nothing as an expression.
   '$.s.includes("ell")',
   '$.s.includes("l.")',
   // Exists — `=== undefined` is an existence test in BOTH targets: `$exists` in the query
@@ -124,9 +122,9 @@ const SAME_QUERY: readonly string[] = [
 ];
 
 /**
- * A predicate whose two lowerings legitimately differ, with the reason. Each is a
- * MongoDB-semantics fact, not a jsmql choice — but jsmql picks which one the user gets, so
- * the difference is stated here, not discovered later.
+ * A predicate whose two lowerings legitimately differ, with the reason. Each is a MongoDB-semantics fact, not a
+ * jsmql choice. But jsmql picks which one the user gets, so this file states the difference and a user does not
+ * discover it later.
  */
 const DIVERGE: readonly { src: string; why: string }[] = [
   {
@@ -205,8 +203,8 @@ describe("the documented divergences still diverge", () => {
     it(src, async () => {
       const r = await bothSides(src);
       if (r === null) return;
-      // Asserted in BOTH directions on purpose. If a divergence is ever repaired, this fails
-      // and the row must be moved to AGREE — a fix should not be able to land silently.
+      // Asserted in BOTH directions on purpose. If a developer repairs a divergence, this test fails and the
+      // row must move to AGREE. A fix must not land silently.
       expect(r.expr, `${src} no longer diverges — move it to AGREE.\n  ${why}`).not.toEqual(r.query);
     });
   }

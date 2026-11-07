@@ -16,16 +16,16 @@
 // So a JavaScript spelling that READS a condition — `? :`, `&&`, `||`, `!`, a
 // predicate body — checks missing, null, false, "" and 0 itself. This is the
 // developer's own ruling. NaN is not checked: JSMQL does not support NaN. The
-// `$op(...)` escape hatch is the developer's own MQL. It is not read here at
-// all — MongoExprIn has no `truth` service.
+// `$op(...)` escape hatch is the developer's own MQL. This module does not read
+// it at all — MongoExprIn has no `truth` service.
 //
 // The check is SUBTRACTIVE. Each of the four tests belongs to one part of the
-// value's proof, and the check keeps only the tests some part of the proof can
+// value's proof. The check keeps only the tests that some part of the proof can
 // fail: `$ne null` only when the value may be absent, `$ne false` only when it
 // may be a boolean, `$ne ""` only when it may be a string, `$ne 0` only when it
-// may be a number. An array, an object, a date or an ObjectId owes no test. A
-// value that can only be a boolean or a number is its own truth, because
-// MongoDB already reads 0, false, null and missing as false there (the table).
+// may be a number. An array, an object, a date or an ObjectId owes no test.
+// A value that can only be a boolean or a number is its own truth. MongoDB
+// already reads 0, false, null and missing as false there (the table).
 // No test left is the constant `true`, and the slot that reads it folds.
 // See docs/specs/types.md § The truthiness rule.
 //
@@ -51,8 +51,8 @@ export const boolTruth = (doc: unknown): Truth => mint(doc);
 
 /**
  * MongoDB's own truthiness: the value as `$expr` reads it. A `$op(…)` call that
- * stands as a predicate keeps it, because the call is the developer's own MQL, and
- * no JavaScript spelling reads its truth. MEASURED: `{ $expr: "$s" }` reads false,
+ * stands as a predicate keeps it. The call is the developer's own MQL, and no
+ * JavaScript spelling reads its truth. MEASURED: `{ $expr: "$s" }` reads false,
  * null, missing and 0 as false, and "" and [] as true.
  */
 export const mongoTruthy = (value: unknown): Truth => mint(value);

@@ -1,8 +1,8 @@
 // The comparison operators.
 //
 // The server orders two values of different types by the place of their types in one
-// fixed order, and orders two values of one type by value (`rankOf` and `compareValues`
-// in values.ts). So a comparison across types always has an answer, and so does a
+// fixed order. It orders two values of one type by value (`rankOf` and `compareValues`
+// in values.ts). So a comparison across types always has an answer. So does a
 // comparison with null: null sorts above MinKey and below every other value. Strings
 // compare by code point, which is also the UTF-8 byte order that the server uses.
 // A comparison of two opaque values of one place (a Long beside a number) is a refusal.

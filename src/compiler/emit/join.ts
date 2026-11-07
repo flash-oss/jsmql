@@ -1,34 +1,34 @@
 // Phase 5 — EMIT. The join road: a chain on another collection, `$$$.<coll>.<links>`,
 // as the `$lookup` it means, in every position it may stand.
 //
-// One road, two shapes. A body that OPENS with a correlated equality — a `$match`
-// whose predicate states `<foreign field> === <outer field>`, alone or as one
-// `&&` conjunct among others — becomes the `localField`/`foreignField` pair.
-// Whatever follows it, the other conjuncts and the later links go into
-// `pipeline` beside the pair, and the server runs this over the matched
+// One road, two shapes. A body that OPENS with a correlated equality becomes the
+// `localField`/`foreignField` pair. The equality is a `$match` whose predicate
+// states `<foreign field> === <outer field>`, alone or as one `&&` conjunct among
+// others. Whatever follows it, the other conjuncts and the later links go into
+// `pipeline` beside the pair. The server runs this over the matched
 // documents only (MongoDB 5.0+). The pair is the join form MongoDB's own
 // documentation uses. The planner answers it from the foreign index (a
-// multikey index when either side is an array), and the server's own rules
+// multikey index when either side is an array). The server's own rules
 // apply to it: a missing field counts as null, and an array matches
 // element-wise — two arrays join when they share one element. Everything else
-// uses `let` + `pipeline` + `$expr`, which compares the two fields' OWN values
-// as JavaScript does (`undefined === null` is false), and also uses the
+// uses `let` + `pipeline` + `$expr`. This form compares the two fields' OWN values
+// as JavaScript does (`undefined === null` is false). It also uses the
 // foreign index (measured: `indexesUsed`, keys examined = rows matched). The
 // compiler takes the pair from the body's FIRST stage and never from its only
-// stage, so a trailing `.take(n)` changes what the join returns and never what
+// stage. So a trailing `.take(n)` changes what the join returns and never what
 // it matches.
 //
-// The chain peels: a link goes INTO `$lookup.pipeline` when its row has a
+// The chain peels. A link goes INTO `$lookup.pipeline` when its row has a
 // `stream` cell that accepts it (`filter`, the sorts, `take`, `aggregate`, a
 // stage link, a `.map` to a provable document). The first link that is not such
 // a link ends the sub-pipeline. It and everything after it read the materialised
 // array as a VALUE (`.length` → `$size`, `.map(o => o.total)` → `$map`, `[0]`).
-// `.find(p)` is the one special head: `[$match, { $limit: 1 }]`, with the slot
-// unwrapped with `$first` to ONE document.
+// `.find(p)` is the one special head: `[$match, { $limit: 1 }]`. The compiler
+// unwraps the slot with `$first` to ONE document.
 //
-// Correlation is the Env's business: a read of a shallower level inside the body
-// lands in the boundary's Capture (env.ts `render`), and the compiler writes the
-// `let` from it once the body is lowered. See docs/specs/emit-pass.md § The join road.
+// Correlation is the Env's business. A read of a shallower level inside the body
+// lands in the boundary's Capture (env.ts `render`). The compiler writes the
+// `let` from it after it lowers the body. See docs/specs/emit-pass.md § The join road.
 
 import type { Expr, Stage, Type } from "../../registry/vocabulary.ts";
 import { chainBase } from "../passes/naming.ts";
@@ -141,8 +141,8 @@ function documentBody(link: Link, env: Env): boolean {
 
 /**
  * Lower the chain's prefix into a `$lookup` body. The body runs one level
- * deeper: its Env crosses a `$lookup` boundary with a fresh Capture, so every
- * read of the outer document inside it is interned into `let`.
+ * deeper: its Env crosses a `$lookup` boundary with a fresh Capture, so the compiler
+ * interns every read of the outer document inside it into `let`.
  */
 export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" | "$unionWith" = "$lookup"): Lookup {
   // `.length`, `.total`, `[0]` after the links read the joined value. A method after
@@ -257,7 +257,7 @@ function reads(v: unknown, name: string): boolean {
 }
 
 /**
- * The correlated equality the body's first stage carries, taken out as the
+ * The correlated equality that the body's first stage carries. The compiler takes it out as the
  * `localField`/`foreignField` pair. Whatever else that stage stated stays as a
  * `$match`.
  *
@@ -270,9 +270,10 @@ function reads(v: unknown, name: string): boolean {
  * stage's query-document keys, stay as the pipeline's first `$match`, over the
  * pair's matches. The pair's variable leaves `let` unless a later stage still
  * reads it. A `let` beside the pair is the concise correlated form, and the
- * server accepts it (measured on 8.3.7). A first stage with no such equality —
- * a comparison that is not one, a side that is not a plain field path, an
- * equality under `||` — keeps the body whole, because only `$expr` can state it.
+ * server accepts it (measured on 8.3.7). A first stage with no such equality
+ * keeps the body whole, because only `$expr` can state it. Examples are a
+ * comparison that is not an equality, a side that is not a plain field path,
+ * and an equality under `||`.
  */
 function takePair(
   vars: Record<string, string> | null,
@@ -316,7 +317,7 @@ export function lookupStage(l: Lookup, as: string): Stage {
   if (l.let !== null) body.let = l.let;
   // The pair alone needs no pipeline. A `.find` keeps its `{ $limit: 1 }`
   // there. The server takes ONE matched document per outer document and stops
-  // (measured: one key, one document examined per outer document), where the
+  // (measured: one key, one document examined per outer document). The
   // pair alone would materialise every match first. MEASURED: 110 matching
   // documents of 1 MB each give Location4568: the total size of the matches
   // is more than the limit of 104857600 bytes.
@@ -353,8 +354,8 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name = `#join${slot.path}`;
-  // The slot holds the body's documents; an unwound field's elements are read off
-  // them by the rebased chain (`elementsOf`), so the slot's proof is the array's.
+  // The slot holds the body's documents. The rebased chain (`elementsOf`) reads the elements
+  // of an unwound field off them, so the slot's proof is the array's.
   const bound = env.bind(name, { ref: { kind: "field", slot }, type: joinedType(l), mutable: false, pos: l.pos });
   const rebased = rebase(node, l.peeledTo, elementsOf({ type: "Ident", name, pos: l.pos }, l, env, node));
   const valueEnv = bound.at({ at: "value" });
@@ -373,7 +374,7 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
 export function joinWrite(node: Expr, path: string, env: Env, S: JoinServices): { stages: Stage[]; type: Type } | null {
   // The body's lowering may hoist onto the outer chains (`$$.size()` stamps
   // the root stream). When the chain goes on, the value road lowers the body
-  // again, so the compiler takes back what this attempt hoisted — otherwise
+  // again. So the compiler takes back what this attempt hoisted. Otherwise
   // the stamp lands twice.
   const marks = [env.chain, env.rootChain].map((c) => [c, c.mark()] as const);
   const l = lookupOf(node, env, S);

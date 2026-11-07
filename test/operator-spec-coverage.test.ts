@@ -25,9 +25,8 @@ import { generateGlobalsSource } from "../scripts/generate-globals.mjs";
 // states a row for every operator the official spec defines. Each failure message
 // names the specific drift, so a contributor can act without a manual search.
 //
-// The spec is vendored on `npm install` through vendor/fetch-mql-specs.mjs at a
-// pinned commit. The vendor directory is gitignored — re-fetch with
-// `node vendor/fetch-mql-specs.mjs` if missing.
+// `npm install` vendors the spec through vendor/fetch-mql-specs.mjs at a pinned commit. The vendor directory is
+// gitignored — re-fetch with `node vendor/fetch-mql-specs.mjs` if missing.
 // ---------------------------------------------------------------------------
 
 const SPEC_ROOT = resolve(import.meta.dirname, "..", "vendor", "mql-specifications", "definitions");
@@ -92,10 +91,9 @@ function loadSpec(folders: readonly string[]): Map<string, SpecOp> {
 const spec = loadSpec(IN_SCOPE_FOLDERS);
 const stageSpec = loadSpec(["stage"]);
 
-// The operator rows: every MongoDB name the registry states that is not a stage.
-// A row exists for each — and for the ones the registry confines to another
-// operator's body (`$case`, `$box`) and the ones it refuses outright (`$where`),
-// because the question this file asks is coverage, not callability.
+// The operator rows: every MongoDB name the registry states that is not a stage. A row exists for each. A row
+// also exists for the ones the registry confines to another operator's body (`$case`, `$box`), and for the ones
+// it refuses outright (`$where`). The question this file asks is coverage, not callability.
 const stageNames = new Set(everyStageName());
 const operatorRows = everyMongoName().filter((name) => !stageNames.has(name));
 
@@ -140,14 +138,13 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("src/globals.ts is byte-equal to the generator output", () => {
-    // The committed src/globals.ts is the artifact that ships in the npm package.
-    // The generator runs as part of `prebuild` and `pretest`, but a contributor
-    // who edits a registry row without re-running the generator (or who edits
-    // src/globals.ts by hand) would otherwise ship drifted types. Catch that here.
+    // The committed src/globals.ts is the artifact that ships in the npm package. The generator runs as part of
+    // `prebuild` and `pretest`. But a contributor who edits a registry row without re-running the generator (or
+    // who edits src/globals.ts by hand) would otherwise ship drifted types. Catch that here.
     //
-    // The generator's CLI writes the file through oxfmt before exit, so the test
-    // does the same: it pipes the generated string through oxfmt before
-    // the comparison — otherwise the test would always fail on whitespace.
+    // The CLI of the generator writes the file through oxfmt before it exits, so the test does the same. It
+    // pipes the generated string through oxfmt before the comparison, because otherwise the test would always
+    // fail on whitespace.
     const raw = generateGlobalsSource();
     const root = resolve(import.meta.dirname, "..");
     const oxfmt = resolve(root, "node_modules/.bin/oxfmt");
@@ -168,17 +165,15 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
     // type-check, and surface the collection-/cluster-scoped diagnostic stages
     // with completion. A future generator change must not silently drop them.
     const src = generateGlobalsSource();
-    // Two named interfaces, one extends the other. The `extends` is what lets a
-    // single `$$$` index type serve both roles the database ref has — read head
-    // (`$$$.coll.find(…)`) and `$out` write target (`$$$.coll = $$`) — because
-    // TypeScript resolves a target's named members against the source's DECLARED
-    // members and never through its index signature. Drop the `extends` and
-    // `$$$.coll = $$` no longer type-checks.
+    // Two named interfaces, one extends the other. The `extends` is what lets a single `$$$` index type serve
+    // both roles of the database ref. The roles are the read head (`$$$.coll.find(…)`) and the `$out` write
+    // target (`$$$.coll = $$`). TypeScript resolves a target's named members against the DECLARED members of
+    // the source, and never through its index signature. Drop the `extends` and `$$$.coll = $$` no longer
+    // type-checks.
     expect(src).toContain("interface JsmqlForeignRef {");
     expect(src).toContain("interface JsmqlStreamRef extends JsmqlForeignRef {");
-    // `$$` must be `var`, not `const`: it is reassigned wholesale by the
-    // `$$ = …` replace-stream / `$facet` sugar, and `const $$` makes TS reject
-    // that valid jsmql (TS2588). `$$$` / `$$$$` stay `const` — they only take
+    // `$$` must be `var`, not `const`: the `$$ = …` replace-stream / `$facet` sugar reassigns it wholesale, and
+    // `const $$` makes TS reject that valid jsmql (TS2588). `$$$` / `$$$$` stay `const` — they only take
     // property writes (`$$$.coll = …` → `$out`), which `const` permits.
     expect(src).toContain("var $$: JsmqlStreamRef;");
     expect(src).not.toContain("const $$: JsmqlStreamRef;");
@@ -196,12 +191,11 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("declares the stream vocabulary on both refs, each chaining back to itself", () => {
-    // Every registered stream method (plus the non-registry `.filter` / `.reject`,
-    // and `.push` on the collection ref alone) surfaces as a typed member, so a
-    // chain gets IDE completion, and does not fall through to the `[key: string]`
-    // tail. Each ref re-declares them with ITSELF as the return type: a chain
-    // keeps the identity of its root, which is the rule jsmql enforces for
-    // `.find` (legal anywhere on a foreign chain, nowhere on a `$$` chain).
+    // Every registered stream method (plus the non-registry `.filter` / `.reject`, and `.push` on the
+    // collection ref alone) surfaces as a typed member. So a chain gets IDE completion, and does not fall
+    // through to the `[key: string]` tail. Each ref re-declares them with ITSELF as the return type: a chain
+    // keeps the identity of its root. This is the rule that jsmql enforces for `.find` (legal anywhere on a
+    // foreign chain, nowhere on a `$$` chain).
     const src = generateGlobalsSource();
     const foreign = src.slice(src.indexOf("interface JsmqlForeignRef {"), src.indexOf("interface JsmqlStreamRef"));
     const collection = src.slice(src.indexOf("interface JsmqlStreamRef"), src.indexOf("var $$:"));
@@ -218,8 +212,8 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
       expect(block).toContain(`$unwind(body: any): ${ref};`);
       // Registry is the source of truth: every STREAM_METHODS name must appear.
       for (const name of streamMethodNames()) expect(block).toContain(`${name}(`);
-      // …and every stage EXCEPT the diagnostic ones, which keep their own
-      // non-`$` spelling (`$$.indexStats()`) and are rejected as `.$indexStats()`.
+      // …and every stage EXCEPT the diagnostic ones, which keep their own non-`$` spelling (`$$.indexStats()`),
+      // and the compiler rejects them as `.$indexStats()`.
       for (const stage of everyStageName()) {
         if (diagnosticOf(stage) === undefined) expect(block).toContain(`${stage}(body: any): ${ref};`);
         else expect(block).not.toContain(`${stage}(body: any)`);
@@ -251,11 +245,9 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("object-shape registry entries use keys that exist in the spec", () => {
-    // jsmql's positional key order may legitimately differ from the spec's
-    // (a change to it would be a breaking API change for callers that use the
-    // positional form). What we DO require is set membership: every key the
-    // registry exposes for positional invocation must be a name the spec
-    // recognises for that operator.
+    // jsmql's positional key order may legitimately differ from the spec's. A change to it would be a breaking
+    // API change for callers that use the positional form. What we DO require is set membership: every key the
+    // registry exposes for positional invocation must be a name the spec recognises for that operator.
     const violations: string[] = [];
     for (const name of everyOperatorName()) {
       if (operandShapeOf(name) !== "object") continue;

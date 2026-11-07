@@ -195,12 +195,11 @@ describe("$$.size() — cleanup", () => {
 });
 
 describe("nested size usage — sub-stream handles + `$$.size()` (root) at every level", () => {
-  // The composite case: a per-user orders pivot whose `.map` reads three
-  // different counts — a nested lookup `.size()` (this order's shipments), the
-  // 3rd-arg handle `ordersColl.size()` (this user's orders sub-stream), and
-  // `$$.size()` (the ROOT users stream, captured into the orders $lookup.let as
-  // jsmql_s0_size). Verified end-to-end on a live mongod: per-order shipment counts,
-  // per-user order counts, and a constant root count, all correct, no leak.
+  // The composite case: a per-user orders pivot whose `.map` reads three different counts. They are a nested
+  // lookup `.size()` (this order's shipments) and the 3rd-arg handle `ordersColl.size()` (this user's orders
+  // sub-stream). The third is `$$.size()` (the ROOT users stream, captured into the orders $lookup.let as
+  // jsmql_s0_size). Verified end-to-end on a live mongod: per-order shipment counts, per-user order counts, and
+  // a constant root count, all correct, no leak.
   it("compiles three count levels in one block-body .map", () => {
     expect(
       jsmql(`
@@ -250,15 +249,14 @@ describe("nested size usage — sub-stream handles + `$$.size()` (root) at every
     ]);
   });
 
-  // Four DISTINCT counts and reads in one `.map`, and no collision — the disambiguation
-  // matrix: the root STREAM count (`$$.size()`), the root DOC field (`$.length`),
-  // an outer-scope `const` derived from that field, and the sub-stream count
-  // (`coll.size()`, the 3rd-arg handle). Each lands in its own `$lookup.let` var
-  // (`jsmql_s0_…` system, `jsmql_f0_…` field, `jsmql_v0_…` binding) or the system
-  // `$__jsmql.size` slot. Needs the correlated lookup form (`$$ = $$$.coll.filter(<corr>)…`)
-  // so the outer context survives into the sub-pipeline — a bare `$$ = $$$.coll.map(…)`
-  // is a `$unionWith` source-switch that discards it. Verified on a live mongod:
-  // l0/l1/l2/l3 = 3/7/8/2 for a user with field length=7 and 2 orders (3 users total).
+  // Four DISTINCT counts and reads in one `.map`, and no collision: the disambiguation matrix. The reads are
+  // the root STREAM count (`$$.size()`) and the root DOC field (`$.length`). The others are an outer-scope
+  // `const` derived from that field, and the sub-stream count (`coll.size()`, the 3rd-arg handle). Each lands
+  // in its own `$lookup.let` var (`jsmql_s0_…` system, `jsmql_f0_…` field, `jsmql_v0_…` binding) or the system
+  // `$__jsmql.size` slot. Needs the correlated lookup form (`$$ = $$$.coll.filter(<corr>)…`) so the outer
+  // context survives into the sub-pipeline — a bare `$$ = $$$.coll.map(…)` is a `$unionWith` source-switch that
+  // discards it. Verified on a live mongod: l0/l1/l2/l3 = 3/7/8/2 for a user with field length=7 and 2 orders
+  // (3 users total).
   it("the root count, the doc field, the const, and the handle count resolve to four distinct, non-colliding vars", () => {
     expect(
       jsmql(`

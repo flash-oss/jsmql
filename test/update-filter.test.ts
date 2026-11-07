@@ -2,13 +2,11 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
 describe("update filters: simple assignment (=)", () => {
-  // `jsmql()` always returns an aggregation-pipeline array for update-filter
-  // inputs so callers can pass the output directly to
-  // `db.coll.updateOne(filter, update)` and have RHS expressions actually
-  // evaluate. (Bare-doc form treats values as literals; only pipeline form
-  // evaluates aggregation expressions.) `jsmql.expr()` keeps the bare shape
-  // for building blocks — see the `lex regression checks` block below and the
-  // `describe("uppercase a user's name…")` case in realistic.test.ts.
+  // `jsmql()` always returns an aggregation-pipeline array for update-filter inputs so callers can pass the
+  // output directly to `db.coll.updateOne(filter, update)` and have RHS expressions actually evaluate.
+  // (Bare-doc form treats values as literals. Only pipeline form evaluates aggregation expressions.)
+  // `jsmql.expr()` keeps the bare shape for building blocks. See the `lex regression checks` block below and
+  // the `describe("uppercase a user's name…")` case in realistic.test.ts.
   it("emits a single $set stage for one assignment", () => {
     expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
   });
@@ -80,9 +78,8 @@ describe("update filters: compound assignment (+=, -=, *=, /=)", () => {
 });
 
 describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
-  // In MQL pipeline context the prefix/postfix distinction is irrelevant —
-  // there is no "value of expression" for a stage-level update op, so all four
-  // forms compile to the same `$set: { x: { $add|$subtract: ["$x", 1] } }`.
+  // In MQL pipeline context the prefix/postfix distinction is irrelevant. A stage-level update op has no "value
+  // of expression", so all four forms compile to the same `$set: { x: { $add|$subtract: ["$x", 1] } }`.
 
   it("postfix ++ on a top-level field", () => {
     expect(jsmql("$.x++")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
@@ -203,10 +200,9 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("regression: `5 - -3` still parses (whitespace separates the minuses)", () => {
-    // Without space, `5--3` lexes as `5 -- 3` (MinusMinus token) and would be
-    // rejected as an inc/dec on a non-field-path target. With whitespace, the
-    // two minuses lex as separate Minus tokens and the unary minus path runs.
-    // `jsmql.expr()` lowers as an aggregation expression so the lex shape is visible
+    // Without space, `5--3` lexes as `5 -- 3` (MinusMinus token), and the compiler would reject it as an
+    // inc/dec on a non-field-path target. With whitespace, the two minuses lex as separate Minus tokens and the
+    // unary minus path runs. `jsmql.expr()` lowers as an aggregation expression so the lex shape is visible
     // without the Filter `$expr` wrap that `jsmql()` would add.
     expect(jsmql.expr("5 - -3")).toEqual(8);
   });
@@ -311,9 +307,8 @@ describe("update filters: realistic mixed (user-supplied)", () => {
   });
 
   it("three-stage coalescing across kind boundaries: $set → $unset → $set", () => {
-    // Assignments coalesce into one $set; the kind change at `delete` opens a
-    // new $unset stage (two paths → array form); the kind change back to
-    // assignment opens the final $set.
+    // Assignments coalesce into one $set. The kind change at `delete` opens a new $unset stage (two paths →
+    // array form). The kind change back to assignment opens the final $set.
     expect(
       jsmql(
         "$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, " +
@@ -451,10 +446,9 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
   });
 
   it("comma-chained parenthesized assignments coalesce into one $set", () => {
-    // Formatter output: prettier and oxfmt wrap each assignment in parens and
-    // join the chain with `,` when it appears as a statement at the top of a
-    // block-body arrow. The two halves must combine into one $set, just like
-    // the bare-form `$.a = 1, $.b = 2`.
+    // Formatter output: prettier and oxfmt wrap each assignment in parens and join the chain with `,`. This
+    // happens when the chain appears as a statement at the top of a block-body arrow. The two halves must
+    // combine into one $set, just like the bare-form `$.a = 1, $.b = 2`.
     expect(jsmql("($.a = 1), ($.b = 2)")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
@@ -530,8 +524,8 @@ describe("update filters: validation errors", () => {
   });
 
   it("rejects update op inside parenthesized expression context", () => {
-    // ($.a = 1) + 2 — an assignment used as a value: the parser ends the
-    // statement at the closing paren, and the `+` after it has no place.
+    // ($.a = 1) + 2 is an assignment used as a value. The parser ends the statement at the closing paren, and
+    // the `+` after it has no place.
     const result = jsmql.validate("($.a = 1) + 2");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Expected ';' but got '+' at position 10");
@@ -545,11 +539,10 @@ describe("update filters: validation errors", () => {
 });
 
 describe("update filters: lex regression checks", () => {
-  // Make sure that `=`, `+=` and the other new operators did not break existing operators. The
-  // expectations are the aggregation-expression shape that the lexer +
-  // expression codegen produce, surfaced through `jsmql.expr()` so the top-level
-  // Filter dispatch does not add an outer layer the lex test does not care
-  // about.
+  // Make sure that `=`, `+=` and the other new operators did not break existing operators. The expectations are
+  // the aggregation-expression shape that the lexer + expression codegen produce. They come through
+  // `jsmql.expr()`, so the top-level Filter dispatch does not add an outer layer that the lex test does not
+  // care about.
   it("== null still parses (loose null check)", () => {
     expect(jsmql.expr("$.a == null")).toEqual({ $lte: ["$a", null] });
   });

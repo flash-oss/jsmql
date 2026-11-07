@@ -1,7 +1,7 @@
 // Phase 5 of src/compiler/ — what a row says about one name in one position.
 //
 // A question to the registry has this value: the answer covers EVERY name and
-// EVERY position at once, so the tests here cover the whole table, not
+// EVERY position at once. So the tests here cover the whole table, not
 // examples. An example test proves one row; a table test proves the rule.
 
 import { describe, expect, it } from "vitest";
@@ -56,8 +56,8 @@ describe("compiler/emit/consult — EVERY refusal is usable", () => {
     // The alternative to the flag is to read the first letter of the message and
     // guess whether a subject is missing — a coupling nothing declares.
     //
-    // Apply this to names only. A production is keyed descriptively — `remainder`,
-    // never `"%"` — so its key is not what a user typed and naming it would be
+    // Apply this to names only. A production has a descriptive key — `remainder`,
+    // never `"%"`. So its key is not what a user typed, and naming it would be
     // the bug, not the fix. The rule for productions is the next test.
     const silent = Object.keys(NAMES)
       .flatMap((n) => POSITIONS.map((p) => [n, p, consult(n, p)] as const))
@@ -95,10 +95,10 @@ describe("compiler/emit/consult — the other verdicts", () => {
 
   it("has no cell only where that kind of thing can never stand", () => {
     // A production has four cells and a name has six, and both are right. Only a
-    // MongoDB operator is ever specific to an update document, and a production is
-    // never an accumulator: `$cond` inside `$group` sits in an accumulator's
+    // MongoDB operator is ever specific to an update document. A production is
+    // never an accumulator. `$cond` inside `$group` sits in an accumulator's
     // ARGUMENT, which is value position, not the accumulator slot itself. A `$op` row
-    // has a cell exactly where its `where` lists the position: a call anywhere else
+    // has a cell exactly where its `where` lists the position. A call anywhere else
     // is the developer's own MQL, and it takes HR2's plain form.
     const allowed: Readonly<Record<string, readonly Position[]>> = {
       production: ["group", "window", "updateDoc"],
@@ -117,8 +117,8 @@ describe("compiler/emit/consult — the other verdicts", () => {
   });
 
   it("resolves a per-family cell when the family is known, and reports the branches when it is not", () => {
-    // `.size()` is the worked case: the array family merely scans, the stream does
-    // not compile at all, and one answer for both would claim the wrong thing.
+    // `.size()` is the worked case. The array family merely scans and the stream does
+    // not compile at all. One answer for both would claim the wrong thing.
     expect(consult("size", "filter", "array").kind).toBe("fallback");
     expect(consult("size", "filter", "stream").kind).toBe("refused");
     expect(consult("size", "filter").kind).toBe("perFamily");
@@ -209,7 +209,7 @@ describe("registry — a stage is one construct with two spellings", () => {
 
   it("lists both positions on every stage row", () => {
     // `$match(<body>);` and `$$ = $$.$match(<body>)` are the same stage written
-    // two ways, and the language accepts both — measured on every one of them.
+    // two ways. The language accepts both — measured on every one of them.
     // A row that listed only `stream` refused the canonical spelling, which is
     // the one every pipeline program in the docs uses.
     const oneSided = stageRows()
@@ -221,7 +221,7 @@ describe("registry — a stage is one construct with two spellings", () => {
   it("renders the same document in both", () => {
     // Each cell has its own `emit` closure, so the test runs both on the same probe
     // bodies and compares what they render. Every service of the context answers
-    // with a marker that names the service and its arguments, so a different use of
+    // with a marker that names the service and its arguments. So a different use of
     // a service shows as a different output. `args` compares by value.
     type Emit = (ctx: unknown) => unknown;
     const BODIES = [
@@ -277,8 +277,8 @@ describe("registry — an operator cannot accept more operands than it renders",
    * The cells whose rendering is governed by the row's `shape` — the ones that
    * put OPERANDS into `{ $name: … }`.
    *
-   * `stream` and `statement` are not among them: a stage renders its BODY, and
-   * `$count` proves the two are different renderings of one row — `$count("total")`
+   * `stream` and `statement` are not among them: a stage renders its BODY. `$count`
+   * proves the two are different renderings of one row. `$count("total")`
    * is a stage that takes one argument, but `$count()` as an accumulator takes none.
    * `filter` renders a query document, which is not this shape either.
    */
@@ -307,11 +307,11 @@ describe("registry — an operator cannot accept more operands than it renders",
   };
 
   it("never states an arity its shape cannot render", () => {
-    // An operand accepted and then not rendered VANISHES. `$abs($.a, $.b)` used
-    // to emit `{"$abs":"$a"}` — valid MQL and the wrong answer — and the three
-    // object-shaped date operators emitted a shape mongod refuses outright:
+    // An operand accepted and then not rendered VANISHES. Without this check,
+    // `$abs($.a, $.b)` would emit `{"$abs":"$a"}` — valid MQL and the wrong answer.
+    // The three object-shaped date operators would emit a shape mongod refuses outright:
     //   {$dateDiff:"$a"} → refused: `$dateDiff` takes only a document
-    // The `keys` field's own doc records this regression once already.
+    // The doc of the `keys` field states the same risk.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" || row.shape === undefined) continue;
@@ -378,7 +378,7 @@ describe("registry — exactly the value-producing rows state a return type", ()
 
   it("states one on every value-producing row and on no other", () => {
     // A missing `returns` and a `returns: "unknown"` mean the same thing to a
-    // type check and different things to a reader: absent is "produces no value
+    // type check. They mean different things to a reader: absent is "produces no value
     // at all", `"unknown"` is "a value whose type follows the operands". Because
     // presence ties to `where`, a reader does not read the two as one.
     const wrong: string[] = [];

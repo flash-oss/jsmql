@@ -32,9 +32,8 @@ describe("system stages — collection-scoped ($$)", () => {
 });
 
 describe("system stages — server/cluster-scoped ($$$$)", () => {
-  // $currentOp / $listSessions / $listLocalSessions / $listSampledQueries all
-  // run against the admin (or config) database, not the current one, so they
-  // live on $$$$ (cluster/server), not $$$ (current database).
+  // $currentOp / $listSessions / $listLocalSessions / $listSampledQueries all run against the admin (or config)
+  // database, not the current one. So they live on $$$$ (cluster/server), not $$$ (current database).
   it("$$$$.currentOp(options) lowers to a $currentOp source stage", () => {
     expect(jsmql("$$$$.currentOp({ allUsers: true, idleConnections: false })")).toEqual([
       { $currentOp: { allUsers: true, idleConnections: false } },
@@ -143,8 +142,8 @@ describe("system stages — error messages", () => {
     expect(() => jsmql("$$.indexStat()")).toThrow(
       "'.indexStat()' is not a method of the stream '$$'. Did you mean '$$.indexStats()'? A stage is a link too: '$$.$match(…)'.",
     );
-    // The '$' spelling of a diagnostic stage is refused outright: it is a source
-    // stage, and it reached the row, but not the scope its sugar states.
+    // The compiler refuses the '$' spelling of a diagnostic stage outright. It is a source stage, and it
+    // reached the row, but not the scope that its sugar states.
     expect(() => jsmql("$$.$indexStats()")).toThrow(
       "'$indexStats' reports on the deployment, so it is a source stage and not a chain link. Write '$$.indexStats()' — the root stream, run on 'db.coll.aggregate()'.",
     );

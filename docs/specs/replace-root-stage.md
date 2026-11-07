@@ -11,13 +11,12 @@ The compiler refuses an ARRAY on the right, whatever its shape: the root
 takes ONE document, and the message names the destination that takes many.
 See [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
-The compiler lowers to `$replaceWith` (the shorter MQL spelling), not
-to `$replaceRoot: { newRoot: <expr> }` (the legacy spelling). The two are
-exact runtime equivalents on MongoDB 4.2+, and `$replaceWith: <expr>` uses
-far fewer characters than `$replaceRoot: { newRoot: <expr> }`. The cost is
-the 4.0 / 4.1 line of server versions, which the rest of the language
-already excludes, because it relies on 4.2+ features (`$function`, `let` on
-`$lookup`, and others).
+The compiler lowers to `$replaceWith` (the shorter MQL spelling), not to
+`$replaceRoot: { newRoot: <expr> }` (the legacy spelling). The two are exact
+runtime equivalents on MongoDB 4.2+, and `$replaceWith: <expr>` uses far fewer
+characters than `$replaceRoot: { newRoot: <expr> }`. The cost is the 4.0 / 4.1
+line of server versions. The rest of the language already excludes them, because
+it relies on 4.2+ features (`$function`, `let` on `$lookup`, and others).
 
 `$ = <expr>` is statement-only: it appears as a top-level pipeline
 statement, either inside `[ ... ]` array form or as a `;`-separated
@@ -26,7 +25,11 @@ update-filter chain like `$.a = 1, $ = $.profile, $.b = 2`. A use of it inside
 a Filter or `jsmql.expr` goes through the normal pipeline-mode-required
 gate.
 
-**No `;` required.** A write is a pipeline wherever it stands ([filter-mode.md § The decision](filter-mode.md)), so a bare `$ = <expr>` with no `;` emits the same `$replaceWith` that the `;`-terminated form does, through `jsmql()` and `jsmql.pipeline()` alike. `jsmql.update()` refuses it: an update document holds writes to fields, and the server's document-form update has no root replacement.
+**No `;` required.** A write is a pipeline wherever it stands ([filter-mode.md §
+The decision](filter-mode.md)), so a bare `$ = <expr>` with no `;` emits the
+same `$replaceWith` that the `;`-terminated form does, through `jsmql()` and
+`jsmql.pipeline()` alike. `jsmql.update()` refuses it: an update document holds
+writes to fields, and the server's document-form update has no root replacement.
 
 The two entry points that cannot hold a stage reject it instead, each with a
 root-replace-specific message: `jsmql.filter()` returns a Filter, and
@@ -73,12 +76,11 @@ the user's first cue to what the statement does to the document.
 | `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = $.x.entries()` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
-The direct-lookup form unwinds the slot, and does not read `$first`:
-`$replaceWith: { $first: … }` fails on the server for every document
-whose match is empty (measured), but `$unwind` drops that document.
-The one document it found becomes the new document, and a document that
-found nothing has nothing to become
-([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows
+The direct-lookup form unwinds the slot and does not read `$first`.
+`$replaceWith: { $first: … }` fails on the server for every document whose match
+is empty (measured). `$unwind` drops that document. The one document it found
+becomes the new document, and a document that found nothing has nothing to
+become ([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows
 a `$replaceWith`: the scratch namespace goes away with the old root.
 
 ## Element-wise object methods on the root
@@ -109,13 +111,15 @@ takes the value road — one `$replaceWith` whose `.pick` reads the document's o
 time — and so does any chain with such a link. The dispatch keys on what the developer wrote, so
 one input has one output.
 
-A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)`), or with a `?.`
-(`$ = $?.pick([…])`), takes the value road: one `$replaceWith` over `$$ROOT`, as for every other
-method on the bare `$`.
+A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)`)
+takes the value road. A chain with a `?.` (`$ = $?.pick([…])`) takes it too. The
+result is one `$replaceWith` over `$$ROOT`, as for every other method on the
+bare `$`.
 
-The stages run over the documents of the level where the write stands. So the base must be the
-whole document of that level. `locate` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
-resolves the base, as it resolves a write target for `targetPath`, and two bases pass:
+The stages run over the documents of the level where the write stands. So the
+base must be the whole document of that level. `locate` in
+[src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) resolves the
+base, as it resolves a write target for `targetPath`, and two bases pass:
 
 - the bare `$`, where the stages run over the root documents. These places are the top, a
   `$facet` branch and a `$$.aggregate(…)` block.
@@ -184,11 +188,30 @@ $ = {
 //   } }]
 ```
 
-**Detection is all-or-nothing.** `isFacet` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the object literal. When no entry is a chain on `$$`, it is an ordinary `$replaceWith` body. When at least one is, every entry must be one, and the compiler refuses a mixed object and names the entry. The message names two fixes: make the entry a chain on `$$`, or move it out of the object. It refuses a spread entry or a computed key in that mode too.
+**Detection is all-or-nothing.** `isFacet` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the
+object literal. When no entry is a chain on `$$`, it is an ordinary
+`$replaceWith` body. When at least one is, every entry must be one, and the
+compiler refuses a mixed object and names the entry. The message names two
+fixes: make the entry a chain on `$$`, or move it out of the object. It refuses
+a spread entry or a computed key in that mode too.
 
-**Each entry is one sub-pipeline.** `facetStages` lowers each chain through the stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an Env that has crossed the `$facet` boundary over the SAME documents: a predicate lowers through the filter road with the parameter as the document, a stage link becomes the stage, and the outer bindings and `$$.size()` stay readable inside the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). Each branch ends with the cleanup of the scratch fields that its documents carry ([let-bindings.md § Cleanup](let-bindings.md#cleanup)). `$facet` replaces the document — its output is `{ <branch>: […], … }` — so every field-carried binding is dropped after it, and a later read is refused, with a precise message.
+**Each entry is one sub-pipeline.** `facetStages` lowers each chain through the
+stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an
+Env that has crossed the `$facet` boundary over the SAME documents: a predicate
+lowers through the filter road with the parameter as the document, a stage link
+becomes the stage, and the outer bindings and `$$.size()` stay readable inside
+the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). Each
+branch ends with the cleanup of the scratch fields that its documents carry
+([let-bindings.md § Cleanup](let-bindings.md#cleanup)). `$facet` replaces the
+document — its output is `{ <branch>: […], … }` — so it drops every
+field-carried binding. The compiler refuses a later read, with a precise
+message.
 
-**Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid: it lowers to `$match`, as the stream road's own spelling (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md)). Only inside `$ = { … }` does the same call name a facet branch.
+**Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement
+position is valid: it lowers to `$match`, as the stream road's own spelling (see
+[stream-methods.md § Bare-statement stream chains](./stream-methods.md)). Only
+inside `$ = { … }` does the same call name a facet branch.
 
 ## Fan-out belongs to the stream, not the root
 
@@ -196,12 +219,13 @@ $ = {
 destination that takes many. `rootIsArray` refuses `$ = <array>`; `$$ = <array>`
 fans out.
 
-When the right side of `$$ = …` is **provably an array** and is not a chain
-on a stream (`kindOf` in [src/compiler/emit/prove.ts](../../src/compiler/emit/prove.ts)),
-one input document produces one output document per element. `$unwind`
-needs a materialised field path — it cannot unwind an inline array
-expression — so the compiler parks the array in a fresh compiler slot with
-`$set`, unwinds it, then makes each element the new root:
+When the right side of `$$ = …` is **provably an array** and is not a chain on a
+stream (`kindOf` in
+[src/compiler/emit/prove.ts](../../src/compiler/emit/prove.ts)), one input
+document produces one output document per element. `$unwind` needs a
+materialised field path. It cannot unwind an inline array expression. So the
+compiler parks the array in a fresh compiler slot with `$set`, unwinds it, then
+makes each element the new root:
 
 ```
 $$ = $.lineItems.map(li => ({ sku: li.sku }));
@@ -241,13 +265,13 @@ $$ = [{ a: 1 }, { a: 2 }];
    { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } }]
 ```
 
-Nothing in that pair depends on position, so the list reads the same
-anywhere in the program: written after other statements, it drops what
-they produced and starts again. The empty list is the first half on its
-own. The element check is the `$documents` row's own rule, applied under
-the name the source wrote. A list that holds a `...` spread is not this
-reading, because its elements are not the documents, and neither is an
-array the data decides, which gives one answer per input document.
+Nothing in that pair depends on position, so the list reads the same anywhere in
+the program. When it follows other statements, it drops what they produced and
+starts again. The empty list is the first half on its own. The element check is
+the `$documents` row's own rule, applied under the name the source wrote. A list
+that holds a `...` spread is not this reading, because its elements are not the
+documents, and neither is an array the data decides, which gives one answer per
+input document.
 
 **A stream holds DOCUMENTS.** When a row states the kind of ONE element of
 what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `.entries()`
@@ -270,7 +294,16 @@ $$ = $.items.filter(x => x.qty > 0);   // docs with no qualifying item are dropp
 
 ## Lowering and refusals
 
-`$ = <expr>` is an `AssignExpr` whose target is the bare `$` (a `FieldRef` with an empty path). `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and emits `{ $replaceWith: <value> }` — or, for a value that is an array, the fan-out (`$set` a scratch slot, `$unwind`, `$replaceWith`), and for a join, the join road's `joinRoot` ([lookup-stage.md](lookup-stage.md)). A write before it takes its own stage (`$.a = 1; $ = $.profile;` → `[{ $set: { a: 1 } }, { $replaceWith: "$profile" }]`), and every field-carried binding is dropped after it, so a later `let` read is refused, with a precise message ([let-bindings.md § Stages that replace the document](let-bindings.md)).
+`$ = <expr>` is an `AssignExpr` whose target is the bare `$` (a `FieldRef` with
+an empty path). `writeStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the
+target and emits `{ $replaceWith: <value> }` — or, for a value that is an array,
+the fan-out (`$set` a scratch slot, `$unwind`, `$replaceWith`), and for a join,
+the join road's `joinRoot` ([lookup-stage.md](lookup-stage.md)). A write before
+it takes its own stage (`$.a = 1; $ = $.profile;` → `[{ $set: { a: 1 } }, {
+$replaceWith: "$profile" }]`). The stage drops every field-carried binding, so
+the compiler refuses a later `let` read, with a precise message
+([let-bindings.md § Stages that replace the document](let-bindings.md)).
 
 Each refusal names a concrete fix:
 
@@ -282,16 +315,35 @@ Each refusal names a concrete fix:
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | `$` is the whole document, not a field; the message names a write to a field (`$.<field>++`) |
 | `delete $` | the statement would delete the document itself; the message names `$ = { … };` to replace it, and `$ = { keep: $.keep };` to keep one field |
 
-**Each refusal uses the spelling that you wrote.** A stage body writes its own document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …` fix there would write the OUTER document, and a body over another collection cannot write it ([lookup-stage.md § The join road](lookup-stage.md#the-join-road)). So each refusal above, except the arithmetic one, quotes the spelling the program uses. `rootAsWritten` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the parameter's own name for an `Ident` target, and `$` for the bare root:
+**Each refusal uses the spelling that you wrote.** A stage body writes its own
+document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …`
+fix there would write the OUTER document, and a body over another collection
+cannot write it ([lookup-stage.md § The join
+road](lookup-stage.md#the-join-road)). So each refusal above, except the
+arithmetic one, quotes the spelling the program uses. `rootAsWritten` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the
+parameter's own name for an `Ident` target, and `$` for the bare root:
 
 | Trigger | The refusal |
 |---|---|
 | `$$.aggregate(o => { o = o.a * 2; })` | the value must be a document; the message names `o = { value: … };` and `o.value = …;`, with the `o` that you wrote |
 | `$$.aggregate(o => { delete o; })` | the statement would delete the document itself; the message names `o = { … };` to replace it, and `o = { keep: o.keep };` to keep one field |
 
-A body on the stream (`$$.aggregate(…)`) runs on the same documents as `$`. So a `$ = …` write there compiles, and its refusal keeps the `$` spelling. The arithmetic writes are the exception to the rule. The parser refuses them on the bare `$` only, because only the emit phase knows which name is a body's document. So `o++` in a body reaches the emitter as `o = o + 1`, and it gets the "'o = …' replaces the document" message.
+A body on the stream (`$$.aggregate(…)`) runs on the same documents as `$`. So a
+`$ = …` write there compiles, and its refusal keeps the `$` spelling. The
+arithmetic writes are the exception to the rule. The parser refuses them on the
+bare `$` only, because only the emit phase knows which name is a body's
+document. So `o++` in a body reaches the emitter as `o = o + 1`, and it gets the
+"'o = …' replaces the document" message.
 
-The compiler reads the value's proof, so a value is refused only when it can never be a document: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set). A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`). So does any value that may be one. The server, not the compiler, refuses `$ = $.f ? $.sub : 5` for a document whose `f` is false. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
+The compiler reads the value's proof, so it refuses a value only when it can
+never be a document: see [types.md § A refusal reads the whole
+set](types.md#a-refusal-reads-the-whole-set). A field path that resolves to a
+document at run time passes (`$ = $.profile`, `$ = "$sub"`). So does any value
+that may be one. The server, not the compiler, refuses `$ = $.f ? $.sub : 5` for
+a document whose `f` is false. An ARRAY never passes, whatever its elements —
+see [Fan-out belongs to the stream, not the
+root](#fan-out-belongs-to-the-stream-not-the-root).
 
 ## Deferred
 

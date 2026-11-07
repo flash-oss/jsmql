@@ -44,7 +44,7 @@ One row per rule, in `RULES` order
 
 ## Position, and why the pass needs it
 
-Some forms mean one thing as a **statement** and are refused everywhere else:
+Some forms mean one thing as a **statement**, and the compiler refuses them everywhere else:
 
 ```
 $.items.sort();        →  [{ "$set": { "items": { "$sortArray": { "input": "$items", "sortBy": 1 } } } }]
@@ -100,7 +100,7 @@ a chain of accesses, not yet the path it folds to (`couldWriteItsReceiver` in
 [naming.ts](../../src/compiler/passes/naming.ts)). So it walks the chain to its
 base, and it admits any receiver the fold MIGHT reach a path from. This set is
 wider than the set this pass really rewrites, and deliberately so. A receiver
-admitted there and declined here is refused by name on the statement road. The
+that the fold admits and this pass declines gets a refusal by name on the statement road. The
 reverse order would read a whole program as the wrong document
 ([filter-mode.md](filter-mode.md)).
 
@@ -153,8 +153,9 @@ different fact with its own name:
   and does not rewrite them — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`)
 
 An object receiver can state a layout too, as `.findKey()` does. The desugar
-rule writes an arrow with one parameter, so the shorthand reads the value of each entry, never its key:
-`$.team.findKey({ role: "admin" })` is `$.team.findKey(x => x.role === "admin")`.
+rule writes an arrow with one parameter, so the shorthand reads the value of
+each entry, never its key: `$.team.findKey({ role: "admin" })` is
+`$.team.findKey(x => x.role === "admin")`.
 
 Only a layout has slots for the rule to rewrite. The rule reads the receiver's
 FAMILY off the chain: a chain rooted in `$$` or `$$$.<coll>` is the stream
@@ -169,9 +170,10 @@ position, because that gave two answers for one link.
 
 `propertyIndex` is a whole-number literal, lodash's `_.property(n)`. The fold
 runs after each round of the rules (see § The driver), so a constant (`2 + 3`)
-and an injected number reach the rule as a literal too. The rule writes the arrow `x => x[n]`. The read carries
-an `iteratee` mark, the method and the slot. The emitter needs the mark to refuse
-an index that the elements cannot hold. The plain arrow has no such refusal:
+and an injected number reach the rule as a literal too. The rule writes the
+arrow `x => x[n]`. The read carries an `iteratee` mark, the method and the slot.
+The emitter needs the mark to refuse an index that the elements cannot hold. The
+plain arrow has no such refusal:
 
 ```
 $.rows.keyBy(5)              →  $.rows.keyBy(x => x[5])   (the same MQL)

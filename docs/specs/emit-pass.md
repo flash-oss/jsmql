@@ -3,8 +3,9 @@
 The fifth phase of `src/compiler/` turns a settled tree into its MQL. This spec
 owns the VALUE target (`jsmql.expr`), the FILTER target (`jsmql.filter`, a
 `$match` body) and the modules under `src/compiler/emit/`. The registry states
-what the language has. This phase states how a document is built, and only
-where a row cannot state it — see `src/compiler/CLAUDE.md` for that boundary.
+what the language has. This phase states how the emitter builds a document, and
+only where a row cannot state it — see `src/compiler/CLAUDE.md` for that
+boundary.
 
 ## The reading order
 
@@ -12,22 +13,22 @@ where a row cannot state it — see `src/compiler/CLAUDE.md` for that boundary.
 switch. Each case is one of three kinds.
 
 1. **A node that is its own document.** A literal, a field path (`$.a.b` →
-   `"$a.b"`, the bare `$` → `"$$ROOT"`), an array or object literal. A constant
-   the fold could not write back as source — a `Date`, an `ObjectId` —
-   is settled here by the evaluator before any row is read; a value holding a
-   JavaScript `bigint` is not, because `$toLong` spells it.
+   `"$a.b"`, the bare `$` → `"$$ROOT"`), an array or object literal. The
+   evaluator settles here, before any row is read, a constant that the fold
+   could not write back as source (a `Date`, an `ObjectId`). It does not settle
+   a value that holds a JavaScript `bigint`, because `$toLong` spells it.
 2. **A name.** The reading order is: `consult` (the row's answer for the
    position), then `select` (the receiver's proof and the arguments' class),
-   then the rule's own renderer over an `ExprIn` built by `inputs.ts`. Every
+   then the rule's own renderer over an `ExprIn` that `inputs.ts` builds. Every
    JavaScript method, MongoDB operator, global and namespace member takes this
    road. So does every operator production with a plain renderer (`-`, `*`,
    `===`, `?:`, …).
 3. **A construct that reads its neighbours.** `+` is `$concat` when an operand
    is provably a string, and `$add` otherwise. `&&`/`||` as a value keep the
-   operand and bind a computed left side once. `x[i]` dispatches on what the
-   receiver and the index are proven to be. `=== undefined` and `typeof x ===
-   "t"` are the predicate vocabulary's expression cells. These are the rows
-   whose cell says `inCode("src/compiler/emit/lower.ts")`.
+   operand and bind a computed left side once. `x[i]` dispatches on the proof of
+   the receiver and the index. `=== undefined` and `typeof x === "t"` are the
+   predicate vocabulary's expression cells. These are the rows whose cell says
+   `inCode("src/compiler/emit/lower.ts")`.
 
 `lowerTruth(node, env)` is the second reading: `&&`/`||`/`!`/`?:` recurse as
 truths, and anything else is `truthOf(value, row says bool)`. See `mode.ts`.
@@ -54,7 +55,8 @@ A row that states `renamedTo` (`.toLowerCase()`, built with `renamed(…)`) stil
 matches the typo. The message then shows the method that the row names. So a typo
 leads to a method that runs in one step.
 
-`select` refuses a rule whose slot cannot take the proven kind. See [The kind of a slot](#the-kind-of-a-slot).
+`select` refuses a rule whose slot cannot take the proven kind. See [The kind of
+a slot](#the-kind-of-a-slot).
 
 ```js
 $.x.indexOf("a")
@@ -63,28 +65,30 @@ $.x.trim().indexOf("a")
 // ✗ the receiver is a proven string; the sibling sentence names .indexOfSubstring()
 ```
 
-**HR5 — a dot runs an array or object method on `[]` or `{}`.**
-`dispatchOn` (`emit/lower.ts`) wraps a receiver the proof does not show present
-in `{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
-for an object rule, before the cell runs, and hands the cell `present: true`.
-The family is the receiver's proven family, else the family the selected rule
-runs on (`Selected.family`, from a per-family cell), else the row's one field
-family. The operator then answers what it answers on `[]` or `{}` —
-`[]`, `0`, `false`, `true`, missing — and every array or object method under a
-dot answers a value that is there. `statedPresence` (`emit/prove.ts`) says so:
-such a call is present when no `?.` sits on its spine, so a chain pays the one
-`$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
-callback parameter binds the wrapped input, and is present with it.
+**HR5 — a dot runs an array or object method on `[]` or `{}`.** `dispatchOn`
+(`emit/lower.ts`) wraps a receiver the proof does not show present in
+`{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
+for an object rule. It does so before the cell runs, and it hands the cell
+`present: true`. The family is the receiver's proven family. Otherwise it is the
+family the selected rule runs on (`Selected.family`, from a per-family cell).
+Otherwise it is the row's one field family. The operator then answers what it
+answers on `[]` or `{}`: `[]`, `0`, `false`, `true`, missing. So every array or
+object method under a dot answers a value that is there. `statedPresence`
+(`emit/prove.ts`) says so. Such a call is present when no `?.` sits on its
+spine. So a chain pays the one `$ifNull` at its head, and `.size()` after
+`.uniq()` adds nothing. The third callback parameter binds the wrapped input,
+and is present with it.
 
-**A number method reads a missing number as `0`.** `emptyValueOf` answers `0` for
-the number family. So under a dot, `dispatchOn` wraps the receiver in
-`{ $ifNull: [<recv>, 0] }`, as it does with `[]`, `{}` and `""`. `$.n.round(2)` is
-`{ $round: [{ $ifNull: ["$n", 0] }, 2] }`. A row whose operator refuses 0 states its own
-safe value. The logarithm of 0 stops the command, so `.log()` states
-`nullReceiverAs: 1`, and `$.n.log()` is 0. A row with two families, for example
-`.clamp()` on a number or a date, wraps the receiver in its own cell (`safeBound` in
-`src/registry/names.ts`). A row whose operator answers null for a null operand states
-`passesNull`, so `$.n?.round(2)` is `{ $round: ["$n", 2] }`, with no `$cond`.
+**A number method reads a missing number as `0`.** `emptyValueOf` answers `0`
+for the number family. So under a dot, `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, 0] }`, as it does with `[]`, `{}` and `""`. `$.n.round(2)`
+is `{ $round: [{ $ifNull: ["$n", 0] }, 2] }`. A row whose operator refuses 0
+states its own safe value. The logarithm of 0 stops the command, so `.log()`
+states `nullReceiverAs: 1`, and `$.n.log()` is 0. A row with two families wraps
+the receiver in its own cell (`safeBound` in `src/registry/names.ts`). An
+example is `.clamp()` on a number or a date. A row whose operator answers null
+for a null operand states `passesNull`, so `$.n?.round(2)` is
+`{ $round: ["$n", 2] }`, with no `$cond`.
 
 **A date method reads a missing date as the epoch.** `emptyValueOf` answers
 `new Date(0)` for the date family, so under a dot `dispatchOn` wraps the receiver in
@@ -94,52 +98,56 @@ family gives the cell no kind. So the kind of the bounds picks the safe value
 (`safeOfBounds`): the epoch when a bound is a date, and 0 for any other bound. A bound
 read at run time gives 0.
 
-**A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
-the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`
-under a dot, as it does with `[]` and `{}`. `$.s.length()` is
-`{ $strLenCP: { $ifNull: ["$s", ""] } }`. Where the operator already reads null as
-`""`, the cell takes the bare receiver. `$substrCP` of null is `""` (measured), so
-`substrOperand` in `src/registry/mql.ts` drops the wrap there. `nullOr` in
-`src/registry/names.ts` keeps one shape for a receiver that may still be null:
-`{ $cond: [{ $lte: [r, null] }, null, <body over r>] }`. A `$let` binds the receiver
-unless it is a path. The body runs on a proven receiver, so it carries no
-`$ifNull` of its own. The compiler skips the
-test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
-`isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
-array, a `let` of a present value through the binding's proof, a `neverNull`
-row over present operands, a written field whose value was present, a path a
-`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped).
-Each row states its `neverNull` fact: `.map`, `.filter`, `.slice` and `.keys` answer null only
-for a null input. `.find` (a missing element), `.max` (of an empty array) and
-`.match` (`$regexFind` with no match) do not state it.
+**A string method reads a missing string as `""`.** `emptyValueOf` answers `""`
+for the string family, so `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, ""] }` under a dot, as it does with `[]` and `{}`.
+`$.s.length()` is `{ $strLenCP: { $ifNull: ["$s", ""] } }`. Where the operator
+already reads null as `""`, the cell takes the bare receiver. `$substrCP` of
+null is `""` (measured), so `substrOperand` in `src/registry/mql.ts` drops the
+wrap there. `nullOr` in `src/registry/names.ts` keeps one shape for a receiver
+that may still be null: `{ $cond: [{ $lte: [r, null] }, null, <body over r>] }`.
+A `$let` binds the receiver unless it is a path. The body runs on a proven
+receiver, so it carries no `$ifNull` of its own. The compiler skips the test
+when the receiver is PRESENT (`ExprIn.present`). `isPresent` (`emit/prove.ts`)
+proves that from the source. A present receiver is one of these: a literal, the
+root document, a `$lookup`'s array, or a `let` of a present value (through the
+binding's proof). It can also be a `neverNull` row over present operands, or a
+written field whose value was present. The last two cases are a path that a `?.`
+proved through `Env.proving`, and an array or object receiver that `dispatchOn`
+wrapped. Each row states its `neverNull` fact: `.map`, `.filter`, `.slice` and
+`.keys` answer null only for a null input. `.find` (a missing element), `.max`
+(of an empty array) and `.match` (`$regexFind` with no match) do not state it.
 
 **A `?.` before a call that passes null needs no `$cond`.** A row states
-`passesNull` when its bare cell, on a receiver it reads as there, answers null for a
-null or missing receiver (`{ $objectToArray: null }` is null). When the chain is ONE
-such call directly on the path that the `?.` tests, `lowerValue` emits the bare call
-under the proof of that path: `$.o?.keys()` is
-`{ $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }`. A read or a second
-call between the `?.` and the top keeps the `$cond`, because either one can turn the
-missing value into another value first. test/compiler-methods.test.ts measures every
-row that states the fact.
+`passesNull` when its bare cell answers null for a null or missing receiver
+(`{ $objectToArray: null }` is null). The bare cell reads the receiver as there.
+When the chain is ONE such call directly on the path that the `?.` tests,
+`lowerValue` emits the bare call under the proof of that path. For example,
+`$.o?.keys()` is
+`{ $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }`. A read or a
+second call between the `?.` and the top keeps the `$cond`. Either one can turn
+the missing value into another value first. test/compiler-methods.test.ts
+measures every row that states the fact.
 
 **A `?.` with a CALL after it STOPS the chain.** `stoppedChain`
-(`emit/lower.ts`) walks the receiver spine of a `MemberAccess` /
-`IndexAccess` / `MethodCall` down to its base. A field read and an index read are
-plain reads: each passes a missing value through as missing. When a call runs after the
-`?.`, the walk answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
-[<that value is null or missing>, null, <the chain with every `?.` on its
-spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
-the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
-base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
-follows the dot rule. The fold runs bottom-up, so a member after a folded `?.` path
-keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A `?.` with no call after it
-stops nothing. The reads run as plain reads, and one `{ $ifNull: [<the reads>, null] }`
-stands on top. A `?.` read is JavaScript's `undefined` where the value is not there, and a
-written document holds it as `null`. The folded path takes the same wrap
-(`$.a?.b` is `{ $ifNull: ["$a.b", null] }`), so `$.o?.[k]` and `$.o[k]?.q` answer as
-`$.o?.p` does. `test/compiler-chains.test.ts` runs every chain of a small grammar of these
-reads on the server. It compares each answer with an oracle that states the rules.
+(`emit/lower.ts`) walks the receiver spine of a `MemberAccess` / `IndexAccess` /
+`MethodCall` down to its base. A field read and an index read are plain reads:
+each passes a missing value through as missing. When a call runs after the `?.`,
+the walk answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
+[<that value is null or missing>, null, <the chain with every `?.` on its spine
+cleared>] }`. The fold moves a `?.` on a plain read onto the PATH. It records
+the path the LAST `?.` tests (`FieldRef.optionalAt`). So the walk also checks
+the base `FieldRef`. The guard tests `a` alone for `$.a?.b.uniq()`, and `a.b`
+inside follows the dot rule. The fold runs bottom-up, so a member after a folded
+`?.` path keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A
+`?.` with no call after it stops nothing. The reads run as plain reads, and one
+`{ $ifNull: [<the reads>, null] }` stands on top. A `?.` read is JavaScript's
+`undefined` where the value is not there, and a written document holds it as
+`null`. The folded path takes the same wrap (`$.a?.b` is `{ $ifNull: ["$a.b",
+null] }`), so `$.o?.[k]` and `$.o[k]?.q` answer as `$.o?.p` does.
+`test/compiler-chains.test.ts` runs every chain of a small grammar of these
+reads on the server. It compares each answer with an oracle that states the
+rules.
 
 **A read after a value reads as a field path.** `memberAccess` binds a value that is
 not a path once, and reads the field reads above it off the variable:
@@ -163,14 +171,14 @@ can be, because a receiver of that family is not a program that compiles. So
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
 
-When a row states a REFUSAL for the position, that refusal is the answer even
-on a receiver the row's `on` does not admit. It is the more specific sentence,
-and the project wrote it for the receiver that reaches it (`$$.takeRight(3)`
-hears why a stream cannot count from the end, not that the row lists
-`array`). A mutator is the exception, because its refusal is advice ABOUT
-arrays — `.sort()` says to write `.toSorted()`, which is right for an array
-and wrong for `$.s.trim()`, a string that has neither method. There the proof
-answers first.
+When a row states a REFUSAL for the position, that refusal is the answer even on
+a receiver the row's `on` does not admit. It is the more specific sentence, and
+the project wrote it for the receiver that reaches it. For example,
+`$$.takeRight(3)` gets the reason that a stream cannot count from the end. It
+does not get the fact that the row lists `array`. A mutator is the exception,
+because its refusal is advice ABOUT arrays. `.sort()` says to write
+`.toSorted()`. That advice is right for an array and wrong for `$.s.trim()`, a
+string that has neither method. There the proof answers first.
 
 **A call that reads no receiver refuses one.** A `mongo` row (an operator or a
 stage) and a `global` row (a function such as `Number`) take no receiver. A `$`
@@ -190,10 +198,11 @@ $$.$sort({ a: 1 });       // [{ $sort: { a: 1 } }] — the stream is the one rec
 
 ## Operand shapes and the checks
 
-A MongoDB operator's `shape` is applied at the call, not in the renderer. A
-`$op(…)` call is the developer's own MQL, and HR3 does not apply to it. So the
-row's rule runs where the arguments fit it, and every other call takes HR2's
-plain form (`plainOperator` in `lower.ts`). The server judges the result:
+The emitter applies the `shape` of a MongoDB operator at the call, not in the
+renderer. A `$op(…)` call is the developer's own MQL, and HR3 does not apply to
+it. So the row's rule runs where the arguments fit it, and every other call
+takes HR2's plain form (`plainOperator` in `lower.ts`). The server judges the
+result:
 
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
@@ -210,16 +219,17 @@ $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": th
 [$.a, 2].size()         // → 2                            an array LITERAL holds one element per entry (`sizeOf`)
 ```
 
-`$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides
-carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
-`{$let:{vars:{v_v_5fx:1},in:"$$v_v_5fx"}}`, so a name the server refuses
+`$let(vars, arrow)` binds the arrow's parameters to the vars. Both sides carry
+the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
+`{$let:{vars:{v_v_5fx:1},in:"$$v_v_5fx"}}`. So a name the server refuses
 (`ROOT`) becomes one it takes. The compiler never folds `Number(<constant>)`:
 `$toDouble("3")` is a double on the server, and a written `3` is an int.
 
-`check.ts` holds the literal-gated checks for JSMQL code: a method, a global
-and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
-refusals for a spread or a computed key inside an object body
-(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check reads an `Arity` field that the row states:
+`check.ts` holds the literal-gated checks for JSMQL code: a method, a global and
+a production. A `$op(…)` call and a `$stage(…)` call meet only the two refusals
+for a spread or a computed key inside an object body (`checkBodyKeys`), because
+a JavaScript spread has no MQL there. Each check reads an `Arity` field that the
+row states:
 
 - whole-number, field-name and field-path slots, ranges and enums;
 - `constant` slots, and a non-empty or non-zero slot;
@@ -246,7 +256,7 @@ its own refusal.
 ### The kind of a slot
 
 The KIND of each operand is not a literal check. HR7 judges it from the proof of
-the operand, so a value that an earlier statement computed is judged like a
+the operand. So HR7 judges a value that an earlier statement computed like a
 literal. `select` in [select.ts](../../src/compiler/emit/select.ts) reads the
 rule of the row (`slotType`, `rest`, `homogeneous`, and `elements` on the row)
 against the `Proofs` that the call site passes. The rule itself is in
@@ -280,26 +290,26 @@ inside the operand comes first, because that message names the real cause.
 
 ## Truthiness
 
-A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only
-the tests the value's proof can fail: the subtractive rule and its constant
-folding live in [docs/specs/types.md § The truthiness rule](types.md#the-truthiness-rule).
-A `$op(…)` call keeps MongoDB's own truthiness where no JavaScript spelling
-reads it, because the call is the developer's own MQL: in a filter, `$foo($.a)`
-is `{ $expr: { $foo: "$a" } }` (`mongoTruthy`). In a lambda body, and through a
-name that holds the call, the JavaScript spelling checks the call's value (`jsRead`
-in `filter.ts`). HR6 refuses the call itself as an operand of `&&`, `||` or `!`. The compiler does not check NaN. `mode.ts` is the one minter of
-`Truth`, and `mql.ts` builds every slot that reads one. The table in
-[docs/LANGUAGE.md § Truthy and falsy](../LANGUAGE.md#truthy-and-falsy) states the
-rule for developers.
+A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only the
+tests the value's proof can fail: the subtractive rule and its constant folding
+live in [docs/specs/types.md § The truthiness
+rule](types.md#the-truthiness-rule). A `$op(…)` call keeps MongoDB's own
+truthiness where no JavaScript spelling reads it. The call is the developer's
+own MQL. In a filter, `$foo($.a)` is `{ $expr: { $foo: "$a" } }`
+(`mongoTruthy`). In a lambda body, and through a name that holds the call, the
+JavaScript spelling checks the call's value (`jsRead` in `filter.ts`). HR6
+refuses the call itself as an operand of `&&`, `||` or `!`. The compiler does
+not check NaN. `mode.ts` is the one minter of `Truth`, and `mql.ts` builds every
+slot that reads one. The table in [docs/LANGUAGE.md § Truthy and
+falsy](../LANGUAGE.md#truthy-and-falsy) states the rule for developers.
 
 ## The filter target
 
 `lowerFilter(node, env)` in `emit/filter.ts` turns a predicate into a QUERY
-document — the language an index reads — and falls back to `{ $expr: <truth> }`
-exactly where a row states no native form. The query semantics and the
-measured divergences from the expression road are in
-[filter-mode.md](filter-mode.md) § The filter road. The rule below is the one
-this file owns.
+document, the language an index reads. It falls back to `{ $expr: <truth> }`
+exactly where a row states no native form. The query semantics and the measured
+divergences from the expression road are in [filter-mode.md](filter-mode.md) §
+The filter road. The rule below is the one this file owns.
 
 ```js
 $.a > 1 && $.b <= 2                    // → {"a":{"$gt":1},"b":{"$lte":2}}
@@ -317,16 +327,16 @@ $abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}       
 ```
 
 An `$expr` around the whole `||`, as soon as one branch needs it, changes what
-the other branches mean: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+the other branches mean. `{ $expr: { $eq: ["$tags", "red"] } }` does not match
 `tags: ["red", "blue"]`, where `{ tags: "red" }` does. So a leaf's answer would
 depend on its sibling. Per branch, each branch means what the same predicate
 means alone.
 
 Per branch also changes WHEN a branch runs. The server picks the order of the
-clauses in a query document. So a branch whose expression the server refuses
-on some document can now run there, in a case where one `$expr` over the
-whole `||` would instead run after a cheaper clause had already excluded that
-document. Measured over `{a:1,b:1,c:5}`, `{a:2,b:"oops",c:1}`, `{a:2,b:1,c:9}`:
+clauses in a query document. So a branch whose expression the server refuses on
+some document can now run on that document. With one `$expr` over the whole
+`||`, a cheaper clause could exclude that document first. Measured over
+`{a:1,b:1,c:5}`, `{a:2,b:"oops",c:1}`, `{a:2,b:1,c:9}`:
 
 ```js
 ($.a === 1 || $.b * 2 === 2) && $.c > 3
@@ -345,34 +355,34 @@ sibling.
 ### A query operator's call form is its clause
 
 A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$gt($.a, 1)`
-— is the row's `filter` cell, and it writes the clause the document form
-spells: the first argument is the field, and the rest is the operand. An
-operator that also has an expression form answers the clause when the field
-is a path and the operand a constant (a literal list or document of constants
-counts as one), and answers null otherwise, so `$gt($.a, $.b)` takes the
-expression road. A query-only operator whose arguments do not fit the clause
-takes HR2's plain form, because the call is the developer's own MQL:
-`$exists(1)` → `{"$exists":1}`, and the server refuses it. The raw spelling keeps MongoDB's own reading — the compiler adds no
-own-value clause — but an `$elemMatch` ARROW is a JavaScript spelling over
-the element and reads it as one. `$and` / `$or` / `$nor` list their
-predicates, each a filter of its own, as a call and as a key of a raw
-document. `$not` negates one raw clause on one field, and otherwise takes the
-expression form, whose negation of a JavaScript spelling is exact. `$expr(e)`
-is `{ $expr: <expression> }`. `$text`, `$comment`, `$where` and `$jsonSchema`
-take their literal.
+— is the row's `filter` cell, and it writes the clause the document form spells.
+The first argument is the field, and the rest is the operand. An operator that
+also has an expression form answers the clause when the field is a path and the
+operand a constant. A literal list or document of constants counts as one
+constant. Otherwise it answers null, so `$gt($.a, $.b)` takes the expression
+road. A query-only operator whose arguments do not fit the clause takes HR2's
+plain form. The call is the developer's own MQL. For example, `$exists(1)` →
+`{"$exists":1}`, and the server refuses it. The raw spelling keeps MongoDB's own
+reading, and the compiler adds no own-value clause. But an `$elemMatch` ARROW is
+a JavaScript spelling over the element, and it reads the element as one. `$and`
+/ `$or` / `$nor` list their predicates, each a filter of its own, as a call and
+as a key of a raw document. `$not` negates one raw clause on one field, and
+otherwise takes the expression form, whose negation of a JavaScript spelling is
+exact. `$expr(e)` is `{ $expr: <expression> }`. `$text`, `$comment`, `$where`
+and `$jsonSchema` take their literal.
 
 A FRAGMENT — `$box` inside `$geoWithin`, `$case` inside `$switch`, the row's
 `onlyInside` — has a meaning only as an argument of the operator it names. A
-fragment met elsewhere passes through, because the call is the developer's own
-MQL: `$box([[0, 0], [1, 1]])` → `{"$box":[[0,0],[1,1]]}`, and the server
-refuses it. The Env's site records the operator whose arguments the compiler
-lowers now (`inside`). An object, an entry and an array keep it, and every
-other node clears it. A regex literal reads it: under an operator it is a BSON
-regex, and in JavaScript code it is refused. A literal
-list or document of constants is a literal for the raw operators alone
-(`literalIn`). A JavaScript spelling reads it by reference — `$.tags === [1,
-2]` is never true in JavaScript — and takes the expression road, where `$eq`
-compares the whole value.
+fragment in any other place passes through, because the call is the developer's
+own MQL. For example, `$box([[0, 0], [1, 1]])` → `{"$box":[[0,0],[1,1]]}`, and
+the server refuses it. The Env's site records the operator whose arguments the
+compiler lowers now (`inside`). An object, an entry and an array keep it, and
+every other node clears it. A regex literal reads it. Under an operator it is a
+BSON regex, and the compiler refuses it in JavaScript code. A literal list or
+document of constants is a literal for the raw operators alone (`literalIn`). A
+JavaScript spelling reads it by reference and takes the expression road, where
+`$eq` compares the whole value. For example, `$.tags === [1, 2]` is never true
+in JavaScript.
 
 ```
 $exists($.a)                          → {"a":{"$exists":true}}
@@ -395,8 +405,7 @@ writes by hand, and the server's own rules apply to it.
 | `$.a.b === 1` | `{"a.b":1}` |
 
 `{ $eq: v }` is written `v`, the spelling MQL reads and writes — except where
-`v` would be read as something else, an operator document or a regular
-expression.
+`v` would mean something else, an operator document or a regular expression.
 
 HR5 also applies to a query. A dot reads a missing or null receiver as the safe
 value of its kind. A clause such as `{ s: { $regex: /^$/ } }` never matches a
@@ -430,47 +439,48 @@ does neither. Two suites measure the gap and name every source it separates:
 `test/compiler-query-expr-agreement.test.ts` against the aggregation road.
 
 `!p` is the COMPLEMENT of p's own clause — `{ $nor: [<p>] }` — whenever p has a
-clause with no `$expr` inside. That is not a size choice: `$expr` orders
-across BSON types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]`
-and for `v: "x"`, where JavaScript answers true for both. So with
-`$not` over `$expr`, `$.v > 1 || !($.v > 1)` is not a tautology. With the complement, it is one (measured).
-A predicate with an `$expr` inside keeps the truth road, whose own `$not` over
-one expression is already JavaScript's answer.
+clause with no `$expr` inside. That is not a size choice. `$expr` orders across
+BSON types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and for
+`v: "x"`, where JavaScript answers true for both. So with `$not` over `$expr`,
+`$.v > 1 || !($.v > 1)` is not a tautology. With the complement, it is one
+(measured). A predicate with an `$expr` inside keeps the truth road, whose own
+`$not` over one expression is already JavaScript's answer.
 
-Two measured facts hold the shape in place. First, the exclusion costs no
-index: `{ a: { $eq: 1 } }` plans an IXSCAN over the bounds `[1, 1]`, exactly as
-`{ a: 1 }` does — but a `$not` around the whole positive clause
-drops to a collection scan. This is why a negation is an `$or`. Second, the
-project compares the answer with JavaScript's own. It evaluates the source in
-node over the same documents (`test/compiler-js-agreement.test.ts`). Two
-families of source still differ there, and neither is an array: JavaScript
-COERCES under a relational operator (`[2] > 1` is true), and it THROWS when a
-path walks through a missing intermediate. Raw MQL — a raw `{ … }` filter
-document, a `$op(…)` call — keeps MongoDB's own reading.
+Two measured facts hold the shape in place. First, the exclusion costs no index:
+`{ a: { $eq: 1 } }` plans an IXSCAN over the bounds `[1, 1]`, exactly as
+`{ a: 1 }` does — but a `$not` around the whole positive clause becomes a
+collection scan. This is why a negation is an `$or`. Second, the project
+compares the answer with JavaScript's own. It evaluates the source in node over
+the same documents (`test/compiler-js-agreement.test.ts`). Two families of
+source still differ there, and neither is an array: JavaScript COERCES under a
+relational operator (`[2] > 1` is true), and it THROWS when a path walks through
+a missing intermediate. Raw MQL — a raw `{ … }` filter document, a `$op(…)` call
+— keeps MongoDB's own reading.
 
 A query cell is a row fact. The comparison productions carry
 `strictEqualityQuery` and its family (the type test, the presence test, the
 modulo test, the null test, a field against a constant — in that order), and
 `includes`/`startsWith`/`endsWith`/`match`/`some`/`inRange` carry theirs.
 `$sampleRate` reads its one slot through `literal`, and a rate read at run time
-takes HR2's plain form. Each cell answers null where the operands are not a
-path and a constant, and null is the `FilterOut` contract for "wrap my value
-form". A row with no value form (a query-only operator) has nothing to wrap.
-Inside an `$elemMatch` boundary the call is still the developer's own MQL, so
-it passes through there, and the server refuses it. `FilterIn` hands a cell `pathOf` (a `.length()` call is
-never a path segment; inside a `.some` callback the INNERMOST element is the
-root, and only its fields are paths — an outer callback's parameter read
-inside a nested one has no query form and takes the `$expr` road; the
-`$elemMatch` boundary records which parameter is its element), `constant` (a
-value the query language compares as written — never an array, a regex or a
-bigint), `query`, `nativeQuery`, `elementQuery` and `orMissing`.
+takes HR2's plain form. Each cell answers null where the operands are not a path
+and a constant, and null is the `FilterOut` contract for "wrap my value form". A
+row with no value form (a query-only operator) has nothing to wrap. Inside an
+`$elemMatch` boundary the call is still the developer's own MQL, so it passes
+through there, and the server refuses it. `FilterIn` hands a cell `pathOf`,
+`constant`, `query`, `nativeQuery`, `elementQuery` and `orMissing`. A
+`.length()` call is never a path segment for `pathOf`. Inside a `.some` callback
+the INNERMOST element is the root, and only its fields are paths. An outer
+callback's parameter read inside a nested one has no query form and takes the
+`$expr` road. The `$elemMatch` boundary records which parameter is its element.
+`constant` is a value that the query language compares as written, and never an
+array, a regex or a bigint.
 
-`.inRange()` accepts its two bounds either way round, and the value form
-orders them at run time with `$min`/`$max`. A query clause has no such
-operator, so its cell orders the pair at COMPILE time — which it can only do
-when both bounds are constants of one kind, two numbers or two dates. Any
-other pair answers null and takes the `$expr` road, so the compiler emits no
-clause from a comparison it could not actually make.
+`.inRange()` accepts its two bounds either way round, and the value form orders
+them at run time with `$min`/`$max`. A query clause has no such operator, so its
+cell orders the pair at COMPILE time. It can do so only when both bounds are
+constants of one kind, two numbers or two dates. Any other pair answers null and
+takes the `$expr` road, so the compiler emits no clause from a comparison it
+could not actually make.
 
 `.some()` writes its body as the `$elemMatch` of the field. A body over the fields of
 an element can contain `$and`, `$or` and `$nor`. MEASURED: the server refuses them over
@@ -518,21 +528,22 @@ Three things end a group, each measured on the server.
 | `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent with its own child in one `$set` |
 | `$.a = 1, delete $.b` | `$set` then `$unset` | two stages, because they are two stages |
 
-A write to the document ROOT is its own stage: it replaces what the next
-write would be written into. `$.a = $.b, $.b = 1` needs NO split — writing
-what an earlier value read is exactly what one `$set` already means.
+A write to the document ROOT is its own stage: it replaces the document that the
+next write would go into. `$.a = $.b, $.b = 1` needs NO split — writing what an
+earlier value read is exactly what one `$set` already means.
 
 A statement that NAMES something asks the row, and the row's own cell renders
-it. The compiler does not ask `isStageName`: `assert(…)` is a statement and is
-not a stage, and asking the wrong question would refuse it with the wrong
-word. A stage's BODY lowers in the position its row states (`bodyPositions`).
-This is how `$match`'s predicate becomes a query document and a `$group`
-output key becomes an accumulator, without either cell knowing which reading
-it asked for. `readIn` is that hub.
+it. The compiler does not ask `isStageName`. `assert(…)` is a statement and not
+a stage, and the wrong question would refuse it with the wrong word. A stage's
+BODY lowers in the position its row states (`bodyPositions`). This is how
+`$match`'s predicate becomes a query document and a `$group` output key becomes
+an accumulator, without either cell knowing which reading it asked for. `readIn`
+is that hub.
 
-The compiler applies these facts the row states where the statement stands,
-each because the server enforces it and no renderer implies it. Each applies to
-a stage that the developer names too, because the place of a stage stays checked.
+The compiler applies these facts that the row states where the statement stands.
+It applies each fact because the server enforces it and no renderer implies it.
+Each applies to a stage that the developer names too, because the place of a
+stage stays checked.
 
 | the row says | the target does | measured |
 |---|---|---|
@@ -543,40 +554,39 @@ a stage that the developer names too, because the place of a stage stays checked
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
 | `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | the server refuses `$sort` inside an update |
 
-A stage's own body sub-pipeline runs under its OWN chain, with the container
-recorded as a boundary. Without the chain, a stage filed as LAST files onto
-the outer chain and silently leaves the body — measured: a `$out` inside a
-`$lookup` body landed at the end of the outer pipeline, and the body came out
-empty.
+A stage's own body sub-pipeline runs under its OWN chain, and the compiler
+records the container as a boundary. Without the chain, a stage filed as LAST
+files onto the outer chain and silently leaves the body. Measured: a `$out`
+inside a `$lookup` body landed at the end of the outer pipeline, and the body
+came out empty.
 
 **A first-only row reads a hoist, not just a position.** A value in a stage's
-own body can need a stage of its own — `$$.size()` needs a `$setWindowFields`,
-a `$$$.<coll>` read needs a `$lookup` — and the compiler places that stage
-directly ahead of the one that reads it
-([lookup-stage.md § Where a hoisted stage lands](lookup-stage.md)). So "is
-this stage first?" is only half the question: `place` asks it again of the
-chain's PENDING hoist, which by then holds whatever this stage's body made.
-A first-only stage with one pending hoist has no placement at all — the
-materialiser cannot follow the read, and nothing may precede the stage. So
-the compiler refuses it and names the later-statement rewrite. The chain it
-asks is `env.chain`, never the root one: a `$$.size()` read inside a
-sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first
-(measured, the server runs it). The compiler judges a name the BODY holds the
-same way, unless the row files its slot as a sub-pipeline — a stage there is
-first where IT stands, because its own `place` call already said so. Which
-slots those are is the row's `statementBody` fact, not the slot's `statement`
-kind. The two are different things: `$lookup.pipeline` and a `$facet` branch
-start a pipeline, but `$merge.whenMatched` is an UPDATE spec with no first
-position at all and a closed set of stages the server runs there. A check of the
-slot kind alone conflates them, and one line then does two wrong things at
-once: it refuses `$geoNear` first-in-a-`$lookup`-body when a statement
-precedes the `$lookup` (the server runs that), and it catches a banned stage
-in `whenMatched` only when a statement precedes the `$merge` (the
-server never runs that). The row states which kind it is. A row that files a
-`statement` slot and states nothing fails the build. The `stageLast` mirror
-is the same fact read backwards: the cleanup that drops the scratch fields is
-the stage before the terminal stage, so a terminal body that reads a scratch
-field reads a field already gone.
+own body can need a stage of its own. For example, `$$.size()` needs a
+`$setWindowFields`, and a `$$$.<coll>` read needs a `$lookup`. The compiler
+places that stage directly ahead of the one that reads it ([lookup-stage.md §
+Where a hoisted stage lands](lookup-stage.md)). So "is this stage first?" is
+only half the question. `place` asks it again of the chain's PENDING hoist,
+which by then holds whatever this stage's body made. A first-only stage with one
+pending hoist has no placement at all: the materialiser cannot follow the read,
+and nothing may precede the stage. So the compiler refuses it and names the
+later-statement rewrite. The chain it asks is `env.chain`, never the root one. A
+`$$.size()` read inside a sub-pipeline stamps OUTSIDE it and leaves that body's
+own first stage first (measured, the server runs it). The compiler judges a name
+that the BODY holds the same way, unless the row files its slot as a
+sub-pipeline. A stage there is first where IT stands, because its own `place`
+call already said so. Which slots those are is the row's `statementBody` fact,
+not the slot's `statement` kind. The two are different things.
+`$lookup.pipeline` and a `$facet` branch start a pipeline. But
+`$merge.whenMatched` is an UPDATE spec with no first position at all and a
+closed set of stages that the server runs there. A check of the slot kind alone
+conflates them, and one line then does two wrong things at once. It refuses
+`$geoNear` first-in-a-`$lookup`-body when a statement precedes the `$lookup`
+(the server runs that). It also catches a banned stage in `whenMatched` only
+when a statement precedes the `$merge` (the server never runs that). The row
+states which kind it is. A row that files a `statement` slot and states nothing
+fails the build. The `stageLast` mirror is the same fact read backwards. The
+cleanup that drops the scratch fields is the stage before the terminal stage. So
+a terminal body that reads a scratch field reads a field that is already gone.
 
 Two JavaScript meanings the query language does not share by default:
 
@@ -587,32 +597,32 @@ $.a = 1, $.b = $toString("$a")  // → two $sets, because `"$a"` in raw MQL IS a
 
 `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server — measured, `y`
 survived — where a JavaScript assignment replaces the field. `$mergeObjects`
-makes the document the value of an expression, not a nested field
-spec, and unlike `$literal` an expression inside it still evaluates. A `"$a"`
-in raw MQL is the field `a` (HR1), so it ends a write group exactly as `$.a`
-does. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing. Without that, one `$set` would give `b` the value `a` held
-before the stage.
+makes the document the value of an expression, not a nested field spec, and
+unlike `$literal` an expression inside it still evaluates. A `"$a"` in raw MQL
+is the field `a` (HR1), so it ends a write group exactly as `$.a` does. On the
+right side of `=`, a `"$a"` is text (HR6), and it reads nothing. Without that,
+one `$set` would give `b` the value `a` held before the stage.
 
-The compiler asks which DOCUMENT the whole program becomes once, at the
-entry: a folded constant array (`[1,2].slice(2,2)` settles to `[]`) is a
-VALUE, and read as a program it would compile to no stages at all.
+The compiler asks which DOCUMENT the whole program becomes once, at the entry. A
+folded constant array (`[1,2].slice(2,2)` settles to `[]`) is a VALUE. Read as a
+program, it would compile to no stages at all.
 
-A stage that the developer names — `$limit(…)`, a raw `{ $unwind: … }`
-document, a `$$.$sort(…)` link — is the developer's own MQL (HR2), and HR3
-does not apply to it. So the compiler checks no key, count or value of its
-body, and the server judges it: `$unionWith($.c)` → `[{"$unionWith":"$c"}]`
-unions a collection named `$c`. The body keeps two refusals, because a
-JavaScript spread or a computed key has no lowering there (`checkBodyKeys`).
-The place of the stage stays checked, by the table above. A JavaScript
-spelling that lowers to a stage keeps every check of its own row.
+A stage that the developer names — `$limit(…)`, a raw `{ $unwind: … }` document,
+a `$$.$sort(…)` link — is the developer's own MQL (HR2), and HR3 does not apply
+to it. So the compiler checks no key, count or value of its body. The server
+judges it: `$unionWith($.c)` → `[{"$unionWith":"$c"}]` unions a collection named
+`$c`. The body keeps two refusals, because a JavaScript spread or a computed key
+has no lowering there (`checkBodyKeys`). The place of the stage stays checked,
+by the table above. A JavaScript spelling that lowers to a stage keeps every
+check of its own row.
 
 ### The stream road
 
 `$$.filter(d => d.x > 1).sortBy("k").take(3);` — and the same chain with an
-explicit `$$ =` head, which is never the default spelling — are one program: a
-chain on the stream, one row's `stream` cell per link, base first. A stage is
-a link too (`$$.$match(…)`), through the very cell its statement form uses,
-and each link's stages take the placement its row states. The compiler
+explicit `$$ =` head, which is never the default spelling — are one program. It
+is a chain on the stream, with one row's `stream` cell per link, base first. A
+stage is a link too (`$$.$match(…)`), through the very cell its statement form
+uses, and each link's stages take the placement its row states. The compiler
 refuses a link after `$out` exactly as it refuses a statement after it.
 
 ```js
@@ -634,27 +644,28 @@ write instead. A stream has no per-document index. `$$.size()` gives the size
 of the stream.
 
 A stream cell receives its arguments as SOURCE and asks for the reading it
-wants: `predicate(cb)` a query document (total — a body with no native form
-arrives as `$expr`), `reshape(cb)` a value, `block(cb)` the stages of a
-`{ … }` body, `sortSpec(e)` and `orderBy(keys, orders)` the
+wants. `predicate(cb)` gives a query document (total: a body with no native form
+arrives as `$expr`). `reshape(cb)` gives a value. `block(cb)` gives the stages
+of a `{ … }` body. `sortSpec(e)` and `orderBy(keys, orders)` give the
 `{ field: 1 | -1 }` document from any of the sort spellings
-(`emit/sort-spec.ts`, a reader over the tree that never lowers), `slot()` a
-scratch field the chain's cleanup drops, `element()` where the stream's
-element lives (the document, or the unwound field after `.flatMap` — see
-[stream-methods.md § The element after `.flatMap`](stream-methods.md#the-element-after-flatmap)),
-and `unwound(path)` to say it moved. A bare `$$.<name>(…)` with one link asks
-the row's STATEMENT cell first — the union sugar and the source stages are
-statements spelled on the stream, and their rows say so.
+(`emit/sort-spec.ts`, a reader over the tree that never lowers). `slot()` gives
+a scratch field that the chain's cleanup drops. `element()` gives the place
+where the stream's element lives (the document, or the unwound field after
+`.flatMap`: see [stream-methods.md § The element after
+`.flatMap`](stream-methods.md#the-element-after-flatmap)). `unwound(path)` says
+that the element moved. A bare `$$.<name>(…)` with one link asks the row's
+STATEMENT cell first. The union sugar and the source stages are statements
+spelled on the stream, and their rows say so.
 
 ### Bindings between stages
 
-The compiler carries a `let` whose value is not a constant between stages, in
-a field of the document, `__jsmql.var.<name>`, and the chain's trailing
-cleanup drops it. A constant `let` never gets that far: the fold inlines it.
-`x = …` writes the binding again when it is a `let`, and the compiler refuses
-it when it is a `const`. A second `let x` in the same block is refused, as
-JavaScript refuses it. A nested block — a stage's `[ … ]` body, an
-`o => { … }` block — declares its own names and sees the outer ones, so a
+The compiler carries a `let` whose value is not a constant between stages. It
+keeps the `let` in a field of the document, `__jsmql.var.<name>`, and the
+chain's trailing cleanup drops it. A constant `let` never gets that far: the
+fold inlines it. `x = …` writes the binding again when it is a `let`, and the
+compiler refuses it when it is a `const`. The compiler refuses a second `let x`
+in the same block, as JavaScript does. A nested block — a stage's `[ … ]` body,
+an `o => { … }` block — declares its own names and sees the outer ones, so a
 `let` there shadows and never collides.
 
 ```js
@@ -663,72 +674,72 @@ let t = $.a; $$.filter(d => d.x > t);  // → the binding is a FIELD, so the pre
 let x = $.a; $group({ _id: x });     // → the group drops every field, the cleanup is not owed, and a later `x` is refused
 ```
 
-The scope THREADS through the program: each statement answers the Env the
-next one lowers under. Inside a statement, each group of stages changes the Env
-once, in the order of the stages. A group is a chain link, a write of a `,` run
-or a stage call. See docs/specs/types.md § The document after a stage. A stage whose `document` effect replaces the document (see docs/specs/types.md) takes
-every field-carried binding with it — `true` for `$group`, `$replaceWith`,
-`$count` and their kind, `"inclusion"` for a `$project` whose body names
-fields to keep — and the compiler refuses a read after that. The message names the
-stage. The compiler does not emit a read of a field that the stage took away. The way
-back is the one JavaScript allows: `x = …` on a dropped `let` writes its slot
-again, and the next statement reads it. A dropped `const` can only be carried
-as a field of the new document. Every name that has no value here — a
-dropped binding, a callback's index or receiver parameter that the stream
-cannot fill, a function inside its own body — is one `dropped` marker
-carrying the wording its read throws. This way the reason is worded where
-the name was taken away, and not guessed where it is read. `$$ = [ … ]`
-starts the stream from a literal list of documents — see
-docs/specs/replace-root-stage.md for the pair it emits and why. The empty
-list is a stream of nothing.
+The scope THREADS through the program: each statement answers the Env the next
+one lowers under. Inside a statement, each group of stages changes the Env once,
+in the order of the stages. A group is a chain link, a write of a `,` run or a
+stage call. See docs/specs/types.md § The document after a stage. A stage whose
+`document` effect replaces the document (see docs/specs/types.md) takes every
+field-carried binding with it. The effect is `true` for `$group`,
+`$replaceWith`, `$count` and their kind, and `"inclusion"` for a `$project`
+whose body names fields to keep. The compiler refuses a read after that. The
+message names the stage. The compiler does not emit a read of a field that the
+stage took away. The way back is the one JavaScript allows: `x = …` on a dropped
+`let` writes its slot again, and the next statement reads it. A program can
+carry a dropped `const` only as a field of the new document. Every name that has
+no value here is one `dropped` marker. Such a name is a dropped binding, a
+callback's index or receiver parameter that the stream cannot fill, or a
+function inside its own body. The marker carries the wording that its read
+throws. This way the compiler words the reason where it removes the name, and
+does not guess it where it reads the name. `$$ = [ … ]` starts the stream from a
+literal list of documents — see docs/specs/replace-root-stage.md for the pair it
+emits and why. The empty list is a stream of nothing.
 
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
-(`emit/join.ts`). **A body that opens with a correlated equality** — its
-first stage is a `$match` whose predicate says
-`<foreign field> === <outer field>`, alone or as one `&&` conjunct among
-others, where the outer side is a document field (`$.x`, or a binding the
-compiler stores as `__jsmql.var.<name>`) — is the `localField` /
-`foreignField` pair: the join every MongoDB developer reads and writes, and
-the one the planner reads straight off the foreign index (a multikey index
-when either side is an array). The server's own rules then apply to it: a
-missing field counts as null, and an array matches element-wise, so two
-arrays join when they share one element. That is the same boundary a query
-document has (see docs/LANG_RULES.md), so the two say one thing.
+(`emit/join.ts`). **A body that opens with a correlated equality** is the
+`localField` / `foreignField` pair. Its first stage is a `$match` whose
+predicate says `<foreign field> === <outer field>`, alone or as one `&&`
+conjunct among others. The outer side is a document field (`$.x`, or a binding
+that the compiler stores as `__jsmql.var.<name>`). This is the join that every
+MongoDB developer reads and writes. The planner reads it straight off the
+foreign index (a multikey index when either side is an array). The server's own
+rules then apply to it: a missing field counts as null, and an array matches
+element-wise, so two arrays join when they share one element. That is the same
+boundary a query document has (see docs/LANG_RULES.md), so the two say one
+thing.
 
 **The links that follow the equality go into `pipeline` beside the pair.**
 MongoDB 5.0+ runs a `$lookup.pipeline` over the documents `localField` /
-`foreignField` matched (the concise correlated subquery). So a trailing
-sort, cut, group or document `.map` changes what the join RETURNS and never
-what it MATCHES: the same predicate is the same join with or without a
-`.take(n)`. The compiler takes the pair from the body's FIRST stage — an
-equality that follows a sort or a cut is a `$match` in place. A later stage
-that still reads the outer document keeps its `let` beside the pair (the
-server accepts all four keys together; measured on 8.3.7). `.find` is the
-pair with `pipeline: [{ $limit: 1 }]`: the server takes one matched document
-per outer document and stops (measured: one key and one document examined
-per outer document), where the pair alone would materialise every match
-first — 110 matching documents of 1 MB each answer Location4568. The pair's
-read leaves `let` unless a later stage reads it.
+`foreignField` matched (the concise correlated subquery). So a trailing sort,
+cut, group or document `.map` changes what the join RETURNS and never what it
+MATCHES. The same predicate is the same join with or without a `.take(n)`. The
+compiler takes the pair from the body's FIRST stage. An equality that follows a
+sort or a cut is a `$match` in place. A later stage that still reads the outer
+document keeps its `let` beside the pair (the server accepts all four keys
+together; measured on 8.3.7). `.find` is the pair with
+`pipeline: [{ $limit: 1 }]`. The server takes one matched document per outer
+document and stops (measured: one key and one document examined per outer
+document). The pair alone would materialise every match first: 110 matching
+documents of 1 MB each fail with Location4568. The pair's read leaves `let`
+unless a later stage reads it.
 
-**The other conjuncts of that first `$match` stay in it**, as the
-pipeline's first stage over the pair's matches: a constant clause as the
-query document it already is, an expression clause under `$expr` (the
-compiler drops the `$and` when one clause is left). The FIRST conjunct that
-is a correlated equality is the pair, and a second one keeps its `let` var
-and its `$expr` beside it. Everything else keeps `let` + `pipeline` +
-`$expr`: a predicate whose comparisons are not equalities, an equality
-under `||` (the `$match` is an `$or`, not a conjunction), or a side that is
-not a plain field path. The pipeline form compares the two fields' OWN
-values as JavaScript does (`undefined === null` is false), and it uses the
-foreign index too (measured on mongod 8.3.7: `indexesUsed`, keys examined =
-rows matched). `$expr: { $eq: [array, array] }` compares whole arrays. This
-is why the compiler never emits an array-to-array join in this form: the
-developer wrote one equality, and the pair is the join that reads it
-(measured on 5000 orders with a multikey index: the pair examines one key
-per matched row; the `$expr` form scans the collection and matches
-nothing).
+**The other conjuncts of that first `$match` stay in it**, as the pipeline's
+first stage over the pair's matches. A constant clause stays as the query
+document it already is. An expression clause goes under `$expr` (the compiler
+drops the `$and` when one clause is left). The FIRST conjunct that is a
+correlated equality is the pair, and a second one keeps its `let` var and its
+`$expr` beside it. Everything else keeps `let` + `pipeline` + `$expr`: a
+predicate whose comparisons are not equalities, an equality under `||` (the
+`$match` is an `$or`, not a conjunction), or a side that is not a plain field
+path. The pipeline form compares the two fields' OWN values as JavaScript does
+(`undefined === null` is false), and it uses the foreign index too (measured on
+mongod 8.3.7: `indexesUsed`, keys examined = rows matched).
+`$expr: { $eq: [array, array] }` compares whole arrays. This is why the compiler
+never emits an array-to-array join in this form. The developer wrote one
+equality, and the pair is the join that reads it (measured on 5000 orders with a
+multikey index: the pair examines one key per matched row; the `$expr` form
+scans the collection and matches nothing).
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id);
@@ -760,27 +771,29 @@ $.n = $$$.orders.filter(o => o.userId === $._id).size();
 ```
 
 **The chain peels.** A link goes into `$lookup.pipeline` when its row has a
-`stream` cell that accepts it — `filter`/`reject`, the sort spellings,
-`take`, `aggregate`, a stage link, a `.map` whose body is a provable document
-(the row states `streamBody: "document"`). The first link that is not such a
-link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
-a value `.map` — read the materialised array as a VALUE. A method after a field read or an index read
-(`.find(p).name.trim()`) is part of that value too, never a link of the body. A row that states
-`elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
-link only when the body's element is an unwound field; on a stream of whole
-documents it ends the body the same way. `.find` is the one special head
-(the row states `picksOne`): `filter` plus `{ $limit: 1 }`, with the slot
-unwrapped by `$first`. The compiler also unwraps a link that folds the
-stream into one document (`collapses` on the row: `countBy`, `keyBy`, `groupBy`
-with a field name). When nothing matched, the value is `{}`. The slot is a typed binding, so `.size()` on it is `$size` with no
-run-time guard, and `.total` after `.find` is a path. When the body ends
-with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
-no later stage replaced), the value is the elements and not their carriers:
-the compiler rebases the rest of the chain onto `<slot>.map(x => x.<element>)`
-(or onto the slot itself when the whole value is a COUNT — `.size()` /
-`.size()` — because one document holds one element; or `<slot>.<element>`
-after `.find`). The `$ =` road replaces with `$<slot>.<element>`, and the
-direct-to-`as` shortcut declines so the value road runs.
+`stream` cell that accepts it. Such a link is `filter`/`reject`, the sort
+spellings, `take`, `aggregate`, a stage link, or a `.map` whose body is a
+provable document (the row states `streamBody: "document"`). The first link that
+is not such a link ends the body. It and everything after it — `.size()`,
+`.total`, `[0]`, a value `.map` — read the materialised array as a VALUE. A
+method after a field read or an index read (`.find(p).name.trim()`) is part of
+that value too, never a link of the body. A row that states `elementOnly`
+(`.difference`, `.compact`, the bare `.sortBy()`, …) is such a link only when
+the body's element is an unwound field. On a stream of whole documents it ends
+the body the same way. `.find` is the one special head (the row states
+`picksOne`): `filter` plus `{ $limit: 1 }`, with the slot unwrapped by `$first`.
+The compiler also unwraps a link that folds the stream into one document
+(`collapses` on the row: `countBy`, `keyBy`, `groupBy` with a field name). When
+nothing matched, the value is `{}`. The slot is a typed binding, so `.size()` on
+it is `$size` with no run-time guard, and `.total` after `.find` is a path. When
+the body ends with its element in an unwound field (`Lookup.element`, set by a
+`.flatMap` no later stage replaced), the value is the elements and not their
+carriers. The compiler rebases the rest of the chain onto
+`<slot>.map(x => x.<element>)` (or onto the slot itself when the whole value is
+a COUNT — `.size()` / `.size()` — because one document holds one element; or
+`<slot>.<element>` after `.find`). The `$ =` road replaces with
+`$<slot>.<element>`, and the direct-to-`as` shortcut declines so the value road
+runs.
 
 **Where it stands decides the destination.** A bare write `$.o = <chain>`
 and a `let` make the target the stage's `as` — no scratch, no cleanup.
@@ -795,93 +808,92 @@ compiler refuses a chain with no destination, and names the three that
 exist.
 
 **Correlation is the Env's business.** Every binding records the LEVEL of
-documents it lives on (0 for the root pipeline's, one more per body over
-another collection), and `Env.render` reads a located value: on this level,
-as its path; on a shallower level, through the `let` of the boundary whose
-stage runs over that level's documents (`Capture`, held by reference on the
-boundary like a Chain), as `$$jsmql_<f|v|s><level>_<hint>` — `f` a field, `v`
-a `let` binding, `s` a system value; the names come from `src/namespace.ts`.
-The compiler captures a root read two levels down once, at the outermost
-`$lookup`, and reads it by name below: MQL variables are lexically scoped
-through nested `$lookup.pipeline`s (measured). The raw stage call
-`$lookup({ …, pipeline: [ … ] })` is the same road: the compiler merges what
-its body reads of the outer document into the developer's own `let`.
-`$unionWith` has no `let` (measured: `IDLUnknownField`), so the compiler
-refuses a read of the outer document inside it, and names the way out.
+documents it lives on (0 for the root pipeline's, one more per body over another
+collection). `Env.render` reads a located value. On this level, it reads the
+value as its path. On a shallower level, it reads the value through the `let` of
+the boundary whose stage runs over that level's documents. The `let` var is
+`$$jsmql_<f|v|s><level>_<hint>`, where `f` is a field, `v` a `let` binding, and
+`s` a system value. The names come from `src/namespace.ts`. The boundary holds
+the `Capture` by reference, like a Chain. The compiler captures a root read two
+levels down once, at the outermost `$lookup`, and reads it by name below. MQL
+variables have lexical scope through nested `$lookup.pipeline`s (measured). The
+raw stage call `$lookup({ …, pipeline: [ … ] })` is the same road. The compiler
+merges what its body reads of the outer document into the developer's own `let`.
+`$unionWith` has no `let` (measured: `IDLUnknownField`), so the compiler refuses
+a read of the outer document inside it, and names the way out.
 
 **Inside the body.** The callback's parameter IS the body's document: `o.x`
 reads it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }`
 replaces it. The callback's THIRD parameter is the body's own stream:
 `stream.filter(…)` is a `$match` there, and `stream.size()` its count (a
 `$setWindowFields` inside the body). `$.` is the OUTER document and `$$` the
-ROOT stream at every depth (HR4): `$.x` is read-only from inside — the
-compiler refuses `$.x = …`, naming `o.x = …` — `$$.size()` is the root
-count, materialised on the root pipeline and carried in by `let`, and the
-compiler refuses `$$.filter(…)` inside a body, naming `stream`. A nested
-`$$$.items.filter(…)` inside a predicate is hoisted inside the body's own
-chain, whose close runs its own cleanup, so no `__jsmql.tmp` scratch leaks
-into the joined array.
+ROOT stream at every depth (HR4). `$.x` is read-only from inside: the compiler
+refuses `$.x = …`, and names `o.x = …`. `$$.size()` is the root count, which the
+compiler materialises on the root pipeline and carries in by `let`. The compiler
+refuses `$$.filter(…)` inside a body, and names `stream`. The compiler hoists a
+nested `$$$.items.filter(…)` inside a predicate in the body's own chain. The
+close of that chain runs its own cleanup, so no `__jsmql.tmp` scratch leaks into
+the joined array.
 
 ### The facet, union and out roads, the source stages, and declared functions
 
-**`$ = { k: <$$ chain>, … }` is a `$facet`** (`statement.ts`, `facetStages`):
-one branch per entry, each the stages its chain means under a `$facet`
-boundary, so the row's `forbiddenIn` refuses a `$out` or a second `$facet`
-inside. Every entry must be a chain on `$$` — the compiler refuses a value
-among branches, naming the key — and a bare `$$` is the stream unchanged
-(`[]`). Branch names follow the server's field rules (not empty, no `.`, no
-leading `$`; measured). The facet is a document-replacing stage, so the
-bindings end with it. The compiler refuses a chain on `$$` anywhere else than
-the root replace. The chain is a stream, not a value, and the facet form is the only destination for it.
+**`$ = { k: <$$ chain>, … }` is a `$facet`** (`statement.ts`, `facetStages`). It
+makes one branch per entry, each the stages its chain means under a `$facet`
+boundary. So the row's `forbiddenIn` refuses a `$out` or a second `$facet`
+inside. Every entry must be a chain on `$$` — the compiler refuses a value among
+branches, naming the key — and a bare `$$` is the stream unchanged (`[]`).
+Branch names follow the server's field rules (not empty, no `.`, no leading `$`;
+measured). The facet is a document-replacing stage, so the bindings end with it.
+The compiler refuses a chain on `$$` anywhere else than the root replace. The
+chain is a stream, not a value, and the facet form is the only destination for
+it.
 
-**`$$.push(…)` and `.concat(…)` are `$unionWith`** (`emit/union.ts`), one
-stage per source in order: `...$$$.c` is `{ $unionWith: "c" }`,
-`...$$$.c.filter(p)` is the collection with its pipeline, `$$$.c.find(p)` (no
-spread) is the same with `$limit: 1`, and a run of documents is one
-`$documents`. JavaScript's spread rule holds — an array spreads, one document
-does not — and the compiler refuses the wrong one, naming the other spelling.
-The rows state `unions`. A `$unionWith` body has no `let` (measured), so the
-compiler refuses a read of the outer document inside it, where it reads;
-`$documents` runs over nothing, so it refuses `{ a: $.a }` there the same
-way.
+**`$$.push(…)` and `.concat(…)` are `$unionWith`** (`emit/union.ts`), one stage
+per source in order. `...$$$.c` is `{ $unionWith: "c" }`. `...$$$.c.filter(p)`
+is the collection with its pipeline. `$$$.c.find(p)` (no spread) is the same
+with `$limit: 1`. A run of documents is one `$documents`. JavaScript's spread
+rule holds — an array spreads, one document does not — and the compiler refuses
+the wrong one, naming the other spelling. The rows state `unions`. A
+`$unionWith` body has no `let` (measured), so the compiler refuses a read of the
+outer document inside it, where it reads; `$documents` runs over nothing, so it
+refuses `{ a: $.a }` there the same way.
 
 **`$$$.<coll> = <stream>` and `$$$$.<db>.<coll> = <stream>` are `$out`**
-(`outStages`): the stream's stages, then the write, filed as the pipeline's
-last stage — so the `__jsmql` cleanup precedes it, and nothing can follow it.
-The right side must be `$$` or a chain on it. The target is one name for the
-current database (`{ db, coll }` for another), constant, not empty, and not
-`$`-led (measured).
+(`outStages`): the stream's stages, then the write. The compiler files the write
+as the pipeline's last stage, so the `__jsmql` cleanup precedes it, and nothing
+can follow it. The right side must be `$$` or a chain on it. The target is one
+name for the current database (`{ db, coll }` for another), constant, not empty,
+and not `$`-led (measured).
 
 **`$$ = [{ k: $$.reduce((acc, d) => …, init), … }]` folds the stream to one
 document** (`emit/reduce-wrap.ts`): one `$group` with `_id: null` and one
 accumulator per key, then the `$replaceWith` that drops `_id`. The compiler
-reads each body as the accumulator it spells — `acc + d.x` is `$sum`,
-`acc + 1` counts, `[acc, d.x].max()`/`.min()`, `acc ?? d.x` is `$first`, a bare
-`d.x` is `$last`, `[...acc, d.x]` or `acc.concat(d.x)` is `$push` — and it
-refuses a body that spells none, naming them. The object form
-`[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]` names
-every fold in its body and its init, and the two sets must agree. The init
-is JavaScript's own and stays unread: MongoDB's accumulators have their own
-neutral elements. The compiler refuses a `$$.reduce` anywhere but inside
-this wrap, and names the wrap.
+reads each body as the accumulator it spells. `acc + d.x` is `$sum`, `acc + 1`
+counts, `[acc, d.x].max()`/`.min()` is `$max` / `$min`, `acc ?? d.x` is
+`$first`, a bare `d.x` is `$last`, and `[...acc, d.x]` or `acc.concat(d.x)` is
+`$push`. It refuses a body that spells none, and names them. The object form
+`[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]` names every
+fold in its body and its init, and the two sets must agree. The init is
+JavaScript's own and stays unread: MongoDB's accumulators have their own neutral
+elements. The compiler refuses a `$$.reduce` anywhere but inside this wrap, and
+names the wrap.
 
-**The source stages** — `$$.indexStats()`, `$$$$.currentOp(…)` and their
-kind — run each row's own statement cell (`refStatement`), with the receiver
-checked against the sigil the row's `on` states, so the compiler refuses
-`$$$$.indexStats()`, naming `stream`. Their rows' `only` field makes them
+**The source stages** — `$$.indexStats()`, `$$$$.currentOp(…)` and their kind —
+run each row's own statement cell (`refStatement`). The compiler checks the
+receiver against the sigil that the row's `on` states, so it refuses
+`$$$$.indexStats()` and names `stream`. Their rows' `only` field makes them
 first-stage-only.
 
-**A declared function** binds its name to its body and emits no stage; a
-call inlines the body as a `$let` (`lower.ts`, `applyLambda`). The compiler
-refuses a second declaration in one block, as JavaScript refuses it.
+**A declared function** binds its name to its body and emits no stage; a call
+inlines the body as a `$let` (`lower.ts`, `applyLambda`). The compiler refuses a
+second declaration in one block, as JavaScript does.
 
-**`assert(condition[, message]);` is a guard stage** — the row's own
-statement cell: a `$match` whose `$expr` converts `true` to a type NAMED by
-the outcome, `"bool"` when the condition holds and the message when it does
-not. The server refuses the unknown type name, and its error carries the
-message (measured). The
-compiler reads the condition as a truth (a JavaScript spelling tests
-JavaScript truthiness). It spells a literal message into the name, and
+**`assert(condition[, message]);` is a guard stage** — the row's own statement
+cell. It is a `$match` whose `$expr` converts `true` to a type NAMED by the
+outcome: `"bool"` when the condition holds, and the message when it does not.
+The server refuses the unknown type name, and its error carries the message
+(measured). The compiler reads the condition as a truth (a JavaScript spelling
+tests JavaScript truthiness). It spells a literal message into the name, and
 concatenates a dynamic one at run time.
 
 ```
@@ -891,19 +903,18 @@ assert($.qty >= 0, "qty must be >= 0");
 
 ## The method cells
 
-A JavaScript method's value lowering is its row's `expr` cell — `{ args,
-emit }`, per family under `perFamily` when the method lives on more than one
-prototype — and the pure MQL builders the cells share live in
+A JavaScript method's value lowering is its row's `expr` cell: `{ args, emit }`.
+The cell goes per family under `perFamily` when the method lives on more than
+one prototype. The pure MQL builders that the cells share live in
 `src/registry/mql.ts`, a leaf like the rest of the registry. A cell RECEIVES
 everything it needs (`ExprIn`: the lowered receiver, the source arguments,
-`value`, `truth`, `iteratee`, `predicate`, `objIteratee`, `callback`,
-`reducer`, `elements`, `bind`), and it throws nothing: every refusal is a
-fact on `args` the dispatcher checks first — `slotType`, `slotEnums`,
-`regexFlag` (`.matchAll` needs `g`), `dateFormat` (a `%` specifier the
-server knows, and a Moment token named for what it is), `body` (an options
-document's keys, types and `notTogether` families), `reject` (a count with a
-message of its own). So what the cell then reads is already known to be
-well-formed.
+`value`, `truth`, `iteratee`, `predicate`, `objIteratee`, `callback`, `reducer`,
+`elements`, `bind`), and it throws nothing. Every refusal is a fact on `args`
+that the dispatcher checks first: `slotType`, `slotEnums`, `regexFlag`
+(`.matchAll` needs `g`), `dateFormat` (a `%` specifier the server knows, and a
+Moment token named for what it is), `body` (an options document's keys, types
+and `notTogether` families), and `reject` (a count with a message of its own).
+So the dispatcher has already checked that what the cell reads is well-formed.
 
 A callback service that reads a body as a value or as a condition takes the
 mode as an argument: `callback(cb, "truth")`, `objIteratee(cb, "truth")`. A
@@ -926,14 +937,14 @@ a kind no family has — a boolean, an ObjectId — and names the way to the
 type the method takes. A `?.` on a receiver of unproven type takes the
 neutral of the one family the row names.
 
-The callbacks are services, so a cell never binds a parameter itself.
-`callback` is the array callback `(x[, i[, arr]]) => …`: an index read makes
-the input the `[i, x]` pairs of a `$zip`. `reducer` is `(acc, x[, i]) => …`
-with its seed: the accumulator IS `$value` and the element IS `$this` when
-the body is plain arithmetic, and the compiler reads both through a `$let`
-when the body calls anything, because a call may lower to a `$reduce` of its
-own and shadow them. `elements` binds one parameter per position of one
-array element — `.zipWith`'s arrow over a `$zip` pair.
+The callbacks are services, so a cell never binds a parameter itself. `callback`
+is the array callback `(x[, i[, arr]]) => …`: an index read makes the input the
+`[i, x]` pairs of a `$zip`. `reducer` is `(acc, x[, i]) => …` with its seed.
+When the body is plain arithmetic, the accumulator IS `$value` and the element
+IS `$this`. When the body calls anything, the compiler reads both through a
+`$let`, because a call may lower to a `$reduce` of its own and shadow them.
+`elements` binds one parameter per position of one array element — `.zipWith`'s
+arrow over a `$zip` pair.
 
 `objIteratee` is the object callback `(value[, key]) => …`, bound to one
 `$objectToArray` pair. An object method whose lodash iteratee reads the value
@@ -949,23 +960,24 @@ $.a.reduceRight((acc, x) => acc.concat([x]), [])
                "in":{"$let":{"vars":{"acc":"$value","x":"$this"},"in":{"$concatArrays":["$acc",["$x"]]}}}}}
 ```
 
-A rule that reads its arguments as ONE list states `spread: true` on its
-`args`, and the desugar pass packs a spread call's arguments into one array
-literal for it (see [desugar-pass.md](desugar-pass.md)): `({}).assign(...$.docs)`
-reaches its cell as `{ $mergeObjects: <one list> }`
-— the server reads a single array operand there (measured). The fold reads a
-packed list as the call's own arguments, one per element, as JavaScript passes
-them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
+A rule that reads its arguments as ONE list states `spread: true` on its `args`.
+The desugar pass packs a spread call's arguments into one array literal for it
+(see [desugar-pass.md](desugar-pass.md)). `({}).assign(...$.docs)` reaches its
+cell as `{ $mergeObjects: <one list> }`, because the server reads a single array
+operand there (measured). The fold reads a packed list as the call's own
+arguments, one per element, as JavaScript passes them. `[1].concat(...[[2], 3])`
+folds to `[1, 2, 3]`.
 
-**`.assign()` puts the receiver first.** With no spread, each argument is one source:
-`$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
-sources, after the receiver, and it takes the HR5 guard of the array literal:
-`$.a.assign(...$.docs)` is `{ $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }`.
-Without the guard, `$concatArrays` answers null for a missing `docs`, and the merge loses
-the receiver. An empty-object receiver adds nothing, so the cell leaves it out where the
-sources stay objects: `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and
-`({}).assign($.a, $.b)` is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread
-keeps the `{}`: `({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the
+**`.assign()` puts the receiver first.** With no spread, each argument is one
+source: `$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is
+the list of sources, after the receiver, and it takes the HR5 guard of the array
+literal: `$.a.assign(...$.docs)` is `{ $mergeObjects: { $concatArrays: [["$a"],
+{ $ifNull: ["$docs", []] }] } }`. Without the guard, `$concatArrays` answers
+null for a missing `docs`, and the merge loses the receiver. An empty-object
+receiver adds nothing, so the cell leaves it out where the sources stay objects:
+`({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and `({}).assign($.a,
+$.b)` is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread keeps the
+`{}`: `({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the
 one-operand form would merge an array source. The server merges an array in the
 one-operand form, and refuses an array among two or more operands (measured).
 
@@ -1004,16 +1016,16 @@ takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
 [types.md](types.md) § Presence.
 
 The globals follow JavaScript where the two number differently or the server
-holds a different equality. `Date(y, m, d, …)` and `Date.UTC(…)` count
-the month from 0, like `getMonth()`, so the month moves up by one on the way
-to `$dateFromParts` (folded for a literal). `.isNaN()` reads `$toString`,
-because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
-measured), and `.isInteger()` excludes NaN and the infinities the same
-way. Each one binds a computed receiver once in a `$let`, and the receiver check
-refuses the static `Number.isInteger(x)` or `Number.isNaN(x)`. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
-`.toDouble()` is the numeric conversion: the compiler parses `parseInt` and
-`parseFloat` and refuses them, because a bare `parseInt` takes the element
-index as its radix, and `$toInt` refuses a fractional string.
+holds a different equality. `Date(y, m, d, …)` and `Date.UTC(…)` count the month
+from 0, like `getMonth()`, so the month moves up by one on the way to
+`$dateFromParts` (folded for a literal). `.isNaN()` reads `$toString`, because
+the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true, measured), and
+`.isInteger()` excludes NaN and the infinities the same way. Each one binds a
+computed receiver once in a `$let`, and the receiver check refuses the static
+`Number.isInteger(x)` or `Number.isNaN(x)`. `.cbrt()` keeps the sign (`$pow` of
+a negative base to 1/3 is NaN). `.toDouble()` is the numeric conversion. The
+compiler parses `parseInt` and `parseFloat` and refuses them. A bare `parseInt`
+takes the element index as its radix, and `$toInt` refuses a fractional string.
 
 The server has no set type, so the compiler parses `Set` and refuses it in both
 spellings. Each set operation is a method of an array, and the refusal names
@@ -1031,31 +1043,36 @@ HR5 reads a missing receiver as 0 for the same reason. So the presence proof cou
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.
 
-A conversion method, for example `.toDouble()` or `.toBool()`, is MongoDB's `$to…`
-operator over the receiver. `conversion` in `src/registry/names.ts` builds each row. A
-conversion works on every kind (`on: "any"`), so its row states the safe value of the
-kind that it gives (`nullReceiverAs`). Each row also states `passesNull`, because each
-`$to…` operator gives null for null. `.toObjectId()` and `.toUUID()` state no safe value,
-so the dot and `?.` emit one document. Each conversion except `.toBool()` and `.toString()`
-stops the command on `""`, which a string method under a dot gives for a missing string.
+A conversion method, for example `.toDouble()` or `.toBool()`, is MongoDB's
+`$to…` operator over the receiver. `conversion` in `src/registry/names.ts`
+builds each row. A conversion works on every kind (`on: "any"`), so its row
+states the safe value of the kind that it gives (`nullReceiverAs`). Each row
+also states `passesNull`, because each `$to…` operator gives null for null.
+`.toObjectId()` and `.toUUID()` state no safe value, so the dot and `?.` emit
+one document. Each conversion except `.toBool()` and `.toString()` stops the
+command on `""`, which a string method under a dot gives for a missing string.
 So each refusal that names one of them also names the `?.` right after the field
-(`afterStringMethod` in `src/registry/names.ts`). `.toDate()` is the bare `$toDate`, which
-stops the command on an int, so the refusal of `Date(x)` also names `.toLong().toDate()`
-for a number of milliseconds (`MILLIS_TO_DATE`). See docs/LANGUAGE.md § Type conversion methods.
+(`afterStringMethod` in `src/registry/names.ts`). `.toDate()` is the bare
+`$toDate`, which stops the command on an int. So the refusal of `Date(x)` also
+names `.toLong().toDate()` for a number of milliseconds (`MILLIS_TO_DATE`). See
+docs/LANGUAGE.md § Type conversion methods.
 
-A type test, for example `.isString()`, compares the `$type` of the receiver with one
-type name. `typeTest` in `src/registry/names.ts` builds each row. A type test works on
-every kind (`on: "any"`). It states no safe value. `$type` gives `"missing"` for a
-missing receiver, so the test gives false with no `$ifNull`. `.isNumber()` is `$isNumber`, and `.isArray()` is `$isArray`.
-The filter cell writes the query form of `typeof x === "<name>"`, `{ x: { $type: "<name>" } }`.
-`.isUUID()` has no query form, because `$type` names each binary subtype `"binData"`. Its
-value cell adds a `$convert` with the format `"uuid"`, which fails on any other subtype.
-The cell binds a computed receiver once in a `$let`. A row with `on: "any"` takes every
-value. It takes no namespace. The receiver check (`receiverGate` in `src/compiler/emit/select.ts`)
-refuses `Array.isArray(x)`, and the `sibling` sentence of the `isArray` row names `x.isArray()`.
-The filter road reads a namespace receiver as the value road does. The `isUndefined` row refuses
-in every position, because the comparison with `undefined` is the missing-field test.
-See docs/LANGUAGE.md § Type test methods.
+A type test, for example `.isString()`, compares the `$type` of the receiver
+with one type name. `typeTest` in `src/registry/names.ts` builds each row. A
+type test works on every kind (`on: "any"`). It states no safe value. `$type`
+gives `"missing"` for a missing receiver, so the test gives false with no
+`$ifNull`. `.isNumber()` is `$isNumber`, and `.isArray()` is `$isArray`. The
+filter cell writes the query form of `typeof x === "<name>"`, `{ x: { $type:
+"<name>" } }`. `.isUUID()` has no query form, because `$type` names each binary
+subtype `"binData"`. Its value cell adds a `$convert` with the format `"uuid"`,
+which fails on any other subtype. The cell binds a computed receiver once in a
+`$let`. A row with `on: "any"` takes every value. It takes no namespace. The
+receiver check (`receiverGate` in `src/compiler/emit/select.ts`) refuses
+`Array.isArray(x)`, and the `sibling` sentence of the `isArray` row names
+`x.isArray()`. The filter road reads a namespace receiver as the value road
+does. The `isUndefined` row refuses in every position, because the comparison
+with `undefined` is the missing-field test. See docs/LANGUAGE.md § Type test
+methods.
 
 ```
 (5).range(1)          → {"$range":[5,1,-1]}
@@ -1063,20 +1080,20 @@ See docs/LANGUAGE.md § Type test methods.
                          "in":{"$range":[1,"$$jsmqlEnd",{"$cond":[{"$lt":[1,"$$jsmqlEnd"]},1,-1]}]}}}
 ```
 
-A JavaScript aggregate written where a stage takes an ACCUMULATOR — a
-`$group` output field, a `$setWindowFields.output` entry — is the row's
-`group` or `window` cell, and the receiver is the accumulator's operand:
-`$.a.sum()` is `{ $sum: "$a" }`, `.mean()` is `$avg`, `.first()` / `.head()`
-are `$first`, `.last()` is `$last`, `.max()` / `.min()` are their operators.
-`.sumBy(fn)` and `.meanBy(fn)` accumulate each document's OWN value —
-`{ $sum: { $sum: <map> } }`, `{ $avg: { $avg: <map> } }` — because the
-accumulator alone ignores an array operand (`$sum` of an array is 0, and
-`$avg` of one is null, measured). So `.meanBy` in a group is the mean of the
-per-document means. A receiver that renders as an array LITERAL is reduced the same
-way (`slotAggregate` in `src/registry/mql.ts`), because a slot reads
-`{ $sum: [ … ] }` as an operand list, and a `$group` slot refuses it:
-`[$.n, $.m].sum()` is `{ $sum: { $sum: ["$n", "$m"] } }`. A `GroupIn` carries the
-receiver and `iteratee` for these cells; an operator call passes null.
+A JavaScript aggregate written where a stage takes an ACCUMULATOR is the row's
+`group` or `window` cell. Such a place is a `$group` output field or a
+`$setWindowFields.output` entry. The receiver is the accumulator's operand.
+`$.a.sum()` is `{ $sum: "$a" }`, `.mean()` is `$avg`, `.first()` / `.head()` are
+`$first`, `.last()` is `$last`, and `.max()` / `.min()` are their operators.
+`.sumBy(fn)` and `.meanBy(fn)` accumulate each document's OWN value:
+`{ $sum: { $sum: <map> } }` and `{ $avg: { $avg: <map> } }`. The accumulator
+alone ignores an array operand (`$sum` of an array is 0, and `$avg` of one is
+null, measured). So `.meanBy` in a group is the mean of the per-document means.
+The compiler reduces a receiver that renders as an array LITERAL the same way
+(`slotAggregate` in `src/registry/mql.ts`). A slot reads `{ $sum: [ … ] }` as an
+operand list, and a `$group` slot refuses it. So `[$.n, $.m].sum()` is
+`{ $sum: { $sum: ["$n", "$m"] } }`. A `GroupIn` carries the receiver and
+`iteratee` for these cells; an operator call passes null.
 
 ```
 $group({ _id: $.tag, total: $.a.sum(), f: $.a.first() });
@@ -1087,15 +1104,15 @@ $group({ _id: $.tag, q: $.items.sumBy(i => i.q) });
 
 ## The update-document target
 
-`update(source)` is the OBJECT form of an update — what
-`updateOne(filter, …)` takes when it is not a pipeline. Its root position is
-`updateDoc`, and every statement under it stays there (`edge` keeps the
-position below a `Pipeline` and an `UpdateFilter` at that root), so no
-statement sugar rewrites a write: `$.n += 2` IS `{ $inc: { n: 2 } }`, and
-`$.tags.push(x)` IS `{ $push: { tags: x } }`. A document-form update takes
-CONSTANTS — the server reads `"$b"` there as the string — so the compiler
-refuses a read of the document anywhere in a value (`Env.render` at this
-root), and names the pipeline form as the way to compute.
+`update(source)` is the OBJECT form of an update — what `updateOne(filter, …)`
+takes when it is not a pipeline. Its root position is `updateDoc`, and every
+statement under it stays there (`edge` keeps the position below a `Pipeline` and
+an `UpdateFilter` at that root). So no statement sugar rewrites a write:
+`$.n += 2` IS `{ $inc: { n: 2 } }`, and `$.tags.push(x)` IS
+`{ $push: { tags: x } }`. A document-form update takes CONSTANTS. The server
+reads `"$b"` there as the string. So the compiler refuses a read of the document
+anywhere in a value (`Env.render` at this root), and names the pipeline form as
+the way to compute.
 
 | Write | Document |
 |---|---|
@@ -1137,15 +1154,18 @@ rejection that comes from a row quotes the row.
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For
 example, the `.split("")` hint is
-`$.<field>.length().range().map(i => $.<field>.charAt(i))`.
-`.length()` reads a missing string as `""` and answers 0, so the range has a number. `test/compiler-methods.test.ts` reads each such
-hint out of its message, fills in the placeholder, and runs it on the server.
+`$.<field>.length().range().map(i => $.<field>.charAt(i))`. `.length()` reads a
+missing string as `""` and answers 0, so the range has a number.
+`test/compiler-methods.test.ts` reads each such hint out of its message, fills
+in the placeholder, and runs it on the server.
 
 ## What proves the value target
 
 Three suites run it on a live mongod and compare the server's answer with
-JavaScript's own for the same input: [`test/compiler-methods.test.ts`](../../test/compiler-methods.test.ts)
-per method cell, [`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
+JavaScript's own for the same input:
+[`test/compiler-methods.test.ts`](../../test/compiler-methods.test.ts) per
+method cell,
+[`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
 for a folded constant against its run-time lowering, and
 [`test/compiler-returns-agrees.test.ts`](../../test/compiler-returns-agrees.test.ts)
 for each row's measured `returns`. A `toEqual` proves only what JSMQL EMITS;

@@ -6,9 +6,9 @@
 // enum slot, or the keys of an object literal. Each check answers nothing when
 // a slot holds a field path, a computed key, a spread or an expression. So the
 // check refuses only a 100% certain violation, and a probable violation still
-// emits: the server decides what it can decide, and jsmql refuses only what the
-// server always refuses. Each rule read here is a `BodyRule` field or an
-// `Arity` field the row states.
+// emits. The server decides what it can decide. JSMQL refuses only what the
+// server always refuses. Each rule that a check reads here is a `BodyRule` field or an
+// `Arity` field that the row states.
 
 import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
@@ -152,9 +152,9 @@ function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, pr
 }
 
 /**
- * The one wording of a refusal for a value of the wrong kind. Every such refusal calls it,
- * for example the literal checks and the kind check of `select` (see `kindRefusal` in
- * errors.ts), so each one reads the same. `slot` names a key, an argument, an element or
+ * The one wording of a refusal for a value of the wrong kind. Every such refusal calls it, so each one
+ * reads the same. Examples are the literal checks and the kind check of `select`
+ * (see `kindRefusal` in errors.ts). `slot` names a key, an argument, an element or
  * the key of `[…]`, or is "". `found` is the clause after
  * "but", for example `got a string` or `the array holds a number and a string`. `shown` is
  * the call as the source spells it: `'.max()'`, `'+'`, `'$match'`.
@@ -289,8 +289,8 @@ export function checkBody(
   let valueOf: (k: string) => Expr | undefined;
   const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
   if (body !== null) {
-    // The keys of the body are its wire format: neither a spread nor a computed key
-    // can produce one, and the server refuses the document either way.
+    // The keys of the body are its wire format. Neither a spread nor a computed key
+    // can produce one. The server refuses the document either way.
     checkBodyKeys(body);
     const byKey = new Map<string, Expr>();
     for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
@@ -381,8 +381,8 @@ export function checkSlots(
   operands: readonly Expr[],
   /**
    * Does the row state an OBJECT form for this body? When it does, an object
-   * literal is exempt from `slotType` — the date accessors take a date OR the
-   * `{ date, timezone }` document, and the rule stated for the first must not
+   * literal is exempt from `slotType`. The date accessors take a date OR the
+   * `{ date, timezone }` document. The rule that the row states for the first must not
    * refuse the second. The row's own `body` rule judges the second instead. When
    * the row states no object form, an object literal is simply the wrong type:
    * the server refuses `$documents({ a: 1 })`.
@@ -455,8 +455,8 @@ export function checkSlots(
     }
   }
   // The KIND of a slot is HR7's, and `select` judges it from the proof of each operand.
-  // Only the checks that read the SOURCE of a literal stay here: a whole number, and a
-  // field name or a field path, whose rules a kind cannot state.
+  // Only the checks that read the SOURCE of a literal stay here. They are a whole number,
+  // and a field name or a field path, whose rules a kind cannot state.
   // A slot that `slotType` names reads that type; every other operand reads `rest`.
   operands.forEach((e, i) => {
     const t = args.slotType?.[i] ?? args.rest;
@@ -500,8 +500,8 @@ export function checkSlots(
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    // An object literal is exempt, as it is for `slotType`: for a body that may be
-    // a name OR a document, the row's `body` rule describes its keys, and some
+    // An object literal is exempt, as it is for `slotType`. For a body that may be
+    // a name OR a document, the row's `body` rule describes its keys. Some
     // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
     // A run-time value is a constant too: the call supplies it before the compile.

@@ -21,8 +21,8 @@ import type { TokenName } from "./vocabulary.ts";
 
 // NO import of productions.ts, deliberately. A keyword that points at the rules
 // it heads, together with those rules that point back at the keyword they
-// consume, is a type cycle TypeScript refuses. It is also the same fact in two files, and the two
-// can disagree. The edge stays in ONE direction: a rule lists its `tokens`.
+// consume, is a type cycle. TypeScript refuses it. It is also the same fact in two
+// files, and the two can disagree. The edge stays in ONE direction: a rule lists its `tokens`.
 // So the question "which rule does `return` head?" is a search of
 // productions.ts, and there is nothing here to contradict it.
 

@@ -1,14 +1,14 @@
 # `jsmql.stringify` — MQL as the JavaScript that rebuilds it
 
 `jsmql.stringify(value, options?)` turns a compiled MQL document into text. The
-text is **JavaScript source**, not JSON. Each value is written as the
+text is **JavaScript source**, not JSON. The printer writes each value as the
 expression that MAKES it. So the output pastes into a driver script or into
 mongosh and keeps the source's own meaning.
 
 Source: [src/stringify.ts](../../src/stringify.ts). One printer serves every
-surface that shows MQL to a person: the CLI, the landing page, the playground,
-the expectation rewriters, and the compiler's own error messages. None of them
-carries its own copy.
+surface that shows MQL to a person. These surfaces are the CLI, the landing
+page, the playground, the expectation rewriters, and the compiler's own error
+messages. None of them carries its own copy.
 
 ```js
 jsmql.stringify(jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011'));
@@ -84,13 +84,13 @@ The printer picks a few spellings by hand, not by a fixed rule:
 
 ## A tag without the data behind it
 
-Every class reads its data defensively, and the printer falls back to the
-plain object when the data is absent. A plain object may wear the tag — the
-compiler passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it
-is. If the printer called the class's methods on this object, it would throw,
-and take the whole document's output down with it. The legacy `_bsontype:
-"ObjectID"` (uppercase D, bson 1.x) is read as an ObjectId, because the
-compiler reads it as one.
+Every class reads its data defensively, and the printer falls back to the plain
+object when the data is absent. A plain object may wear the tag — the compiler
+passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is. If the
+printer called the class's methods on this object, it would throw, and take the
+whole document's output down with it. The printer reads the legacy `_bsontype:
+"ObjectID"` (uppercase D, bson 1.x) as an ObjectId, because the compiler reads
+it as one.
 
 ## The text holds data, never code
 
@@ -116,8 +116,8 @@ survives.
 
 ## Layout
 
-The printer writes a document on ONE line when it fits inside `width`, and
-breaks it to one entry per line once it does not fit. MQL nests deeply and
+The printer writes a document on ONE line when it fits inside `width`. When it
+does not fit, the printer breaks it to one entry per line. MQL nests deeply and
 narrowly, so a brace on each line would bury the shape the text should show:
 
 ```js

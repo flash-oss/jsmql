@@ -1,13 +1,12 @@
 // INJECTION — the values a call supplies: the parameters of `jsmql.compile` and
 // the `${…}` slots of the template tag. Each bound name in the tree becomes the
-// value itself. It is spelled as a literal node when the source could have
-// spelled it, so it folds and compares like anything written. Otherwise it is
-// held as an `Injected` node — a Date, a binary, or anything that READS AS MQL
-// (a string that starts with `$`, or a document with a `$`-key, a DBRef among
-// them). HR1: an
-// injected value is never an operator or a field reference. The value road
-// wraps such a value in `$literal`, and the query road compares it as written.
-// See docs/LANG_RULES.md.
+// value itself. The pass spells it as a literal node when the source could have
+// spelled it, so it folds and compares like anything written. Otherwise the pass
+// holds it as an `Injected` node. This covers a Date, a binary, and anything that
+// READS AS MQL (a string that starts with `$`, or a document with a `$`-key, a
+// DBRef among them). HR1: an injected value is never an operator or a field
+// reference. The value road wraps such a value in `$literal`. The query road
+// compares it as written. See docs/LANG_RULES.md.
 import type { Expr, Program } from "../../registry/ast.ts";
 import { asLiteral } from "./literal.ts";
 import { bsonTagOf, isPlainObject, isRegExp } from "../../bson.ts";
@@ -32,8 +31,8 @@ export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet(
 /** A value as the node that spells it: a literal when the source could have spelled it, an `Injected` node otherwise. */
 export function spellValue(value: unknown, pos: number): Expr {
   const literal = isMqlShaped(value) ? null : asLiteral(value, pos);
-  // A RegExp the CALL supplies is the developer's own MongoDB regex. A query slot takes it as written,
-  // and a value slot passes it through, where one typed in the source is a pattern for the regex methods.
+  // A RegExp the CALL supplies is the developer's own MongoDB regex. A query slot takes it as written.
+  // A value slot passes it through. A regex typed in the source is a pattern for the regex methods.
   if (literal !== null && literal.type === "RegexLiteral" && isRegExp(value)) return { ...literal, injected: value };
   return literal ?? { type: "Injected", value, pos };
 }

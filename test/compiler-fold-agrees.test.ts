@@ -1,12 +1,12 @@
-// THE proof that constant folding is safe: for every expression the fold can
+// THE proof that constant folding is safe. For every expression the fold can
 // compute, the value it computes equals the value MongoDB computes for the SAME
-// expression left alone: the first constant operand is read from a document, and
+// expression left alone. The first constant operand is read from a document, and
 // the tree lowers with no fold, so the server does the arithmetic itself.
 //
 // Nothing else can establish this. A `toEqual` on emitted MQL proves what jsmql
 // writes down, never that the server agrees — and "agrees" is the entire claim a
-// fold makes. Every rule the fold has that LOOKS like an arbitrary restriction
-// was put there by a failure of this suite:
+// fold makes. Every rule of the fold that LOOKS like an arbitrary restriction
+// has its cause in a failure of this suite:
 //   (0.25).atanh()           JavaScript 0.25541281188299536   server …3
 //   123456789 * 987654321    JavaScript …260                  server …269
 //   (0.5).round()            JavaScript 1                     server 0
@@ -359,7 +359,7 @@ const readsSeed = (mql: unknown): boolean => JSON.stringify(mql).includes('"$f0'
  * The compiler folds a constant expression before it lowers it, so `jsmql.expr("1 + 2")`
  * sends `3` and the server computes nothing. Here the first constant operand of the top
  * node (a receiver, a left operand, a first argument, a first entry) becomes a field of
- * a seeded document, and the tree lowers with no fold. The server then computes the SAME
+ * a seeded document. The tree then lowers with no fold. The server then computes the SAME
  * operation on the SAME value. The other operands stay written, because an argument read
  * from a field can take a different lowering (a computed index, an options document).
  */

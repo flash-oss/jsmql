@@ -4,10 +4,10 @@
 // server runs selects the comparison, not the name of the method. So a set method
 // that gets a fold needs no change here.
 //
-// An operator that builds a value from the elements of a set, one by one, gives a
-// value with the same unspecified order: a list that `$map` or `$filter` makes, a
-// document that `$arrayToObject` makes, and the join of such values. So the answer of
-// those operators is a set answer too, when the operand that carries the order is one.
+// An operator that builds a value from the elements of a set, one by one, gives a value with the same
+// unspecified order. Examples: a list that `$map` or `$filter` makes, a document that `$arrayToObject` makes,
+// and the join of such values. So the answer of those operators is a set answer too, when the operand that
+// carries the order is one.
 
 /** The operators whose answer is a set. */
 const SET_OPERATOR = /^\$set(Union|Intersection|Difference)$/;

@@ -71,7 +71,7 @@ _id     | total | cleared | alerted | reviewed | rejected | autorejected | queri
 
       $$ = $$$.transactions
         .filter(
-          // start to process the deposits of the above accounts
+          // start processing the deposits of the above accounts
           { finInstnId, vanId: $._id, status: "CONFIRMED", direction: "INBOUND" },
         )
         .filter(

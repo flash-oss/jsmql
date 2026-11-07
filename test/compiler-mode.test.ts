@@ -2,9 +2,9 @@
 //
 // The truthiness check is SUBTRACTIVE over the value's proof: the four-way shape for a
 // value nothing is known about, fewer tests as the proof grows. This suite measures the
-// truth table the full shape implements on mongod, and compares it to JavaScript's own
-// `Boolean(v)` for every value class the language can produce (NaN is not supported),
-// and states what each narrower proof leaves of it.
+// truth table that the full shape implements on mongod. It compares the table to JavaScript's own
+// `Boolean(v)` for every value class the language can produce (NaN is not supported).
+// It also states what each narrower proof leaves of it.
 
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";

@@ -1,16 +1,15 @@
 /**
- * HARD RULE: this project connects to ONE mongod, the instance on port 27018 that
- * `npm run fixture:up` starts. MongoDB's default port belongs to the developer's own
- * instance, which holds their real work — this project never reads it, writes it,
- * probes it or measures against it.
+ * HARD RULE: this project connects to ONE mongod, the instance on port 27018 that `npm run fixture:up` starts.
+ * MongoDB's default port belongs to the developer's own instance, which holds their real work. This project
+ * never reads it, writes it, probes it or measures against it.
  *
- * A rule written only in prose gets broken by the next person who copies a URI from a
- * tutorial, so it is a test. Two things are checked:
+ * A rule written only in prose gets broken by the next person who copies a URI from a tutorial, so it is a
+ * test. This test checks two things:
  *
  *   1. No file in the repository names the default port in a connection string.
- *   2. Every database a suite writes to is listed in SCRATCH_DBS, which IS the grant
- *      the scratch user holds. A suite that writes elsewhere gets an authentication
- *      error, and a suite that skips itself would turn that into a silent green.
+ *   2. SCRATCH_DBS lists every database a suite writes to, and it IS the grant the
+ *      scratch user holds. A suite that writes elsewhere gets an authentication
+ *      error. A suite that skips itself would turn that into a silent green.
  *
  * docs/DEVLOG/ is exempt from the first check: it is the historical record, and
  * history says what used to be true.
@@ -31,10 +30,10 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".id
 /**
  * Is this directory a checkout of its own — a nested git worktree?
  *
- * A worktree's root carries `.git` as a FILE that points at the parent repository.
- * The ones under `.claude/worktrees/` are other branches at other commits, and
- * what they say is true of THEM: a session working on a branch from before this
- * rule existed would fail the rule for every session that ran a suite from here.
+ * A worktree's root carries `.git` as a FILE that points at the parent repository. The ones under
+ * `.claude/worktrees/` are other branches at other commits, and what they say is true of THEM. A session on a
+ * branch from before this rule existed would fail the rule. This would happen for every session that ran a
+ * suite from here.
  */
 const isOwnCheckout = (dir: string): boolean => existsSync(join(dir, ".git"));
 /** The historical record states what was once true; every other file states what IS true. */
@@ -98,15 +97,14 @@ describe("the default mongod port is never used", () => {
 });
 
 /**
- * The scratch identity must hold, on every scratch database, what a live suite needs.
- * A missing grant does not fail that suite — each one wraps its setup in try/catch and
- * reads any error as "no server", so it degrades to compile-only AND STILL REPORTS
- * GREEN. The usual way to reach that state is to add a database to SCRATCH_DBS and
- * forget to re-run `npm run fixture:up`.
+ * The scratch identity must hold, on every scratch database, what a live suite needs. A missing grant does not
+ * fail that suite. Each one wraps its setup in try/catch and reads any error as "no server", so it degrades to
+ * compile-only AND STILL REPORTS GREEN. The usual way to reach that state is to add a database to SCRATCH_DBS
+ * and forget to re-run `npm run fixture:up`.
  *
- * The check READS the grant, and does not use it: a drop and a rewrite of the
- * suites' own databases would fight the suites, which vitest runs in parallel.
- * It skips (green) only when the instance is down, like every other live suite.
+ * The check READS the grant and does not use it. A drop and a rewrite of the suites' own databases would fight
+ * the suites, which vitest runs in parallel. It skips (green) only when the instance is down, like every other
+ * live suite.
  */
 describe.skipIf(!(await liveUp()))("the scratch identity holds what a live suite needs", () => {
   it("has readWrite, dbAdmin and indexStats on every scratch database", async () => {

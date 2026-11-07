@@ -67,10 +67,9 @@ async function adminAuthWorks(): Promise<boolean> {
   }
 }
 
-// Launch mongod detached and unref'd so it outlives this process. `--fork` is
-// rejected on macOS in modern MongoDB, so we daemonize it ourselves; mongod still
-// writes its own --logpath / --pidfilepath. ensureUp() polls until it accepts
-// connections.
+// Launch mongod detached and unref'd so it outlives this process. Modern MongoDB
+// rejects `--fork` on macOS, so we daemonize it ourselves. mongod still writes its
+// own --logpath / --pidfilepath. ensureUp() polls until it accepts connections.
 function startMongod(): void {
   mkdirSync(FIXTURE_DBPATH, { recursive: true });
   const child = spawn(
@@ -120,13 +119,14 @@ async function ensureReadonlyUser(admin: MongoClient): Promise<void> {
  * Its roles are `readWrite` on the scratch databases and nothing else, so the
  * integration dataset stays unwritable through it.
  *
- * An existing user is UPDATED, not left alone: the roles follow SCRATCH_DBS,
- * so when you add a database to that list and run `fixture:up` again, it grants it.
+ * The script UPDATES an existing user, and does not leave it alone. The roles follow
+ * SCRATCH_DBS, so when you add a database to that list and run `fixture:up` again, it
+ * grants it.
  */
 async function ensureScratchUser(admin: MongoClient): Promise<void> {
   // What a suite actually does to its own database, and nothing more:
   //  - readWrite  insert the documents it asserts against, and read them back.
-  //  - dbAdmin    DROP the database first. `readWrite` alone cannot, and without it
+  //  - dbAdmin    DROP the database first. `readWrite` alone cannot. Without it
   //               the drop throws, each suite's own try/catch reads that as "no
   //               server", and the suite degrades to compile-only and still
   //               reports GREEN — the silent pass this instance exists to prevent.
@@ -154,8 +154,8 @@ async function ensureScratchUser(admin: MongoClient): Promise<void> {
 }
 
 // Bootstrap the admin (root) + read-only users. On a fresh instance the
-// localhost exception lets us create the first user without credentials; once
-// users exist we just connect as admin and top up the read-only user.
+// localhost exception lets us create the first user without credentials.
+// Once users exist we just connect as admin and top up the read-only user.
 async function bootstrapUsers(): Promise<void> {
   if (await adminAuthWorks()) {
     const admin = new MongoClient(ADMIN_URI);

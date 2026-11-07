@@ -2,14 +2,12 @@ import { describe, it, expect } from "vitest";
 import { jsmql, ObjectId } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
 
-// Compile-time constant folding of `const`/`let` (see docs/specs/let-bindings.md
-// § Constant folding, and docs/specs/desugar-pass.md for the pass that does it).
-// A foldable RHS is evaluated at compile time and inlined at every reference;
-// the declaration emits no stage, and when only one expression survives the
-// program collapses to a Filter. Non-constant RHS keeps the runtime `$set`
-// binding (covered in let-bindings.test.ts). This suite is commit-1 scope:
-// literals, arithmetic, value construction, ObjectId, new Date, index/length,
-// const-chains, and the fold/collapse/edge-case mechanics.
+// Compile-time constant folding of `const`/`let` (see docs/specs/let-bindings.md § Constant folding, and
+// docs/specs/desugar-pass.md for the pass that does it). The compiler evaluates a foldable RHS at compile time
+// and inlines it at every reference. The declaration emits no stage. When only one expression survives, the
+// program collapses to a Filter. Non-constant RHS keeps the runtime `$set` binding (covered in
+// let-bindings.test.ts). This suite is commit-1 scope: literals, arithmetic, value construction, ObjectId, new
+// Date, index/length, const-chains, and the fold/collapse/edge-case mechanics.
 
 describe("const folding — collapse to Filter", () => {
   it("ObjectId const folds and collapses to a Filter", () => {
@@ -185,8 +183,8 @@ describe("const folding — fallback to runtime binding", () => {
     ]);
   });
 
-  // A BigInt folds to a live Long, so the comparison stays a query the index serves
-  // — and matches an ELEMENT of an array field, which the `$expr` form did not.
+  // A BigInt folds to a live Long, so the comparison stays a query that the index serves. It also matches an
+  // ELEMENT of an array field, which the `$expr` form did not.
   it("a BigInt RHS folds to a Long on the query road", () => {
     expect(jsmql("const big = 123n; $match($.n === big)")).toEqual([{ $match: { n: Long.fromString("123") } }]);
   });
@@ -330,8 +328,8 @@ describe("const folding — lodash string methods", () => {
   });
 
   it(".words() folds to an array", () => {
-    // the fold settles the array; a comparison of a field WITH an array is the expression
-    // road, because the query language would read the array as an element match
+    // the fold settles the array. A comparison of a field WITH an array is the expression road, because the
+    // query language would read the array as an element match
     expect(jsmql('const w = "fooBar-baz 9".words(); $.tags === w')).toEqual({
       $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },
     });

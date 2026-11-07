@@ -13,31 +13,31 @@ import {
 // The rule under test (HR1 — see docs/LANG_RULES.md):
 //
 //   A `$`-prefixed string literal typed in SOURCE passes through verbatim in
-//   EVERY context — pipeline, stage body, and `jsmql.expr` alike, at any depth
-//   and inside nested operator calls too. It IS the MQL field ref `$x`, so
+//   EVERY context. The contexts are pipeline, stage body, and `jsmql.expr`, at any
+//   depth and inside nested operator calls too. It IS the MQL field ref `$x`, so
 //   jsmql adds no `$literal` of its own. This makes pasted raw MQL round-trip.
 //
-//   The only `$literal` auto-wrap is HR1's runtime-injected exception: a `"$x"`
-//   that arrives through `jsmql.compile` params or a template-tag `${…}` gets wrapped in
-//   expression position so untrusted input cannot silently become a field ref —
-//   covered in codegen.test.ts, not here (this file uses source-typed sentinels).
+//   The only `$literal` auto-wrap is HR1's runtime-injected exception. The compiler
+//   wraps a `"$x"` that arrives through `jsmql.compile` params or a template-tag `${…}`
+//   in expression position. This way untrusted input cannot silently become a field ref.
+//   codegen.test.ts covers that case, not this file (this file uses source-typed sentinels).
 //   The explicit `$literal("$y")` escape hatch forces a literal anywhere.
 //
-// This file is the comprehensive guard: it loops EVERY operator and EVERY stage
-// so no `$op` can silently regress so that it emits (or drops) a `$literal`.
+// This file is the comprehensive guard. It loops EVERY operator and EVERY stage, so no `$op` can silently
+// regress to emit (or drop) a `$literal`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SENTINEL = "$f"; // a `$`-prefixed string that MUST survive verbatim in a pipeline
 
-/** The operand count a synthetic array-shape call must supply to satisfy any
- *  declared arity rule (exact, the low end of an allowed range, or a min); 2
- *  otherwise. Keeps the pass-through probe arity-valid so it reaches codegen. */
+/** The operand count that a synthetic array-shape call must supply to satisfy any
+ *  declared arity rule. That count is exact, the low end of an allowed range, or a min.
+ *  The default is 2. This keeps the pass-through probe arity-valid so it reaches codegen. */
 function arrayArgCount(name: string): number {
   const a = argCountOf(name);
   if (a === undefined) return 2;
   if (a.none === true) return 0;
-  // A variadic list operator states `atLeast: 1` — one operand is legal only as a
-  // single array literal, and this probe writes the positional form, so it needs two.
+  // A variadic list operator states `atLeast: 1`. One operand is legal only as a single array literal, and this
+  // probe writes the positional form, so it needs two.
   if (a.atLeast !== undefined) return Math.max(a.atLeast, 2);
   return a.exact ?? a.allowed?.[0] ?? 2;
 }
@@ -57,9 +57,8 @@ function callSource(name: string): string {
         .map(() => q)
         .join(", ")})`;
     case "flex":
-      // flex defaults to the single-value form (1 arg); but an arity rule
-      // dictates the count — the comparison ops ($eq/$gt/…) need exactly 2 in
-      // the aggregation position this probe builds.
+      // flex defaults to the single-value form (1 arg), but an arity rule dictates the count. The comparison
+      // ops ($eq/$gt/…) need exactly 2 in the aggregation position this probe builds.
       return `${name}(${Array(argCountOf(name) ? arrayArgCount(name) : 1)
         .fill(q)
         .join(", ")})`;
@@ -68,14 +67,12 @@ function callSource(name: string): string {
   }
 }
 
-// Place the call in a stage whose context the operator is legal in. NOTE: these
-// are deliberately minimal synthetic calls (a single `$f` sentinel per slot,
-// arity-padded through `arrayArgCount`) — they exercise `$literal` pass-through, NOT
-// operator type validity, so an individual call here is not necessarily
-// *runnable* MQL (the sentinel is the wrong BSON type for most slots). We do
-// supply a `sortBy` for the window branch so the common ranking
-// operators stay runnable; the loop's contract is strictly "no spurious
-// `$literal`", asserted on the emitted shape — see test/CLAUDE.md.
+// Place the call in a stage whose context the operator is legal in. NOTE: these are deliberately minimal
+// synthetic calls (a single `$f` sentinel per slot, arity-padded through `arrayArgCount`). They exercise
+// `$literal` pass-through, NOT operator type validity. So an individual call here is not necessarily *runnable*
+// MQL, because the sentinel is the wrong BSON type for most slots. The probe does supply a `sortBy` for the
+// window branch so the common ranking operators stay runnable. The contract of the loop is strictly "no
+// spurious `$literal`", asserted on the emitted shape (see test/CLAUDE.md).
 function stageSourceFor(name: string, call: string): string {
   const positions = positionsOf(name) ?? [];
   if (!positions.includes("value")) {
