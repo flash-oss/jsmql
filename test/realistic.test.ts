@@ -870,6 +870,62 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
   });
 });
 
+describe("pick the warehouse that ships an order (lodash `.findKey`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // `stock` maps each warehouse code to its stock record. `.findKey()` gives the code of
+    // the first warehouse that passes, and no field when no warehouse passes. The
+    // `{ qty: 0 }` shorthand reads each record, as lodash's `_.findKey(stock, { qty: 0 })` does.
+    expect(
+      jsmql`
+$.outOfStockAt = $.stock.findKey({ qty: 0 });
+$.shipFrom = $.stock.findKey((s, site) => site !== $.homeSite && s.qty >= $.qty);
+      `,
+    ).toEqual([
+      {
+        $set: {
+          outOfStockAt: {
+            $getField: {
+              field: "k",
+              input: {
+                $first: {
+                  $filter: {
+                    input: { $objectToArray: { $ifNull: ["$stock", {}] } },
+                    as: "jsmqlKv",
+                    cond: { $let: { vars: { x: "$$jsmqlKv.v" }, in: { $eq: ["$$x.qty", 0] } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $set: {
+          shipFrom: {
+            $getField: {
+              field: "k",
+              input: {
+                $first: {
+                  $filter: {
+                    input: { $objectToArray: { $ifNull: ["$stock", {}] } },
+                    as: "jsmqlKv",
+                    cond: {
+                      $let: {
+                        vars: { s: "$$jsmqlKv.v", site: "$$jsmqlKv.k" },
+                        in: { $and: [{ $ne: ["$$site", "$homeSite"] }, { $gte: ["$$s.qty", "$qty"] }] },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 describe("price bulk orders from a tier table that the compiler computes", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // The tier table is a constant: it reads nothing from the document, the clock or the

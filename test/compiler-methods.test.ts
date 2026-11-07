@@ -57,6 +57,12 @@ const DOC = {
   mixed: [0, 1, "", "a", null, false, true],
   // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
   mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
+  // a document of documents, for the shorthands of an object predicate
+  team: {
+    ann: { active: false, role: "user", tags: ["x"] },
+    bob: { active: true, role: "admin", tags: [] },
+    cy: { active: true, role: "user", tags: ["y", "z"] },
+  },
   // one value of each BSON type that a type test names
   bt: {
     l: Long.fromNumber(5),
@@ -647,6 +653,89 @@ describe("compiler/emit — object methods", () => {
     });
   });
 
+  it("finds the key of the first entry that passes, as lodash's _.findKey does", () => {
+    // lodash's `_.findKey`: the first own key whose value passes, or `undefined`
+    const findKey = <V>(o: Record<string, V> | undefined, p: (v: V, k: string) => unknown): string | undefined =>
+      Object.keys(o ?? {}).find((k) => p(o![k], k));
+    const pairs = (f: string) => ({ $objectToArray: { $ifNull: [f, {}] } });
+    const first = (input: unknown, vars: Record<string, string>, cond: unknown) => ({
+      $getField: {
+        field: "k",
+        input: { $first: { $filter: { input, as: "jsmqlKv", cond: { $let: { vars, in: cond } } } } },
+      },
+    });
+    expect(compiled("$.o.findKey(v => v > 1)", (d) => findKey(d.o, (v) => v > 1))).toEqual(
+      first(pairs("$o"), { v: "$$jsmqlKv.v" }, { $gt: ["$$v", 1] }),
+    );
+    expect(
+      compiled('$.o.findKey((v, k) => k.startsWith("_"))', (d) => findKey(d.o, (_v, k) => k.startsWith("_"))),
+    ).toEqual(
+      first(
+        pairs("$o"),
+        { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
+        { $eq: [{ $indexOfCP: [{ $ifNull: ["$$k", ""] }, "_"] }, 0] },
+      ),
+    );
+    // the predicate reads the JavaScript truth rules: `""` and `0` fail, `[]` passes
+    expect(compiled("$.mo.findKey(v => v)", (d) => findKey(d.mo, (v) => v))).toEqual(
+      first(
+        pairs("$mo"),
+        { v: "$$jsmqlKv.v" },
+        { $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }] },
+      ),
+    );
+    // the shorthands: `_.property`, `_.matches` and `_.matchesProperty` over the VALUE
+    expect(compiled('$.team.findKey("active")', (d) => findKey(d.team, (v) => v.active))).toEqual(
+      first(
+        pairs("$team"),
+        { x: "$$jsmqlKv.v" },
+        {
+          $and: [
+            { $gt: ["$$x.active", null] },
+            { $ne: ["$$x.active", false] },
+            { $ne: ["$$x.active", ""] },
+            { $ne: ["$$x.active", 0] },
+          ],
+        },
+      ),
+    );
+    expect(
+      compiled('$.team.findKey({ active: true, role: "user" })', (d) =>
+        findKey(d.team, (v) => v.active === true && v.role === "user"),
+      ),
+    ).toEqual(
+      first(
+        pairs("$team"),
+        { x: "$$jsmqlKv.v" },
+        { $and: [{ $eq: ["$$x.active", true] }, { $eq: ["$$x.role", "user"] }] },
+      ),
+    );
+    expect(compiled('$.team.findKey(["role", "admin"])', (d) => findKey(d.team, (v) => v.role === "admin"))).toEqual(
+      first(pairs("$team"), { x: "$$jsmqlKv.v" }, { $eq: ["$$x.role", "admin"] }),
+    );
+    // no entry passes, the object is empty, or the field is missing: `undefined`, a missing value on the server
+    compiled("$.o.findKey(v => v > 9)", (d) => findKey(d.o, (v) => v > 9));
+    compiled("({}).findKey(v => v > 1)", () => findKey({}, () => true));
+    compiled("$.nope.findKey(v => v > 1)", () => findKey(undefined, () => true));
+    // a `?.` gives null for a missing receiver, with no null test
+    expect(compiled("$.nope?.findKey(v => v > 1)", () => null)).toEqual({
+      $getField: {
+        field: "k",
+        input: {
+          $first: {
+            $filter: {
+              input: { $objectToArray: "$nope" },
+              as: "jsmqlKv",
+              cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $gt: ["$$v", 1] } } },
+            },
+          },
+        },
+      },
+    });
+    expect(() => expr("$.o.findKey()")).toThrow(/'\.findKey\(predicate\)' requires exactly 1 argument/);
+    expect(() => expr("[1, 2].findKey(v => v > 1)")).toThrow(/defined on 'object'/);
+  });
+
   it("maps, filters and reshapes a document's pairs", () => {
     expect(compiled("$.o.mapValues(v => v * 2)", (d) => ({ a: 2, b: 4, _c: 6 }))).toEqual({
       $arrayToObject: {
@@ -828,6 +917,7 @@ describe("compiler/emit — object methods", () => {
                     "pairs",
                     "mixed",
                     "mo",
+                    "team",
                     "bt",
                   ],
                 ],
@@ -2856,6 +2946,7 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ['$.o.omit(["a"])', {}],
   ["$.o.pickBy(v => v != null)", {}],
   ["$.o.omitBy(v => v == null)", {}],
+  ["$.o.findKey(v => v != null)", undefined],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
   // an object method under a dot runs on `{}` (HR5)
@@ -3527,6 +3618,7 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   mapKeys: ["$.nope?.mapKeys((v, k) => k)", "$.mo.d?.mapKeys((v, k) => k)"],
   omit: ['$.nope?.omit(["a"])', '$.mo.d?.omit(["a"])'],
   pickBy: ["$.nope?.pickBy(v => v > 1)", "$.mo.d?.pickBy(v => v > 1)"],
+  findKey: ["$.nope?.findKey(v => v > 1)", "$.mo.d?.findKey(v => v > 1)"],
   omitBy: ["$.nope?.omitBy(v => v > 1)", "$.mo.d?.omitBy(v => v > 1)"],
   invert: ["$.nope?.invert()", "$.mo.d?.invert()"],
   toPairs: ["$.nope?.toPairs()", "$.mo.d?.toPairs()"],

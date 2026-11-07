@@ -911,6 +911,11 @@ the JavaScript truth rules of [LANGUAGE.md § Truthy and
 falsy](../LANGUAGE.md#truthy-and-falsy). `$.o.pickBy(v => v)` drops a `""`
 value, as lodash does.
 
+`.findKey()` reads the same pairs as `.pickBy()`. Its answer is the `k` of the
+first pair that passes: `$getField` over the `$first` of the `$filter`. When
+no pair passes, `$first` of `[]` is missing, so the answer is missing, as the
+answer of `.find()` is.
+
 Where JavaScript and MongoDB number differently, the cell follows
 JavaScript: `getMonth()` and `getDay()` count from 0 (`$month` and
 `$dayOfWeek` count from 1), so each subtracts 1. The local-time accessors

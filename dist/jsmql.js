@@ -8338,6 +8338,36 @@ var NAMES = {
     group: unsupported("'.omitBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.omitBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  findKey: name({
+    doc: "'.findKey()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    // MEASURED: `$getField` over a `$first` of `$objectToArray: null` is null, for a missing `o` and for `o: null`
+    passesNull: true,
+    on: "object",
+    params: ["value", "key"],
+    // lodash's `_.findKey` takes its shorthands, and each one reads the VALUE, as `.find()` reads the element
+    iterateeSlots: {
+      object: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] }
+    },
+    // MEASURED: the key of the first entry that passes, and MISSING when no entry passes, as `.find()` is
+    returns: "string",
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
+        const it = objIteratee(args[0], "truth");
+        const hit = { $first: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
+        return { $getField: { field: "k", input: hit } };
+      }
+    },
+    stream: unsupported("'.findKey()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.findKey()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findKey();'"
+    ),
+    group: unsupported("'.findKey()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.findKey()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   invert: name({
     doc: "'.invert()' \u2014 see docs/LANGUAGE.md.",
     call: true,

@@ -2559,7 +2559,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The predicate of `findKey` is the same arrow, or one of the [lodash shorthands](#lodash-iteratee-and-predicate-shorthands). A shorthand reads the value of each entry, as lodash's `_.findKey` does.
 
 A reader of an object is a method of the object:
 
@@ -2573,6 +2573,8 @@ $.pick(["name", "age"])               // the document itself is a receiver too �
 $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.pickBy(v => v)                    // keep the truthy entries: JavaScript's rule, so "" and 0 drop out (see Truthy and falsy)
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
+$.o.findKey(v => v > 1)               // the key of the first entry whose value passes
+$.team.findKey({ role: "admin" })     // a shorthand reads the value: _.findKey(team, { role: "admin" })
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
@@ -2586,6 +2588,8 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 ```
 
 > `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
+
+> `findKey` answers the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is. Lodash answers `undefined` in that case.
 
 > `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins, as in lodash. A live mongod verified every shape here.
 
