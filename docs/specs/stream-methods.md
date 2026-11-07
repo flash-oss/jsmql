@@ -369,7 +369,7 @@ Supported body shapes:
 | `(acc, d) => ({ ...acc, [d.id]: d.name })` | `{ k: { $toString: { $ifNull: ["$id", ""] } }, v: "$name" }` |
 | `(acc, d) => ({ ...acc, [d.user.email]: d.score })` | `{ k: { $toString: { $ifNull: ["$user.email", ""] } }, v: "$score" }` (nested paths) |
 | `(acc, d) => ({ ...acc, [d.id]: d })` | `{ k: { $toString: { $ifNull: ["$id", ""] } }, v: "$$ROOT" }` (bare-doc value; see [let-bindings.md](let-bindings.md#the-whole-document-as-a-value)) |
-| `(acc, d) => ({ [d.id]: d.name })` | same as the spread form (the `...acc` is optional, JS-faithful boilerplate) |
+| `(acc, d) => ({ [d.id]: d.name })` | refused: with no `...acc`, each step replaces the accumulator, so JavaScript keeps the last document only. The message names the spread form. |
 
 The init MUST be `{}` (empty object). Mixed shapes (a computed key with static
 keys in the same body) fall through to the static-key object-reducer detector,
