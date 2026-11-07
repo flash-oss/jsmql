@@ -94,6 +94,13 @@ function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
 const fnSource = (fn: (...args: never[]) => unknown): string => Function.prototype.toString.call(fn).trim();
 
 /**
+ * The errors that already carry a frame. An entry can run inside another entry: a
+ * parameter's `toBSON()` can call `jsmql`. Its error then leaves through both entries.
+ * Its `.pos` is a position in the inner source only, so only the inner entry frames it.
+ */
+const FRAMED = new WeakSet<Error>();
+
+/**
  * Run `run`. A compile error that it throws gets the line, the column and the source line
  * of its `.pos` at the end of its message. So a test runner shows where the fault is.
  */
@@ -101,7 +108,8 @@ function framed<T>(src: string, run: () => T): T {
   try {
     return run();
   } catch (e) {
-    if (e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) {
+    if ((e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) && !FRAMED.has(e)) {
+      FRAMED.add(e);
       const before = src.slice(0, e.pos).split("\n");
       const line = before.length;
       const column = before[line - 1].length + 1;
@@ -500,7 +508,8 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
   function compile<P extends Record<string, unknown>>(input: JsmqlCompileFn<P> | string): (params?: P) => R {
     let src: string;
     if (typeof input === "function") src = fnSource(input);
-    else if (typeof input === "string") src = input.trim();
+    // The string as given: `.pos` counts from its first character, as `validate()` counts.
+    else if (typeof input === "string") src = input;
     else {
       const ty = input === null ? "null" : typeof input;
       throw new TypeError(`${api}() expects an arrow function or a string containing one — got ${ty}.`);

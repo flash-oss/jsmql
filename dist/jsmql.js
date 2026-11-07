@@ -28591,11 +28591,13 @@ function isTemplateStringsArray(x) {
   return Array.isArray(x) && Array.isArray(x.raw);
 }
 var fnSource = (fn) => Function.prototype.toString.call(fn).trim();
+var FRAMED = /* @__PURE__ */ new WeakSet();
 function framed(src, run) {
   try {
     return run();
   } catch (e) {
-    if (e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) {
+    if ((e instanceof CodegenError || e instanceof ParseError || e instanceof LexError) && !FRAMED.has(e)) {
+      FRAMED.add(e);
       const before = src.slice(0, e.pos).split("\n");
       const line = before.length;
       const column = before[line - 1].length + 1;
@@ -28899,7 +28901,7 @@ function makeCompile(mode, api) {
   function compile2(input) {
     let src;
     if (typeof input === "function") src = fnSource(input);
-    else if (typeof input === "string") src = input.trim();
+    else if (typeof input === "string") src = input;
     else {
       const ty = input === null ? "null" : typeof input;
       throw new TypeError(`${api}() expects an arrow function or a string containing one \u2014 got ${ty}.`);

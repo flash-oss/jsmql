@@ -107,18 +107,14 @@ call `process.exit` mid-stream.
 
 ## Error rendering
 
-On a thrown compile error, `renderError()` writes three lines to stderr:
-
-1. the CLI's error prefix, then `err.message`;
-2. the source line that contains `err.pos`;
-3. spaces, then a caret `^` under the offending column.
-
-Every JSMQL compile error (`LexError`, `ParseError`, `CodegenError`,
-`UnknownIdentifierError`, or `FunctionInputError`) carries `pos: number`. The
-caret column is `pos - lineStart`. When `pos` is absent or out of range, the
-CLI prints only the first line. A usage error has a different form: a shorter
-prefix, then the message, then a line that points to `jsmql --help`. So the two
-error classes look different.
+On a thrown compile error, `renderError()` writes the CLI's error prefix and
+then `err.message` to stderr. The library ends the message of each positioned
+error with a frame. The frame holds the line and the column, the source line,
+and a caret under the fault (`framed()` in `src/index.ts`). So the CLI adds no
+caret of its own. The frame counts from the first character of the source that
+the CLI passes, which is the input without its trailing whitespace. A usage
+error has a different form: a shorter prefix, then the message, then a line that
+points to `jsmql --help`. So the two error classes look different.
 
 ## Versioning
 

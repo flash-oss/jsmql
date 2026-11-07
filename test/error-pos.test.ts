@@ -86,3 +86,31 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     expect(result.errors[0].message).toMatch(/slot 2/);
   });
 });
+
+describe("a thrown error and .validate() agree on .pos", () => {
+  it("`.compile(string)` counts from the first character of the string, blank lead included", () => {
+    const src = "  ({ x }, { $ }) => $.a.foo(x)";
+    let thrown: { pos?: number } = {};
+    try {
+      jsmql.compile(src)({ x: 1 });
+    } catch (e) {
+      thrown = e as { pos?: number };
+    }
+    expect(thrown.pos).toBe(src.indexOf(".foo"));
+    expect(jsmql.validate(src).errors[0].pos).toBe(src.indexOf(".foo"));
+  });
+
+  it("frames an error once, in the source of the entry that threw it", () => {
+    // The parameter's `toBSON()` runs inside the outer entry, and calls an inner one.
+    const v = { toBSON: () => jsmql.expr("$.a.foo()") };
+    let message = "";
+    try {
+      jsmql.compile("({ v }, { $ }) => $.x === v")({ v });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message.match(/at line \d+, column \d+/g)).toEqual(["at line 1, column 4"]);
+    expect(message).toContain("1 | $.a.foo()");
+    expect(message).not.toContain("$.x === v");
+  });
+});

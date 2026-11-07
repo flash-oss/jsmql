@@ -239,6 +239,16 @@ describe("cli: errors and meta", () => {
     expect(r.stderr).toContain("^");
   });
 
+  it("prints the frame once, at the column of the fault", () => {
+    const r = run(["--argjson", "x", "1"], "  ({ x }, { $ }) => $.a.foo(x)");
+    expect(r.status).toBe(1);
+    expect(r.stderr.match(/\^/g)).toHaveLength(1);
+    // The caret stands under the `.` of `.foo`, where the call starts.
+    const lines = r.stderr.split("\n");
+    const caret = lines.findIndex((l) => l.trim() === "^");
+    expect(lines[caret].indexOf("^")).toBe(lines[caret - 1].indexOf(".foo"));
+  });
+
   it("rejects an unknown option with a usage error (exit 2)", () => {
     const r = run(["--nope", "$.age > 18"]);
     expect(r.status).toBe(2);

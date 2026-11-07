@@ -205,25 +205,12 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
   return jsmql(source);
 }
 
-// Compiler-style error output: the message, then the source line at fault with
-// a caret under the column derived from the error's `.pos`. Every jsmql compile
-// error (LexError / ParseError / CodegenError / UnknownIdentifierError /
-// FunctionInputError) carries `pos: number`. When it is absent, the CLI prints the
-// message alone.
-function renderError(err: unknown, source: string): string {
-  const e = err as { message?: string; pos?: number };
-  const message = typeof e.message === "string" ? e.message : String(err);
-  let out = `jsmql: error: ${message}\n`;
-  const pos = typeof e.pos === "number" ? e.pos : -1;
-  if (pos >= 0 && pos <= source.length && source.length > 0) {
-    const lineStart = source.lastIndexOf("\n", pos - 1) + 1;
-    const nl = source.indexOf("\n", pos);
-    const lineEnd = nl === -1 ? source.length : nl;
-    const lineText = source.slice(lineStart, lineEnd);
-    const col = pos - lineStart;
-    out += `  ${lineText}\n  ${" ".repeat(col)}^\n`;
-  }
-  return out;
+// Compiler-style error output. A compile error from the library already ends with
+// its frame: the line, the column, the source line and a caret under the fault
+// (`framed` in index.ts). So the CLI prints the message as it is.
+function renderError(err: unknown): string {
+  const message = typeof (err as { message?: unknown }).message === "string" ? (err as Error).message : String(err);
+  return `jsmql: error: ${message}\n`;
 }
 
 function usageExit(message: string): number {
@@ -277,7 +264,7 @@ function main(): number {
     process.stdout.write(stringify(result, { indent: opts.indent, width: opts.width }) + "\n");
     return 0;
   } catch (err) {
-    process.stderr.write(renderError(err, source));
+    process.stderr.write(renderError(err));
     return 1;
   }
 }
