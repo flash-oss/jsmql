@@ -112,6 +112,7 @@ const EXPRESSIONS: readonly string[] = [
   '"ab".repeat(3)',
   '"5".padStart(3, "0")',
   '"5".padEnd(3, "-")',
+  '"5".pad(4, "-")',
   '"a,b,c".split(",")',
   '"hello".charAt(4)',
   '"hello" + "!"',

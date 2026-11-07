@@ -54,6 +54,7 @@ for (const v of STRING_SAMPLES) {
     ".padStart(10)",
     '.padStart(10, "*")',
     ".padEnd(10)",
+    '.pad(10, "*")',
     ' + "!" + "?"',
     // lodash string family
     ".capitalize()",

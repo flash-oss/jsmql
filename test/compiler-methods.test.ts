@@ -57,6 +57,12 @@ const DOC = {
   mixed: [0, 1, "", "a", null, false, true],
   // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
   mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
+  // a document of documents, for the shorthands of an object predicate
+  team: {
+    ann: { active: false, role: "user", tags: ["x"] },
+    bob: { active: true, role: "admin", tags: [] },
+    cy: { active: true, role: "user", tags: ["y", "z"] },
+  },
   // one value of each BSON type that a type test names
   bt: {
     l: Long.fromNumber(5),
@@ -65,6 +71,8 @@ const DOC = {
     uuid: new UUID("6ac24965-7917-4323-8d44-920ad1d69b94"),
     bin: new Binary(Buffer.from("hi")),
   },
+  // an object whose values give one key more than once, for `.invertBy()`
+  inv: { a: { k: "x", n: 1 }, b: { k: "y", n: 2 }, c: { k: "x", n: 3 }, d: { n: 4 } },
 };
 
 type Case = { src: string; js: (d: typeof DOC) => unknown; note?: string; unordered?: true };
@@ -122,42 +130,30 @@ describe("compiler/emit — string methods", () => {
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
         in: {
-          $concat: [
-            {
-              $reduce: {
-                input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
-                initialValue: "",
-                in: { $concat: ["$$value", "-"] },
-              },
-            },
-            "$$jsmqlPad",
-          ],
+          $reduce: {
+            input: { $range: [7, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["-", "$$value"] },
+          },
         },
       },
     });
-    expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toEqual({
+    expect(compiled('$.csv.padEnd(8, "x")', (d) => d.csv.padEnd(8, "x"))).toEqual({
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
         in: {
-          $concat: [
-            "$$jsmqlPad",
-            {
-              $substrCP: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "xy"] },
-                  },
-                },
-                0,
-                { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
-              ],
-            },
-          ],
+          $reduce: {
+            input: { $range: [8, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $concat: ["$$value", "x"] },
+          },
         },
       },
     });
+    // a string that is long enough stays as it is, and a "$" pad stays text
+    compiled('$.csv.padStart(3, "-")', (d) => d.csv.padStart(3, "-"));
+    compiled('$.csv.padEnd(9, "$")', (d) => d.csv.padEnd(9, "$"));
+    compiled("$.nope.padStart(3)", () => "   ");
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
       $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", { $ifNull: ["$csv", ""] }] } },
     });
@@ -647,6 +643,89 @@ describe("compiler/emit — object methods", () => {
     });
   });
 
+  it("finds the key of the first entry that passes, as lodash's _.findKey does", () => {
+    // lodash's `_.findKey`: the first own key whose value passes, or `undefined`
+    const findKey = <V>(o: Record<string, V> | undefined, p: (v: V, k: string) => unknown): string | undefined =>
+      Object.keys(o ?? {}).find((k) => p(o![k], k));
+    const pairs = (f: string) => ({ $objectToArray: { $ifNull: [f, {}] } });
+    const first = (input: unknown, vars: Record<string, string>, cond: unknown) => ({
+      $getField: {
+        field: "k",
+        input: { $first: { $filter: { input, as: "jsmqlKv", cond: { $let: { vars, in: cond } } } } },
+      },
+    });
+    expect(compiled("$.o.findKey(v => v > 1)", (d) => findKey(d.o, (v) => v > 1))).toEqual(
+      first(pairs("$o"), { v: "$$jsmqlKv.v" }, { $gt: ["$$v", 1] }),
+    );
+    expect(
+      compiled('$.o.findKey((v, k) => k.startsWith("_"))', (d) => findKey(d.o, (_v, k) => k.startsWith("_"))),
+    ).toEqual(
+      first(
+        pairs("$o"),
+        { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
+        { $eq: [{ $indexOfCP: [{ $ifNull: ["$$k", ""] }, "_"] }, 0] },
+      ),
+    );
+    // the predicate reads the JavaScript truth rules: `""` and `0` fail, `[]` passes
+    expect(compiled("$.mo.findKey(v => v)", (d) => findKey(d.mo, (v) => v))).toEqual(
+      first(
+        pairs("$mo"),
+        { v: "$$jsmqlKv.v" },
+        { $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }] },
+      ),
+    );
+    // the shorthands: `_.property`, `_.matches` and `_.matchesProperty` over the VALUE
+    expect(compiled('$.team.findKey("active")', (d) => findKey(d.team, (v) => v.active))).toEqual(
+      first(
+        pairs("$team"),
+        { x: "$$jsmqlKv.v" },
+        {
+          $and: [
+            { $gt: ["$$x.active", null] },
+            { $ne: ["$$x.active", false] },
+            { $ne: ["$$x.active", ""] },
+            { $ne: ["$$x.active", 0] },
+          ],
+        },
+      ),
+    );
+    expect(
+      compiled('$.team.findKey({ active: true, role: "user" })', (d) =>
+        findKey(d.team, (v) => v.active === true && v.role === "user"),
+      ),
+    ).toEqual(
+      first(
+        pairs("$team"),
+        { x: "$$jsmqlKv.v" },
+        { $and: [{ $eq: ["$$x.active", true] }, { $eq: ["$$x.role", "user"] }] },
+      ),
+    );
+    expect(compiled('$.team.findKey(["role", "admin"])', (d) => findKey(d.team, (v) => v.role === "admin"))).toEqual(
+      first(pairs("$team"), { x: "$$jsmqlKv.v" }, { $eq: ["$$x.role", "admin"] }),
+    );
+    // no entry passes, the object is empty, or the field is missing: `undefined`, a missing value on the server
+    compiled("$.o.findKey(v => v > 9)", (d) => findKey(d.o, (v) => v > 9));
+    compiled("({}).findKey(v => v > 1)", () => findKey({}, () => true));
+    compiled("$.nope.findKey(v => v > 1)", () => findKey(undefined, () => true));
+    // a `?.` gives null for a missing receiver, with no null test
+    expect(compiled("$.nope?.findKey(v => v > 1)", () => null)).toEqual({
+      $getField: {
+        field: "k",
+        input: {
+          $first: {
+            $filter: {
+              input: { $objectToArray: "$nope" },
+              as: "jsmqlKv",
+              cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $gt: ["$$v", 1] } } },
+            },
+          },
+        },
+      },
+    });
+    expect(() => expr("$.o.findKey()")).toThrow(/'\.findKey\(predicate\)' requires exactly 1 argument/);
+    expect(() => expr("[1, 2].findKey(v => v > 1)")).toThrow(/defined on 'object'/);
+  });
+
   it("maps, filters and reshapes a document's pairs", () => {
     expect(compiled("$.o.mapValues(v => v * 2)", (d) => ({ a: 2, b: 4, _c: 6 }))).toEqual({
       $arrayToObject: {
@@ -828,7 +907,9 @@ describe("compiler/emit — object methods", () => {
                     "pairs",
                     "mixed",
                     "mo",
+                    "team",
                     "bt",
+                    "inv",
                   ],
                 ],
               },
@@ -1884,7 +1965,7 @@ describe("compiler/emit — array methods", () => {
   });
 
   it("refuses what the server or JavaScript would", () => {
-    expect(() => expr("$.a.take(-1)")).toThrow(/from 0 to Infinity/);
+    expect(() => expr("$.a.take(-1)")).toThrow(/of 0 or more/);
     expect(() => expr("$.a.chunk($.n)")).toThrow(/compile-time constant/);
     expect(() => expr("$.a.flat(2)")).toThrow(/from 1 to 1/);
     expect(() => expr("$.a.has(x => x > 1)")).toThrow(/searches for a VALUE/);
@@ -1957,6 +2038,113 @@ describe("compiler/emit — array methods", () => {
 const byIndex = (rows: readonly (readonly number[])[], i: number) => ({
   groups: rows.reduce<Record<string, number[][]>>((o, r) => ({ ...o, [r[i]]: [...(o[r[i]] ?? []), [...r]] }), {}),
   counts: rows.reduce<Record<string, number>>((o, r) => ({ ...o, [r[i]]: (o[r[i]] ?? 0) + 1 }), {}),
+});
+
+/**
+ * lodash's `_.invertBy`: the original keys, grouped by the string of the iteratee's
+ * result, in entry order. JSMQL spells a missing result as `"null"`, as `.groupBy()`
+ * does. lodash spells it `"undefined"`. So a case with a missing result maps it to null.
+ */
+const invertBy = (o: Record<string, unknown>, f: (v: any) => unknown = (v) => v): Record<string, string[]> => {
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(o)) (out[String(f(v))] ??= []).push(k);
+  return out;
+};
+
+describe("compiler/emit — `.invertBy()` gives lodash's `_.invertBy` object", () => {
+  it("groups the original keys by the iteratee's result, as strings", () => {
+    expect(compiled("$.o.invertBy()", (d) => invertBy(d.o))).toEqual({
+      $let: {
+        vars: {
+          jsmqlEntries: {
+            $map: {
+              input: { $objectToArray: { $ifNull: ["$o", {}] } },
+              as: "jsmqlKv",
+              in: { k: { $ifNull: [{ $toString: "$$jsmqlKv.v" }, "null"] }, v: "$$jsmqlKv.k" },
+            },
+          },
+        },
+        in: {
+          $arrayToObject: {
+            $map: {
+              input: { $setUnion: ["$$jsmqlEntries.k", []] },
+              as: "jsmqlKey",
+              in: {
+                k: "$$jsmqlKey",
+                v: {
+                  $map: {
+                    input: { $filter: { input: "$$jsmqlEntries", cond: { $eq: ["$$this.k", "$$jsmqlKey"] } } },
+                    in: "$$this.v",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    // two keys on one result: the group keeps the entry order
+    expect(compiled("$.inv.invertBy(v => v.n % 2)", (d) => invertBy(d.inv, (v) => v.n % 2))).toEqual({
+      $let: {
+        vars: {
+          jsmqlEntries: {
+            $map: {
+              input: { $objectToArray: { $ifNull: ["$inv", {}] } },
+              as: "jsmqlKv",
+              in: {
+                k: {
+                  $ifNull: [
+                    { $toString: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $mod: ["$$v.n", 2] } } } },
+                    "null",
+                  ],
+                },
+                v: "$$jsmqlKv.k",
+              },
+            },
+          },
+        },
+        in: {
+          $arrayToObject: {
+            $map: {
+              input: { $setUnion: ["$$jsmqlEntries.k", []] },
+              as: "jsmqlKey",
+              in: {
+                k: "$$jsmqlKey",
+                v: {
+                  $map: {
+                    input: { $filter: { input: "$$jsmqlEntries", cond: { $eq: ["$$this.k", "$$jsmqlKey"] } } },
+                    in: "$$this.v",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    // a number, a boolean, an empty string and null each become a key
+    compiled('$.mo.omit(["g"]).invertBy()', (d) =>
+      invertBy(Object.fromEntries(Object.entries(d.mo).filter(([k]) => k !== "g"))),
+    );
+    compiled("$.o.invertBy(v => v / 2)", (d) => invertBy(d.o, (v) => v / 2));
+    // an empty object, and a missing one under a dot, give the empty object
+    compiled("$.o.pickBy(v => v > 5).invertBy()", () => ({}));
+    compiled("$.nope.invertBy()", () => ({}));
+  });
+
+  it("takes each iteratee shorthand that `.groupBy()` takes", () => {
+    const same = (short: string, long: string, js: (d: typeof DOC) => unknown) => {
+      expect(compiled(short, js)).toEqual(expr(long));
+    };
+    // `d` holds no `k`: a missing result is the key "null"
+    same('$.inv.invertBy("k")', "$.inv.invertBy(x => x.k)", (d) => invertBy(d.inv, (v: { k?: string }) => v.k ?? null));
+    same('$.inv.invertBy({ k: "x" })', '$.inv.invertBy(x => x.k === "x")', (d) =>
+      invertBy(d.inv, (v: { k?: string }) => v.k === "x"),
+    );
+    same('$.inv.invertBy(["k", "y"])', '$.inv.invertBy(x => x.k === "y")', (d) =>
+      invertBy(d.inv, (v: { k?: string }) => v.k === "y"),
+    );
+  });
 });
 
 describe("compiler/emit — a whole number in an iteratee slot is lodash's `_.property(n)`", () => {
@@ -2092,6 +2280,81 @@ describe("compiler/emit — number ranges", () => {
 
   it("leaves the $range escape hatch as raw MQL", () => {
     expect(expr("$range(5)")).toEqual({ $range: 5 });
+  });
+});
+
+/** lodash's `_.pad` for a pad of one character, the answer each `.pad()` case compares with. */
+const lodashPad = (string: unknown, length?: number, chars?: string): string => {
+  const s = string == null ? "" : String(string);
+  const size = [...s].length;
+  const target = Math.trunc(Number(length ?? 0)) || 0;
+  if (!target || size >= target) return s;
+  const fill = (n: number): string => (chars ?? " ").repeat(n);
+  const mid = (target - size) / 2;
+  return fill(Math.floor(mid)) + s + fill(Math.ceil(mid));
+};
+
+describe("compiler/emit — `.pad()` is lodash's `_.pad`", () => {
+  it("adds the pad on alternate sides, and gives the end the odd character", () => {
+    // the step whose `$$this` has the parity of the length adds at the end
+    expect(compiled("$.csv.pad(9)", (d) => lodashPad(d.csv, 9))).toEqual({
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $reduce: {
+            input: { $range: [9, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $cond: [{ $mod: ["$$this", 2] }, { $concat: ["$$value", " "] }, { $concat: [" ", "$$value"] }] },
+          },
+        },
+      },
+    });
+    expect(compiled('$.csv.pad(8, "*")', (d) => lodashPad(d.csv, 8, "*"))).toEqual({
+      $let: {
+        vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
+        in: {
+          $reduce: {
+            input: { $range: [8, { $strLenCP: "$$jsmqlPad" }, -1] },
+            initialValue: "$$jsmqlPad",
+            in: { $cond: [{ $mod: ["$$this", 2] }, { $concat: ["*", "$$value"] }, { $concat: ["$$value", "*"] }] },
+          },
+        },
+      },
+    });
+    compiled('$.csv.pad(6, "$")', (d) => lodashPad(d.csv, 6, "$"));
+    compiled('$.csv.pad(7, "-")', (d) => lodashPad(d.csv, 7, "-"));
+  });
+
+  it("keeps the string when the length is not more than the string", () => {
+    compiled('$.csv.pad(2, "-")', (d) => lodashPad(d.csv, 2, "-"));
+    compiled('$.csv.pad(5, "-")', (d) => lodashPad(d.csv, 5, "-"));
+  });
+
+  it("pads the empty string for a missing receiver, and answers null after `?.`", () => {
+    compiled('$.nope.pad(5, "-")', () => lodashPad(undefined, 5, "-"));
+    expect(compiled("$.nope?.pad(5)", () => null)).toHaveProperty("$cond");
+  });
+
+  it("folds a constant receiver", () => {
+    expect(compiled('"abc".pad(8, "_")', () => lodashPad("abc", 8, "_"))).toBe("__abc___");
+  });
+
+  it("takes a constant length of 1 or more and a pad of one ASCII character", () => {
+    expect(() => expr("$.s.pad($.n)")).toThrow(
+      "'.pad()' argument 1 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
+    );
+    expect(() => expr("$.s.pad(5, $.c)")).toThrow(
+      "'.pad()' argument 2 must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.",
+    );
+    expect(() => expr("$.s.pad(0)")).toThrow("'.pad()' argument 1 must be a number of 1 or more. It got 0.");
+    expect(() => expr("$.s.pad(-4)")).toThrow("'.pad()' argument 1 must be a number of 1 or more. It got -4.");
+    expect(() => expr('$.s.pad(5, "ab")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "ab".`);
+    expect(() => expr('$.s.pad(5, "")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "".`);
+    expect(() => expr('$.s.pad(5, "é")')).toThrow(`'.pad()' argument 2 takes one ASCII character, but got "é".`);
+    expect(() => expr('$.s.pad("3")')).toThrow("'.pad()' argument 1 takes an integer, but got a string.");
+    expect(() => expr("$.s.pad(3, 0)")).toThrow("'.pad()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.s.pad(null)")).toThrow("'.pad()' argument 1 takes an integer, but got null.");
+    expect(() => expr("$.s.pad()")).toThrow("'.pad(length[, pad])' requires 1 or 2 arguments, got 0");
   });
 });
 
@@ -2856,7 +3119,10 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ['$.o.omit(["a"])', {}],
   ["$.o.pickBy(v => v != null)", {}],
   ["$.o.omitBy(v => v == null)", {}],
+  ["$.o.findKey(v => v != null)", undefined],
   ["$.o.invert()", {}],
+  ["$.o.invertBy()", {}],
+  ['$.o.invertBy("k")', {}],
   ["$.o.toPairs()", []],
   // an object method under a dot runs on `{}` (HR5)
   ["$.o.keys()", []],
@@ -3214,6 +3480,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   search: ["$.csv.search(/z/)"],
   padStart: ["$.csv.padStart(9)"],
   padEnd: ["$.csv.padEnd(9)"],
+  pad: ["$.csv.pad(9)"],
   repeat: ["$.csv.repeat(2)"],
   indexOf: ["$.a.indexOf(9)"],
   indexOfSubstring: ['$.csv.indexOfSubstring("b")'],
@@ -3317,6 +3584,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   pickBy: ["$.o.pickBy(v => v > 1)"],
   omitBy: ["$.o.omitBy(v => v > 1)"],
   invert: ["$.o.invert()"],
+  invertBy: ["$.o.invertBy()"],
   toPairs: ["$.o.toPairs()"],
   assign: ["$.o.assign({ z: 1 })", "$.o.assign($.nope)"],
   // numbers and Math
@@ -3475,7 +3743,6 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   indexOfSubstring: ['$.nope?.indexOfSubstring("b")', '$.mo.d?.indexOfSubstring("b")'],
   replace: ['$.nope?.replace("a", "x")', '$.mo.d?.replace("a", "x")'],
   replaceAll: ['$.nope?.replaceAll(",", ";")', '$.mo.d?.replaceAll(",", ";")'],
-  padEnd: ["$.nope?.padEnd(9)", "$.mo.d?.padEnd(9)"],
   repeat: ["$.nope?.repeat(2)", "$.mo.d?.repeat(2)"],
   escape: ["$.nope?.escape()", "$.mo.d?.escape()"],
   toReversed: ["$.nope?.toReversed()", "$.mo.d?.toReversed()"],
@@ -3524,8 +3791,10 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   mapKeys: ["$.nope?.mapKeys((v, k) => k)", "$.mo.d?.mapKeys((v, k) => k)"],
   omit: ['$.nope?.omit(["a"])', '$.mo.d?.omit(["a"])'],
   pickBy: ["$.nope?.pickBy(v => v > 1)", "$.mo.d?.pickBy(v => v > 1)"],
+  findKey: ["$.nope?.findKey(v => v > 1)", "$.mo.d?.findKey(v => v > 1)"],
   omitBy: ["$.nope?.omitBy(v => v > 1)", "$.mo.d?.omitBy(v => v > 1)"],
   invert: ["$.nope?.invert()", "$.mo.d?.invert()"],
+  invertBy: ['$.nope?.invertBy("k")', '$.mo.d?.invertBy("k")'],
   toPairs: ["$.nope?.toPairs()", "$.mo.d?.toPairs()"],
   getFullYear: ["$.nope?.getFullYear()", "$.mo.d?.getFullYear()"],
   getMonth: ["$.nope?.getMonth()", "$.mo.d?.getMonth()"],

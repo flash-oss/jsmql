@@ -1827,15 +1827,30 @@ $.first.trim() + " " + $.last      // { $concat: [{ $trim: ... }, " ", "$last"] 
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: { $ifNull: ["$email", ""] }, regex: "^[a-z]" } }
 $.text.matchAll(/word/g)           // { $regexFindAll: { input: { $ifNull: ["$text", ""] }, regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
-$.code.padStart(5, "0")            // padded via $reduce + $range + $concat (no length guard — an already-long string concats an empty filler)
-$.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
-$.note.padEnd(10)                  // (default pad char is space)
+$.code.padStart(5, "0")            // "42" → "00042"   (see "Padding" below)
+$.note.padEnd(10)                  // the default pad is a space
 "-".repeat($.n)                    // $reduce concatenating "-" n times
 
 // Regex receiver methods — equivalent to .match / .search-style calls
 /^[a-z]/.test($.s)                 // { $regexMatch: { input: "$s", regex: "^[a-z]" } }
 /word/i.exec($.s)                  // { $regexFind: { input: "$s", regex: "word", options: "i" } }
 /word/gi.test($.s)                 // { $regexMatch: { input: "$s", regex: "word", options: "i" } }  — g dropped
+```
+
+**Padding.** `.padStart(length[, pad])`, `.padEnd(length[, pad])` and `.pad(length[, pad])` take a
+constant length of 1 or more. The pad is one ASCII character, and it is a space when you omit it. A string that is `length` or longer stays the same. `.pad()` pads both sides, as lodash's
+`_.pad` does. When the padding is an odd number of characters, the end gets one more character.
+JavaScript also accepts a length from the data, a pad of two or more characters and a non-ASCII pad.
+JSMQL refuses them, because a fixed width is the padding that analytics needs. For other padding,
+write the MQL yourself with `$reduce` and `$concat`.
+
+```js
+$.code.padStart(5, "0")            // { $let: { vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
+                                   //   in: { $reduce: { input: { $range: [5, { $strLenCP: "$$jsmqlPad" }, -1] },
+                                   //     initialValue: "$$jsmqlPad", in: { $concat: ["0", "$$value"] } } } } }
+$.code.pad(8, "*")                 // "abc" → "**abc***"
+$.code.padStart($.width)           // ✗ the length must be a constant
+$.code.padStart(5, "ab")           // ✗ the pad is one character
 ```
 
 **`.endsWith()` and indices out of range.** MongoDB's `$substrCP` is stricter than the string
@@ -1896,11 +1911,10 @@ $.s.indexOfSubstring("b", $.from)  // { $indexOfCP: [{ $ifNull: ["$s", ""] }, "b
 missing or null, and every derived length needs `$strLenCP`. So JSMQL coerces the receiver of every
 length that it derives: `.endsWith()` binds `{ $ifNull: ["$file", ""] }` above.
 
-A string method on a receiver that JSMQL cannot prove is there gets a test first, and answers
-`null`. This is the JavaScript-method rule of [Type-aware dispatch](#type-aware-dispatch). On an
-absent field, `.length()`, `.padStart(5, "0")` and `.endsWith(…)` are all `null`. A *type* mismatch
-is still an error: an array or a number where the method expects a string fails as the server
-reports it.
+A string method on an absent field runs on `""`, and after `?.` it answers `null` (HR5, see
+[Type-aware dispatch](#type-aware-dispatch)). So on an absent field, `.length()` is `0`,
+`.padStart(5, "0")` is `"00000"` and `.endsWith(…)` is `false`. A *type* mismatch is still an error:
+an array or a number where the method expects a string fails as the server reports it.
 
 Note: JSMQL folds the length of a **literal** at compile time. It counts **code points**, as
 `$strLenCP` does, not the UTF-16 units of JS. So `"a👍b"` is 3, not 4.
@@ -1938,6 +1952,7 @@ $.s.startCase()          // "foo_bar" → "Foo Bar"
 $.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
 $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
+$.s.pad(8, "_")          // "abc" → "__abc___"      (both sides; see "Padding" above)
 ```
 
 `.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLower()` and `.toUpper()` change only the case, and keep all other characters.
@@ -2356,7 +2371,7 @@ A **key function** can name a deep path: `x => x.a.b.c` → `sortBy: { "a.b.c": 
 
 #### lodash iteratee and predicate shorthands
 
-Every higher-order value method accepts the same lodash vocabulary of iteratees and predicates. This includes the native JS methods (`.map`, `.filter`, `.find`, `.findIndex`, `.findLast`, `.some`, `.every`, `.flatMap`) and the lodash methods (`.sumBy`, `.uniqBy`, `.groupBy`, `.reject`, `.takeWhile`, `.differenceBy`, …). Each shorthand desugars to exactly what the equivalent one-parameter arrow emits:
+Most higher-order value methods accept the shorthands below, for example `.filter({ active: true })`. Some methods take an arrow only, for example `.reduce((acc, x) => …)` and `.mapValues((v, k) => …)`. The `iterateeSlots` cell of each row in `src/registry/names.ts` states which slots accept which shorthands. Each shorthand desugars to exactly what the equivalent one-parameter arrow emits:
 
 | shorthand | example | equivalent arrow |
 |---|---|---|
@@ -2559,7 +2574,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The predicate of `findKey` is the same arrow, or one of the [lodash shorthands](#lodash-iteratee-and-predicate-shorthands). A shorthand reads the value of each entry. The iteratee of `invertBy` reads the value only, as in lodash, so it takes the same shorthands as `groupBy`.
 
 A reader of an object is a method of the object:
 
@@ -2573,7 +2588,11 @@ $.pick(["name", "age"])               // the document itself is a receiver too �
 $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.pickBy(v => v)                    // keep the truthy entries: JavaScript's rule, so "" and 0 drop out (see Truthy and falsy)
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
+$.o.findKey(v => v > 1)               // the key of the first entry whose value passes
+$.team.findKey({ role: "admin" })     // a shorthand reads the value of each entry
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
+$.o.invertBy()                        // { <value>: [keys that hold it] } — no key is lost
+$.team.invertBy("role")               // { admin: ["bob"], user: ["ann", "cy"] }
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
 
@@ -2587,7 +2606,9 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
 
-> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins, as in lodash. A live mongod verified every shape here.
+> `findKey` answers the key of the FIRST entry that passes, in the order of the stored document. When no entry passes, the answer is missing, as the answer of `.find()` is.
+
+> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys`, `invert` and `invertBy` **stringify** the key that they make, with `$toString`. When two keys have the same name, `mapKeys` and `invert` keep the last one, as in lodash. `invertBy` keeps every original key in a list, in entry order, and the order of its new keys is unspecified. A missing or null iteratee result becomes the key `"null"`, as in `groupBy`. lodash spells a missing result `"undefined"`. A live mongod verified every shape here.
 
 > **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. `_.pick(undefined, …)` is `{}` and `({}).keys()` is `[]`, and each method gives that answer. Write `?.`, and the chain stops with `null` instead:
 >

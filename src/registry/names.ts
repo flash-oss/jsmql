@@ -37,7 +37,6 @@ import {
   indexedPairs,
   isFiniteNumber,
   isIfNullWrapped,
-  isSingleCodePointLiteral,
   iterateeKeys,
   joinWords,
   joinedWith,
@@ -1105,29 +1104,38 @@ const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } },
 ];
 
-/** `.padStart` / `.padEnd`: the pad, repeated to the target length, and cut to fit when it is more than one character. */
+/**
+ * `.padStart`, `.padEnd` and `.pad` take a constant length of 1 or more and a pad of one ASCII
+ * character (the `args` of each row). One `$reduce` adds the pad once for each missing character.
+ * Its `$range` counts down from the length to the length of the string. MEASURED: the range is
+ * empty when the string is long enough, so the string stays as it is.
+ *
+ * `.pad` adds the pad at the end on the first step, then at the start, and so on. So the end takes
+ * the odd character, as `_.pad` does. `$$this` is the length on the first step, so a step whose
+ * `$$this` has the parity of the length adds at the end.
+ */
 function padded(
-  side: "start" | "end",
+  side: "start" | "end" | "both",
   recv: unknown,
   args: readonly Expr[],
   value: (e: Expr) => unknown,
   bind: (hint: string) => Minted,
 ): unknown {
-  const target = value(args[0]);
+  // the row's `constant` and `slotRange` rules hold the length to a whole number of 1 or more
+  const length = value(args[0]) as number;
   const pad = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
-  const need = { $subtract: [target, { $strLenCP: v.ref }] };
-  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
-  const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
-  // A target the DATA decides can be missing or null, and `$range` refuses a
-  // non-numeric end — measured, it stops the whole query. JavaScript pads nothing
-  // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
-  // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
-  // and a target already shorter than the string. A number LITERAL needs no test.
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
+  const atStart = { $concat: [pad, "$$value"] };
+  const atEnd = { $concat: ["$$value", pad] };
+  const step =
+    side === "start"
+      ? atStart
+      : side === "end"
+        ? atEnd
+        : { $cond: [{ $mod: ["$$this", 2] }, ...(length % 2 === 1 ? [atEnd, atStart] : [atStart, atEnd])] };
+  const input = { $range: [length, { $strLenCP: v.ref }, -1] };
   // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
-  return { $let: { vars: { [v.as]: recv }, in: bounded } };
+  return { $let: { vars: { [v.as]: recv }, in: { $reduce: { input, initialValue: v.ref, in: step } } } };
 }
 
 /** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
@@ -1453,6 +1461,41 @@ function groupedByKey(
   const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
   return {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } },
+  };
+}
+
+/**
+ * lodash's `invertBy` as a value: `{ <key>: [the original keys whose value gives <key>] }`.
+ * One `$map` gives each entry its key once. Each group keeps the entry order.
+ */
+function invertedByKey(
+  pairs: unknown,
+  it: { as: string; ref: string; in: unknown },
+  bind: (hint: string) => Minted,
+): Record<string, unknown> {
+  const kv = bind("kv");
+  const entries = bind("entries");
+  const key = bind("key");
+  const value = `${kv.ref}.v`;
+  // A body that only reads a path off the parameter (`x`, `x.k`) reads the same path off the value.
+  const path = typeof it.in === "string" && (it.in === it.ref || it.in.startsWith(`${it.ref}.`));
+  const keyOf = path
+    ? value + (it.in as string).slice(it.ref.length)
+    : { $let: { vars: { [it.as]: value }, in: it.in } };
+  const keysOf = { $filter: { input: entries.ref, cond: { $eq: ["$$this.k", key.ref] } } };
+  return {
+    $let: {
+      vars: { [entries.as]: { $map: { input: pairs, as: kv.as, in: { k: stringKeyExpr(keyOf), v: `${kv.ref}.k` } } } },
+      in: {
+        $arrayToObject: {
+          $map: {
+            input: { $setUnion: [`${entries.ref}.k`, []] },
+            as: key.as,
+            in: { k: key.ref, v: { $map: { input: keysOf, in: "$$this.v" } } },
+          },
+        },
+      },
+    },
   };
 }
 
@@ -4941,7 +4984,14 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind)),
     },
@@ -4958,14 +5008,20 @@ export const NAMES = {
   padEnd: name({
     doc: "'.padEnd()' — see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
+      args: {
+        sig: "targetLength[, padString]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind)),
     },
@@ -4975,6 +5031,34 @@ export const NAMES = {
     ),
     group: unsupported("'.padEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.padEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  pad: name({
+    doc: "'.pad()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: {
+        sig: "length[, pad]",
+        allowed: [1, 2],
+        constant: [0, 1],
+        slotType: { 0: "int", 1: "string" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+        oneChar: [1],
+      },
+      emit: ({ recv, args, value, bind, present }) =>
+        nullOr(recv, present, bind, (r) => padded("both", r, args, value, bind)),
+    },
+    stream: unsupported("'.pad()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.pad()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pad();'",
+    ),
+    group: unsupported("'.pad()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.pad()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   repeat: name({
@@ -9568,6 +9652,37 @@ export const NAMES = {
     window: unsupported("'.omitBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
+  findKey: name({
+    doc: "'.findKey()' — see docs/LANGUAGE.md.",
+    call: true,
+    // MEASURED: `$getField` over a `$first` of `$objectToArray: null` is null, for a missing `o` and for `o: null`
+    passesNull: true,
+    on: "object",
+    params: ["value", "key"],
+    // lodash's `_.findKey` takes its shorthands, and each one reads the VALUE, as `.find()` reads the element
+    iterateeSlots: {
+      object: { 0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    },
+    // MEASURED: the key of the first entry that passes, and MISSING when no entry passes, as `.find()` is
+    returns: "string",
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, objIteratee, present }) => {
+        const it = objIteratee(args[0], "truth");
+        const hit = { $first: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: it.body } } };
+        return { $getField: { field: "k", input: hit } };
+      },
+    },
+    stream: unsupported("'.findKey()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.findKey()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findKey();'",
+    ),
+    group: unsupported("'.findKey()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.findKey()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
   invert: name({
     doc: "'.invert()' — see docs/LANGUAGE.md.",
     call: true,
@@ -9598,6 +9713,36 @@ export const NAMES = {
     ),
     group: unsupported("'.invert()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.invert()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  invertBy: name({
+    doc: "'.invertBy()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "object",
+    params: ["value"],
+    iterateeSlots: {
+      object: {
+        0: ["propertyPath", "propertyIndex", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"],
+      },
+    },
+    returns: { recordOf: { arrayOf: "string" } },
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ recv, args, iteratee, bind, present }) =>
+        invertedByKey(pairsOfObject(recv, present), args[0] === undefined ? identity(bind) : iteratee(args[0]), bind),
+    },
+    stream: unsupported("'.invertBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.invertBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.invertBy();'",
+    ),
+    group: unsupported("'.invertBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.invertBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
   }),
 
   toPairs: name({

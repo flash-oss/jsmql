@@ -139,37 +139,29 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     });
   });
 
-  // Variable capture: a lowering that `$let`-binds its receiver and then splices
-  // a user argument into the body must not shadow that argument's lambda param —
-  // here `s.qty`, the padStart target, which would resolve against the padded
-  // string instead of the element. That gives WRONG VALUES rather than errors, so
-  // a `toEqual` on emitted MQL is no protection; only running it is.
-  it("pipeline: an argument referencing the lambda param is not captured by the internal $let", async () => {
+  // The pad of each array element: the receiver is a value that the element computes.
+  it("pipeline: padStart fills each element of an array to a constant width", async () => {
     const rows = (await aggregate(
       "orders",
       `$match($.status === "shipped");
 $sort({ _id: 1 });
-$ = { codes: $.items.map(s => s.qty.toString().padStart(s.qty, "0")) };`,
+$ = { codes: $.items.map(s => s.qty.toString().padStart(3, "0")) };`,
     )) as { codes: string[] }[];
-    // Each line's qty is BOTH the padded value and the target width, so a capture
-    // shows up immediately. Expected values match real String.prototype.padStart.
-    expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["1", "02"], ["1"], ["0000000010"], ["02", "1"]]);
+    // Expected values match real String.prototype.padStart.
+    expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["001", "002"], ["001"], ["010"], ["002", "001"]]);
   });
 
-  // A multi-character pad must fill to exactly `targetLength`, cutting the pad
-  // mid-string as JS does — repeating it whole over-fills. Values checked against
-  // real String.prototype.padStart/padEnd.
-  it("expr: padStart/padEnd fill to the target width with a multi-character pad", async () => {
+  // The three pads, each to a constant width with one character. `.pad` gives the
+  // end the odd character, as lodash's `_.pad` does.
+  it("expr: padStart, padEnd and pad fill to the target width", async () => {
     const rows = (await aggregate(
       "users",
-      `$ = { name: $.name, s: $.tier.padStart(9, "<>"), e: $.tier.padEnd(9, "<>") };`,
-    )) as { name: string; s: string; e: string }[];
+      `$ = { name: $.name, s: $.tier.padStart(9, "<"), e: $.tier.padEnd(9, ">"), b: $.tier.pad(11, "*") };`,
+    )) as { name: string; s: string; e: string; b: string }[];
     const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
-    // "platinum" (8) → 1 pad char: the pad is cut mid-string, not repeated whole.
-    expect(byName["Ada Lovelace"]).toMatchObject({ s: "<platinum", e: "platinum<" });
-    // "gold" (4) → 5 pad chars = "<><><", NOT five whole "<>" units.
-    expect(byName["Grace Hopper"]).toMatchObject({ s: "<><><gold", e: "gold<><><" });
-    expect(byName["Karen Spärck Jones"]).toMatchObject({ s: "<><bronze", e: "bronze<><" });
+    expect(byName["Ada Lovelace"]).toMatchObject({ s: "<platinum", e: "platinum>", b: "*platinum**" });
+    expect(byName["Grace Hopper"]).toMatchObject({ s: "<<<<<gold", e: "gold>>>>>", b: "***gold****" });
+    expect(byName["Karen Spärck Jones"]).toMatchObject({ s: "<<<bronze", e: "bronze>>>", b: "**bronze***" });
   });
 
   // The `0x…` ObjectId literal, end-to-end: jsmql mints a live BSON ObjectId so
