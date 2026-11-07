@@ -1838,8 +1838,8 @@ $.note.padEnd(10)                  // the default pad is a space
 ```
 
 **Padding.** `.padStart(length[, pad])`, `.padEnd(length[, pad])` and `.pad(length[, pad])` take a
-constant length of 1 or more. The pad is one ASCII character, and it is a space when you omit it. A string that is `length` or longer stays the same. `.pad()` pads both sides, as lodash's
-`_.pad` does. When the padding is an odd number of characters, the end gets one more character.
+constant length of 1 or more. The pad is one ASCII character, and it is a space when you omit it. A string that is `length` or longer stays the same. `.pad()` pads both sides.
+When the padding is an odd number of characters, the extra character goes at the end.
 JavaScript also accepts a length from the data, a pad of two or more characters and a non-ASCII pad.
 JSMQL refuses them, because a fixed width is the padding that analytics needs. For other padding,
 write the MQL yourself with `$reduce` and `$concat`.
@@ -2574,7 +2574,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The predicate of `findKey` is the same arrow, or one of the [lodash shorthands](#lodash-iteratee-and-predicate-shorthands). A shorthand reads the value of each entry. The iteratee of `invertBy` reads the value only, as in lodash, so it takes the same shorthands as `groupBy`.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow. The predicate of `findKey` is the same arrow, or one of the [lodash shorthands](#lodash-iteratee-and-predicate-shorthands). A shorthand reads the value of each entry. The iteratee of `invertBy` reads only the value. It takes the same shorthands as `groupBy`.
 
 A reader of an object is a method of the object:
 

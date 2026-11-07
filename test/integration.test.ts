@@ -151,8 +151,8 @@ $ = { codes: $.items.map(s => s.qty.toString().padStart(3, "0")) };`,
     expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["001", "002"], ["001"], ["010"], ["002", "001"]]);
   });
 
-  // The three pads, each to a constant width with one character. `.pad` gives the
-  // end the odd character, as lodash's `_.pad` does.
+  // The three pads fill to a constant width with one character. `.pad` puts the
+  // extra character at the end.
   it("expr: padStart, padEnd and pad fill to the target width", async () => {
     const rows = (await aggregate(
       "users",
