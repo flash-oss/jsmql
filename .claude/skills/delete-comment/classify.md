@@ -15,26 +15,29 @@ Read tool whenever the excerpt is not enough. Use Grep to check whether a name, 
 or claim that a comment mentions still exists and is still true.
 
 ## Categories (pick exactly one per block)
-- **T — Tautology.** Repeats what the code, a name, a type, a test title or an assert already says. Section
+Read § No comments in code in the root `CLAUDE.md` first. It defines the four categories and their actions. The
+signs below help you choose. K is the one extra code of this brief.
+
+- **T — Tautology.** Signs: section
   banners (`// ── foo ──`), "returns X" on a function whose name/type says it, a header that restates the file
   name, step-by-step narration of the next lines, an example of a call that the next line performs.
-- **S — Stale.** Mentions code, files, functions, fields, spec sections, behaviours or counts that no longer
+- **S — Stale.** Signs: it mentions code, files, functions, fields, spec sections, behaviours or counts that no longer
   exist or are no longer true (verify with Grep/Read — say what you checked in `why`), or narrates history
   ("previously", "used to", "now we", "was added", "no longer").
-- **E — Excuse.** Admits or justifies a shortcut: a hack, workaround, crude or approximate logic, a heuristic
+- **E — Excuse.** Signs: a hack, workaround, crude or approximate logic, a heuristic
   that can misfire, "best effort", "for now", TODO/FIXME, "good enough", a known gap that the code papers over,
   an `any` or cast justified by a weak reason, a duplicated code path justified rather than removed, a test that
-  is skipped or weakened with an explanation. Delete the comment, and report the fix to the developer. Use E only
-  when there is a real engineering fix to make — a deliberate, sound trade-off is D, not E.
-- **D — Decision Record.** Documents an important, non-obvious decision: why the code is shaped this way and not
+  is skipped or weakened with an explanation.
+  Use E only when there is a real engineering fix to make.
+- **D — Decision Record.** Signs: why the code is shaped this way and not
   the obvious way, a MongoDB server constraint the code obeys (e.g. "the server rejects the bare form"), an
   invariant other code relies on, an ordering requirement, a security or DX reason. If an existing doc already
   states this decision fully (docs/specs/*.md, docs/LANG_RULES.md, docs/LANGUAGE.md, a CLAUDE.md, docs/DEFERRED.md),
   set `home` to that doc (path + section) and write no ADR — deleting the comment loses nothing. A bare
   pointer comment such as "See docs/specs/x.md" is D with `home` = that doc. Otherwise give an `adr` key.
-- **K — Keep (rare).** Only: (1) JSDoc on an exported declaration of the published API that users see in their
+- **K — Keep (rare).** The comments that `CLAUDE.md` lets the baseline keep: (1) JSDoc on an exported declaration of the published API that users see in their
   editor (exports of src/index.ts, src/mongoose.ts, and what they re-export to users); (2) a comment that holds a
-  `[DEF-NNN]` tag (the deferred-coverage test needs the tag in the code); (3) a comment that code reads as data.
+  `[DEF-NNN]` tag.
   State in `why` which case applies.
 
 Tie-breaks: T over D when the code already makes the reason obvious to a reader who knows JS + MongoDB. Choose S

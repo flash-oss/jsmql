@@ -144,16 +144,28 @@ Drift is a disagreement between two places that state one fact. Examples are cod
 The rules below apply this principle, for example § Single source of truth and § No development history outside DEVLOG.
 
 ### No comments in code
-Source code holds no comments. A comment is a second copy of a fact, so it drifts from the code. A comment also hides a shortcut, because it gives an excuse for the shortcut. Give each fact a better home:
+Source code holds no comments. A comment is a second copy of a fact, so it drifts from the code. A comment also protects a shortcut, because it gives an excuse. The hack then stays in the code, and the next change copies it.
 
-- A name that says what the code does, in place of a comment that explains it.
-- An ADR in [docs/adr/](docs/adr/CLAUDE.md) for a non-obvious decision that no spec states.
-- A spec in `docs/specs/` for a rule of a feature.
-- A report to the developer for a shortcut that needs a fix. Never open a GitHub issue.
+**When you write code, write no comment.** Ask what the comment would say. Then put that fact in its home:
 
-The rule has three exemptions: a tool directive (`/// <reference>`, `@ts-expect-error`), a comment inside a JSMQL input that a test compiles, and a generated file. The rule does not apply to `test/human/`.
+- **What the code does** goes into a name. Rename the variable, or extract a function with a name that says it.
+- **Why the code has a non-obvious shape** goes into an ADR in [docs/adr/](docs/adr/CLAUDE.md). A rule of a feature goes into its spec in `docs/specs/`.
+- **An excuse for a shortcut** means that the code needs a fix. Fix it. If you cannot, report the shortcut and its fix to the developer. Never open a GitHub issue.
 
-The rule is a ratchet. [test/no-comments.test.ts](test/no-comments.test.ts) fails when a file holds more comment lines than [test/comment-baseline.json](test/comment-baseline.json) allows. It also fails when the baseline is looser than the code, so the count can only go down. Never raise a baseline number. The [`delete-comment`](.claude/skills/delete-comment/SKILL.md) project skill removes comments and moves what they hold. `scripts/comments.mjs` is the scanner, the stripper and the baseline writer.
+**When you find a comment, put it in exactly one of four categories. Then act on it:**
+
+| Category | What the comment does | Action |
+|---|---|---|
+| Tautology | It repeats what the code, a name, a type or a test title already says. | Delete it. |
+| Stale | It names code, a file or a behaviour that does not exist or is not true, or it narrates history. | Delete it. When a doc makes the same false claim, correct the doc in its own commit. |
+| Excuse | It justifies a shortcut: a workaround, a heuristic that can fail, a duplicate, a weak `any`, a weak test. | Delete it, and report the shortcut and its fix to the developer. |
+| Decision Record | It records an important decision that the code does not show. | Move it into an ADR, then delete it. When a spec already states the decision, only delete it. |
+
+A sound trade-off is a Decision Record, not an Excuse. A comment that is partly false is Stale.
+
+The rule has three exemptions: a tool directive (`/// <reference>`, `@ts-expect-error`), a comment inside a JSMQL input that a test compiles, and a generated file. The rule does not apply to `test/human/`. Two kinds of comment have no other home, so the baseline below keeps them. The first is the JSDoc on the published API, because the editor shows it to a user. The second is a `[DEF-NNN]` tag, because `test/deferred-coverage.test.ts` reads it.
+
+The rule is a ratchet. [test/no-comments.test.ts](test/no-comments.test.ts) fails when a file holds more comment lines than [test/comment-baseline.json](test/comment-baseline.json) allows. It also fails when the baseline is looser than the code, so the count can only go down. Never raise a baseline number. The [`delete-comment`](.claude/skills/delete-comment/SKILL.md) project skill applies the four categories to existing comments. `scripts/comments.mjs` is the scanner, the stripper and the baseline writer.
 
 ### Write in Simplified Technical English
 All prose follows **ASD-STE100** — documents, code comments, test titles, error

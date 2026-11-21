@@ -16,11 +16,9 @@ description: >-
 
 ## Why this exists
 
-Source code in this repository holds no comments. A comment is a second copy of a
-fact, and it drifts from the code (see § Simplify everything to keep drift minimal
-in the root `CLAUDE.md`). A comment also hides a shortcut, because it gives an
-excuse for the shortcut. The ratchet test `test/no-comments.test.ts` holds the count of
-comment lines per file in `test/comment-baseline.json`. The count can only decrease.
+§ No comments in code in the root `CLAUDE.md` is the rule: why the source holds no
+comments, the four categories, the action for each one, and the ratchet. This skill
+applies that rule to the comments that remain.
 
 The scanner, the stripper and the baseline writer are one script:
 `scripts/comments.mjs`. It skips tool directives (`/// <reference>`,
@@ -38,17 +36,13 @@ those comments are JSMQL source under test. It skips generated files, `vendor/`,
    exactly. If there are more than 300 blocks, start one sub-agent for each batch
    of files (Sonnet or Opus, never Haiku). Give each sub-agent `classify.md` and
    its block list. Tell the sub-agent not to edit the repository.
-4. **Act on each category.**
-   - **T — Tautology** and **S — Stale**: delete.
-   - **E — Excuse**: delete. Report each distinct fix to the developer in your
-     reply: the code site, the shortcut and the proper fix. Never open a GitHub
-     issue.
-   - **D — Decision Record**: when a spec, `docs/LANG_RULES.md` or a `CLAUDE.md`
-     file already states the decision, delete. Otherwise add or extend an ADR in
-     `docs/adr/` (format: [docs/adr/CLAUDE.md](docs/adr/CLAUDE.md)), add its row to
-     `docs/adr/index.md`, then delete.
-   - **K — Keep**: the comment that `classify.md` allows to remain. This case is
-     rare. Pass its block id to `--keep`.
+4. **Act on each category.** Take the action that `CLAUDE.md` gives for it.
+   - For an Excuse, report each distinct fix to the developer in your reply: the
+     code site, the shortcut and the proper fix.
+   - For a Decision Record with no home yet, add or extend an ADR in `docs/adr/`
+     (format: [docs/adr/CLAUDE.md](docs/adr/CLAUDE.md)), and add its row to
+     `docs/adr/index.md`.
+   - For K, pass the block id to `--keep`.
 5. **Strip.** Run `node scripts/comments.mjs strip [--keep <file:line>]… <file…>`.
    Then run `npm run format`.
 6. **Lower the baseline.** Run `node scripts/comments.mjs ratchet`. It stops when the
