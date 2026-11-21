@@ -10,8 +10,8 @@ import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 import { NAMES } from "../src/registry/names.ts";
 import type { Only, Position } from "../src/registry/vocabulary.ts";
-import { GROUP_SLOT, LENGTH_SLOT } from "../src/registry/vocabulary.ts";
-import { GROUP_TMP, LENGTH_SLOT as NS_LENGTH_SLOT } from "../src/namespace.ts";
+import { GROUP_SLOT, SIZE_SLOT } from "../src/registry/vocabulary.ts";
+import { GROUP_TMP, SIZE_SLOT as NS_SIZE_SLOT } from "../src/namespace.ts";
 
 type Row = {
   kind?: string;
@@ -84,7 +84,7 @@ describe("registry — the reserved names it spells for itself", () => {
     // Nothing else holds the two spellings together. A rename on one side alone would give a stage that writes
     // one field and a read of another.
     expect(GROUP_SLOT).toBe(GROUP_TMP);
-    expect(LENGTH_SLOT).toBe(NS_LENGTH_SLOT);
+    expect(SIZE_SLOT).toBe(NS_SIZE_SLOT);
   });
 });
 
