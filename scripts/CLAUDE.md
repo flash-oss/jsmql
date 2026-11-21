@@ -48,6 +48,10 @@ The `cli` entry is the `jsmql` bin. esbuild preserves its `#!/usr/bin/env node` 
 
 The script runs as the second half of `npm run build`, after `tsc`. The [`test/smoke.test.ts`](../test/smoke.test.ts) suite covers the CJS bundle, in the `dist/cjs/index.cjs loads via require()` case and the `dist/cjs/cli.cjs runs as the jsmql bin` case.
 
+### `comments.mjs`
+
+This script finds, counts and strips the code comments in the repository, through the TypeScript parser. `test/no-comments.test.ts` imports it for the comment ratchet. Run it by hand: `count` lists the comment lines per file, `blocks <file…>` prints each comment block with the code after it, `strip [--keep <file:line>]… <file…>` deletes the comments, `init` writes `test/comment-baseline.json` when it does not exist, and `ratchet` lowers it to the current counts. `ratchet` refuses when a file holds more comment lines than its baseline. The [`delete-comment`](../.claude/skills/delete-comment/SKILL.md) skill drives the whole procedure.
+
 ### `merge-devlog.mjs`
 
 This script resolves `git merge` conflicts on a `docs/DEVLOG/YYYY-MM.md` file automatically. With no argument, it finds every conflicted month file on its own; it also accepts one or more paths. For each file, it splits both sides on `---`. It removes duplicates by date and title heading. It sorts the entries newest first. Then it stages the result.
@@ -77,6 +81,6 @@ After the edits land, the file goes through `oxfmt`. So the formatter owns the l
 ## Conventions
 
 - Each script is `.mjs` (ESM) and may import directly from a `src/*.ts` file. Node 22.18+ and 24.3+ strip TS syntax natively, without a flag (unflagged in 22.18.0 LTS and in 24.3.0; stable in 25.2.0).
-- Each script's first paragraph (in a top-of-file comment) explains its purpose, when it runs, and how to invoke it by hand.
+- Each script's section in this file explains its purpose, when it runs, and how to invoke it by hand. A script holds no comments (see § No comments in code in the root `CLAUDE.md`).
 - No script uses `npx`. Each one uses `node_modules/.bin/<tool>` or an npm script instead. The rationale lives in the root `CLAUDE.md`.
 - A script that writes files into `src/` (for example `generate-globals.mjs`) must produce **byte-stable output**, so the drift test can compare it cleanly. Sort the inputs by name. Avoid timestamps. Pass the result through `oxfmt`, so the formatter does not add churn.

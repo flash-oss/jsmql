@@ -109,10 +109,12 @@ src/
 docs/
   LANGUAGE.md     The user-facing language reference. It is canonical for user-visible behaviour and for examples.
   specs/          The implementation specs. Each one is canonical for its own feature's internals. See docs/CLAUDE.md for the index.
+  adr/            The architecture decision records: one non-obvious decision about the code per file. See docs/adr/CLAUDE.md.
 test/
   compiler-*.test.ts   The compiler's suites, one per phase or road. Some of them compare every construct with JavaScript's own answer on a live mongod.
   codegen / pipeline / lookup / stream-methods / match-translation / …  The feature suites: JSMQL inputs with the MQL that each one emits. scripts/regen-expectations.mjs regenerates them after a shape change. See test/CLAUDE.md.
   registry-*.test.ts   The registry's audits: the type contracts, and the cross-references that no type can hold.
+  no-comments.test.ts  The comment ratchet: no file holds more comment lines than test/comment-baseline.json allows.
   realistic.test.ts    Full-feature compile-time examples. They assert the emitted MQL, the README points at them, and they are the playground's source.
   strict-api / security / error-pos / cli / mongoose / site / cross-realm   The public API's contracts. For cross-realm: a parameter value from another realm compiles to the same document.
   integration.test.ts  Runs jsmql's MQL against a live mongod and asserts the data it returns. The suite self-skips when the server is down. See test/fixtures/CLAUDE.md.
@@ -122,6 +124,7 @@ scripts/
   generate-globals.mjs          Generates src/globals.ts from the registry (through src/compiler/rows.ts) and from the spec YAML. It runs on prebuild and on pretest.
   build-cjs.mjs                 Bundles dist/cjs/*.cjs with esbuild for the `require` condition.
   merge-devlog.mjs              Resolves a docs/DEVLOG/ merge conflict without help.
+  comments.mjs                  Finds, counts and strips code comments, and writes the ratchet baseline.
   regen-expectations.mjs        Rewrites a suite's expected MQL with the compiler's answers, and you review the result as a diff. convert-expectations.mjs flips the polarity of the cases it lists.
   sync-playground.mjs           Builds the committed pure-ESM bundle dist/jsmql.js, and generates playground.html from the skeleton and the realistic examples. sync-playground-loader.mjs and -vitest-shim.mjs let it read the examples without a test run.
   hook-post-edit-realistic.sh   A PostToolUse dispatcher that runs sync-playground.
@@ -139,6 +142,18 @@ Drift is a disagreement between two places that state one fact. Examples are cod
 - A comment, a doc or a test title can disagree with the code. When you find one, correct it or remove it, in its own commit.
 
 The rules below apply this principle, for example § Single source of truth and § No development history outside DEVLOG.
+
+### No comments in code
+Source code holds no comments. A comment is a second copy of a fact, so it drifts from the code. A comment also hides a shortcut, because it gives an excuse for the shortcut. Give each fact a better home:
+
+- A name that says what the code does, in place of a comment that explains it.
+- An ADR in [docs/adr/](docs/adr/CLAUDE.md) for a non-obvious decision that no spec states.
+- A spec in `docs/specs/` for a rule of a feature.
+- A GitHub issue for a shortcut that needs a fix.
+
+The rule has three exemptions: a tool directive (`/// <reference>`, `@ts-expect-error`), a comment inside a JSMQL input that a test compiles, and a generated file. The rule does not apply to `test/human/`.
+
+The rule is a ratchet. [test/no-comments.test.ts](test/no-comments.test.ts) fails when a file holds more comment lines than [test/comment-baseline.json](test/comment-baseline.json) allows. It also fails when the baseline is looser than the code, so the count can only go down. Never raise a baseline number. The [`delete-comment`](.claude/skills/delete-comment/SKILL.md) project skill removes comments and moves what they hold. `scripts/comments.mjs` is the scanner, the stripper and the baseline writer.
 
 ### Write in Simplified Technical English
 All prose follows **ASD-STE100** — documents, code comments, test titles, error
@@ -190,9 +205,10 @@ Every fact has **one** true home. Everywhere else, write a one-line pointer (`Se
 | Operator / stage shapes | `src/registry/names.ts` |
 | The wording of an error message | The code that builds the message |
 | "Which doc to update when" governance | `docs/CLAUDE.md` |
+| A non-obvious decision about the shape of the code | `docs/adr/` |
 | Historical record of changes | `docs/DEVLOG/` (append-only — duplication there is fine) |
 
-The rule for every other place: **before you copy a paragraph that already has a canonical home, write one sentence and a link instead.** State each fact in exactly one place; write a one-line pointer everywhere else. **`docs/DEVLOG/` and `README.md` are the only two surfaces where a restatement is allowed.** Everywhere else — this file, `src/CLAUDE.md`, a spec, a code comment — links instead of copies. This file's "What this project is" and "File map" sections, and the spec table in `docs/CLAUDE.md`, are **indexes**: one line and a pointer per item, not a restatement. A code comment follows the same rule: write a short intent header, then `See docs/specs/<f>.md` (`src/compiler/emit/statement.ts` is the model). Keep only an inline `// why` note that has no other home.
+The rule for every other place: **before you copy a paragraph that already has a canonical home, write one sentence and a link instead.** State each fact in exactly one place; write a one-line pointer everywhere else. **`docs/DEVLOG/` and `README.md` are the only two surfaces where a restatement is allowed.** Everywhere else — this file, `src/CLAUDE.md`, a spec, a code comment — links instead of copies. This file's "What this project is" and "File map" sections, and the spec table in `docs/CLAUDE.md`, are **indexes**: one line and a pointer per item, not a restatement. Source code links nowhere, because it holds no comments; see § No comments in code.
 
 **Write prose that stays true over time; describe the rule, not today's list.** A copy of a paragraph is one kind of restatement. A list of the *current members of a set that changes* is the same drift, and it goes stale faster. JSMQL is pre-1.0, so a set such as its recognised methods, operators, or stages changes often. Prose that names what a set holds *right now* — an inline list of the supported methods, operators, or stages; a count such as "all N operators"; a phrase such as "currently supports X, Y, Z"; a version or status snapshot — copies the code or the registry a second time, and goes stale at the next change. State the stable **rule** instead, and name the single source of truth for the live list. Write "a JavaScript method JSMQL recognises (the rows of `src/registry/names.ts`)", not "a method (`.map`, `.filter`, `.trim`)". One **illustrative** example is welcome. An exact-output example, as the HARD RULES use, is also welcome. A parenthetical that reads as a full member list is not. Cut such a list, or mark the one example open-ended (`for example .trim()`). Keep a count, a version, or an "as of today" status out of prose everywhere except `docs/DEVLOG/` and `README.md`. A count belongs in the test that checks it; a status belongs in `docs/DEFERRED.md`.
 
@@ -210,7 +226,7 @@ This rule binds every other file: source, code comments, specs, `docs/LANGUAGE.m
 
 **Rewrite the sentence; do not just delete it.** When the sentence carries real information, restate it as current behaviour or as a rule — write "`.reject` negates the predicate", not "`.reject` was added alongside…". When the only content was history, move it to `docs/DEVLOG/`, or drop it, because the git log already holds it.
 
-This rule does **not** forbid two things. `docs/DEFERRED.md` and the deferral markers it tracks state a forward-looking fact about the product, such as "this has no support yet" or "we decided against this"; that is not history, so it stays. A `// why` comment that explains a *current* constraint is also fine. It becomes history only when it narrates the change instead of the reason. Write "guard against X", not "added this guard after X broke".
+This rule does **not** forbid two things. `docs/DEFERRED.md` and the deferral markers it tracks state a forward-looking fact about the product, such as "this has no support yet" or "we decided against this"; that is not history, so it stays. An ADR in `docs/adr/` that explains a *current* constraint is also fine. It becomes history only when it narrates the change instead of the reason. Write "guard against X", not "added this guard after X broke".
 
 ### Maintain a CLAUDE.md file in each directory
 Create a `CLAUDE.md` file in every directory that holds non-trivial logic — `src/`, `docs/`, `test/` — and keep each one current. Each file must explain the purpose of its directory and that directory's own conventions. When you add a new directory, add its `CLAUDE.md` file at once.
@@ -275,7 +291,7 @@ A breaking API change must use `feat!:` or `fix!:`, and must bump the major vers
 `oxfmt` is the only formatter. Its config sits in `.oxfmtrc.json`, which excludes `*.md`, `dist/`, and `package*.json`. Never make a manual style choice; just run `npm run format`.
 
 ### TypeScript
-Keep strict mode on. Do not write `any` without a comment that explains why you cannot avoid it.
+Keep strict mode on. Do not write `any`. When you cannot avoid it, record the reason in an ADR in `docs/adr/`.
 
 ## Facts the developer did not state, but that still matter
 
