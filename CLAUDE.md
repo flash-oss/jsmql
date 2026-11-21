@@ -109,7 +109,7 @@ src/
 docs/
   LANGUAGE.md     The user-facing language reference. It is canonical for user-visible behaviour and for examples.
   specs/          The implementation specs. Each one is canonical for its own feature's internals. See docs/CLAUDE.md for the index.
-  adr/            The architecture decision records: one non-obvious decision about the code per file. See docs/adr/CLAUDE.md.
+  adr/            The architecture decision records: the one home for every decision and its reason, accepted or rejected. See docs/adr/CLAUDE.md.
 test/
   compiler-*.test.ts   The compiler's suites, one per phase or road. Some of them compare every construct with JavaScript's own answer on a live mongod.
   codegen / pipeline / lookup / stream-methods / match-translation / …  The feature suites: JSMQL inputs with the MQL that each one emits. scripts/regen-expectations.mjs regenerates them after a shape change. See test/CLAUDE.md.
