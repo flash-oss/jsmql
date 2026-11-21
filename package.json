@@ -83,7 +83,7 @@
     "lil-csv": "^1.4.6",
     "mongodb": "^7.3.0",
     "mongoose": "*",
-    "oxfmt": "^0.47.0",
+    "oxfmt": "^0.79.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
   },
