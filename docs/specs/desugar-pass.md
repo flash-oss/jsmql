@@ -223,9 +223,9 @@ the nested pipelines. See [constant-engine.md](constant-engine.md) for the engin
 [LANGUAGE.md § Compile-time constants](../LANGUAGE.md#compile-time-constants-folding) for the
 user-facing statement.
 
-**What never folds.** The emitter writes a raw `$op(…)` call as written, so it never folds (HR2).
-The fold also skips a name that its scope writes or mutates, a name read before its declaration,
-and a subtree that a desugar rule still rewrites. The next round asks again.
+**What never folds.** [constant-engine.md § What never folds](constant-engine.md#what-never-folds)
+lists it. The fold also skips a subtree that a desugar rule still rewrites. The next round
+tries it again.
 
 ## Order constraints
 
