@@ -51,17 +51,14 @@ The compiler hoists the materialiser **lazily** and caches it:
 (`src/registry/names.ts`): the stage leaves the stream's COUNT and its
 documents' FIELDS both untouched, so a count already stamped into a field is
 still the count afterwards. A stage that states nothing invalidates the count.
-The rule is **conservative**. A recount is always correct, and a reuse of a
-stale count is a bug. So a read reuses a count only where a row proves it safe.
+So a read reuses a count only where a row proves it safe. See
+[ADR 0174](../adr/0174-stream-size-conservative-reuse.md).
 
 Inside a callback, JSMQL refuses the third parameter altogether in a body that runs
 any stage without `preservesCount`. The count is a FIELD stamped onto the body's
 documents, and such a stage drops it (`$group`) or changes how many documents
-there are (`$unwind`, `$match`, `$limit`). So whether a read still means what it
-says depends on where in the block it sits, and a stage body reads the documents
-its own stage receives. `staleCountStage` asks the question of the SOURCE and
-answers it once for the whole body, which is the conservative answer; its message
-names the stage.
+there are (`$unwind`, `$match`, `$limit`). `staleCountStage` asks the question of the SOURCE and
+answers it once for the whole body, and its message names the stage.
 
 Detection is a **complete** AST walk (`someExpr` / `containsStreamLength` in
 `pipeline.ts`). It covers every child-bearing `Expr` node, because a missed node
@@ -118,13 +115,9 @@ chain of the body that BOUND the handle, ahead of the stage that reads it.
 back when the `hoist` service places the stamp. So a DEEPER body that reads an
 ANCESTOR's handle stamps the ancestor's own pipeline, and it reads the value
 back down through each `$lookup.let` on the way — `jsmql_s<level>_length`, the
-same hop an outer field takes. If a read took the level from the READ instead,
-it would collapse the two counts onto one `$__jsmql.size` field. Then
-`shpmntsColl.size() < ordersColl.size()` would compare a value with itself.
-Nothing about that document is invalid MQL, so the server answers it without a
-word. A `$facet` branch is the same trap by another route. It assembles a chain
-of its own at the SAME level, so the chain, and not the level, decides. The
-parameter is a `streamHandle` binding in the body's Env, and its `.size()` is
+same hop an outer field takes. A `$facet` branch assembles a chain of its own at
+the SAME level, so the chain, and not the level, decides
+([ADR 0015](../adr/0015-emit-internal-binding-names.md)). The parameter is a `streamHandle` binding in the body's Env, and its `.size()` is
 that inner count. Placement is automatic: the chain appends each link's stages
 in order, so the count reflects the sub-stream *at that chain point*
 (post-filter, post-`.slice`, …), and the body's own trailing `{ $unset:

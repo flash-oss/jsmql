@@ -11,18 +11,18 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Reusable functions.
 ## The one-line idea
 
 A reusable function is a **named [IIFE](emit-pass.md)**. A call of it is sugar for
-`((params) => body)(args)`, and JSMQL already lowers that to `$let`. So the feature
-reuses the whole IIFE → `$let` machinery. The only new parts are the *name* of a lambda
-and the *resolution of a call* back to it.
+`((params) => body)(args)`, which lowers to `$let`. The feature adds only the *name*
+of a lambda and the *resolution of a call* back to it. See
+[ADR 0178](../adr/0178-functions-inline-per-call.md) for the reason.
 
-This gives the feature three properties:
+The feature has three properties:
 
 1. **Declared, not lowered.** A declaration emits no MQL. It registers
    `name → lambda` in a compile-time table and is otherwise erased.
 2. **Lowered on use.** A call expands the stored body through the IIFE path.
 3. **Re-lowered per use.** Each call site runs the expansion on its own, so two
-   calls produce two separate `$let` blocks (no hoisting, no CSE). The same input
-   always gives the same output, with no data-dependent shape drift.
+   calls produce two separate `$let` blocks. The compiler hoists nothing and
+   shares no common expression.
 
 ```js
 const double = (x) => x * 2;
@@ -46,11 +46,10 @@ distinguishes the two:
 | an arrow function (`(a) => …` / `a => …`) | `FuncDecl` | none (registered, expanded on call) |
 | anything else (`$.x`, `5`, `$op(…)`, …) | `LetDecl` | a `$set { __jsmql.var.<name>: … }` stage |
 
-The fork is syntactic. There is no data dependence and no heuristic. So a JS
-developer's mental model maps directly: "a `const` that holds a function"
-against "a `const` that holds a value". Both keywords (`const`/`let`) work. The
-node records `kind`, but it has no behavioural effect for a function, because a
-function is not reassignable and is not a value.
+The fork is syntactic: the node type of the initialiser decides it
+([ADR 0178](../adr/0178-functions-inline-per-call.md)). Both keywords (`const`/`let`)
+work. The node records `kind`, but it has no behavioural effect for a function,
+because a function is not reassignable and is not a value.
 
 The fork is per DECLARATOR, so a [declaration list](let-bindings.md#declaration-lists)
 may hold a function beside a value, and a later declarator may call an earlier
@@ -215,7 +214,7 @@ Filter, the same as `$ = …` and an arrow `FuncDecl`.
 **Entry block-body reconciliation.** At the entry, a brace body that opens with
 `return` is the value form (`{ return E }` behaves as `({ $ }) => E`); otherwise it
 is the existing `;`-pipeline body. This rule applies to both `=> {` and
-`function {`, and it also fixes the long-broken `({ $ }) => { return E }`.
+`function {`, so `({ $ }) => { return E }` is the value form.
 `rejectReturn` rejects a stray statement-position `return` in a pipeline body, with
 guidance.
 

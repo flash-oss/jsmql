@@ -45,7 +45,8 @@ $$$.metrics.push($.summary);
 ```
 
 The stages before `$merge` are the ones `$$ = <array>;` emits — one function
-builds both, so the two spellings cannot drift apart.
+builds both, so the two spellings cannot drift apart
+([ADR 0029](../adr/0029-emit-statement-writes.md)).
 
 The sugar covers the PLAIN merge only. The developer writes the four settings of
 `$merge` — `on`, `whenMatched`, `whenNotMatched`, `let` — as the stage itself,
@@ -65,23 +66,13 @@ it. So the `__jsmql` cleanup comes before it, and it is still written last. The
 compiler refuses a later statement with a position-bearing error, and the
 message names the fix: move the statement above the write.
 
-## Convention: why a distinct LHS prefix?
+## The left side names the destination
 
-JSMQL reserves `$ = <expr>` exclusively for *root-replacing* sugar —
-`$replaceWith` and the `$facet` variant. The bare `$` LHS is the visual signal
-that the statement replaces the document itself. `$out` does **not** replace
-root; it writes the (filtered) stream elsewhere. To keep the asymmetry visible
-to readers, `$out` uses a different LHS prefix. The destination is on the left,
-and the source is on the right. Cross-cuts:
-
-- `$ = …` → `$replaceWith` / `$facet` (root replacement).
-- `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` (write destination).
-- `$$$.<coll>.find(…)` / `.filter(…)` → `$lookup` (read source).
-- `$$.push(…)` → `$unionWith` (stream union).
-
-See
-[`docs/specs/replace-root-stage.md`](replace-root-stage.md#convention-all-root-replacing-sugar-starts-with--)
-for the convention statement.
+`$out` does not replace the document, so its sugar does not start with `$ =`.
+The left side names the destination, and the right side names the source. The
+convention is in
+[`replace-root-stage.md`](replace-root-stage.md#convention-all-root-replacing-sugar-starts-with--),
+and the reason is in [ADR 0169](../adr/0169-destination-visible-prefixes.md).
 
 See
 [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#out-write-the-pipeline-to-a-collection)
@@ -203,7 +194,7 @@ every head — the bare stream, a join, a `$out` chain — reads it.
 
 | Entry point | Behaviour |
 |---|---|
-| `jsmql("…")`, with or without `;` | Allowed — a write is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)). |
+| `jsmql("…")`, with or without `;` | Allowed — a write is a pipeline by the shape rule ([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)). |
 | `jsmql.pipeline("…")` | Allowed. |
 | `jsmql.filter("…")` / `jsmql.expr("…")` | Refused as a write; the message names `jsmql.pipeline()` instead. |
 | `jsmql.update("…")` | Refused: a document-form update writes only fields of the document, and the message names field writes that work. |

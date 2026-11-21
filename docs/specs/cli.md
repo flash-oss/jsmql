@@ -74,7 +74,9 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 
 `--arg NAME VALUE` binds `NAME` to the string `VALUE`. `--argjson NAME VALUE`
 binds it to `JSON.parse(VALUE)`. A malformed value is a usage error. Both
-flags are repeatable, and they accumulate into one params object.
+flags are repeatable, and they accumulate into one params object. The CLI
+keeps the values in a `Map` until it builds that object: see
+[ADR 0003](../adr/0003-cli-params-map.md).
 
 Params combine with any output-shape flag. When params are present, the
 source is a parameterised arrow. So each mode routes through the matching
@@ -144,9 +146,7 @@ name `jsmql` to that file.
   (`node src/cli.ts --help`), plus a dist-gated case that drives the built
   `dist/cjs/cli.cjs` (stdin to MQL, `--version`, shebang assertion).
 
-## Deferred work and non-goals
+## Non-goals
 
-A `-S` / `--sort-keys` flag is a deliberate **non-goal**. A new order of object
-keys can change MQL semantics — for example, `$project` computed-field order.
-So the project records this as a will not-implement decision in
-[DEFERRED.md](../DEFERRED.md) §B, instead of a TODO.
+The CLI has no `-S` / `--sort-keys` flag. It prints each document with the key
+order that the compiler emits. See [ADR 0137](../adr/0137-cli-sort-keys.md).

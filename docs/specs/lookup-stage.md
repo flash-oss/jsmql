@@ -15,11 +15,9 @@ This file covers:
 - the cross-database refusal at the `foreignChain` choke point in [src/compiler/emit/join.ts](../../src/compiler/emit/join.ts)
 - the error catalog
 
-## Why `$$$` (and not `this.`)
+## The `$$$` prefix
 
-`this.<coll>.find(pred)` reads well, but it cannot be the surface. `this` is a JavaScript reserved word, and a parser refuses it outside a class or a method body. So `({ $ }) => this.users.find(...)` would not parse as a `.js` file — see the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md).
-
-The context-reference prefixes (`$$` / `$$$` / `$$$$`) parse anywhere. They never collide with the host language, and they give one uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and the AST nodes.
+A read of another collection starts with the context-reference prefix `$$$`. See [`context-references.md`](./context-references.md) for the prefix grammar and the AST nodes, and [ADR 0181](../adr/0181-context-reference-prefixes.md) for the choice of the prefix.
 
 ## Grammar
 
@@ -65,9 +63,7 @@ The callback's first parameter is the foreign document (`o.total` → `"$total"`
 
 **A value terminal gives ONE DOCUMENT.** The `$lookup.as` array holds the foreign collection's documents. So the binding for the slot states `elements: "object"`. A method whose row answers `returns: "element"` — `.head()`, `.first()`, `.last()`, `.at(i)`, `.nth(i)`, `.find(p)`, `.findLast(p)`, `.min()`, `.max()`, `.minBy(k)`, `.maxBy(k)` — is typed `"object"` over it. The compiler then refuses every array method on that document, and it names the field read as the way out.
 
-The proof belongs to the binding, and it travels no further. A link that REPLACES the elements (`$$$.c.map(f).head()`) leaves them unproven. A field path proves nothing at all (`$.items.head()`). So both keep every method open.
-
-Before this rule stated the elements, `$$$.c.head().map(f)` emitted `$map` over a document. mongod refuses this at execution time on a non-empty collection. It silently answers null on an empty one.
+The proof belongs to the binding, and it travels no further. A link that REPLACES the elements (`$$$.c.map(f).head()`) leaves them unproven. A field path proves nothing at all (`$.items.head()`). So both keep every method open. See [ADR 0016](../adr/0016-emit-join-lowering-rules.md).
 
 **The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.size()` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name. It is neither a document nor a value.
 
@@ -100,7 +96,8 @@ A join in a VALUE position materialises a `$lookup` into a scratch slot. The cha
 `hoist` / `ahead` pair places that stage ([`src/compiler/emit/env.ts`](../../src/compiler/emit/env.ts)).
 It lands **directly ahead of the stages of the lowering that hoisted it**, never at
 the front of the statement. A callback's parameter names the document ITS stage
-receives, so that is the document the `$lookup` has to read.
+receives, so that is the document the `$lookup` has to read
+([ADR 0016](../adr/0016-emit-join-lowering-rules.md)).
 
 ```js
 $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() }));
@@ -109,19 +106,13 @@ $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag =
 //    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
 ```
 
-`$sortByCount` MADE `g._id` as the group key, so the compiler must read `localField: "_id"` after it. Ahead of the statement, the same `_id` is the source document's.
-`$sortByCount` then replaces the document and discards the slot. The read comes
-back missing, and the server says nothing about it.
+`$sortByCount` makes `g._id` as the group key, so the compiler reads `localField: "_id"` after it.
 
-Every stage that reshapes the document (`$group`, `$replaceWith` / `$replaceRoot`,
-`$project`, `$unwind`, `$bucket`, …) puts the two documents further apart. So the
-drain runs per STAGE, not per statement, on every road that makes more than one stage
-out of one source statement: the stream chain (one drain per link), a
-`,`-joined run of writes (one per op, so `$.k = $.pid, $.name = $$$.c.find({ _id:
-$.k }).name` joins on the `k` the first write made), the array reducer, a
-bracketed program, and a stage block's statements. `lookupOf` has always drained
-per link. This is why the same chain inside a `$lookup` body placed its nested
-join correctly.
+The drain runs per STAGE, not per statement, on every road that makes more than one stage
+out of one source statement: the stream chain (one drain per link, also in
+`lookupOf`), a `,`-joined run of writes (one per op, so `$.k = $.pid, $.name =
+$$$.c.find({ _id: $.k }).name` joins on the `k` the first write made), the array
+reducer, a bracketed program, and a stage block's statements.
 
 **A variable an enclosing expression binds is refused.** `$lookup` is a stage. So
 the compiler hoists it out of any `$map` / `$filter` / `$reduce` / `$let` the
@@ -134,18 +125,9 @@ DOCUMENT. So the compiler refuses the read where it stands. The message names th
 `Env.render` holds the gate. A `Located` of kind `var` carries the LEVEL it was
 bound on, and a read of one from a deeper level is the refusal.
 
-**A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let` against the outer document. Then it optimises the sub-pipeline with the result substituted in. So an expression that dispatches on type there folds against that one
-value, branch by branch.
-
-A nested `$cond` folds the branch that does not apply, and the server refuses the
-whole pipeline before it reads a document — MEASURED: the server refused `$.o =
-$$$.products.find({ _id: $.arr[0] })` for an array key, and again for a string key.
-Each time, the refusal came from the branch for the other type.
-
-So every runtime type dispatch JSMQL writes is a `$switch`. A `$switch` drops a
-branch whose case folds to false, and needs no optimiser for it (`indexAccess` in
+**Every runtime type dispatch is a `$switch`.** `$lookup` evaluates its `let` against the outer document, so a correlated key is a CONSTANT to the server. A `$switch` drops a branch whose case folds to false (`indexAccess` in
 [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts), and the family dispatch
-`select.ts` builds). The same hazard reaches a plain expression through any value the server holds as a constant — a `jsmql.compile` parameter inside `$literal`. So the shape is one shape everywhere, and no rule ever picks it by position.
+`select.ts` builds). The shape is one shape everywhere, and no rule picks it by position. See [ADR 0167](../adr/0167-type-dispatch-is-switch.md).
 
 **The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll]`). MongoDB's `$lookup.from` takes no expression. The compiler refuses `$$$[$.name]`, a name that only the document holds, and `$$$[""]`, which names no collection.
 

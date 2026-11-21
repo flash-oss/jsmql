@@ -24,17 +24,15 @@ This script produces two committed artifacts.
 
 The injected `<script id="examples-data">` carries a `data-stamp` attribute. This is a short sha256 hash of the manifest. It changes only when an example's slug, title, query, or metadata changes.
 
-The playground stores this stamp with each saved session. It discards a session written against a different stamp, but only when that session holds nothing but an example. It always keeps a query that the visitor wrote.
-
-Without this stamp, a returning visitor never sees a newly shipped example. This happens because the first visit writes a session, and a restored session outranks the default example. The rule sits next to `staleExampleSession` in the skeleton.
+The playground stores this stamp with each saved session. It discards a session written against a different stamp, but only when that session holds nothing but an example. It always keeps a query that the visitor wrote. The rule sits next to `staleExampleSession` in the skeleton. See [ADR 0054](../docs/adr/0054-playground-sync-extraction.md) for the reason.
 
 `playground_skeleton.html` is the hand-authored source of the UI: markup, CSS, and behaviour. The examples region sits empty between its markers there, with no stamp, so `EXAMPLES_STAMP` reads `""` until generation runs.
 
 `playground.html` is a **pure build artifact**. Do not hand-edit it. Edit the skeleton, then re-run the sync.
 
-The script reads the skeleton and writes only `playground.html`; it never writes the skeleton. So a change to `src/` or to `test/realistic.test.ts` can never destroy playground UI work. This means you can always resolve a `playground.html` merge conflict: re-run the sync against the merged skeleton.
+The script reads the skeleton and writes only `playground.html`; it never writes the skeleton (see [ADR 0054](../docs/adr/0054-playground-sync-extraction.md)). To resolve a `playground.html` merge conflict, re-run the sync against the merged skeleton.
 
-Two sibling scripts make this extraction possible, and no test runs. `sync-playground-loader.mjs` is a Node module loader that remaps the bare `"vitest"` specifier. `sync-playground-vitest-shim.mjs` is the target of that remap: it records each `describe` call and each `it` call, and it captures the SOURCE of the `it` body. It does not run the body. So no assertion runs, and no mongod is needed.
+Two sibling scripts let the script read the examples, and no test runs. See [ADR 0054](../docs/adr/0054-playground-sync-extraction.md) for the load order and the dedent rule. `sync-playground-loader.mjs` is a Node module loader that remaps the bare `"vitest"` specifier. `sync-playground-vitest-shim.mjs` is the target of that remap: it records each `describe` call and each `it` call, and it captures the SOURCE of the `it` body. It does not run the body. So no assertion runs, and no mongod is needed.
 
 The script runs as `prebuild`, so `npm run build` always refreshes both artifacts. A PostToolUse hook in `.claude/settings.json` also runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, and it stages the updated outputs for the next commit. A `src/` edit does **not** trigger the hook; this is deliberate, because the hook does not watch `src/`. Run `npm run sync:playground` by hand after such an edit. The script is idempotent per file: it writes and stages each artifact only when its contents change.
 
@@ -56,7 +54,7 @@ This script finds, counts and strips the code comments in the repository, throug
 
 This script resolves `git merge` conflicts on a `docs/DEVLOG/YYYY-MM.md` file automatically. With no argument, it finds every conflicted month file on its own; it also accepts one or more paths. For each file, it splits both sides on `---`. It removes duplicates by date and title heading. It sorts the entries newest first. Then it stages the result.
 
-Run this script when `git merge` reports a conflict under `docs/DEVLOG/`. It falls back to a manual conflict, for the affected file, only when both sides edited one past entry in different ways.
+Run this script when `git merge` reports a conflict under `docs/DEVLOG/`. It falls back to a manual conflict, for the affected file, only when both sides edited one past entry in different ways. See [ADR 0094](../docs/adr/0094-scripts-merge-devlog.md) for the rules of the merge.
 
 ### `hook-post-edit-realistic.sh`
 
@@ -73,6 +71,8 @@ These two tools help reviewers work on the test suites. You run each one by hand
 Review both outputs as a diff before you commit them. A wrong answer regenerates just as cleanly as a right one, so the script proves only that the output matches the compiler; it never proves correctness. A running `mongod` proves correctness — see [test/CLAUDE.md](../test/CLAUDE.md).
 
 `expectations.mjs` holds what both scripts need. This includes the suite file read as a TypeScript AST; an expression evaluated in the scope that the suite itself builds (its own top-level constants, plus the constants declared above the call in every enclosing block); `expectCall` and `literalSubject`, which recognise an assertion; and `spell`, which calls `jsmql.stringify`, so a regenerated expectation reads exactly as the CLI prints it.
+
+See [ADR 0093](../docs/adr/0093-scripts-expectations-tools.md) for how the tools tell an answer of the compiler from a failure of the harness.
 
 `undefined` is the one value that the printer refuses, but a suite may still assert it — for example, `expect(doc.let).toEqual(undefined)` states that a key is absent. `spell` writes this value as a special case.
 

@@ -29,7 +29,7 @@ $gt($.a, 1)             →  { a: { $gt: 1 } }                  (filter: MongoDB
 $gt($.x)                →  { $gt: "$x" }                      (expression: the server refuses one operand)
 ```
 
-**An object-form operator** (`$trim`, `$dateAdd`, `$regexMatch`, …) takes its keys positionally, or as one object literal. The row's `keys` give the positional order. A call with more arguments than keys takes the plain form. The compiler does not check the keys of an object literal:
+**An object-form operator** (`$trim`, `$dateAdd`, `$regexMatch`, …) takes its keys positionally, or as one object literal. The row's `keys` give the positional order ([ADR 0065](../adr/0065-registry-names-mongo-spec-fields.md)). A lone argument that is not an object literal is the first positional argument. A call with more arguments than keys takes the plain form. The compiler does not check the keys of an object literal:
 
 ```
 $trim($.name, " ")                     →  { $trim: { input: "$name", chars: " " } }
@@ -56,7 +56,7 @@ The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A Java
 
 ## Unknown operators
 
-A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no spelling suggestion for a `$name`. A suggestion would refuse each new MongoDB name that is near a known one (docs/DEFERRED.md § B):
+A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no spelling suggestion for a `$name` ([ADR 0145](../adr/0145-no-suggestion-for-unknown-dollar-name.md)):
 
 | Args | Output |
 |---|---|
@@ -71,7 +71,7 @@ A `$name` with no row passes through by its argument count, in every position. S
 
 ## Return kinds
 
-A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands. For example, `$add` gives a number or a date, and `$first` gives whatever the array holds. The chain type-check reads this fact. It refuses `$.s.trim().foo()` when `foo` is not a string method. The compiler measures `returns` on a running `mongod` (`{ $type: { <op>: <args> } }`). It never reads the vendored YAML's `type:` field, which is wrong for `$trunc`.
+A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands. For example, `$add` gives a number or a date, and `$first` gives whatever the array holds. The chain type-check reads this fact. It refuses `$.s.trim().foo()` when `foo` is not a string method. The compiler measures `returns` on a running `mongod` (`{ $type: { <op>: <args> } }`). It never reads the `type:` field of the vendored YAML ([ADR 0065](../adr/0065-registry-names-mongo-spec-fields.md)).
 
 ## Add an operator
 

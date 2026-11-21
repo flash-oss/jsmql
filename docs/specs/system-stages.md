@@ -10,7 +10,7 @@ dispatch auto-wrap in [`src/index.ts`](../../src/index.ts). User-facing
 reference: [LANGUAGE.md → System and diagnostic
 stages](../LANGUAGE.md#system-and-diagnostic-stages-indexstats-currentop-).
 
-## What and why
+## Scope
 
 Some aggregation stages do not transform an incoming stream. They *produce*
 one (index metadata, collection stats, running ops, …). MongoDB calls these
@@ -28,27 +28,14 @@ So `$$.indexStats()` reads as "this collection's index stats". `$$$$.currentOp()
 reads as "the deployment's current ops". The method name is the stage name
 minus the leading `$`. Each one lowers to `{ $<stage>: <options-or-{}> }`. The
 prefix *is* the scope, so a stage at the wrong scope causes a **compile-time**
-error. This catches classic mistakes early, for example "ran `$indexStats`
-through `db.aggregate()`" or "ran `$currentOp` through `db.coll.aggregate()`".
-The compiler finds the mistake before it reaches the driver.
+error.
 
-**Two tiers, not three.** An earlier draft put `$currentOp` and related stages
-under `$$$` (current database). That draft was wrong. MongoDB requires these
-stages to run on the **admin** database. For example, `$listSessions` reads the
-cluster-wide `config.system.sessions`, never your current application database.
-These stages report deployment-wide state. `$$$` means "current database" (the
-database that `$$$.<coll>.find()` joins into), so `$$$.currentOp()` would read
-as "ops in *this* database" — you cannot run this. These stages are server- or
-cluster-level, so they live on `$$$$`. `$$$` therefore carries **no**
-diagnostics; it keeps the `$$$.<coll>.find()` lookups and the
-`$$$.<coll> = …` `$out` write. The real split is collection (`$$`) and
-deployment (`$$$$`).
-
-This fits the **"source visible after the prefix"** convention (CLAUDE.md). A
-diagnostic is a *read* from a source, like `$$$.<coll>.find(...)`. The prefix
-names what you read from. The generic stage dispatch already compiled these
-stages (`{ $indexStats: {} }` / `$indexStats({})`). This sugar adds
-discoverability and scope-checking. It adds no new compile capability.
+`$$$` carries **no** diagnostics. It keeps the `$$$.<coll>.find()` lookups and
+the `$$$.<coll> = …` `$out` write. The split is collection (`$$`) and
+deployment (`$$$$`). The stage call (`$indexStats({})`) and the stage document
+(`{ $indexStats: {} }`) also compile these stages. See
+[ADR 0175](../adr/0175-diagnostic-stage-scopes.md) for the two tiers and the reason for
+the sugar.
 
 ## Lowering
 
@@ -138,7 +125,7 @@ So `jsmql.validate()` returns a usable offset.
 This sugar works in Pipeline mode only, like the other source and sugar
 shapes. `jsmql.pipeline()` accepts a diagnostic source stage. It auto-wraps
 the stage as a one-stage Pipeline. `jsmql.filter()`, `jsmql.expr()`, and
-`jsmql.update()` reach the bare-ref codegen error. This error now lists the
+`jsmql.update()` reach the bare-ref codegen error. This error lists the
 diagnostic forms among the supported shapes for each prefix. The arrow form
 type-checks too: `$$` and `$$$$` are ambient globals with the diagnostic
 methods declared ([globals-generation.md](globals-generation.md)).

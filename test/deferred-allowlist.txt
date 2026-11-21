@@ -28,12 +28,11 @@
 # Meta-documentation about the deferral system itself.
 # -----------------------------------------------------------------------------
 CLAUDE.md::is the single source of truth for every open
-docs/CLAUDE.md::"what did we decide against?"
+docs/CLAUDE.md::You add a "not yet supported" throw
 
 # -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
-docs/specs/union-stage.md::Out of scope — the explicit
 
 # -----------------------------------------------------------------------------
 # Doc wording that still names a shipped capability as future work. Drop each

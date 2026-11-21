@@ -2,12 +2,11 @@
 name: devlog
 description: >-
   Add or update an entry in docs/DEVLOG/ — jsmql's single historical record of
-  decisions and changes, one file per month (docs/DEVLOG/YYYY-MM.md). Use this
+  changes, one file per month (docs/DEVLOG/YYYY-MM.md). Use this
   whenever you make an observable change to jsmql (a feature, fix, refactor,
   rename, or documentation/naming decision) and are about to commit, because
   every such change requires a DEVLOG entry in the same commit. Also use when
-  the user says "add a devlog entry", "log this", "record why we did X", "note
-  this decision", or when a `git merge` reports a conflict on a file under
+  the user says "add a devlog entry", "log this", or when a `git merge` reports a conflict on a file under
   docs/DEVLOG/. Handles the exact heading format (newest-on-top, UTC date,
   conventional-commit-typed title), the what+why body, the "supersede, don't
   delete" rule, and the merge-devlog.mjs conflict resolver. Trigger even when the
@@ -19,8 +18,9 @@ description: >-
 ## What the DEVLOG is
 
 [docs/DEVLOG/](docs/DEVLOG) is JSMQL's **single historical record**. It
-answers future "why is X this way?" questions, and it is the closest thing the
-project has to a ticket tracker. The project keeps no separate CHANGELOG or
+answers "what changed, and when?", and it keeps that answer forever. It is
+history only, not a decision tracker: the current reason for a decision lives in
+an ADR in `docs/adr/`, and a change to an ADR is one more DEVLOG entry. The project keeps no separate CHANGELOG or
 ROADMAP file, by design. **Every observable change gets an entry**, in the
 *same commit* as the change itself. A feature, a fix, a refactor, a rename, or
 a doc or naming decision each counts as an observable change.

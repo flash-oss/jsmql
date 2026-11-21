@@ -6,13 +6,7 @@ A sugar is a construct that MEANS another construct the language already has.
 `$.items.sort();` means the write `$.items = $.items.toSorted();`. `$.a.b` means
 one field path. `$.items.filter({ a: 1 })` means the arrow it is short for. The
 desugar pass rewrites every one of them, source to source, before any lowering
-runs. After the pass, those shapes are gone.
-
-That property is the point. Every loop that lowers must recognise a sugar
-recognised DURING lowering. JSMQL assembles stages from more than one place, and
-a loop that does not know a form mis-lowers it silently, and does not refuse it.
-A pass that removes sugar cannot miss it, because by the time any loop runs there
-is nothing left to miss.
+runs. After the pass, those shapes are gone. See [ADR 0183](../adr/0183-desugar-pass-design.md) for the reason.
 
 The destination-visible sugars — `$ = <expr>`, `$$$.<coll>.find(…)`,
 `$$.push(…)`, `$$.indexStats()` — are NOT rewritten here. They read their
@@ -51,13 +45,9 @@ $.items.sort();        →  [{ "$set": { "items": { "$sortArray": { "input": "$i
 $.a = $.items.sort()   →  ✗ refused: in a value, write .toSorted()
 ```
 
-One tree shape, two meanings. A rewrite blind to position would turn the second
-into a nested assignment, and it would throw away the message the row carries.
-So the position arrives WITH the node, carried down by `mapTreeIn`.
-
-The position cannot be a set of nodes looked up by identity. The walk rebuilds a
-parent as soon as one of its children changes. So by the time a rule runs, the
-object it holds is not the object anyone recorded.
+One tree shape has two meanings. So the position arrives WITH the node, and
+`mapTreeIn` carries it down. It is never a set of nodes that a rule looks up by
+identity. See [ADR 0183](../adr/0183-desugar-pass-design.md) for the reason.
 
 [position-pass.md](position-pass.md) owns where each position comes from, and
 how a stage's body is laid out. A statement can stand in four places:
@@ -80,15 +70,10 @@ fields, and the test for both is the SAME ARGUMENTS:
 | `immutableTwin` | `sort`, `reverse`, `splice` | `$.a = $.a.<twin>(<same args>)` |
 | `asArrayLiteral` | `push`, `unshift` | `$.a = [...$.a, <args>]` or `[<args>, ...$.a]` |
 
-The rewrite spreads the arguments; it does not use `.concat()`, because the two
-are not the same function: `[1].push([2])` is `[1, [2]]`, and `[1].concat([2])`
-is `[1, 2]`.
+The rewrite spreads the arguments. It does not use `.concat()` ([ADR 0051](../adr/0051-passes-desugar-rules.md)).
 
-`pop`, `shift`, `fill` and `copyWithin` carry neither field, and the pass lowers
-them directly. `.toSpliced(-1, 1)` does compute what `.pop()` does, but from
-arguments the caller never wrote. Re-deriving them spends the receiver-family
-proof the mutator's own row supplies. So the MQL comes out 1.5 times the size
-for `.pop()`, and 4.4 times for `.shift()`.
+`pop`, `shift`, `fill` and `copyWithin` carry neither field. Each states a write
+form instead (below). [ADR 0051](../adr/0051-passes-desugar-rules.md) gives the reason that they take no twin.
 
 The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)`
 and `$.items.filter(p).sort()` have no destination, and they are not statements
@@ -99,10 +84,9 @@ The shape pass asks the same question one phase earlier, where `$.a.b` is still
 a chain of accesses, not yet the path it folds to (`couldWriteItsReceiver` in
 [naming.ts](../../src/compiler/passes/naming.ts)). So it walks the chain to its
 base, and it admits any receiver the fold MIGHT reach a path from. This set is
-wider than the set this pass really rewrites, and deliberately so. A receiver
-that the fold admits and this pass declines gets a refusal by name on the statement road. The
-reverse order would read a whole program as the wrong document
-([filter-mode.md](filter-mode.md)).
+wider than the set this pass rewrites. A receiver that the shape pass admits and
+this pass declines gets a refusal by name on the statement road. See [ADR 0051](../adr/0051-passes-desugar-rules.md) for the
+reason, and [filter-mode.md](filter-mode.md) for the shape rule.
 
 **A mutator with neither a twin nor a literal shape states its WRITE FORM.**
 This is JSMQL source by argument count, with `_r` the receiver and `_0`, `_1`,
@@ -127,18 +111,13 @@ $.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 
 ## The iteratee shorthands
 
 A shorthand is a shorter spelling of an arrow. So this rewrite is the plainest
-sugar the pass has. The pass does this rewrite here, not inside each lowering.
-That is what makes the spellings agree — and today they do not:
+sugar the pass has. The pass does this rewrite here, not inside each lowering,
+so both spellings lower to one shape ([ADR 0183](../adr/0183-desugar-pass-design.md)):
 
 ```
 $.items.some(x => x.active === true)  →  {"items":{"$elemMatch":{"active":true}}}
-$.items.some({ active: true })        →  {"$expr":{"$anyElementTrue":{"$map":…}}}
+$.items.some({ active: true })        →  {"items":{"$elemMatch":{"active":true}}}
 ```
-
-Same meaning. On a document whose `items` is a string, the second form fails the
-query outright, but the first form answers it. The second form also cannot
-use an index. The pass rewrites first, so lowering sees one shape, and the
-divergence cannot arise.
 
 `iterateeSlots` on the row states which slots may be rewritten. The rule never
 reads this off the argument, because three other kinds of slot wear the same
@@ -160,7 +139,7 @@ each entry, never its key: `$.team.findKey({ role: "admin" })` is
 Only a layout has slots for the rule to rewrite. The rule reads the receiver's
 FAMILY off the chain: a chain rooted in `$$` or `$$$.<coll>` is the stream
 family wherever the call stands. It never reads the family off the call's own
-position, because that gave two answers for one link.
+position ([ADR 0183](../adr/0183-desugar-pass-design.md)).
 
 | Spelling | As an iteratee | As something else |
 |---|---|---|
@@ -230,10 +209,7 @@ object when no rule fires.
 
 A round that produces a tree ALREADY SEEN (compared with positions erased) is a
 cycle: two rules undo each other's work. This is a bug in the table, and the
-pass reports it as an internal error. No round limit decides between a cycle
-and real progress: a chain of declarations, where each needs the previous one
-folded, advances one link per round, and a developer may write as many links as
-they like.
+pass reports it as an internal error. The driver has no round limit ([ADR 0183](../adr/0183-desugar-pass-design.md)).
 
 ## Constant folding
 

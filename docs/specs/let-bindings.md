@@ -24,23 +24,19 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 > variable (`$$name`), not a document field. [emit-pass.md → Block-body
 > arrows](emit-pass.md#bindings-between-stages) owns that construct.
 
-## Why it exists
+## What it adds
 
-The construct sits above the existing [update ops](update-filter.md) machinery (`$.x = …`)
-and adds three things to plain update ops:
+The construct sits above the [update ops](update-filter.md) (`$.x = …`) and adds
+three things to them:
 
-1. **Auto-cleanup** — the compiler emits one trailing `{ $unset: "__jsmql" }`
+1. **Cleanup** — the compiler emits one trailing `{ $unset: "__jsmql" }`
    stage per pipeline, whenever at least one `let` declaration exists.
-2. **Collision-safe storage** — every let materialises under one nested field,
+2. **Storage in the namespace** — every let materialises under one nested field,
    `__jsmql.var.<name>`. The lowering never touches a user's real document
    field named `name`.
-3. **Bare-identifier reference** — a call site reads `total`, not `$.total`,
-   so a "scratch helper" read looks visually distinct from a "real document
-   field" read. This also gives each derivation one line for an intent
-   comment.
+3. **Bare-identifier reference** — a call site reads `total`, not `$.total`.
 
-The lowering is a thin layer over the existing primitives. It adds no
-MongoDB-side feature.
+See [ADR 0177](../adr/0177-let-binding-field-storage.md) for the reason.
 
 ## AST
 
@@ -144,7 +140,9 @@ one would put a stage on the wrong side of the shared `$set`.
   answered `1` for every document, where the `;` spelling answered the real
   counts, and the server REJECTED two chained joins. So the compiler takes the
   declarator back (`Chain.rewind`) and lowers it again as its own statement,
-  where the per-statement flush lands its prologue correctly.
+  where the per-statement flush lands its prologue correctly. The taken-back
+  lowering gives its scratch slot back
+  ([ADR 0018](../adr/0018-emit-let-rewind-slot.md)).
 
 A declarator that emits no stage at all — a folded constant, a function —
 groups with anything.
@@ -363,7 +361,9 @@ there. The message names the join form that carries the value instead.
 ### Cleanup
 
 The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace
-still on the documents (`Chain.dirty`). A `let` slot, a join's scratch slot, and
+still on the documents (`Chain.dirty`). No stage unsets one slot: each chain, a
+`$lookup` body included, unsets the namespace root
+([ADR 0097](../adr/0097-stream-scratch-cleanup.md)). A `let` slot, a join's scratch slot, and
 the stream count share the namespace and the one cleanup. A stage that replaced
 the document clears the flag, so the cleanup never unsets a field that is
 already gone. A scratch field that a later stage writes sets the

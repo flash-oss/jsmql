@@ -52,7 +52,7 @@ They carry no payload. The existing `MemberAccess` (for `.name`) and `IndexAcces
 - `$$["foo"]` → `IndexAccess { object: StreamRef, index: StringLiteral "foo" }`
 - `$$$$[db].coll` → `MemberAccess { object: IndexAccess { object: ClusterRef, index: <ParamRef db> }, member: "coll" }`
 
-Why use separate node types instead of one `ContextRef { depth }` node? Each level carries a different surface. A database ref needs a collection after it. A cluster ref needs a database and a collection. `$$` is a stream in its own right. So each node matches on its own, not by a depth count.
+Each level has its own node type, not one `ContextRef { depth }` node. See [ADR 0181](../adr/0181-context-reference-prefixes.md).
 
 ## Parser
 

@@ -17,7 +17,7 @@ Applies to: `src/compiler/emit/consult.ts`
 - `noCell` is not a refusal. For example, only a MongoDB row has an `updateDoc` cell, because only a MongoDB operator is specific to an update document. `$.views++` is a statement, and the choice between `$inc` and `$set` belongs to the whole program.
 - `inCode` names a pass that owns the node. The pass already rewrote the node or left it. A caller reads such a node the way the other cells of the row describe.
 - `everyName` lists names only, for `didYouMean`. A production is a construct, and a user cannot misspell it.
-- `everyMethodName` leaves out a global (`Number`), a static of a namespace (`Array.isArray`) and a row that refuses in every position. A suggestion must name a method that runs. A renamed row stays, and the suggestion shows its new name through `suggestedAs`.
+- `everyMethodName` leaves out a global (`Number`), a static of a namespace (`Array.isArray`) and a row that refuses in every position. A suggestion must name a method that runs, because a suggestion that also refuses sends the user to a second error. So a typo of `.forEach()` gets no suggestion. A renamed row stays, and the suggestion shows its new name through `suggestedAs`.
 
 ## Consequences
 

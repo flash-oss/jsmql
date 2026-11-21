@@ -25,8 +25,7 @@ for the user-facing reference.
 The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
 the assignment form this spec covers is its explicit alternative — see
 [stream-methods.md § Bare-statement stream
-chains](./stream-methods.md#bare-statement-stream-chains). [stream-methods.md §
-Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
+chains](./stream-methods.md#bare-statement-stream-chains).
 
 ## Lowering table
 
@@ -63,7 +62,7 @@ StreamRef, value: <expr>, pos }`.
 
 `$$ = <expr>` is an `AssignExpr` whose target is the `StreamRef`, and it is a
 statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the
-shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic
+shape rule ([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)), so the polymorphic
 and the strict entries agree; `jsmql.filter()` refuses it, as it refuses every
 pipeline. `writeStages` in
 [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the
@@ -97,7 +96,7 @@ JSMQL refuses an unsupported RHS and names the forms that work:
 
 | Trigger | The refusal |
 |---|---|
-| `TernaryExpr` RHS (for example `$$ = a ? b : c`) | refused, for the reason in § Not supported (by design); the message names the right sides that work |
+| `TernaryExpr` RHS (for example `$$ = a ? b : c`) | refused (§ Refused right sides); the message names the right sides that work |
 | Anything else | refused; the message names the right sides that work |
 
 The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time. The
@@ -131,17 +130,12 @@ because the documents after the switch do not hold `cutoff`. The message names
 two fixes: write `cutoff` again after the switch, or write the value as a
 field of the new document.
 
-## Not supported (by design)
+## Refused right sides
 
-JSMQL rejects these RHS forms on purpose. They have no coherent JS semantics, so
-they are not planned:
+JSMQL refuses these forms. See [ADR 0173](../adr/0173-stream-replace-rejected-forms.md)
+for the reason.
 
-- **`$$ = cond ? A : B`** (stream-level ternary). A stream is many documents. No
-  single condition swaps the *whole* stream for A or B, so "replace the stream
-  with A or B" has no JS meaning. Narrow the stream with `$$.filter(p)`, or
-  switch source with `$$$.<coll>.filter(p)`.
-- **`$$.find(<predicate>)`** (self-lookup on the current collection). One
-  document found in the same stream of documents is a value with nothing to do
-  in JS expression semantics; JSMQL also compiles statelessly (it does not know the
-  current collection's name). Use an explicit `$$$.<coll>.find(...)` lookup against
-  a named collection instead.
+- **`$$ = cond ? A : B`** (stream-level ternary). Narrow the stream with
+  `$$.filter(p)`, or switch source with `$$$.<coll>.filter(p)`.
+- **`$$.find(<predicate>)`** (self-lookup on the current collection). Use an
+  explicit `$$$.<coll>.find(...)` lookup against a named collection instead.

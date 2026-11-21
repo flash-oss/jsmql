@@ -16,7 +16,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 JSMQL accepts two surface forms, and both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material. [LANGUAGE.md](../LANGUAGE.md#canonical-form--between-stages) recommends it, the README's tour uses it, and the author wrote `test/realistic.test.ts` in it.
 
 1. **`;`-separated (canonical)** — the parser returns a `Pipeline` whose `stmts` are the `;`-separated statements. `lowerProgram` lowers each in turn, and it threads the scope: a `let` declared in one statement is a name the next one reads, and a stage that replaced the document takes it away again.
-2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The decision](filter-mode.md)) reads it as a pipeline, whatever it holds, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
+2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)) reads it as a pipeline, whatever it holds, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
 
 The two forms agree on stage shapes, the `$match` body rule, and sub-pipeline lowering. They differ only in coalescing, which the separator decides: `,` is in-stage (and groups writes), `;` is a hard stage boundary.
 
@@ -31,12 +31,9 @@ $$.$match({ status: "shipped" }).$sort({ total: -1 }).$limit(5);
 const top = $$$.orders.$match({ status: "shipped" }).$group({ _id: "$region", n: $sum(1) }).$limit(3);
 ```
 
-Why it exists: stage calls stand at statement position, and JS chain methods
-stand in both. That leaves one empty cell: a chain that cannot reach a stage.
-This matters most for the stages with **no JavaScript spelling** (`$group`,
-`$unwind`, `$setWindowFields`, `$bucket`, `$graphLookup`, …). In a value
-position (`const x = $$$.<coll>.…`), a program otherwise reaches them only by
-nesting an `.aggregate((o) => { … })` block.
+A stage link reaches a stage with no JavaScript spelling (`$group`, for example)
+from a chain in a value position. See [ADR 0179](../adr/0179-chained-stage-links.md)
+for the reason.
 
 **Surface.**
 
@@ -86,7 +83,7 @@ $.t = $$$.orders.$match({ qty: { $gte: $.min } });
 
 ## Which document a program is
 
-The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape.ts) decides once, for the whole program ([filter-mode.md § The decision](filter-mode.md)). A stage call or stage document is a pipeline, with or without a `;`. A bracketed literal is a pipeline, whatever it holds, so every element of `[$match(…), …]` must be a statement, and `jsmql("[1, 2, 3]")` refuses element 0. `jsmql.expr("[1, 2, 3]")` is the array value. The compiler refuses a bare predicate with a `;` (`$.age > 18;`), and it names the `$match(…)` wrapper.
+The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape.ts) decides once, for the whole program ([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)). A stage call or stage document is a pipeline, with or without a `;`. A bracketed literal is a pipeline, whatever it holds, so every element of `[$match(…), …]` must be a statement, and `jsmql("[1, 2, 3]")` refuses element 0. `jsmql.expr("[1, 2, 3]")` is the array value. The compiler refuses a bare predicate with a `;` (`$.age > 18;`), and it names the `$match(…)` wrapper.
 
 ## Lowering
 
@@ -133,13 +130,13 @@ The parser accepts `Dollar` + identifier tokens as a static object key in `objec
 
 `jsmql()`'s return type is `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array. Expression mode returns the single object. Both runtime values satisfy `object`, so existing code still type-checks. This is pre-1.0, and semver tracks it once 1.0 cuts.
 
-One input shape narrows that union. A **block-bodied arrow** (`({ $ }) => { $match(…); $limit(5); }`) is a run of statements, which is always a Pipeline, and its arrow type returns `void`. So `JsmqlArrowOutput<F>` ([src/index.ts](../../src/index.ts)) resolves it to `object[]`. This is the only shape the input's own type settles. The near-misses are worth stating here, so a future change does not "fix" them by mistake:
+One input shape narrows that union. A **block-bodied arrow** (`({ $ }) => { $match(…); $limit(5); }`) is a run of statements, which is always a Pipeline, and its arrow type returns `void`. So `JsmqlArrowOutput<F>` ([src/index.ts](../../src/index.ts)) resolves it to `object[]`. This is the only shape the input's own type settles. These shapes keep the full union ([ADR 0180](../adr/0180-arrow-output-type-narrowing.md)):
 
 - An **expression-bodied arrow** may be either. `({ $ }) => $.age > 18` is a Filter; `({ $ }) => $$.filter(d => d.a).take(5)` is a Pipeline, by the lone-chain sugar. Both are just expressions to TypeScript.
 - **An array return type** does not settle it either. `[$match(…)]` is a Pipeline, but `[$.a, $.b]` is an array-valued Filter, and both are `any[]`. The stage-candidate test that separates them is an AST check, not a type-level one.
 - A **string** and a **template tag** are opaque by construction.
 
-Those keep the full union. A caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`. These two have types that state their shape exactly.
+A caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`. These two have types that state their shape exactly.
 
 `validate()` reports pipeline errors as `CODEGEN_ERROR` (not `SYNTAX_ERROR`). It catches them at the codegen stage, after the AST parses cleanly.
 

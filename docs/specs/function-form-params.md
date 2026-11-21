@@ -12,7 +12,7 @@ Every rule below applies the same way to the strict-shape `.compile` builders (`
 
 `jsmql.compile()` accepts either an arrow function or a **string** that contains the arrow source text. The function form goes through `Function.prototype.toString.call` to get the source; the string form passes through unchanged. Both paths converge on the same `Parser.parseEntry()` call, so every rule below applies to each the same way. A string with no arrow shape gives the same `FunctionInputError` that the function-form path would raise. The message names the arrow form that the entry takes. Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
 
-JSMQL does not support a placeholder syntax inside the string (`${name}`, `$1`, and so on); the destructure pattern stays the one parameter-declaration mechanism. An inline placeholder would break the strict-JS-subset invariant, because `${id}` is not valid JS outside a template literal. It would also collide silently with a real template literal: a user who writes `` jsmql.compile(`… ${id} …`) `` with backticks would have JS resolve `id` before JSMQL ever saw the string.
+JSMQL supports no placeholder syntax inside the string (`${name}`, `$1`, and so on). The destructure pattern is the one way to declare a parameter. See [ADR 0155](../adr/0155-compile-string-placeholder.md).
 
 ## Arrow signature
 
@@ -29,7 +29,7 @@ Two optional slots, each an **object destructure**. The parser classifies each b
 | Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
 > The toolbox slot is types-only convenience. The **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which makes every stage and operator an ambient global. You do not list them per call site. When you list `$` (and any operator) in the toolbox, the arrow type-checks even without that import.
-> The toolbox type `JsmqlToolbox` is `any`, so an arrow declared separately from the call also type-checks. That arrow has its own toolbox type, with a required member for each name. An index signature cannot give a required member.
+> The toolbox type `JsmqlToolbox` is `any`, so an arrow declared separately from the call also type-checks. See [ADR 0038](../adr/0038-index-entry-mechanics.md).
 
 When both slots appear, the only legal order is `(params, { $, … })`. A shorter combination also works: `(params)`, `({ $, … })`, and `()`. Anything else, such as a third slot, a bare-identifier or bare-`$` slot, or the toolbox before params, throws `FunctionInputError`. The error states the actual and expected shape.
 
@@ -46,7 +46,7 @@ A slot is one `{ … }` destructure and nothing else:
 Each key of the `{ … }` body is either `Ident` (a params key) or a `$`-prefixed toolbox key: the bare `$` (a lone `Dollar`), an operator `$name` (`Dollar` + `Ident`), or a context ref `$$` / `$$$` / `$$$$` (`DoubleDollar` / `TripleDollar` / `QuadDollar`). For each entry it also handles:
 
 - `key: alias` — sets the binding's `name` field to the alias (params keys only; the parser strips an alias on a toolbox key, because it matters only for autocomplete, and the original key already provides that).
-- `key = expr` — the compiler rejects it with the explanatory message, whatever `expr` is. See [§ Why defaults are rejected](#why-defaults-are-rejected).
+- `key = expr` — the compiler rejects it with the explanatory message, whatever `expr` is. See [§ Defaults](#defaults).
 - `...rest`, a nested pattern, an array pattern — each rejected with its own targeted message.
 - Mixed `$`-and-non-`$` keys in the same destructure — rejected; the params and toolbox destructures stay separate slots.
 
@@ -56,14 +56,9 @@ A `ParamBinding` is `{ key: string; name: string }`:
 
 The slot-ordering validator runs after the slots are collected. A slot count above 2 throws immediately. Each slot kind may appear at most once. The order must be `(params, { $, … })`, with params before the toolbox.
 
-### Why defaults are rejected
+### Defaults
 
-The team considered and rejected two alternatives:
-
-- **Allow only a literal default** (`{ a = 1 }`, but not `{ a = config.x }`). The surface looks like normal JS, but silently fails on any non-literal default. The failure mode looks arbitrary to a user, because a destructure default usually accepts any expression. A user who writes `{ minAge = 18 }` and later refactors to `{ minAge = config.defaults.minAge }` would then hit `FunctionInputError` with no warning. CLAUDE.md priority #1 forbids that kind of "subset surprise".
-- **Evaluate a default by stringify-then-`Function`-eval.** This lets an arbitrary expression through. But it brings eval-style meaning back into a compile-time API. It also forces JSMQL to take a position on how an unrelated closure reference resolves.
-
-The refusal of every default keeps the rule simple and the surface honest: **the only way a value reaches a compiled query is through the params object at call time.** For a runtime fallback the user writes `q({ minAge: input ?? 18 })`; for a hardcoded value the template tag already inlines a literal (`` jsmql`$.age > ${18}` ``).
+The compiler refuses every default in the params destructure, whatever its expression. **The only way a value reaches a compiled query is through the params object at call time.** For a run-time fallback, the user writes `q({ minAge: input ?? 18 })`. For a fixed value, the template tag inlines a literal (`` jsmql`$.age > ${18}` ``). See [ADR 0154](../adr/0154-compile-defaults-refused.md) for the alternatives that the project rejected.
 
 ## Lowering
 
@@ -111,7 +106,7 @@ jsmql.validate(input)     // { valid, errors } instead of a throw
 
 `jsmql.validate` accepts every shape that `jsmql.compile` accepts. It also accepts the one-shot string / function / template-tag shapes of `jsmql()`. So editor tooling can check a parameterised arrow before it passes the arrow to `jsmql.compile`. The check binds each parameter to a value of no known kind (`ParameterValue` in [src/index.ts](../../src/index.ts)). The check does not bind `null`, because each slot that takes a value other than `null` refuses `null` (HR7). The call can pass a value of the kind that the slot takes. See [types.md](types.md#the-kind-check).
 
-`jsmql.compile` resolves the arrow source and parses it once. The source is the trimmed text of `Function.prototype.toString.call` for a function input, and the string itself for a string input. `parseEntry` gives the params, the toolbox names and the program. The returned closure, on each call:
+`jsmql.compile` resolves the arrow source and parses it once. The source is the trimmed text of `Function.prototype.toString.call` for a function input. For a string input, the source is the string as given, with no trim, so `.pos` counts from its first character, as in `validate()`. `parseEntry` gives the params, the toolbox names and the program. The returned closure, on each call:
 
 1. Looks each destructured key up on the params object. It refuses a missing key by name, and the message shows the call that passes it.
 2. Checks each value (`checkValue`, shared with the template tag): it refuses `undefined`, a function, a symbol, a non-finite number, an Invalid Date and a circular structure, by slot (`JsmqlInterpolationError`, with the key on `.key`).

@@ -6,10 +6,10 @@
 |---|---|---|
 | `docs/LANG_RULES.md` | Anyone changing the language | A language axiom changes. All HARD RULES outrank every other document here. A change to them is a language design decision, not a doc edit. |
 | `docs/LANGUAGE.md` | Users of JSMQL | The user-visible behaviour changes |
-| `docs/DEVLOG/` | Future-self / contributors who ask "why?" | Every observable change — feature, refactor, naming, doc decision |
-| `docs/DEFERRED.md` | Anyone who asks "what's left to do?" / "what did we decide against?" | You add a "not yet supported" throw, you ship a deferred item, or you record a "will not implement" decision. See § Maintain docs/DEFERRED.md in the root `CLAUDE.md`. |
+| `docs/DEVLOG/` | Future-self / contributors who ask "what changed, and when?" | Every observable change — feature, refactor, naming, doc change. It is history only; the reason for a decision lives in an ADR. |
+| `docs/DEFERRED.md` | Anyone who asks "what's left to do?" | You add a "not yet supported" throw, or you ship a deferred item. See § Maintain docs/DEFERRED.md in the root `CLAUDE.md`. |
 | `docs/specs/*.md` | Claude / contributors who implement JSMQL | The code structure or the internal behaviour changes |
-| `docs/adr/*.md` | Contributors who ask "why is the code shaped this way?" | You make a non-obvious decision about the code that no spec states. See [`adr/CLAUDE.md`](adr/CLAUDE.md). |
+| `docs/adr/*.md` | Anyone who asks "why?" or "what did we decide against?" | You make or reverse a decision, or reject an idea. It is the one home for every decision and its reason. See [`adr/CLAUDE.md`](adr/CLAUDE.md). |
 | `docs/STE.md` | Anyone who writes prose here | This is the ASD-STE100 digest. It gives the rules, the banned-word table, the Technical Name exemption, and the official links. The short form that binds every session is in § Write in Simplified Technical English in the root `CLAUDE.md`. |
 
 Do not put implementation detail in `LANGUAGE.md`. Do not put user-facing examples in the specs. Each spec is the **single source of truth** for its own feature's internals. See § "Single source of truth" in the root `CLAUDE.md`. The table below is an **index**. It gives one short scope phrase per spec, not another copy of its contents.

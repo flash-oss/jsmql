@@ -8,13 +8,11 @@ The three strict-shape variants of `jsmql()` exported from [src/index.ts](../../
 - `jsmql.pipeline(input)` — returns a Pipeline stage array; throws on a bare expression that would lower to a Filter.
 - `jsmql.update(input)` — returns the update DOCUMENT that `db.coll.updateOne(filter, update)` takes: the object form (`{ $set: …, $inc: …, $push: … }`), where every value is a compile-time constant. Writes become their operators (`$.n += 2` → `$inc`, `$.tags.push(x)` → `$push`, `delete $.a` → `$unset`, …). The document form refuses a value computed from the document; use the pipeline form instead — see [update-filter.md § The update document](update-filter.md).
 
-`jsmql.expr(input)` is the fourth shape. It returns one aggregation expression, with no Filter wrapper and no `$expr` envelope. It refuses a stage, a write, and a stream chain. Each refusal names the entry that takes that construct.
+`jsmql.expr(input)` is the fourth shape. It returns one aggregation expression, with no Filter wrapper and no `$expr` envelope. It refuses a stage, a write, and a stream chain. Each refusal names the entry that takes that construct. For the refusal of a stage call, see [ADR 0030](../adr/0030-entry-expr-refuses-stage.md).
 
 User-facing reference: [docs/LANGUAGE.md → Strict-shape entry points](../LANGUAGE.md#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate).
 
-## Why they exist
-
-`jsmql()` is polymorphic. It dispatches a Filter or a Pipeline from the shape of the parsed program (see [filter-mode.md](filter-mode.md)). The polymorphic surface is the right default when the same source can legitimately be either shape. A driver call site that takes exactly one shape wants a silent wrong dispatch to become an error instead. The strict entries add no lowering of their own; they only narrow what the entry accepts.
+A strict entry adds no lowering of its own. It only narrows what the entry accepts. See [ADR 0156](../adr/0156-strict-shape-entries.md) for the reason.
 
 ## Dispatch
 
@@ -47,7 +45,7 @@ The update road refuses on its own terms, because the shape rule does not know a
 
 Each strict entry carries a `.compile` builder: `jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile`. Each is the parse-once, bind-many form of that entry, narrowed to the same output type. The compiler parses the arrow once, eagerly. The returned closure injects the per-call values as `Injected` nodes ([inject.ts](../../src/compiler/passes/inject.ts)) and runs the same `lowerMode`. So the shape contract applies again on every call, with the identical message. The binding mechanics come from `jsmql.compile`: the destructure pattern, the refused values (`undefined`, a function, a symbol, a non-finite number, a circular structure), and values as literals, never as syntax; see [function-form-params.md](function-form-params.md). The one difference per builder is the wrong-input-type `TypeError`, which names the builder (for example `jsmql.filter.compile()`).
 
-The CLI uses these builders for `--arg` / `--argjson`, combined with a shape flag — see [cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow string directly. It validates the shape with the bound values stubbed to `null`, so `--validate` with params needs no separate `validate.compile`.
+The CLI uses these builders for `--arg` / `--argjson`, combined with a shape flag — see [cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow string directly. It binds each parameter to a value of no known kind, as [function-form-params.md](function-form-params.md#indexts--entry-points) states. So `--validate` with params needs no separate `validate.compile`.
 
 ## Error messages
 

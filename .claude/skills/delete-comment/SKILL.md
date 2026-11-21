@@ -4,7 +4,7 @@ description: >-
   Remove code comments from jsmql and move the knowledge they hold to its right
   home. Each comment is classified as a Tautology or Stale (delete it), an Excuse
   (delete it and report the shortcut to the developer), or a Decision Record
-  (move it to an ADR under docs/adr/, or confirm that a spec already states it).
+  (move it to an ADR under docs/adr/, or confirm that an ADR already records it).
   Then the skill lowers the comment ratchet baseline. Use this skill when the user
   types /delete-comment. Also use it when the user asks to "delete comments",
   "clean up comments", "lower the comment baseline" or "move this comment to an

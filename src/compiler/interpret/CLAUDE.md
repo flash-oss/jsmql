@@ -4,8 +4,8 @@ An in-process interpreter for MQL expressions.
 
 A constant is an expression whose lowered MQL reads nothing from the document and
 nothing from the environment. The compiler lowers a closed subtree to MQL. It gives
-that MQL to `interpret(mql)`, and the interpreter answers with the value. One rule
-for each MongoDB operator replaces a hand-written JavaScript function for each method.
+that MQL to `interpret(mql)`, and the interpreter answers with the value. See
+[ADR 0036](../../../docs/adr/0036-fold-server-agreement.md) for the reason.
 
 ## The one invariant
 
@@ -50,9 +50,9 @@ It may import `src/bson.ts`, `src/errors.ts` and `src/registry/mql.ts`.
   has the kind that the server gives it. So `$type` answers for a written number only.
 - Every integer result beyond 2^53 is a refusal. MongoDB is exact in 64 bits and a
   double is not. An operand beyond 2^53 is always a double, so its arithmetic is double arithmetic on both sides.
-- A `-0` is a refusal. A NaN and an infinity are `unspellable`. `$divide` answers a double.
-- A list of three or more fractions is a refusal for `$sum` and `$avg`. The server adds it
-  with a compensated sum, and the interpreter does not. `$add` and `$multiply` fold from left
+- A `-0` is a refusal ([ADR 0041](../../../docs/adr/0041-interpret-measured-rules.md)). A NaN and an infinity are `unspellable`. `$divide` answers a double.
+- A list of three or more numbers that holds a fraction is a refusal for `$sum` and `$avg`
+  ([ADR 0040](../../../docs/adr/0040-interpret-family-rules.md)). `$add` and `$multiply` fold from left
   to right on the server, so they run on any list. A randomized test on the server shows the same bits as JavaScript.
 - A string compares by code point, which is the UTF-8 byte order. A string operator
   counts code points or bytes, never UTF-16 units. A string with a lone surrogate has no
@@ -105,7 +105,7 @@ The interpreter never evaluates it. `$cond: [true, 1, { $divide: [1, 0] }]` is 1
 server folds each constant part before it runs the expression, so it fails on that
 division. This is the one place where the interpreter answers and the server fails.
 `DIVERGE` in test/compiler-interpret-agrees.test.ts lists such cases, with the reason.
-The interpreter follows JavaScript here: a guard such as `d === 0 ? 0 : 1 / d` works.
+See [ADR 0036](../../../docs/adr/0036-fold-server-agreement.md) for the reason of the divergence.
 The same holds for a `$let` variable that nothing reads: its failure has no effect.
 
 ## How to add a rule
@@ -144,6 +144,7 @@ A name in this directory is a key of a table. No branch tests the name of an ope
 - `$toDate` of an int fails on the server, and of a double or a long it does not. The kind
   of a computed number is not known, so only a fraction or an integer beyond 32 bits runs.
 - A date beyond the range of a JavaScript Date is a refusal, as is a `$dateDiff` beyond 2^53.
+  [ADR 0039](../../../docs/adr/0039-interpret-dates-rules.md) holds the other measured date rules.
 - `$toString` answers an integer below 10^16, a string, a boolean, null, an ObjectId (its 24 hex
   digits), a Decimal128 and an integer Long or Int32. Every other number prints in a form that
   differs from JavaScript, and its text is a `NumberText`. A `NumberText` is a value with no text. The interpreter knows
@@ -171,3 +172,4 @@ A name in this directory is a key of a table. No branch tests the name of an ope
   - With `i`, U+017F and U+212A fold to an ASCII letter in JavaScript. So a string that holds either one is a refusal.
 
   A string that is long for the cost of its pattern, and a match inside a surrogate pair, are refusals too.
+  [ADR 0042](../../../docs/adr/0042-interpret-regex-subset.md) gives the design of the reader and the reasons.

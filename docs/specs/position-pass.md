@@ -29,11 +29,8 @@ The pass answers one question for every node — *where does this node stand* �
 answers it on the way DOWN. `edge(node, key, here)` in
 [src/compiler/passes/position.ts](../../src/compiler/passes/position.ts) states
 what the position becomes on one parent-to-property step, and `mapTreeIn` carries
-it forward.
-
-The pass cannot use a set of nodes looked up by identity. A walk that rewrites
-rebuilds a parent as soon as one of its children changes. So when a rule runs,
-the object it holds is no longer the object that anyone recorded.
+it forward. [ADR 0185](../adr/0185-position-answered-on-the-way-down.md) gives the
+reason that the pass answers on the way down.
 
 ## The root is the caller's fact
 
@@ -64,6 +61,9 @@ states the layout in `bodyPositions`, keyed by dotted path from the body:
 | `"k"` | that one key |
 | `"k.*"` | every key of that key's object |
 
+A key maps to one position, or to a pair: `list` is the position of a bracketed
+list, and `otherwise` is the position of any other value.
+
 The longest key that covers it wins, and a literal key beats a `*` of the same depth. A
 `*` covers a computed key (`{ [k]: … }`); a literal key never does, because the
 compiler cannot know that a computed key is the one the row names.
@@ -73,6 +73,7 @@ $group:            { "": "value", "*": "group", _id: "value" }
 $setWindowFields:  { "": "value", "output.*": "window" }
 $facet:            { "": "value", "*": "statement" }
 $lookup:           { "": "value", pipeline: "statement" }
+$merge:            { "": "value", whenMatched: { list: "statement", otherwise: "value" } }
 $rankFusion:       { "": "value", "input.pipelines.*": "statement" }
 $match:            { "": "filter" }
 $geoNear:          { "": "value", query: "filter" }
@@ -94,32 +95,20 @@ answers "which row does this node name" once, for every pass). It consults the
 layout only where a stage may stand: `$count` is both a stage and an accumulator,
 and inside `$group` its arguments belong to an operator, not to a body.
 
-The layout is **stated, never derived**, because the slots differ per stage and
-mongod refuses the wrong reading. The team measured:
-
-```
-{ $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }        accepted
-{ $group: { _id: null, s: { $sum: ["$x","$y"] } } }       refused: an accumulator takes one operand
-{ $geoNear: { …, query: { $eq: ["$k","a"] } } }           refused: query is a query document
-{ $geoNear: { …, query: { $expr: { $eq: ["$k","a"] } } } } accepted
-```
+The layout is **stated, never derived**.
+[ADR 0074](../adr/0074-registry-names-stage-facts.md) gives the reason, and
+[ADR 0127](../adr/0127-test-position-census.md) holds the measurements.
 
 A type-level check makes the `""` key mandatory, and
 `test/compiler-position.test.ts` asserts that exactly the stage rows carry a
-layout. A stage with no layout sends its whole body to `value`, which is where
-every bug this field fixes came from.
+layout. A stage with no layout sends its whole body to `value`.
 
 ## An accumulator slot takes one operand
 
 Both the `group` and the `window` slots hold **one** expression, whatever the
-operator's expression form allows. They report a second operand differently, and
-the second way is the dangerous one:
-
-```
-{ $group: { _id: null, s: { $sum: ["$x","$y"] } } }             → refused
-{ $setWindowFields: { …, output: { r: { $sum: ["$x","$y"] } } } } → 0
-{ $setWindowFields: { …, output: { r: { $sum: "$x" } } } }        → 4
-```
+operator's expression form allows. The `group` slot refuses a second operand. The
+`window` slot gives a wrong answer and reports no error. [ADR 0127](../adr/0127-test-position-census.md)
+holds the measurement.
 
 A `$op(…)` call in such a slot is the developer's own MQL (HR2), and HR3 does not
 apply to it. So the call renders as written, through the one emitter `single`
@@ -133,7 +122,7 @@ $group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the serv
 
 `$covariancePop` and `$covarianceSamp` are the exception that the registry
 states and does not derive. Their window slot genuinely takes an array of two,
-and one operand answers `null`.
+and one operand answers `null` ([ADR 0071](../adr/0071-registry-names-row-rules.md)).
 
 A JavaScript aggregate in such a slot (`$.a.sum()`, `.first()`, `.sumBy(fn)`) is
 the compiler's own lowering, so HR3 applies to it: the cell must emit ONE operand.
@@ -191,9 +180,8 @@ An `evaluates` path below the leaf keeps the walk descending, the same as a
 
 - **`target`** — the left of `=`, the operand of `delete`, or the callee of a
   call. JSMQL does not evaluate it: each one names a place to write or a thing
-  to call. If the pass called it a value, a rule meant for an expression could
-  fire on the destination of a write. It could also fold `f` away in `f(1)` to
-  give `3(1)`. The fold pass and this pass share the one predicate that decides
+  to call ([ADR 0185](../adr/0185-position-answered-on-the-way-down.md) gives the
+  reason). The fold pass and this pass share the one predicate that decides
   this, `namesSomething` in naming.ts.
 - **`stageBody`** — part-way down a body path the stage's row still owns, with the
   stage and the path so far. This is a waypoint, not a place a name can be legal
@@ -205,11 +193,10 @@ An `evaluates` path below the leaf keeps the walk descending, the same as a
 
 A block with no `return` means pipeline STAGES only under a callee whose row says
 `blockBody: "stages"`. Under every other callee it is a JavaScript block that
-forgot its `return`, and JSMQL refuses it. The PARSER decides this, because only
-the parser holds the callee and the body at the same time: `args()` claims a
+forgot its `return`, and JSMQL refuses it. The PARSER decides this
+([ADR 0050](../adr/0050-parse-pratt-parser-design.md)): `args()` claims a
 stages block for a stages-taking owner, and `finish()` refuses whatever nobody
-claimed. Phase 4 therefore never has to ask whether a `Lambda.stages` it meets is
-legal, because by the time it runs, every one is.
+claimed. So every `Lambda.stages` that phase 4 meets is legal.
 
 ## What the pass does NOT decide
 

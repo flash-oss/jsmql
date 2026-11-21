@@ -31,10 +31,10 @@ signs below help you choose. K is the one extra code of this brief.
   Use E only when there is a real engineering fix to make.
 - **D — Decision Record.** Signs: why the code is shaped this way and not
   the obvious way, a MongoDB server constraint the code obeys (e.g. "the server rejects the bare form"), an
-  invariant other code relies on, an ordering requirement, a security or DX reason. If an existing doc already
-  states this decision fully (docs/specs/*.md, docs/LANG_RULES.md, docs/LANGUAGE.md, a CLAUDE.md, docs/DEFERRED.md),
-  set `home` to that doc (path + section) and write no ADR — deleting the comment loses nothing. A bare
-  pointer comment such as "See docs/specs/x.md" is D with `home` = that doc. Otherwise give an `adr` key.
+  invariant other code relies on, an ordering requirement, a security or DX reason. If an ADR in docs/adr/ already records
+  this decision fully, set `home` to that ADR file and write no new ADR — deleting the comment loses nothing.
+  A bare pointer comment such as "See docs/specs/x.md" is T: the spec is a rule, not a decision. Otherwise
+  give an `adr` key. A rule of a feature that a spec states fully is T, not D.
 - **K — Keep (rare).** The comments that `CLAUDE.md` lets the baseline keep: (1) JSDoc on an exported declaration of the published API that users see in their
   editor (exports of src/index.ts, src/mongoose.ts, and what they re-export to users); (2) a comment that holds a
   `[DEF-NNN]` tag.

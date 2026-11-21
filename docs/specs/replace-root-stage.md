@@ -11,12 +11,10 @@ The compiler refuses an ARRAY on the right, whatever its shape: the root
 takes ONE document, and the message names the destination that takes many.
 See [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
-The compiler lowers to `$replaceWith` (the shorter MQL spelling), not to
-`$replaceRoot: { newRoot: <expr> }` (the legacy spelling). The two are exact
-runtime equivalents on MongoDB 4.2+, and `$replaceWith: <expr>` uses far fewer
-characters than `$replaceRoot: { newRoot: <expr> }`. The cost is the 4.0 / 4.1
-line of server versions. The rest of the language already excludes them, because
-it relies on 4.2+ features (`$function`, `let` on `$lookup`, and others).
+The compiler lowers to `$replaceWith`, not to `$replaceRoot: { newRoot: <expr> }`.
+No option makes `$ = …` lower to the `$replaceRoot` form. A developer who wants
+it writes the stage call `$replaceRoot({ newRoot: <expr> })`. See
+[ADR 0170](../adr/0170-root-replace-is-replacewith.md).
 
 `$ = <expr>` is statement-only: it appears as a top-level pipeline
 statement, either inside `[ ... ]` array form or as a `;`-separated
@@ -26,7 +24,7 @@ a Filter or `jsmql.expr` goes through the normal pipeline-mode-required
 gate.
 
 **No `;` required.** A write is a pipeline wherever it stands ([filter-mode.md §
-The decision](filter-mode.md)), so a bare `$ = <expr>` with no `;` emits the
+The shape rule](filter-mode.md#the-shape-rule)), so a bare `$ = <expr>` with no `;` emits the
 same `$replaceWith` that the `;`-terminated form does, through `jsmql()` and
 `jsmql.pipeline()` alike. `jsmql.update()` refuses it: an update document holds
 writes to fields, and the server's document-form update has no root replacement.
@@ -44,12 +42,13 @@ user-facing reference.
 ## Convention: all root-replacing sugar starts with `$ =`
 
 **`$ = …` is reserved for *root-replacing* sugar in JSMQL.** The bare `$`
-on the left-hand side is the visual signal that the document itself gets
-replaced. Today that means `$replaceWith` and the `$facet` variant of the
-same surface. Future root-replacing sugar must follow the same shape.
+on the left-hand side shows that the document itself gets replaced, as by
+`$replaceWith` and the `$facet` variant of the same surface. New root-replacing
+sugar must follow the same shape. See
+[ADR 0169](../adr/0169-destination-visible-prefixes.md) for the reason.
 
 A stage that does *not* replace the root uses a **different** left-hand-side
-prefix, so the asymmetry stays visible to a reader at a glance:
+prefix, which names its destination:
 
 - `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → [`$out`](out-stage.md) (write to a destination).
 - `$$$.<coll>.find(…)` / `.filter(…)` → [`$lookup`](lookup-stage.md) (read from a source).
@@ -58,8 +57,7 @@ prefix, so the asymmetry stays visible to a reader at a glance:
 Follow this rule when you add new sugar: if the stage replaces the
 document root, it starts with `$ =`. If it writes elsewhere, reads from
 elsewhere, or composes a derived stream, it takes a destination-bearing
-left-hand-side prefix. Never blur this asymmetry — the left-hand side is
-the user's first cue to what the statement does to the document.
+left-hand-side prefix.
 
 ## Lowering table
 
@@ -98,15 +96,9 @@ is a row spelled on BOTH the `object` and the `stream` family (`on` in
 bare `$$.flatMap("items")` leaves `items` as the element, and `$` names the document, not that
 field; the element comes back afterwards unless a link replaced the document.
 
-Why one lowering: a row on both families is element-wise by construction. What it makes of the
-document is what its stream cell makes of each document of the stream. So "the document becomes
-`pick(document)`" and "every document is picked" are the same operation, and the stream cell's
-`$project` is the smaller MQL. MEASURED: `[{ $project: { a: 1, b: 1, _id: 0 } }]` and the value
-form `$replaceWith: { $let: { vars: { jsmqlObj: "$$ROOT" }, in: { a: { $getField: … }, … } } }`
-return the same documents for a present key, a null key, and a missing key. Inside a
-`$lookup` body, the stage and the value form return the same orders too. The compiler takes
-the stream road only when every argument is a compile-time constant, because a stage reads its
-field list before any document. `$ = $.pick($.keys)` names a list only the server knows, so it
+See [ADR 0171](../adr/0171-root-pick-omit-stream-road.md) for the reason for one lowering. The compiler
+takes the stream road only when every argument is a compile-time constant, because a stage reads
+its field list before any document. `$ = $.pick($.keys)` names a list only the server knows, so it
 takes the value road — one `$replaceWith` whose `.pick` reads the document's own keys at query
 time — and so does any chain with such a link. The dispatch keys on what the developer wrote, so
 one input has one output.
@@ -316,11 +308,9 @@ Each refusal names a concrete fix:
 | `delete $` | the statement would delete the document itself; the message names `$ = { … };` to replace it, and `$ = { keep: $.keep };` to keep one field |
 
 **Each refusal uses the spelling that you wrote.** A stage body writes its own
-document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …`
-fix there would write the OUTER document, and a body over another collection
-cannot write it ([lookup-stage.md § The join
-road](lookup-stage.md#the-join-road)). So each refusal above, except the
-arithmetic one, quotes the spelling the program uses. `rootAsWritten` in
+document through its parameter: `o = …` in `.aggregate(o => { … })`. So each
+refusal above, except the arithmetic one, quotes the spelling the program uses
+([ADR 0029](../adr/0029-emit-statement-writes.md)). `rootAsWritten` in
 [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the
 parameter's own name for an `Ident` target, and `$` for the bare root:
 
@@ -352,8 +342,3 @@ root](#fan-out-belongs-to-the-stream-not-the-root).
   trailing `$unset: "__jsmql"` is harmless but unnecessary — the field
   does not exist on the post-replace document. A fold that removes it would be a
   small win, and the project has not done this work.
-- **`$replaceRoot` as an alternative target.** A user who explicitly wants
-  the verbose 4.0-compatible shape can still write
-  `$replaceRoot({ newRoot: <expr> })` directly — the stage-call form stays
-  unchanged. The project offers no knob that makes `$ = …` lower to the
-  verbose form.

@@ -18,15 +18,10 @@ program:
 - Each entry of [src/compiler/index.ts](../../src/compiler/index.ts) calls it
   before `fold`.
 
-Two reasons fix this place:
-
-1. **A passed value is not source.** Before `inject`, a template `${…}` slot or a
-   `jsmql.compile` parameter is still a name. A name is JSMQL, so the check never
-   sees the value. `` jsmql`${base} && $.qty > 5` `` merges `base` as a query
-   document.
-2. **A later phase moves nodes.** `fold` inlines a `const` binding, and a desugar
-   rule rewrites a method to another spelling. After them, the tree no longer
-   shows what the developer wrote.
+Before `inject`, a template `${…}` slot or a `jsmql.compile` parameter is still a
+name, so the check never sees the value. `` jsmql`${base} && $.qty > 5` `` merges
+`base` as a query document. See [ADR 0182](../adr/0182-raw-mql-check-before-inject.md)
+for the reason for this place.
 
 ## The contexts
 
@@ -117,7 +112,7 @@ A mark is not a new node, so each compile-time reader keeps `.value`. These
 readers are the fold, the regex road of `.startsWith()`, a constant length, and
 the string type of `+`. The one question "is this a field path?" has one answer,
 `isFieldPathString(node)` in [src/registry/ast.ts](../../src/registry/ast.ts).
-Every site that used to test `value.startsWith("$")` on a source node asks it.
+Every site asks it, and no site tests `value.startsWith("$")` on a source node.
 
 The fold computes only from JSMQL constructs (`EVALUABLE_TYPES` in
 [src/compiler/passes/fold.ts](../../src/compiler/passes/fold.ts)), and a `const`

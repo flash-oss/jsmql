@@ -12,13 +12,11 @@ registry file that owns its facts. It invents nothing a row could have stated.
    keywords.ts                        + position       + productions    + productions
 ```
 
-**Phase 4 runs inside phase 3, and also after it.** Some sugars mean one
-thing as a statement, and are refused everywhere else. So a rewrite must know
-where it stands. The answer cannot come from identity, because the walk rebuilds
-a parent as soon as a child changes. `passes/position.ts` states the position at
-each parent-to-property step, and `mapTreeIn` carries this position down the
-tree. `passes/shape.ts` answers the other half: which document the whole program
-becomes. No single step can see this on its own.
+**Phase 4 runs inside phase 3, and also after it.** A rewrite must know where it
+stands. `passes/position.ts` states the position at each parent-to-property step,
+and `mapTreeIn` carries this position down the tree. See
+[ADR 0183](../../docs/adr/0183-desugar-pass-design.md) for the reason. `passes/shape.ts`
+answers the other half: which document the whole program becomes.
 
 ## The one rule that shapes everything
 
@@ -29,7 +27,8 @@ it attach to? In which of the seven positions is it legal? How many arguments
 does it take there? What does the error say when it is not legal? A row does
 not hold a renderer. A lowering reads its neighbours: the receiver's provable
 type, the stages already emitted and the shape of a sibling argument. A single
-row cannot see any of that. Lowerings are code, and they live in `emit/`.
+row cannot see any of that (docs/adr/0088-registry-vocabulary-positions.md).
+Lowerings are code, and they live in `emit/`.
 
 So when a phase needs a fact about the language, it reads a row. When it needs to
 produce a document, it calls a function here.
@@ -49,17 +48,16 @@ kinds.ts       the kind check of HR7: the fit rule, the fault a call can break, 
 
 lex/
   token.ts     the Token record and the source-position helpers.
-  lexer.ts     the longest-match loop over `TOKENS`, plus the five rules a table
-               cannot imply: maxRun, chooseBy, introducesName, tracksDepth,
+  lexer.ts     the longest-match loop over `TOKENS`, plus the rules a table cannot
+               imply: maxRun, chooseBy, introducesName, tracksDepth,
                resumesTemplateAtDepth.
-  scanners.ts  number, string, template, regex, identifier. Algorithms, not tables:
-               a table says which spelling makes which token, a scanner decides
-               where a token ENDS.
+  scanners.ts  number, string, template, regex, identifier. Each scanner decides
+               where its token ENDS. See docs/adr/0045-lex-table-driven-lexer.md.
 
 parse/         the Pratt loop that precedence, associativity and fixity drive,
                plus the mixing rules (noMixWith, leftOperandNot) and the one
-               NAME fact it reads: `blockBodyOf`, because only the parser holds a
-               callee and its `{ … }` body at the same time.
+               NAME fact it reads: `blockBodyOf`. See
+               docs/adr/0050-parse-pratt-parser-design.md.
 passes/        naming.ts answers "which row does this node name", "what is the
                chain's base" and "what does this node bind" ONCE for every pass;
                walk.ts is the one tree walk they all use. fold.ts and its family
@@ -69,8 +67,8 @@ passes/        naming.ts answers "which row does this node name", "what is the
                inject carries a runtime value in; fresh mints a parameter name;
                position and shape decide which document the program becomes;
                raw-mql checks HR6 on the tree as parsed, before inject.
-               no-new checks HR8 (no `new` keyword) on the tree as parsed,
-               before any pass can fold a `new Date(…)`.
+               no-new checks HR8 (no `new` keyword) on the tree as parsed
+               (docs/adr/0053-passes-no-new-timing.md).
                See docs/specs/desugar-pass.md, docs/specs/constant-engine.md,
                docs/specs/position-pass.md and docs/specs/raw-mql-boundary.md.
 interpret/     the interpreter for MQL expressions: `interpret(mql)` gives the value of a

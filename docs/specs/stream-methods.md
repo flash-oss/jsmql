@@ -92,11 +92,9 @@ slot (`slot()`), the `$sort` names the slot, and the chain's cleanup clears the
 slot when the chain closes. The cleanup never sits next to the `$sort`, because
 a following `.takeWhile` reads the sort it follows.
 
-The compiler cannot materialise `.flatMap` the same way. This is a *semantic*
-limit, not a mechanical one. `$unwind` returns each element to a **named**
-field, so the field name is part of what the user means. Auto-naming it into a
-scratch slot, then clearing the slot afterwards, would silently decide the shape
-of every downstream document.
+The compiler does not materialise a computed `.flatMap` path, so `.flatMap`
+takes a field path only. See
+[ADR 0172](../adr/0172-stream-method-decisions.md).
 
 Where the object spelling is already claimed, it keeps its richer meaning:
 `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction
@@ -159,6 +157,11 @@ each one is a separate slot.
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — the stage drops `_id` unless the list names it, as the value-mode `.pick` does | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (this also drops the `__jsmql` scratch). An empty list is `{ $replaceWith: {} }`. After `.flatMap`, the empty document stands at the element's path (`{ items: {} }`). An inclusion needs a field, and `{ $project: { _id: 0 } }` alone keeps every other field (measured) |
 | `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else, and `_id` too | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope. An empty list drops nothing and emits no stage: the server refuses `{ $project: {} }` (measured) |
 
+MEASURED on the project's `mongod` over the ids `[3, 1, 2, null, 0, 2]`:
+`.difference([1, 2])` keeps 3, null and 0; `.intersection([1, 2, 9])` keeps one
+1 and one 2; `.compact().sortBy()` gives 1, 2, 2, 3. `test/stream-methods.test.ts`
+asserts these answers.
+
 `$ = $.pick([…])` and `$ = $.omit([…])` — the same methods on the document
 itself — reach these two cells too, and emit the same stage: see
 [replace-root-stage.md § Element-wise object methods on the
@@ -177,7 +180,8 @@ identical helper, so both modes agree. `$toString` still errors on an object or
 array key — a separate, documented pitfall. Because the key is a string, code
 that reads it back (`.keys()`) and joins on it must first cast it to the field's
 own type — see the `keyBy`/`groupBy`/`countBy` pitfall in
-[LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
+[LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case. See
+[ADR 0004](../adr/0004-codegen-lowering-small-decisions.md).
 
 **A `.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, and
 MongoDB requires an object root there. The stream cell reads the body through the
@@ -265,12 +269,12 @@ $$$.orders.filter({ userId: $._id }).flatMap("productIds").filter(p => !$.owned.
 //                      { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } }, …the collapse ]
 ```
 
-### `.reduce` is intentionally NOT in the registry
+### The `.reduce` wrap forms
 
-In JS, `arr.reduce(...)` returns a single value — a scalar, an object, or an
-array, and that depends on the reducer. So the compiler rejects `.reduce` as a
-chain method, with an actionable wrap-pattern hint. What the reducer returns
-decides how the result is assigned:
+`.reduce` has no `stream` cell. The compiler refuses it as a chain method, and
+the refusal names the wrap forms below. See
+[ADR 0172](../adr/0172-stream-method-decisions.md). What the reducer returns decides
+how the result is assigned:
 
 - **scalar / object reducer** (one value) — the code must **wrap** it into a
   stream-shaped RHS. Both wrap forms lower to the same `$group` +
@@ -333,11 +337,23 @@ Each entry's body must reference `acc.<sameKey>` as the accumulator side
 (`total: acc.count + d.amount` is rejected, and the hint names `acc.total`,
 because this is the constraint that keeps the per-key lowering local).
 
-JSMQL requires the `init` value for JS-faithfulness, but the MQL
-lowering does not use it (MongoDB accumulators have their own neutral elements). In the
-scalar form it must be a literal, so a stray `$.<field>` cannot sneak through.
-In the object-reducer form it is a literal object whose keys define the
-accumulator namespace.
+JSMQL requires the `init` value, and it must be a constant. In the object-reducer
+form it is a literal object whose keys define the accumulator namespace.
+`seeded` in [src/compiler/emit/reduce-wrap.ts](../../src/compiler/emit/reduce-wrap.ts)
+folds the seed of each key into the `$replaceWith` value, as JavaScript starts
+from it ([ADR 0024](../adr/0024-emit-reduce-wrap-seed.md)):
+
+| Accumulator | Seed | The value |
+|---|---|---|
+| `$sum` | `0` | the sum |
+| `$sum` | any other constant `c` | `{ $add: [c, <sum>] }` |
+| `$max` / `$min` | `null` | the max / min |
+| `$max` / `$min` | any other constant `c` | `{ $max: [c, <max>] }` / `{ $min: [c, <min>] }` |
+| `$push` | `[]` | the list |
+| `$push` | a non-empty list `c` | `{ $concatArrays: [c, <list>] }` |
+| `$first` | `null` | the first value |
+| `$first` | any other constant `c` | `c` |
+| `$last` | any | the last value |
 
 Multiple aggregates in either form share **one** `$group` stage. The detector
 does not recognise some shapes. `$avg` would need a two-key sum/count dance with
@@ -407,12 +423,16 @@ the same road `.filter` uses — with the parameter as the document, so a
 
 ## Error wording
 
-Every rejection branch sits next to the method's `validate` function, so
-the wording stays consistent across methods. Two general principles:
+The refusals come from the row's `args` rule and its `stream` cell. Three
+general principles:
 
 - **Name the method explicitly.** A message that names the call and its
   signature (`.slice(start[, end])`) beats one that names only the kind of
   argument.
+- **Name the method that the source wrote.** A helper that several methods share
+  names its caller, never a sibling. A predicate refusal names the method alone,
+  never a receiver such as `$$`. See
+  [ADR 0096](../adr/0096-stream-group-key-errors.md).
 - **Suggest the actionable alternative.** A negative index on `.slice` gets a
   message that states the index rule. A computed argument gets a hint to write
   the value as a literal in the source.
@@ -445,11 +465,9 @@ the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 
 A cell that needs what the chain emitted before it reads `sortedBy()` — the last
 `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` /
-`.dropWhile` are the readers, and they show the safe shape. They **read** the
-sort (never rewrite it). They **refuse** when there is none (never guess one).
-The contrast is the "from the end" family (§ below), which could work only if it
-rewrote the preceding stage AND fell back to `_id` when that stage is absent — a
-wrong answer with no diagnostic. Read; do not rewrite. Refuse; do not guess.
+`.dropWhile` are the readers. They **read** the sort, and they **refuse** when
+there is none. Read; do not rewrite. Refuse; do not guess. See
+[ADR 0136](../adr/0136-stream-from-the-end-methods.md).
 
 ## Bare-statement stream chains
 
@@ -487,14 +505,8 @@ same one, whether it came from this statement or the one before.
 ## Deliberately absent: the "from the end" methods
 
 `.takeRight(n)`, `.dropRight(n)`, `.initial()` and `.toReversed()` are **not**
-stream methods. MongoDB has no stage that reverses a stream (`$reverseArray` is
-an expression, for an array inside a document). A stream has no order except the
-one a `$sort` gives it. So "the last n" has nothing to count back from. The only
-way to fake them is to rewrite the preceding `$sort`. This makes them
-position-dependent in a way the JS methods are not, and, with no `$sort` in
-front, it silently orders by `_id` and raises no error.
-`.toSorted(c).toReversed()` is in any case a longer spelling of a descending
-comparator.
+stream methods. See [ADR 0136](../adr/0136-stream-from-the-end-methods.md) for the
+reason.
 
 Each of the four rows states an `unsupported` stream cell. Every head reads it —
 the root stream, a `$$$.<coll>` chain, and a callback's third parameter. So a
@@ -508,9 +520,8 @@ All four remain in **value position** on a real array (`$.items.takeRight(3)` �
 so there they mean exactly what JS means.
 
 **JS-faithfulness note.** In plain JS, `arr.filter(...)` as a statement discards
-its result. The bare form gives it the meaning "transform the running stream" —
-syntactically valid JS (a different runtime meaning is allowed; only a syntax
-error is not) and consistent with the existing `$$.push(...)` statement sugar.
+its result. The bare form means "transform the running stream". See
+[ADR 0172](../adr/0172-stream-method-decisions.md).
 
 ## The Stage cell is answered for every array-receiver method
 
@@ -527,11 +538,8 @@ carry an answer. There are four answers, and no fifth:
 none of the four. A name appears in two of them. A reason is too short to be
 useful.
 
-The reason matters more than the rejection. A generic list of the stream methods
-tells the developer what else exists. It never tells why *this* one is absent.
-That is the difference between a rejection and a dead end. A reason that cannot
-be written convincingly announces a gap — that is how `.uniq`, `.sortedUniq` and
-`.sortedUniqBy` were found and given lowerings.
+A written reason says why *this* method is absent, and what to write instead
+([ADR 0172](../adr/0172-stream-method-decisions.md)).
 
 The generic list still exists, and is still correct, for a name JSMQL does not recognise at
 all. A typo has no reason to give, so it gets the vocabulary list and a `didYouMean` suggestion.

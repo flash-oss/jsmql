@@ -3,7 +3,8 @@
 This folder is the single historical record for the whole project. See
 § No development history outside DEVLOG in the root [`CLAUDE.md`](../../CLAUDE.md)
 for what that means: every other file describes what JSMQL **is**; only this
-folder describes **how it got here**. There is no separate CHANGELOG file and
+folder describes **how it got here**. It is history only: the current reason
+for a decision lives in an ADR in [docs/adr/](../adr/CLAUDE.md). There is no separate CHANGELOG file and
 no separate ROADMAP file.
 
 ## Layout

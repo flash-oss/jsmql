@@ -7,56 +7,22 @@ phase touches a BSON value. User-facing behaviour is in
 [docs/LANGUAGE.md](../LANGUAGE.md); the printer is
 [docs/specs/mql-stringify.md](mql-stringify.md).
 
-## Why a live value, and not Extended JSON
+## A live value
 
-JSMQL emits a real BSON instance wherever the source spells one. The Extended JSON
-envelope (`{ "$oid": "…" }`) is a client-side serialization shape. The driver does not
-parse this envelope for queries. Sent as written, it reaches the server, and the server
-refuses it as an unknown operator. The team measured this against mongod.
+JSMQL emits a real BSON instance wherever the source spells one, never the Extended JSON envelope (`{ "$oid": "…" }`). See [ADR 0163](../adr/0163-bson-live-values.md).
 
 ## The dependency contract
 
 `bson` is a **peer** dependency, range `^6.10.0 || ^7.0.0`.
 
-A peer dependency resolves to ONE copy: the application's own. That is the whole point.
-A value JSMQL emits is then the same class the driver builds. It passes the caller's
-`instanceof` checks and carries the BSON major version its serializer expects. A plain
-`dependencies` entry would let npm nest a second copy beside the application's copy. A
-value from the wrong copy then fails both checks, and this contract removes that defect.
+A peer dependency resolves to one copy: the copy of the application. A value that JSMQL emits is then of the class that the driver builds. See [ADR 0161](../adr/0161-bson-peer-dependency.md) for the reason, and for what the peer dependency does not give.
 
-Two build rules follow. A break of either one brings the defect back.
+Two build rules follow. A break of the first rule ships a second copy of `bson` in the package.
 
 | artifact | rule | why |
 |---|---|---|
 | `dist/cjs/*.cjs` | `external: ["bson"]` | inlined, the package ships its own copy |
 | `dist/jsmql.js` (site) | bundled | a browser cannot resolve a bare specifier, and the page has no driver to share with |
-
-### What the peer dependency does and does not buy
-
-It guarantees **one resolved copy per module condition**. This is what makes the BSON
-version symbol always agree, and a serializer checks that symbol before it writes a
-value. The hand-made class hard-coded that number, so an app on bson 6 hit
-`BSONVersionError`.
-
-It does NOT guarantee `instanceof` everywhere, and nothing can. `bson` ships a dual
-build: its exports map sends `import` to `lib/bson.node.mjs` and `require` to
-`lib/bson.cjs`. An ESM importer and a CJS importer then hold two different class
-objects. The team measured this, with JSMQL absent from the test entirely:
-
-```
-ESM bson.ObjectId === CJS bson.ObjectId : false
-CJS bson.ObjectId === mongodb.ObjectId  : true      (mongodb is CJS)
-version symbol both sides               : 7 7
-mongodb serialises an ESM-built ObjectId: OK
-```
-
-So a CJS consumer, which is what `mongodb` and `mongoose` are, gets exact class
-identity with JSMQL's CJS build. An ESM consumer that reaches the driver's classes
-through CJS interop does not, and never did, with or without jsmql. The value still
-serialises, because the version symbol is what the serializer reads.
-
-This is the concrete reason recognition duck-types: a valid value can arrive with a
-prototype JSMQL has never seen, through no fault of anyone's dependency graph.
 
 ## Construction and recognition
 
@@ -70,10 +36,7 @@ v instanceof Cls || bsonTagOf(v) === tag
 ```
 
 The prototype answers for a value from this copy. The `_bsontype` tag answers for a
-value from any copy — a monorepo that pins the other major, or a server response,
-which MongoDB's own shell documentation says gets a different base class than a
-user-supplied value. Either match is a yes, so JSMQL accepts a valid value from
-wherever it came from.
+value from any copy. Either match is a yes. See [ADR 0162](../adr/0162-value-recognition.md).
 
 `UUID` is the one type the tag cannot answer alone: it reports `_bsontype: "Binary"`.
 From another copy, only `sub_type === 4` identifies it, and `isUUID` checks both
@@ -87,14 +50,11 @@ is.
 
 ## Recognition across realms
 
-The same rule holds for the JavaScript values a document carries: a Date, a RegExp, a
+The same rule holds for the JavaScript values that a document carries: a Date, a RegExp, a
 Uint8Array (a Node Buffer is one), a plain object. `instanceof Date` is false for a
-real Date made in another realm — a `vm` context, a test runner's sandbox, a worker.
-Each realm has its own `Date`, `RegExp`, `Uint8Array` and `Object.prototype`. A test
-against this realm's class fails a valid value that came from another realm, and the
-value then takes the wrong road: a Date parameter that fails the test compares on the
-`$expr` road and loses the index; a `$`-keyed object that fails the plain-object test
-skips the `$literal` gate.
+real Date from another realm: a `vm` context, the sandbox of a test runner, a worker.
+See [ADR 0162](../adr/0162-value-recognition.md) for the road that such a value takes when a
+test fails it.
 
 So no module in `src/` tests a value with `instanceof` or against `Object.prototype`.
 The recognisers live in `src/registry/vocabulary.ts` beside `bsonTagOf`, where a row
@@ -178,6 +138,8 @@ The `constant` cell of a row builds the value (`bsonConstant` in `src/bson.ts`, 
 `construct` service of the cell). The server has no expression for some of these values, so the
 value goes into the MQL as itself, and the constant engine reads it. A constant that the type
 cannot hold is a refusal that names the type that fits.
+See [ADR 0002](../adr/0002-bson-constant-construction.md) for how `bsonConstant` reads a
+constant.
 
 A type name is no conversion. The cell refuses a constant that is already a live value of
 the type of its row, for example `Long(Long("5"))`. It also refuses a boolean, for example
@@ -203,22 +165,16 @@ Once built, a BSON value is a VALUE and nothing else:
   `src/registry/vocabulary.ts`), because MongoDB's own `$type: "number"` alias covers
   int, long, double and decimal. That is what keeps a comparison on the query road and
   a method off the per-document `$isArray` wrapper.
-- **The fold never computes with it.** `bson.Decimal128`'s whole prototype is
-  `toString` / `toJSON` / `toExtendedJSON`, so there is no decimal arithmetic to fold
-  with, and the server's answer is the exact one (MEASURED: `$add: ["$p", Decimal128("0.2")]`
-  gives `0.3`, where a double gives `0.30000000000000004`). `Long` and `Int32` would need
-  MongoDB's promotion matrix rebuilt in the compiler, and a wrong square is a wrong
-  number in a report.
+- **The fold never computes with it.** The server computes the answer. See
+  [ADR 0163](../adr/0163-bson-live-values.md).
 - **One exact read folds**: `toString()`, which cannot lose anything.
 
 ## A BigInt literal is a `Long`
 
-`5n` is an int64 in MQL, so `src/compiler/emit/lower.ts` builds the value, and does not
-emit `{ $toLong: "5" }`. Three things follow. The server parses no string per
-document. The comparison stays on the query road, so `$.xs === 1n` matches an ELEMENT
-of `xs` where the `$expr` form compared the whole array. And a BigInt past 64 bits is
-refused at its source position, where it used to compile and fail on the server —
-MEASURED: the server refuses `$toLong: "12345678901234567890123"` at run time.
+`5n` is an int64 in MQL, so `src/compiler/emit/lower.ts` builds a live `Long`, and does not
+emit `{ $toLong: "5" }`. The comparison stays on the query road, so `$.xs === 1n` matches
+an element of `xs`. The compiler refuses a BigInt past 64 bits at its source position. See
+[ADR 0163](../adr/0163-bson-live-values.md) for the reasons.
 
 `longsWithin` converts a BigInt at any depth, because a settled constant can hold
 BigInts inside an array or an object. Negation folds (`-5n`), because a BigInt negates
@@ -252,10 +208,8 @@ flows through the compiler, which is what `instanceof || tag` exists for. The re
 the suite runs once, because the compiler is bson-agnostic: it builds nine values and
 reads a `_bsontype` string.
 
-That lane also holds the proof of the peer decision. A bson 7 serializer REFUSES a
-bson 6 value outright (`BSONVersionError`, from the `@@mdb.bson.version` registry
-symbol), so a nested second copy would not merely fail an `instanceof` check — the
-query would never reach the server.
+That lane also holds the measurement behind the peer dependency: a bson 7 serializer
+refuses a bson 6 value. See [ADR 0161](../adr/0161-bson-peer-dependency.md).
 
 ## The plausibility rule
 

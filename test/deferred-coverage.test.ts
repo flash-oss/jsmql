@@ -61,8 +61,7 @@ function parseDeferred(): {
   const idsInOrder: string[] = [];
 
   const sectionStart = text.indexOf("## §A.");
-  const sectionEnd = text.indexOf("## §B.");
-  const sectionA = sectionStart >= 0 && sectionEnd >= 0 ? text.substring(sectionStart, sectionEnd) : text;
+  const sectionA = sectionStart >= 0 ? text.substring(sectionStart) : text;
 
   for (const m of sectionA.matchAll(ROW_HEADING_RE)) {
     const id = m[1];
@@ -139,11 +138,8 @@ describe("deferred-tracking drift protection", () => {
     return hits;
   }
 
-  it("COUNT GATE: the number of open items and decisions, so no prose has to claim it", () => {
-    const { idsInOrder } = parseDeferred();
-    const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
-    const decisions = text.substring(text.indexOf("## §B.")).match(/^### /gm) ?? [];
-    expect({ open: idsInOrder.length, decided: decisions.length }).toEqual({ open: 9, decided: 18 });
+  it("COUNT GATE: the number of open items, so no prose has to claim it", () => {
+    expect(parseDeferred().idsInOrder.length).toBe(9);
   });
 
   it("ID ORDER GATE: §A rows are in ascending id order, as the header states", () => {

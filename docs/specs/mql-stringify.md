@@ -15,29 +15,14 @@ jsmql.stringify(jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd79943
 // → { status: "active", _id: new ObjectId("507f1f77bcf86cd799439011") }
 ```
 
-## Why not `JSON.stringify`
-
-JSON cannot spell what MQL holds. What it writes instead is wrong, not just
-lossy: the document still runs, but it matches nothing. This is the worst
-failure a query can have.
-
-| The value | `JSON.stringify` writes | The server then |
-| --- | --- | --- |
-| `new Date("2026-01-01")` | `"2026-01-01T00:00:00.000Z"` | compares a string to a date |
-| an ObjectId | `"507f1f77bcf86cd799439011"` | compares a string to an `_id` |
-| `/^a/i` | `{}` | matches every document |
-| a `Decimal128`, a `Long`, a `Binary` | its internal byte fields | reads a document, not a number |
-| a key named `__proto__` | `"__proto__": 1` | never gets the field: a paste of the text back sets the prototype and creates no own property |
-
 ## One spelling, two runtimes
 
-The printer writes each BSON class as `new X(…)`, the form the Node driver
-needs. MEASURED in mongosh 2.9.2: the same text runs there and gives the same
-value, because mongosh exposes the driver's BSON classes as globals on top of
-its own `ISODate` / `NumberDecimal` helpers. So there is ONE spelling per type,
-not one per runtime. The bare-call forms (`ObjectId("…")`, `MinKey()`) and the
-helper names (`ISODate`, `NumberLong`, `BinData`) run only in mongosh, so the
-printer writes neither.
+The printer writes each BSON class as `new X(…)`. The same text runs in the Node
+driver and in mongosh. The printer writes no bare-call form (`ObjectId("…")`,
+`MinKey()`) and no mongosh helper name (`ISODate`, `NumberLong`, `BinData`).
+The printer selects the class by the `_bsontype` tag, never by a duck check.
+See [ADR 0157](../adr/0157-stringify-javascript-source.md) for why the text is
+JavaScript and not JSON, and for these two choices.
 
 To paste the text into a driver script, you need the classes in scope. mongosh has
 them already:
@@ -46,11 +31,6 @@ them already:
 const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
         MinKey, MaxKey, Code, DBRef, BSONSymbol, BSONRegExp } = require("mongodb");
 ```
-
-The `_bsontype` tag keys the classes. Every class sets this tag, and the
-compiler itself reads it. A duck check does not work here: a driver `UUID`
-reports `_bsontype: "Binary"` AND carries `toHexString`. So a check for that
-method calls a UUID an ObjectId, and prints text that throws in both runtimes.
 
 The printer picks a few spellings by hand, not by a fixed rule:
 

@@ -16,19 +16,13 @@ See
 [`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks)
 for the user-facing reference.
 
-## Why this mechanism (and not `$function`)
+## The mechanism
 
-MongoDB has **no** dedicated error, assert, or throw aggregation operator
-(confirmed against the v8.x operator reference and the long-open JIRA
-SERVER-27190). The only mechanism with a fully custom message is `$function`
-(server-side JS `throw`). But server-side JS is **deprecated as of MongoDB
-8.0**. The Stable API (`apiStrict:true`) excludes it, and Atlas Flex and the
-free tiers do not offer it. JSMQL therefore does **not** use it.
-
-Instead JSMQL uses a portable runtime failure that is not deprecated: it feeds
-an unrecognised **type name** to `$convert`. `{ $convert: { input: …, to: "<not a
-type>" } }` fails at runtime with a `BadValue` error (code 2), and the server's
-message contains the bad type name. The custom message is the bad type name.
+JSMQL feeds an unrecognised **type name** to `$convert`. `{ $convert: { input: …,
+to: "<not a type>" } }` fails at runtime with a `BadValue` error (code 2), and the
+server's message contains the bad type name. The custom message is the bad type
+name. JSMQL does not use `$function`. See
+[ADR 0176](../adr/0176-assert-through-convert.md) for the reason.
 
 ## Lowering
 
@@ -81,23 +75,18 @@ The dynamic branch wraps the message in `$toString`, so a non-string
 expression (`assert($.ok, $.count)`) gets coerced. So `$concat` does not
 fail.
 
-## Why the gating is robust
+## The gate
 
-The server always evaluates the `$convert`. The gating lives only in its
-runtime `to` value, computed per document. This design does **not** rely on
-`$cond` or `$and` to short-circuit an untaken branch, because MongoDB does
-**not** document or guarantee that behaviour (the `$and`/`$or` reference warns
-that a later operand "may cause an error even if the first expression
-evaluates to false"). If the failing-branch *expression* sat directly in a `$cond` branch, the
-optimiser could fold a constant message at planning time. That would fire the
-error unconditionally. A route through `$convert.to` also prevents that risk.
+The server always evaluates the `$convert`. The gate lives only in its runtime
+`to` value, computed per document. No failing expression sits directly in a
+`$cond` branch. See [ADR 0176](../adr/0176-assert-through-convert.md) for the reason.
 
 ## Dispatch (call forms)
 
 `assert(...)` is a bare-identifier `CallExpression`. Its row lists a
 `statement` form and no value form, so it is a statement wherever it stands.
 A lone `assert(…)` with no `;` is a pipeline by the shape rule
-([filter-mode.md § The decision](filter-mode.md)). All of these work:
+([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)). All of these work:
 
 - `({ $ }) => { assert($.q >= 0, "m"); $.fee = … }` — multi-statement pipeline
 - `({ $ }) => { assert($.q >= 0, "m") }` — single-statement block

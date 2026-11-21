@@ -186,7 +186,7 @@ the existing field on the server, where a JavaScript assignment replaces it
 a stage boundary, never a same-stage separator.
 
 `jsmql()` and `jsmql.pipeline()` return these stages; a lone write with no `;` is a
-pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)).
+pipeline by the shape rule ([filter-mode.md § The shape rule](filter-mode.md#the-shape-rule)).
 `jsmql.expr()` refuses a write, and names the two entries that take one.
 
 ### The update document: `lowerUpdate`

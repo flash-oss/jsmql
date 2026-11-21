@@ -329,7 +329,7 @@ Comments are trivia: `skipTrivia()` discards them during tokenisation (it altern
 - Array literals — `$concatArrays` with consecutive non-spread elements grouped into one literal-array operand; a lone `[...x]` returns `x` directly
 - Object literals — `$mergeObjects` with consecutive non-spread entries grouped into one operand; a lone `{...x}` returns `x` directly
 
-A `$op(…)` call, known or unknown, refuses a spread, because a spread has no MQL of its own. The message names the forms that work. See docs/DEFERRED.md § B.
+A `$op(…)` call, known or unknown, refuses a spread, because a spread has no MQL of its own. The message names the forms that work. See [ADR 0143](../adr/0143-spread-in-op-escape-hatch.md) for the reason.
 
 > **Note on negative numbers:** The lexer never produces a negative number token.
 > It always lexes a leading `-` as a `Minus` token, and the `unary` rule handles
@@ -349,7 +349,7 @@ An operator call uses **object-style** if and only if:
 
 If there is more than one argument, the call is always **positional**, even when the first argument is an object literal. For example, `$foo({ a: 1 }, $.b)` is positional, with two args.
 
-The parser does not decide the shape: it keeps the arguments as it reads them. The emit phase applies the rule. An operator whose row states a cell for the position uses the row's emitter (for example `objectBody` in [src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)). Any other operator takes the plain form (`plainOperator` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)).
+The parser does not decide the shape: it keeps the arguments as it reads them. The emit phase applies the rule ([ADR 0050](../adr/0050-parse-pratt-parser-design.md)). An operator whose row states a cell for the position uses the row's emitter (for example `objectBody` in [src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)). Any other operator takes the plain form (`plainOperator` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)).
 
 ## Field ref — one segment only
 
@@ -361,8 +361,8 @@ This enables method chaining: `$.name.trim()` parses as `MethodCall(FieldRef("na
 
 A name after `$.` that is followed by `(` is not a field, because a field is never callable. So
 `$.pick(["a"])` parses as `MethodCall(FieldRef(""), "pick", […])` — a method on the document
-itself, with the bare `$` as its receiver. The node's position is the `.` of the `$.` token, the same point
-every other method call points to.
+itself, with the bare `$` as its receiver. The node's position is the `.` of the `$.` token, which is the second character of that token.
+It is the same point that every other method call points to.
 
 When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items[0].name`), a method call result, or a ternary — the member read becomes `$getField` over the lowered receiver:
 
@@ -372,7 +372,7 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 
 ## Built-in call or bare reference
 
-A one-value-in/one-value-out built-in reads two ways: its call form (`Long(x)`) and a bare callback reference (`arr.map(Long)`). The parser is **name-blind** and settles neither question. `Long(x)` is a `CallExpression`, a bare `Long` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
+A one-value-in/one-value-out built-in reads two ways: its call form (`Long(x)`) and a bare callback reference (`arr.map(Long)`). The parser is **name-blind** ([ADR 0050](../adr/0050-parse-pratt-parser-design.md)) and settles neither question. `Long(x)` is a `CallExpression`, a bare `Long` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
 
 - The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it. `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Long` into `x => Long(x)`, and a namespace member such as `Math.floor` into `x => Math.floor(x)`. The row then refuses each of these two, because the element is a value of the document. The refusal names the arrow with the value's own method. The row's `iterateeSlots` layout states which slots accept the spelling; the rewrite never guesses this.
 - A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`.
@@ -457,9 +457,9 @@ When any operand of a `+` chain is **string-producing**, the whole chain emits `
 
 `lowerTruth` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) is the truth READING of an expression, and [src/compiler/emit/mode.ts](../../src/compiler/emit/mode.ts) holds the rules it applies over MQL primitives. `Truth` is a brand the vocabulary declares ([src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)), and `mode.ts` alone mints it. Every slot that reads a boolean is typed to take one. So a value cannot get into `$cond.if` unless it goes through `mode.ts`. A value that is provably a boolean passes bare.
 
-- The JavaScript test emits `{ $and: [{ $gt: [v, null] }, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)`, so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing. MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing to null first, matching JS, where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing"), and rely on type-bracketed comparison for the cross-type checks (for example `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. JSMQL treats NaN as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
+- The JavaScript test emits `{ $and: [{ $gt: [v, null] }, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)`, so it catches **both** `null` and *missing*. The other three clauses compare the raw value. See [ADR 0184](../adr/0184-truth-test-lowering.md) for the reason. Empty array `[]` and empty object `{}` stay truthy. JSMQL treats NaN as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
 - The truth reading covers every **boolean position** — anywhere only an expression's truthiness is observed — so one rule covers the whole language: a `?:` test, `!`, `assert()`, a predicate lambda body and the lodash predicate-run family (the `predicate` and `condition` services in [src/compiler/emit/inputs.ts](../../src/compiler/emit/inputs.ts), which read a callback's body through `lowerTruth`), `.compact()`, and the `$expr` residual the filter road emits where no row states a native query form (`matchExpr` in [src/compiler/emit/filter.ts](../../src/compiler/emit/filter.ts)). So `.compact()` is identical to `.filter(x => x)`, `.reject(p)` is the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agrees with the value-mode `.filter(p)`.
-- A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. This gives the same answer (`a && b` read for truth means "a truthy AND b truthy"). The `$cond` is invisible where nothing reads the returned operand. A wrap in `$cond` would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
+- A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective. It does not take the operand-preserving `$cond` that value position emits ([ADR 0184](../adr/0184-truth-test-lowering.md)). Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
 - An expression is provably boolean when `kindOf` proves it so, from the registry alone: a boolean literal; a call, operator, or method whose row states `returns: "bool"` — a comparison and `!` are among them, each a production with its own row; `&&` / `||` whose every operand is itself provably bool; or a `jsmql.compile` parameter the call bound to a JavaScript boolean. When it is, the compiler skips the check and mints the lowered value as a `Truth` unchanged. So `$.a > 1 ? 1 : 2` carries no test beyond the one that the comparison already made.
 - Constructs that are boolean only AFTER lowering have no bool-shaped node to inspect, and `lowerTruth` reads them structurally instead: a `&&` / `||` chain, a `!`, a `?:`, and an `ExprBlock` — an inlined reusable function or IIFE — each read for truth through its own parts, and each returned as a `Truth`.
 
@@ -477,7 +477,7 @@ When any operand of a `+` chain is **string-producing**, the whole chain emits `
 
 Direct operator escapes (`$toBool($.x)`, `$op($and, …)`, `$cond({…})`) bypass these wrappers, because they are explicit MongoDB semantics.
 
-`a ?? b` keeps the existing `$ifNull` codegen, because JS's `??` already matches MongoDB's null/undefined-fallback behaviour.
+`a ?? b` lowers to `$ifNull`, because JavaScript's `??` matches the null and missing fallback of MongoDB.
 
 ## `in` operator — the right side
 

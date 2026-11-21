@@ -140,18 +140,37 @@ $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0]
 ### A row's `returns`
 
 A row states its result as a `TypeExpr`, a closed data grammar the compiler
-evaluates at the call site. [vocabulary.ts](../../src/registry/vocabulary.ts)
-documents the terms and their meaning on the type. `evaluate` in `type.ts` is
-the one reader. A term is data, not a function. So
+evaluates at the call site against the receiver's `Type` and the arguments' types.
+`TypeExpr` in [vocabulary.ts](../../src/registry/vocabulary.ts) is the grammar, and
+`evaluate` in `type.ts` is the one reader. A term is data, not a function
+([ADR 0091](../adr/0091-registry-vocabulary-typeexpr.md)).
 [test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
-measures its top kind on mongod, the registry audits read it, and the globals
-generator can turn it into a TypeScript signature. A row whose result no term
-describes states `"unknown"`.
+measures its top kind on mongod. A row whose result no term describes states
+`"unknown"`, and a test lists those rows. The terms:
+
+| Term | Means | Example |
+|---|---|---|
+| a `Kind` | that kind | `.trim()` is a string |
+| `"same"` | the receiver's type; a fixed-length array keeps its elements, not its positions | `.take(n)` |
+| `"element"` | one element of the receiver | `.head()`, `.max()` |
+| `"unknown"` | nothing stated | `$first` |
+| `{ arrayOf: T }` | an array of `T` | `.keys()` |
+| `{ elementOf: T }` | one element of `T` when `T` is an array, else `T` | what `.flatMap` keeps of a callback's answer |
+| `{ callback: n }` | the answer of the callback in argument `n` | `.map(f)` is `{ arrayOf: { callback: 0 } }` |
+| `{ arg: n }` | argument `n` | `$ifNull(a, b)` |
+| `{ args: n }` | every argument from `n` on, only inside `merge` and `oneOf` | |
+| `{ merge: [...] }` | an object spread; a later term wins | `.assign(o)` |
+| `{ oneOf: [...] }` | one of the terms | `.reduce(f, seed)` |
+| `{ recordOf: T }` | an object whose every value is `T` | `.groupBy(k)` |
+| `{ tuple: [...] }` | one term per position | an `.entries()` pair |
+| `{ itemOf: [T, n] }` | position `n` of the tuple `T` | `.fromEntries()` |
+| `"picked"`, `"omitted"` | the receiver's props that the first argument's names keep or drop | `.pick([...])` |
+| a per-family map, keyed by `Family` | the term for the receiver's family | `.filter` on an array is an array, on a stream a stream |
 
 **An operator production states its result in the same way.** `*` lowers to
 `$multiply`, so its row states a number. `-` states a number or a date (`oneOf`).
-The operands of `-` refuse a proven date. A field of unknown kind can hold a date,
-and a date minus a number is a date. `+` has two roads: a string operand makes
+The operands of `-` refuse a proven date
+([ADR 0079](../adr/0079-registry-productions-measured-returns.md)). `+` has two roads: a string operand makes
 it `$concat`, and `kindsOf` in [prove.ts](../../src/compiler/emit/prove.ts) proves
 that road a string. Its row states the `$add` road, a number or a date, and two
 numbers prove a number. An operator that gives one of its operands, for example `??`,
@@ -214,8 +233,12 @@ A method under a dot is present whatever its receiver, when its kind has a safe
 value. Under a dot, a missing receiver reads as `[]`, `{}`, `""`, `0`, or the value the
 row states in `nullReceiverAs` (`dispatchOn` in [lower.ts](../../src/compiler/emit/lower.ts)
 wraps it). So `$.a.uniq().size()` guards `a` once, and `$.n.range().size()` adds no
-`$ifNull`. The value that a row states comes first, also on a receiver of the array
-family: `.toString()` reads a missing array as `""`, not as `[]`. A row that states
+`$ifNull`. A row states `nullReceiverAs` only where it differs from the safe value of
+its family. A method on every kind reads the safe value of the kind that it gives:
+`.toString()` reads `""`, and `.toBool()` reads false. The value that a row states comes
+first, also on a receiver of the array family: `.toString()` reads a missing array as
+`""`, not as `[]`. [ADR 0066](../adr/0066-registry-names-null-facts.md) holds the
+measurement behind each null fact. A row that states
 `readsNullAsEmpty` takes no wrap at all, because its operator gives the same answer for
 null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
@@ -265,8 +288,8 @@ Every stage row states a `document` fact, from the `DocumentEffect` vocabulary:
 so a stage row cannot omit it. After a stage whose effect is `fields`, `value`
 or `unknown`, and after a `projection` that names fields to keep, the scope
 tracker drops every field-carried binding. It also skips the trailing namespace
-cleanup. MEASURED: a `let` binding survived `{ $project: { x: 0 } }` and went
-away under `{ $project: { x: 1 } }`.
+cleanup. [ADR 0074](../adr/0074-registry-names-stage-facts.md) holds the
+measurement.
 
 **The effect is applied to the emitted stage, not to its source.** `documentAfter`
 in [prove.ts](../../src/compiler/emit/prove.ts) reads the stage's body as MQL:
@@ -298,10 +321,8 @@ effect, and the server judges the stage.
 
 **Each group of stages changes the Env once, where the group stands.** A chain
 link, a write of a `,` run and a stage call are each a group. The Env takes the
-groups in the order of their stages, and it never reads the same stages again. A
-second reading of the stages cannot see the links. So it misses a row that gives
-the documents back. It also misses a scratch field that a later link wrote after
-a stage that replaced the document. The trailing cleanup (`Chain.dirty`) follows the same
+groups in the order of their stages, and it never reads the same stages again
+([ADR 0186](../adr/0186-env-changes-once-per-stage-group.md)). The trailing cleanup (`Chain.dirty`) follows the same
 order: a stage that replaced the document clears it, and a later scratch write
 sets it again. See `Step` in [statement.ts](../../src/compiler/emit/statement.ts).
 
@@ -411,7 +432,7 @@ A row states the rule, never the compiler:
 
 - `slotType` gives the kind of one slot, or a set of kinds. `rest` gives the
   kind of every other slot. `"any"` is the stated answer for a slot that takes
-  every kind, so "takes every kind" and "not yet typed" are different facts.
+  every kind ([ADR 0083](../adr/0083-registry-vocabulary-argtypes.md)).
   `"any"` takes `null` too, because `null` is data there, for example in
   `.concat(null)`. `"value"` takes every kind but `null`, for example the operand
   of a conversion. `test/registry-slot-kinds.test.ts` reports each slot that has
@@ -539,10 +560,8 @@ $.n = $.a.length();  $.x = $.n ? 1 : 2;  // n: number, maybe absent
 // → …, { $set: { x: { $cond: ["$n", 1, 2] } } }
 ```
 
-The rule rejected: `{ $gt: [v, ""] }` covers a string of any presence in one
-operator, because null sorts below every string. It reads as a comparison, not
-as a truth test. A reader has to know the BSON sort order to see why it is
-right.
+[ADR 0187](../adr/0187-no-gt-empty-string-truth-test.md) records why a string takes
+two tests and not one comparison.
 
 **In the filter target** the same rule has a native form. `bareTruth` in
 [filter.ts](../../src/compiler/emit/filter.ts) lowers a bare field read whose

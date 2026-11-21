@@ -2,8 +2,19 @@
 
 This is the single source of truth that the compiler in `src/compiler/` reads.
 There are four registries, one per compiler phase, written in one shared
-vocabulary. The header of [vocabulary.ts](vocabulary.ts) names each file, its
-key space and its job. Nothing here builds MQL for a construct that needs its
+vocabulary. Each registry has one key space and one job
+([ADR 0085](../../docs/adr/0085-registry-vocabulary-core.md)):
+
+- `tokens.ts` — lexical: what the lexer emits, keyed by the spelling or a class
+  name.
+- `keywords.ts` — lexical: the identifiers that the lexer reserves, keyed by the
+  word.
+- `productions.ts` — syntactic: how tokens combine, keyed by a descriptive name.
+- `names.ts` — semantic: everything that the compiler resolves by name, keyed by
+  the name as the user types it.
+
+`vocabulary.ts` holds the shared types, `ast.ts` the node shapes, and `mql.ts`
+the pure MQL builders. Nothing here builds MQL for a construct that needs its
 neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
 
 ## Rules
@@ -22,8 +33,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
 - **One fact, one field.** Two features with different names never share an
   array or a flag. `stream` and `statement` are two cells. `group` and
   `window` are two cells. `TIME_UNIT` and `WINDOW_TIME_UNIT` are two
-  constants. Every pair that once shared a field turned out to hold opposite
-  answers.
+  constants. [ADR 0088](../../docs/adr/0088-registry-vocabulary-positions.md)
+  gives the reason.
 - **A human can read the registry.** Repetition is fine. An abstraction that
   hides which rows state which facts is not fine.
 - **A refusal is an `unsupported("…")` cell.** Its text obeys the rejection rule
@@ -44,11 +55,9 @@ exists (`FilterOut`). An argument-shape dispatch is a keyed partition with its l
 (`ByArgs`). Each file ends with type-level audits over its own
 cross-references.
 
-A type-level audit earns trust only after it fails once. It can pass
-silently in three ways. A union never matches an object pattern. `never
-extends readonly (infer V)[]` resolves to `unknown`. A field not threaded
-through a `const` generic collapses to its constraint. So every rule stands
-twice in [test/types/registry-contracts.ts](../../test/types/registry-contracts.ts):
+A type-level audit can pass silently, so it earns trust only after it fails
+once. [ADR 0077](../../docs/adr/0077-registry-names-type-audits.md) names the
+ways it passes silently. So every rule stands twice in [test/types/registry-contracts.ts](../../test/types/registry-contracts.ts):
 one value that must compile, and one value under `@ts-expect-error` that must
 not compile. Add a pair there whenever you add a rule. `test/registry-agrees.test.ts`
 holds the cross-references no type can hold — a field's presence checked

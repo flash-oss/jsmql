@@ -9,11 +9,9 @@ folding. The user-facing statement is in
 ## The definition
 
 A constant is an expression whose LOWERED MQL reads nothing from the document and nothing from
-the environment. The engine does not compute with a table of JavaScript methods. It lowers a
-closed subtree with the real emitter, gives the MQL to the interpreter, and answers with the
-value. So one lowering states the meaning of each JavaScript method, and one rule states the
-meaning of each MQL operator. A method and its value cannot drift apart, because the value is
-the answer of the MQL that the server would run.
+the environment. The engine lowers a closed subtree with the real emitter, gives the MQL to the
+interpreter, and answers with the value. It holds no table of JavaScript methods. See
+[ADR 0036](../adr/0036-fold-server-agreement.md) for the reason.
 
 ```
 const xs = (5).range().map(i => i * i).filter(x => x % 2 === 0); $.total = xs.sum() + xs.size();
@@ -29,7 +27,7 @@ const a = (3).range().map(() => 7); $.x = a;
 known, and the declared functions.
 
 1. **Read.** A literal is its own value. So is a date that the source spells with literal parts
-   (`src/compiler/passes/date-literal.ts`), and a value that a call supplied, unless it reads as
+   (`src/compiler/passes/date-literal.ts`, [ADR 0007](../adr/0007-constant-engine-internals.md)), and a value that a call supplied, unless it reads as
    MQL. A `"$…"` string below the top is a field path, so it holds no value (HR1).
 2. **Scan.** The engine refuses a subtree that holds the document, a stream or an operator call.
    HR2 says an escape hatch never folds, even inside. The engine also refuses a name that nothing
@@ -46,7 +44,7 @@ known, and the declared functions.
    literal. `unspellable` propagates, and the fold reports it at the position of the constant.
 
 The engine also refuses a value larger than a fixed size, and a tree nested deeper than the
-stack allows.
+stack allows. [ADR 0007](../adr/0007-constant-engine-internals.md) gives the reason for the size cap.
 
 ## The provided lowering
 
@@ -73,6 +71,7 @@ node is the literal that spells the value, so that later rules match on it. When
 no spelling for the value, the node is an `Injected` node: a Date, an ObjectId, a Decimal128 or a
 Long. A query compares such a node as written, and an expression passes it through. The compiler checks
 an ObjectId against the plausibility rule of the literal, so a typo reports at its position.
+[ADR 0046](../adr/0046-literal-value-bridge.md) records the choices of `literal.ts` and `inject.ts`.
 
 A node that a lowering builds itself (a stream cell that makes `list.map(key)` from its
 arguments) is a node that the fold does not visit. The services that hand a node to the lowering call `settled`.

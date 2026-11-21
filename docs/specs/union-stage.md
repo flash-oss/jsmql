@@ -67,7 +67,7 @@ append form at all; `$$ = <array>` makes the stream from it instead.
 A run on the server shows that it also refuses `$documents` anywhere inside a
 `$facet`, at any depth. So the compiler refuses a written document append inside a `$facet`
 branch. The message names two alternatives: the collection append, and an
-append outside the branch.
+append outside the branch. See [ADR 0028](../adr/0028-emit-statement-placement.md).
 
 JSMQL lowers the list inside the `$unionWith` body, where the server evaluates
 it — `noStageInDocuments` in
@@ -79,9 +79,8 @@ need a stage of its own — a `$$$.<coll>` read's `$lookup`, the root count's
 `$setWindowFields` — and names the collection append
 (`$$.push(...$$$.<coll>.filter(…))`) and the constant / `jsmql.compile`
 parameter as the two ways out. Both spellings of the list go through the same
-gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]` answer alike.
-Lowered outside the boundary, the second one emitted a field path that the
-server answered `{}` for, in silence.
+gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]` answer alike
+([ADR 0028](../adr/0028-emit-statement-placement.md)).
 
 ### `$unionWith` has no `let`
 
@@ -126,19 +125,19 @@ The `coll`-less `$unionWith` shape that wraps a `$documents` stage needs
 **MongoDB 6.0+**. Inline-doc pushes lower to that shape. Spread-of-collection
 pushes work on every version that supports `$unionWith` (4.4+).
 
-## Deferred
+## Refusals
 
-- **Custom let-substitution.** Atlas's `$lookup.let` does not apply to
-  `$unionWith`, but a future JSMQL release could synthesise the same effect
-  through a `$set` stage *before* the push and a `$match` against that captured
-  value inside the sub-pipeline. Out of scope — the explicit error for a
-  correlated read is the documented contract.
-- **Cross-database unions are rejected at compile time.** A cross-database
+- **A correlated read inside a push.** `$lookup.let` does not apply to
+  `$unionWith`, so the compiler refuses a read of the outer document inside the
+  sub-pipeline. [ADR 0191](../adr/0191-union-stage-non-goals.md) records why
+  JSMQL does not emulate it.
+- **A cross-database union.** A cross-database
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
-  does not emit a `{ db, coll }` `$unionWith` namespace (that shape works only
-  on Atlas Data Federation, and a regular server rejects it at runtime);
-  the join road refuses it — see
-  [`docs/specs/lookup-stage.md`](./lookup-stage.md) § Cross-database reads
-  are rejected. The cross-database `$out` write is unaffected.
-- **Auto-`$documents`-only `$unionWith` server-version guard.** There is no compile-time
-  check that the deployment is 6.0+ — the runtime error is precise enough.
+  does not emit a `{ db, coll }` `$unionWith` namespace. That shape works only
+  on Atlas Data Federation, and a regular server rejects it at runtime. The join
+  road refuses it — see [`docs/specs/lookup-stage.md`](./lookup-stage.md)
+  § Cross-database reads are rejected. The cross-database `$out` write is
+  unaffected.
+- **No server-version check.** The compiler does not check that the deployment
+  runs MongoDB 6.0 or later for a `$unionWith` that reads only `$documents`
+  ([ADR 0191](../adr/0191-union-stage-non-goals.md)).

@@ -13,13 +13,12 @@ query which looks valid actually runs, and returns what the user meant (HR3; see
 MongoDB's default port carries the developer's own instance and their real work.
 This project never touches that port: not to read from it, not to probe it, not
 to measure it. [`test/no-default-port.test.ts`](../no-default-port.test.ts) fails
-the build when a file names that port, so this rule cannot rot back into the code.
+the build when a file names that port
+([ADR 0122](../../docs/adr/0122-test-no-default-port-guard.md)).
 
-This is why the project runs its own instance, and does not use the developer's
-instance. `--auth` applies to a whole instance, and the server-enforced read-only
-role for the integration dataset needs it. If `--auth` were on for the
-developer's own `mongod`, it would force credentials onto every other service on
-their machine.
+The project runs its own auth-enabled instance. [ADR 0189](../../docs/adr/0189-fixture-own-auth-instance.md)
+records why it does not use the developer's instance, and why its credentials are
+not secret.
 
 - The instance listens on **port `27018`**, with its dbpath outside the repository.
 - The instance runs with **`--auth` enabled**. It creates three users on the first start:
@@ -28,20 +27,20 @@ their machine.
   - `jsmql_ro` (`read` on `jsmql_fixture`) — `integration.test.ts` uses this
     account. The server rejects any write attempt from it, so a test run
     **cannot** change the dataset.
-  - `jsmql_scratch` (`readWrite` on the `SCRATCH_DBS` list in [config.ts](config.ts),
-    and on nothing else) — `test/probe` and every suite that seeds its own
-    documents use this account. Each such suite owns one database in that list,
-    because two suites name a collection `orders`, and vitest runs suites in
-    parallel. The list itself is the grant, so a new live suite adds its
-    database name to the list and re-runs `npm run fixture:up`. The guard test
-    above reports it when a suite forgets this step.
+  - `jsmql_scratch` (the custom role `jsmqlScratch`: `readWrite`, `dbAdmin` and
+    the `indexStats` privilege on the `SCRATCH_DBS` list in [config.ts](config.ts),
+    and nothing else; [ADR 0033](../../docs/adr/0033-fixture-scratch-role.md)
+    gives the reason for each grant) — `test/probe` and every suite that seeds
+    its own documents use this account. Each such suite owns one database in
+    that list, because two suites name a collection `orders`, and vitest runs
+    suites in parallel. The list itself is the grant, so a new live suite adds
+    its database name to the list and re-runs `npm run fixture:up`.
+    `test/no-default-port.test.ts` reports it when a suite forgets this step.
 - The dbpath is **`~/.jsmql-fixture/`**, outside the repository and outside the
-  worktree. This way, it survives worktree cleanup, and branches share it. It is
-  throwaway data, and safe to delete.
+  worktree. It is throwaway data, and safe to delete.
 
-The credentials are hard-coded in [config.ts](config.ts), and they are
-deliberately **not secret**. This is a local, disposable fixture, and its only
-job is to enforce the read-only role. Do not reuse this pattern for anything real.
+The credentials are hard-coded in [config.ts](config.ts), and they are **not
+secret**. Do not reuse this pattern for anything real.
 
 ## Lifecycle (npm scripts → instance.ts)
 
@@ -66,7 +65,10 @@ collections carry realistic cross-references: `orders.userId` points to `users`;
 `orders.items[].productId` points to `products`; `shipments.orderId` points to
 `orders`; `shipments.userId` points to `users` too, denormalised from the
 order's user, so that a nested lookup can trace a shipment back to the outer
-user; and `reviews` points to both `users` and `products`.
+user; and `reviews` points to both `users` and `products`. Some documents exist
+to trigger a server hazard, for example a user with no `email` field
+([ADR 0032](../../docs/adr/0032-fixture-dataset-boundary-user.md),
+[ADR 0111](../../docs/adr/0111-test-integration-live-hazards.md)).
 
 Three invariants make exact assertions possible:
 
@@ -88,7 +90,8 @@ Three invariants make exact assertions possible:
 sha1. The seeder stores this fingerprint in `__fixture_meta`, and re-injects the
 data **only** when the fingerprint changes. `fixtureReady()` in `client.ts`
 skips the integration suite for one reason only: no server answers on the port
-(`isUnreachable()` in [live.ts](live.ts) decides this). When a server answers,
+(`isUnreachable()` in [live.ts](live.ts) decides this; see
+[ADR 0034](../../docs/adr/0034-fixture-server-signals.md)). When a server answers,
 `fixtureReady()` and `assertIntegrity()` fail the suite on a refused login, a
 stale fingerprint or a wrong document count, and the message names the command
 that repairs it. [`test/live-suites.test.ts`](../live-suites.test.ts) keeps

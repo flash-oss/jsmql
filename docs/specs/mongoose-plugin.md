@@ -6,9 +6,9 @@ The mongoose registration plugin in [src/mongoose.ts](../../src/mongoose.ts). It
 
 User-facing reference: README.md → *Use JSMQL with mongoose*.
 
-## Why it exists
+## What it does
 
-Mongoose's documented signatures put MQL JSON at fixed argument positions (`find(filter, …)`, `aggregate(pipeline, …)`, `updateOne(filter, update, …)`). With the strict-shape entries from [strict-shape-entries.md](strict-shape-entries.md), each of those slots has an unambiguous lowering function (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`). The plugin wires those lowering functions into the mongoose method surface, so users do not have to call them by hand at every call site:
+Mongoose puts MQL JSON at fixed argument positions (`find(filter, …)`, `aggregate(pipeline, …)`, `updateOne(filter, update, …)`). Each of those slots has one strict-shape entry from [strict-shape-entries.md](strict-shape-entries.md) (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`). The plugin calls that entry at the slot, so the user does not call it by hand. For the decisions behind the patched surface, see [ADR 0158](../adr/0158-mongoose-plugin-surface.md).
 
 ```js
 // Before
@@ -37,7 +37,7 @@ The plugin inspects the relevant argument at each patched slot:
 
 That rule keeps every existing MQL-JSON call site in working order — a plain object/array stays a plain object/array. The user pre-lowers a template-tag input (`jsmql\`…\`` returns an object), so it takes the pass-through path automatically. The mongoose layer supports no call shape that the JSMQL layer does not already support.
 
-The plugin **does not parse function arguments to disambiguate** between a JSMQL arrow and a mongoose callback. Modern mongoose (7+) is Promise-only and no longer accepts callback arguments at these methods, so the heuristic is safe in practice.
+The plugin reads every function as a JSMQL arrow. It does not parse a function to tell it from a mongoose callback. See [ADR 0158](../adr/0158-mongoose-plugin-surface.md).
 
 ## Implementation shape
 
@@ -51,29 +51,25 @@ Model.find = function find(conditions, projection, options) {
 };
 ```
 
-This is deliberately not abstracted into a generic helper or a lookup table:
-
-- **A stack trace points at the method that did the wrong thing.** A failure inside `Model.updateOne(...)` shows `updateOne` in the stack, not a generic `patchMethod`.
-- **The mongoose signature sits right next to the code.** A future maintainer can compare each block against `mongoose/lib/model.js` in one file.
-- **The set of patched methods stays grep-able.** `grep "^  Model\." src/mongoose.ts` lists exactly what it covers.
+The plugin has no generic helper and no lookup table for these blocks. See [ADR 0047](../adr/0047-mongoose-plugin-wrapper-internals.md) for the reason, and for the `_<name>` capture.
 
 ## TypeScript module augmentation
 
 The bottom of [src/mongoose.ts](../../src/mongoose.ts) carries a `declare module "mongoose" { interface Model<…> { … } }` block that adds overloads to every patched mongoose static. Each overload extends one parameter slot to accept `JsmqlInput` (`string | JsmqlFn`), so `User.find("$.age > 18")` and `User.aggregate(({ $ }) => { $match(...) })` type-check after `import "@koresar/jsmql/mongoose"` — no per-call cast required.
 
-The augmentation is intentionally narrow:
+The augmentation is narrow. See [ADR 0158](../adr/0158-mongoose-plugin-surface.md) for the reason.
 
 - **It adds only the JSMQL-shaped overloads.** Mongoose's own typed `FilterQuery<T>` / `UpdateQuery<T>` / `PipelineStage[]` overloads still apply for the MQL-JSON pass-through path. Overload resolution picks our overload when the parameter is a string or function, and mongoose's overload otherwise.
-- **Return types stay `any`.** A new declaration of mongoose's schema-aware `QueryWithHelpers<…>` / `Aggregate<…>` machinery from inside the augmentation would be brittle and would drift on every mongoose minor release. A user who needs the precise return type either passes a typed value (matching mongoose's own overloads) or casts at the call site. The user already crosses a type boundary the moment they hand JSMQL syntax to the driver, so mongoose's schema generics are not reachable from a string anyway.
+- **Return types stay `any`.** A user who needs the precise return type passes a typed value, which matches the own overloads of mongoose, or casts at the call site.
 - **Methods with two patched slots** (`updateOne`, `updateMany`, `findOneAndUpdate`) get two overloads — one with `JsmqlInput` at slot 0, one with `JsmqlInput` at slot 1 — so `updateOne(filter, jsmqlUpdate)` and `updateOne(jsmqlFilter, plainDoc)` both type-check.
 
 The augmentation merges into mongoose's existing `Model<TRawDocType, …>` interface, so it activates only when the consumer actually has mongoose installed. A project that imports `@koresar/jsmql/mongoose` only for the runtime function, and does not have mongoose on the resolution path, sees no spurious errors about a missing mongoose. TypeScript silently drops the unresolved augmentation.
 
-A type-only validation file at [test/types/mongoose-augmentation.ts](../../test/types/mongoose-augmentation.ts), driven by [test/types/tsconfig.json](../../test/types/tsconfig.json), exercises every patched overload (JSMQL string, JSMQL arrow, plain MQL JSON) against a real mongoose Model. The smoke suite in [test/smoke.test.ts](../../test/smoke.test.ts) spawns `tsc --noEmit` against it; mongoose is pinned at `"*"` in `devDependencies`, so the case always runs locally and in CI, and it is the canary that catches the augmentation drifting against mongoose's evolving generics. The `"*"` pin is deliberate. Every `npm install` pulls whatever mongoose just published, so a generic-arity change or rename in mongoose shows up here before a user hits it. If the spawn does not find tsc/mongoose on a degraded environment, the case skips, so `npm test` still passes.
+A type-only validation file at [test/types/mongoose-augmentation.ts](../../test/types/mongoose-augmentation.ts), driven by [test/types/tsconfig.json](../../test/types/tsconfig.json), exercises every patched overload (JSMQL string, JSMQL arrow, plain MQL JSON) against a real mongoose Model. The smoke suite in [test/smoke.test.ts](../../test/smoke.test.ts) spawns `tsc --noEmit` against it; `devDependencies` pins mongoose at `"*"`, so the case always runs locally and in CI, against the newest mongoose. See [ADR 0158](../adr/0158-mongoose-plugin-surface.md) for the pin. If the spawn does not find tsc/mongoose on a degraded environment, the case skips, so `npm test` still passes.
 
 ## Idempotence
 
-The plugin is **idempotent** — a second `jsmqlMongoose(mongoose)` call on the same `Model` is a no-op. After the first call, the function sets `Model.__jsmqlPatched = true`, and the next call short-circuits on that flag. This is one property check, with no `Symbol.for` indirection. It stays minimal because the failure mode it prevents (double-wrap, then a second wrap that re-`jsmql.filter()`s an already-lowered object) is quiet and strange, not loud, and the user has nowhere else to look for the bug.
+The plugin is **idempotent** — a second `jsmqlMongoose(mongoose)` call on the same `Model` is a no-op. After the first call, the function sets `Model.__jsmqlPatched = true`, and the next call short-circuits on that flag. This is one property check, with no `Symbol.for` key. See [ADR 0158](../adr/0158-mongoose-plugin-surface.md).
 
 ## Patched methods and their slots
 
@@ -97,16 +93,18 @@ The set mirrors the static methods exported by `mongoose/lib/model.js` (mongoose
 | `exists(filter, options)` | 0 | `jsmql.filter` |
 | `aggregate(pipeline, options)` | 0 | `jsmql.pipeline` |
 
-### Methods deliberately not patched
+### Methods not patched
 
-- **`findOneAndReplace(filter, replacement, …)` and `replaceOne(filter, replacement, …)`** — the second argument is a complete *replacement document*, not an update spec. A JSMQL expression at that slot would silently land as a literal object (the same pitfall `jsmql.update()` exists to prevent at the update slot). The filter slot is patched; the replacement slot is not.
+See [ADR 0158](../adr/0158-mongoose-plugin-surface.md) for the reason behind the first two items.
+
+- **The replacement slot of `findOneAndReplace(filter, replacement, …)` and `replaceOne(filter, replacement, …)`** — the second argument is a complete replacement document, not an update. The plugin patches the filter slot only.
 - **`findById`, `findByIdAndDelete`** — id-only methods. They have no jsmql-eligible slot.
-- **`Query.prototype.*` (`.where()`, `.gt()`, `.sort()`, …)** — deliberately not patched, and not planned. JSMQL keeps the mongoose surface small (the `Model` statics), so a developer does not have to learn a new API. DX comes first, and any extra surface is extra complexity to learn. The Query builder is a separate surface the user composes *after* a static call, not a call site where a driver method name fixes the shape.
+- **`Query.prototype.*` (`.where()`, `.gt()`, `.sort()`, …)** — the plugin patches the `Model` statics only.
 - **`Model.create`, `insertOne`, `insertMany`, `Document#save`** — these take whole documents, not query filters.
 
 ## Subclass propagation
 
-Mongoose compiles a fresh `Model` subclass per `mongoose.model(name, schema)` call. Subclasses inherit JavaScript class statics through the constructor's prototype chain. So a patch of `mongoose.Model.find = …` propagates to every subclass automatically and needs no per-model bookkeeping. Each wrapper uses `original.call(this, …)`, so the subclass receiver (the actual model the user called) reaches the original mongoose method untouched. [test/mongoose.test.ts](../../test/mongoose.test.ts) covers this with an explicit `class User extends Model {}` case.
+Mongoose compiles a fresh `Model` subclass per `mongoose.model(name, schema)` call. Subclasses inherit JavaScript class statics through the constructor's prototype chain. So a patch of `mongoose.Model.find = …` propagates to every subclass automatically and needs no per-model bookkeeping. Each wrapper calls the captured original with `.call(this, …)`, for example `_find.call(this, …)`. So the subclass receiver reaches the original mongoose method untouched. [test/mongoose.test.ts](../../test/mongoose.test.ts) covers this with an explicit `class User extends Model {}` case.
 
 ## CJS interop
 
