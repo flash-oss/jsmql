@@ -1,9 +1,3 @@
-// Tests for the scope-encoding diagnostic / system source-stage sugar:
-//   $$.indexStats()                    → { $indexStats: {} }            (collection)
-//   $$$.currentOp({ allUsers: true })  → { $currentOp: { ... } }        (database)
-//   $$$$.shardedDataDistribution()     → { $shardedDataDistribution:{} }(cluster)
-// See docs/specs/system-stages.md for the design and error catalog.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -32,8 +26,6 @@ describe("system stages — collection-scoped ($$)", () => {
 });
 
 describe("system stages — server/cluster-scoped ($$$$)", () => {
-  // $currentOp / $listSessions / $listLocalSessions / $listSampledQueries all run against the admin (or config)
-  // database, not the current one. So they live on $$$$ (cluster/server), not $$$ (current database).
   it("$$$$.currentOp(options) lowers to a $currentOp source stage", () => {
     expect(jsmql("$$$$.currentOp({ allUsers: true, idleConnections: false })")).toEqual([
       { $currentOp: { allUsers: true, idleConnections: false } },
@@ -129,9 +121,7 @@ describe("system stages — error messages", () => {
     expect(() => jsmql("$$$.fooBar()")).toThrow(
       "'$$$' is the database, and no stage runs on it alone. '.fooBar()' is not one of them. A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()'). To read a collection called 'fooBar', write '$.<field> = $$$.fooBar.find(…)'.",
     );
-    // A wrong spelling on the CLUSTER names the nearest stage of that scope.
     expect(() => jsmql("$$$$.currentOpp()")).toThrow("Did you mean '$$$$.currentOp()'?");
-    // And a read of a collection is still a read, whatever it is called.
     expect(jsmql("$.x = $$$.fooBar.find(d => d.a === 1);")).toEqual([
       { $lookup: { from: "fooBar", pipeline: [{ $match: { a: 1 } }, { $limit: 1 }], as: "x" } },
       { $set: { x: { $first: "$x" } } },
@@ -142,15 +132,12 @@ describe("system stages — error messages", () => {
     expect(() => jsmql("$$.indexStat()")).toThrow(
       "'.indexStat()' is not a method of the stream '$$'. Did you mean '$$.indexStats()'? A stage is a link too: '$$.$match(…)'.",
     );
-    // The compiler refuses the '$' spelling of a diagnostic stage outright. It is a source stage, and it
-    // reached the row, but not the scope that its sugar states.
     expect(() => jsmql("$$.$indexStats()")).toThrow(
       "'$indexStats' reports on the deployment, so it is a source stage and not a chain link. Write '$$.indexStats()' — the root stream, run on 'db.coll.aggregate()'.",
     );
     expect(() => jsmql("$$.$currentOp({})")).toThrow(
       "'$currentOp' reports on the deployment, so it is a source stage and not a chain link. Write '$$$$.currentOp()' — the cluster reference, run on the admin database.",
     );
-    // The sugar the new message names needs nothing.
     expect(jsmql("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });
 

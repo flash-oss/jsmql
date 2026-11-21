@@ -1,30 +1,6 @@
-// test/fixtures/dataset.ts — the deterministic e-commerce dataset the integration
-// suite runs real queries against.
-//
-// HARD INVARIANT: this data is DETERMINISTIC. Fixed ObjectIds, fixed dates, fixed
-// numbers — no Math.random(), no Date.now(). Integration tests assert exact
-// returned documents, so the data must be byte-identical on every machine and
-// every run. `DATASET_HASH` fingerprints the content; the seeder re-injects only
-// when the hash changes (see test/fixtures/instance.ts).
-//
-// The code COMPUTES order line-item prices and order totals from the product catalogue (see `buildOrders`), not
-// by hand, so they can never drift out of sync. A `validateDataset()` cross-check runs at seed time as a final
-// guard.
-//
-// EXPAND THIS FREELY. The dataset is meant to grow as new queries need realistic
-// data. After any edit you MUST re-insert it into mongod (`npm run fixture:seed`)
-// — the tests query the server, not this file. See test/fixtures/CLAUDE.md
-// § "Grow and change the data".
-
 import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
 
-// ── Deterministic ObjectIds ────────────────────────────────────────────────
-// A 24-hex id has a fixed, PLAUSIBLE timestamp prefix (0x65000000 = 2023-09-12). A collection tag follows
-// the prefix (a=users b=products c=orders d=shipments e=reviews), then the index, for example id("a", 1) ->
-// 650000000000000000000a1. The plausible prefix matters: jsmql's `0x…` ObjectId literal rejects ids whose
-// embedded timestamp predates 2009 (MongoDB's first release). So an all-zero prefix would make "find by _id
-// through the 0x literal" impossible to query. Readable in output and stable forever.
 const TS_PREFIX = "65000000";
 const id = (tag: string, n: number) => new ObjectId(TS_PREFIX + (tag + n).padStart(16, "0"));
 export const ID = {
@@ -37,9 +13,6 @@ export const ID = {
 
 const D = (iso: string) => new Date(iso + "T00:00:00.000Z");
 
-// ── users ───────────────────────────────────────────────────────────────────
-// active/inactive, four loyalty tiers, three countries, nested subscription +
-// profile, one deliberately-null email (u5), one with no orders (u7).
 export const users = [
   {
     _id: ID.user(1),
@@ -177,10 +150,6 @@ export const users = [
     tags: ["vip", "beta"],
     visits: 77,
   },
-  // Boundary user: `email` is ABSENT (u5's is present-but-null, so the two the missing path and the null path
-  // both have a document). String methods derive lengths through `$strLenCP`, which aborts the query on a
-  // missing input. So this document proves that the coercion holds on a real server. Deliberately archived +
-  // inactive, and with no email at all, so it falls outside every existing active/non-null-email assertion.
   {
     _id: ID.user(9),
     name: "Karen Spärck Jones",
@@ -199,7 +168,6 @@ export const users = [
   },
 ];
 
-// ── products ──────────────────────────────────────────────────────────────────
 export const products = [
   {
     _id: ID.product(1),
@@ -306,10 +274,6 @@ export const products = [
 const PRICE = new Map(products.map((p) => [p._id.toHexString(), p.price]));
 const PNAME = new Map(products.map((p) => [p._id.toHexString(), p.name]));
 
-// ── orders ────────────────────────────────────────────────────────────────────
-// Each spec lists [productId, qty] lines; buildOrders fills in unitPrice (from
-// the catalogue), per-line price (qty*unitPrice) and the order total (sum of
-// line prices). status ∈ shipped|pending|complete|cancelled.
 type OrderSpec = {
   n: number;
   user: number;
@@ -590,16 +554,7 @@ function buildOrders() {
       shippedAt: o.shippedAt === null ? null : D(o.shippedAt),
       items,
       total,
-      // Nested field with a HYPHENATED key — an external-system reference id. A correlation on
-      // `$.meta["ext-id"]` inside a `$$$.<coll>.filter(...)` forces the `$lookup.let` var name to derive from
-      // the segment `ext-id`. The hyphen of that segment is illegal in a MongoDB variable name. This test
-      // exercises that regression end-to-end on a real server. See integration test "hyphenated correlated
-      // let".
       meta: { "ext-id": `X-${o.n}` },
-      // TOP-LEVEL bracket-accessed field. `$["ext-code"]` in a correlated filter exercises a DIFFERENT code
-      // path than the nested `meta["ext-id"]`. The bare root `$` must contribute no path segment. Otherwise the
-      // field path comes out as `.ext-code` (leading dot), which mongod rejects. See integration test
-      // "top-level bracket-accessed correlated field".
       "ext-code": `EC-${o.n}`,
     };
   });
@@ -607,16 +562,13 @@ function buildOrders() {
 
 export const orders = buildOrders();
 
-// ── shipments ─────────────────────────────────────────────────────────────────
-// One per shipped/complete order (subset). carrier ∈ UPS|FedEx|DHL|USPS,
-// status ∈ delivered|in_transit|returned, with an ordered `events` array.
 type ShipSpec = {
   n: number;
   order: number;
   carrier: string;
   status: string;
   weight: number;
-  events: [string, string][]; // [type, dateISO]
+  events: [string, string][];
 };
 
 const shipSpecs: ShipSpec[] = [
@@ -789,9 +741,6 @@ const shipSpecs: ShipSpec[] = [
   },
 ];
 
-// The user who owns each order, so a shipment can carry a denormalised `userId`
-// (the customer who placed the shipped order). This is what lets a nested
-// lookup correlate shipments back to the outer user: `s.userId === $._id`.
 const ORDER_USER = new Map(orderSpecs.map((o) => [o.n, o.user]));
 
 export const shipments = shipSpecs.map((s) => ({
@@ -804,7 +753,6 @@ export const shipments = shipSpecs.map((s) => ({
   events: s.events.map(([type, at]) => ({ type, at: D(at) })),
 }));
 
-// ── reviews ───────────────────────────────────────────────────────────────────
 type ReviewSpec = { n: number; product: number; user: number; rating: number; verified: boolean; createdAt: string };
 const reviewSpecs: ReviewSpec[] = [
   { n: 1, product: 1, user: 1, rating: 5, verified: true, createdAt: "2026-01-20" },
@@ -830,7 +778,6 @@ export const reviews = reviewSpecs.map((r) => ({
   createdAt: D(r.createdAt),
 }));
 
-// ── the full dataset, by collection name ────────────────────────────────────
 export const DATASET: Record<string, Record<string, unknown>[]> = { users, products, orders, shipments, reviews };
 
 export const EXPECTED_COUNTS: Record<string, number> = {
@@ -841,8 +788,6 @@ export const EXPECTED_COUNTS: Record<string, number> = {
   reviews: reviews.length,
 };
 
-// ── content hash (drives the idempotent new seed) ─────────────────────────────
-// Stable canonical serialization: ObjectId -> hex, Date -> ISO, keys sorted.
 function canonical(v: unknown): unknown {
   if (v instanceof ObjectId) return { __oid: v.toHexString() };
   if (v instanceof Date) return { __date: v.toISOString() };
@@ -862,9 +807,6 @@ export const DATASET_HASH = createHash("sha1")
   .digest("hex")
   .slice(0, 12);
 
-// ── self-check ────────────────────────────────────────────────────────────────
-// Catches mistakes in the dataset (mismatched totals, references with no target, dup ids)
-// before they can corrupt expected integration-test values. Runs at seed time.
 export function validateDataset(): void {
   const errs: string[] = [];
   const userIds = new Set(users.map((u) => u._id.toHexString()));
@@ -893,7 +835,6 @@ export function validateDataset(): void {
   for (const s of shipments) {
     const orderHex = (s.orderId as ObjectId).toHexString();
     if (!orderIds.has(orderHex)) errs.push(`shipment ${s._id.toHexString()}: dangling orderId`);
-    // The denormalised userId must equal the user of the order that owns it.
     if (orderUserOf.get(orderHex) !== (s.userId as ObjectId).toHexString())
       errs.push(`shipment ${s._id.toHexString()}: userId does not match its order's user`);
   }

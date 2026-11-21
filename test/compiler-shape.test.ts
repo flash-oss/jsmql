@@ -1,16 +1,7 @@
-// Phase 4 of src/compiler/ — which document a program becomes.
-//
-// This pass asks the ROW. It does not stack auto-wrap special cases. Each case
-// below states the shape by hand. The entries of src/index.ts pick their output
-// with this same pass, so a comparison with `jsmql(src)` would check the pass
-// against itself.
-
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
 import { isStageList, shapeOf } from "../src/compiler/passes/shape.ts";
 
-// The shape is read off the PARSED program: an entry picks the desugar root from it, and the
-// statement-root desugar turns a lone mutator call into the write it means.
 const shape = (src: string): string => shapeOf(parse(src));
 
 describe("compiler/passes/shape — a statement makes a pipeline", () => {
@@ -23,7 +14,6 @@ describe("compiler/passes/shape — a statement makes a pipeline", () => {
   it("reads a stage as a pipeline — it has no expression form at all", () => {
     expect(shape("$match($.a > 1)")).toBe("pipeline");
     expect(shape("$limit(10)")).toBe("pipeline");
-    // The shape MongoDB Compass produces when you copy a stage out of it.
     expect(shape("{ $match: { active: true } }")).toBe("pipeline");
   });
 
@@ -36,16 +26,12 @@ describe("compiler/passes/shape — a statement makes a pipeline", () => {
   it("reads a mutator as a pipeline, because it is a write", () => {
     expect(shape("$.items.sort()")).toBe("pipeline");
     expect(shape("$.items.push(9)")).toBe("pipeline");
-    // The destination is still a path here, one phase before the fold makes it one.
     expect(shape("$.a.b.sort()")).toBe("pipeline");
     expect(shape('$.a["b"].push(9)')).toBe("pipeline");
     expect(shape("x.sort()")).toBe("pipeline");
   });
 
   it("reads a mutator on a value as a filter, not a pipeline", () => {
-    // A call in the middle makes a fresh array. A fresh array is a value however the
-    // row reads. A mutator on a value is a filter, not a pipeline. If a test called
-    // these a Pipeline, `jsmql.expr` would reach `jsmql.pipeline()`, which refuses them.
     expect(shape("$.items.filter(d => d.x).sort()")).toBe("filter");
     expect(shape("$.items.filter(d => d.x).map(d => d.sku).uniq().sort()")).toBe("filter");
     expect(shape("[3, 1, 2].sort()")).toBe("filter");
@@ -66,13 +52,11 @@ describe("compiler/passes/shape — an expression makes a filter", () => {
   });
 
   it("reads a method with a value form as a filter when it stands alone", () => {
-    // `.filter()` lists `value` as well as `stream`; `$match` lists only `stream`.
     expect(shape("$.items.filter(d => d.x)")).toBe("filter");
     expect(shape("$.items.toSorted()")).toBe("filter");
   });
 
   it("reads a lone `.assign()` on a field as a statement, and on a fresh object as a value", () => {
-    // lodash's `_.assign` writes its target, so the statement cell answers it and names the write
     expect(shape("$.a.assign($.b)")).toBe("pipeline");
     expect(shape("$.a.assign($.b);")).toBe("pipeline");
     expect(shape("({}).assign($.a, $.b)")).toBe("filter");
@@ -87,14 +71,12 @@ describe("compiler/passes/shape — a bracketed literal is a pipeline, whatever 
   });
 
   it("is a pipeline otherwise too, as a raw MQL pipeline is", () => {
-    // `[]` is the empty pipeline. The lowering refuses an element that is not a stage.
     expect(shape("[]")).toBe("pipeline");
     expect(shape("[1, 2, 3]")).toBe("pipeline");
     expect(shape("[1, $match($.a > 1)]")).toBe("pipeline");
   });
 
   it("names a stage list apart, for the expression entry", () => {
-    // `jsmql.expr` reads any other bracketed literal as an array value.
     expect(isStageList(parse("[$match($.a > 1)]"))).toBe(true);
     expect(isStageList(parse("[1, $match($.a > 1)]"))).toBe(false);
     expect(isStageList(parse("[]"))).toBe(false);

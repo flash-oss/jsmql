@@ -1,27 +1,8 @@
-// Where the filter target agrees with JAVASCRIPT, and where it does not.
-//
-// A query document is the one a MongoDB developer writes by hand, so MongoDB's own
-// rules apply to it. Any ELEMENT of an array value satisfies a field comparison,
-// and a path TRAVERSES an array in the middle. JavaScript does neither.
-// This suite is the oracle for the whole boundary. The suite EVALUATES each source as
-// JavaScript over the fixture — the source with `$.` read as the document. It
-// compares the ids that come back with the ids that the emitted query selects on a live
-// mongod.
-//
-// The sources JavaScript answers differently sit in a table with a reason each. The
-// suite asserts that they STILL differ, so a change cannot land silently: it moves the row.
-// Three reasons cover them. MongoDB reads an ARRAY element-wise where JavaScript
-// reads one value. JavaScript COERCES under a relational operator (`[2] > 1` is
-// true). And JavaScript THROWS when a path walks through a missing intermediate.
-//
-// This suite self-skips (green) when no mongod is reachable, with an all-or-nothing guard.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { filter } from "../src/compiler/index.ts";
 import { liveClient } from "./fixtures/live.ts";
 
-/** One document per shape a field can take: a scalar, every kind of array, absent, null, the wrong type. */
 const DOCS = [
   { _id: 1, a: 1, s: "abyz", tags: ["vip", "x"], n: { v: 1 }, g: [{ r: { s: 1 } }], h: { g: [{ r: { s: 1 } }] } },
   { _id: 2, a: 2, s: "zz", tags: "vip", n: { v: 2 }, g: [{ r: [{ s: 1 }] }], h: [{ g: [{ r: { s: 1 } }] }] },
@@ -39,7 +20,6 @@ const DOCS = [
   { _id: 14, a: 4, s: "yz", tags: ["vip"], n: { v: 4 } },
 ];
 
-/** Sources whose query form must select exactly what JavaScript selects. */
 const AGREE: readonly string[] = [
   '$.a === "1"',
   "$.a === true",
@@ -48,36 +28,20 @@ const AGREE: readonly string[] = [
   'typeof $.a === "string"',
   "$.n.v > 1",
   "$.n.v === null",
-  // a path INSIDE an element body takes the rule again, PREFIX and all
-  // a `.some` receiver is a path too: an array at its prefix is absent, where `.some` throws
-  // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
   "$.a > 1 || !($.a > 1)",
-  // `.includes(x)` is a substring test, and the regex reads an array element-wise as JavaScript's
-  // `.includes` reads the array: both select the string that holds the needle and the array that holds it
   '$.tags.includes("vip")',
   '$.tags.includes("a") && $.tags.includes("b")',
 ];
 
-/**
- * The rule that moved most of this table: a JavaScript spelling emits the query a MongoDB
- * developer writes by hand, and MongoDB's own array semantics then apply.
- */
 const ARRAY_RULE =
   "MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. jsmql emits the query a MongoDB developer writes by hand — `{ a: { $gt: 18 } }` — so the server's own rules apply and the array documents are selected where JavaScript reads one value. Containment has its own spelling (`.has(x)`), an element test has `.some(e => …)`.";
 
-/**
- * `.has(x)` is the Set spelling of membership, and a JavaScript array has no `.has`:
- * JavaScript throws, so it selects nothing. A query document is read through an
- * INDEX, so `.has(x)` emits the indexable form and MongoDB's own reading applies.
- */
 const INDEXABLE_HAS =
   "`.has(x)` emits `{ f: x }` \u2014 MongoDB's \"equals, or is an array containing\" \u2014 which selects an array holding the needle and a field equal to it. JavaScript's Array has no `.has`, so JavaScript throws on every document and selects none.";
 
-/** A type test is a JSMQL name. JavaScript has no such method, so it throws on every document and selects none. */
 const NO_JS_METHOD =
   'JavaScript has no `.isString()` method, so JavaScript throws on every document and selects none. The query road selects each string, as `typeof $.a === "string"` does.';
 
-/** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   { src: '$.tags.has("vip")', why: INDEXABLE_HAS },
   { src: '$.tags.has("a") && $.tags.has("b")', why: INDEXABLE_HAS },
@@ -153,8 +117,6 @@ let coll: Collection | null = null;
 
 beforeAll(async () => {
   client = await liveClient();
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_js_agreement").collection("t");
@@ -166,10 +128,6 @@ afterAll(async () => {
   await client?.close();
 });
 
-/**
- * The source as JavaScript over one document: `$.` IS the document. A throw is
- * false — a predicate that throws selects nothing.
- */
 function javascriptIds(src: string): number[] {
   const read = new Function("d", `try { return !!(${src.split("$.").join("d.")}) } catch { return false }`) as (
     d: unknown,

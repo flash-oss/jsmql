@@ -1,28 +1,9 @@
 #!/usr/bin/env node
-// The `jsmql` command is a transpiler at the shell. JSMQL source goes in, from a
-// positional argument, `--file`, or stdin. MQL comes out on stdout as JSON, except
-// for a live BSON value, which prints as the JavaScript that builds it (see
-// `render`). This file is a thin wrapper over the public API in ./index.ts. Every
-// shape it can emit already exists there as an entry point. So this file has no
-// compiler logic. It only routes arguments, formats output and renders errors in
-// the compiler style.
-//
-// This file stays in TypeScript's strippable subset (see src/CLAUDE.md) and
-// carries a classic Node shebang. esbuild bundles it to dist/cjs/cli.cjs
-// (Node 14 target, shebang kept), and package.json#bin maps that bundle to `jsmql`.
-// The reference below pulls @types/node into scope for tsc only. This is the one
-// src/ file that touches Node globals (`process`) and the `node:` builtins. The
-// project's tsconfig leaves node types out of the default src build on purpose.
-// The directive is a comment, so the native type-stripper, esbuild, and Node all
-// ignore it at run time.
 /// <reference types="node" />
 import { jsmql } from "./index.ts";
 import { stringify } from "./stringify.ts";
 import { readFileSync } from "node:fs";
 
-// esbuild's `define` step (scripts/build-cjs.mjs) replaces this at build time with
-// the package.json version. The `typeof` guard prevents a throw in an un-bundled `node
-// src/cli.ts` run, where the identifier is genuinely undefined.
 declare const __JSMQL_VERSION__: string;
 const VERSION: string = typeof __JSMQL_VERSION__ === "string" ? __JSMQL_VERSION__ : "0.0.0-dev";
 
@@ -73,14 +54,8 @@ type Mode = "auto" | "filter" | "pipeline" | "expr" | "update" | "validate";
 
 type Options = {
   mode: Mode;
-  /** `number` → that many spaces; `"\t"` → tabs. What one level of nesting adds. */
   indent: number | string;
-  /** Break a document across lines once its one-line form passes this. `--compact` lifts it. */
   width: number;
-  /**
-   * A MAP, not an object: `--arg __proto__ x` on a plain object writes the prototype
-   * slot and stores nothing, and the query then reports the parameter as never supplied.
-   */
   params: Map<string, unknown>;
   hasParams: boolean;
   help: boolean;
@@ -89,9 +64,6 @@ type Options = {
   file?: string;
 };
 
-// Thrown for command-line mistakes (unknown flags, flags that conflict, a missing value,
-// no input on a TTY). Distinct from a compile error so main() can map it to
-// exit code 2 instead of 1.
 class UsageError extends Error {}
 
 function requireValue(v: string | undefined, flag: string): string {
@@ -180,16 +152,9 @@ function resolveSource(opts: Options): string {
   if (process.stdin.isTTY) {
     throw new UsageError("no input — pass a source argument, --file <path>, or pipe JSMQL on stdin.");
   }
-  // fd 0 = stdin; the synchronous read keeps the CLI dependency-free and
-  // Node-14 compatible (no streams, no util.parseArgs).
   return readFileSync(0, "utf8");
 }
 
-// Route the source to the matching entry point. With params present the source
-// is a parameterised arrow, so each shape routes through its `*.compile()`
-// builder (`jsmql.compile` for the default polymorphic shape). Without params
-// it goes through the one-shot entry. `main()` handles `--validate` separately
-// (it produces a structured result, and does not throw).
 function compile(mode: Mode, source: string, params: Record<string, unknown> | undefined): unknown {
   if (params) {
     if (mode === "filter") return jsmql.filter.compile(source)(params);
@@ -205,9 +170,6 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
   return jsmql(source);
 }
 
-// Compiler-style error output. A compile error from the library already ends with
-// its frame: the line, the column, the source line and a caret under the fault
-// (`framed` in index.ts). So the CLI prints the message as it is.
 function renderError(err: unknown): string {
   const message = typeof (err as { message?: unknown }).message === "string" ? (err as Error).message : String(err);
   return `jsmql: error: ${message}\n`;
@@ -238,9 +200,6 @@ function main(): number {
 
   let source: string;
   try {
-    // Trailing whitespace (notably the newline a shell `echo`/heredoc appends)
-    // has no meaning in the language. This trim keeps an end-of-input error's
-    // caret on the source line, not on an empty line after it.
     source = resolveSource(opts).trimEnd();
   } catch (err) {
     if (err instanceof UsageError) return usageExit(err.message);
@@ -249,12 +208,7 @@ function main(): number {
 
   try {
     if (opts.mode === "validate") {
-      // `jsmql.validate` accepts a parameterised-arrow string too, so a
-      // `--validate` + params combination validates the arrow's shape (the
-      // bound values do not affect validity). No separate params branch is needed.
       const result = jsmql.validate(source);
-      // A report, not MQL: it holds strings and numbers only, so JSON is its format
-      // and a tool can read it. `--compact` puts it on one line, as it does a document.
       const report = opts.width === Infinity ? JSON.stringify(result) : JSON.stringify(result, null, opts.indent);
       process.stdout.write(report + "\n");
       return result.valid ? 0 : 1;

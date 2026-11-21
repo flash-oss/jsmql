@@ -1,19 +1,3 @@
-// Phase 5 — EMIT. What a node PROVABLY is, from the registry and the Env alone.
-//
-// This is a proof, not a guess. A literal proves its own kind. A row's `returns`
-// proves a call's type, evaluated against the receiver and the arguments. A
-// binding carries the proof it was made with. A field path answers what the
-// document `Type` on its level records at that path. That is `ANY` for a field
-// the program never wrote, and the written value's proof after a write. The dispatch in
-// select.ts turns "unknown" into a runtime test. It never turns "unknown" into
-// an assumption. So this module must never answer with a kind it cannot show.
-// See docs/specs/types.md.
-//
-// `regexp` and `set` are source-level families with no result kind of
-// their own. A receiver can be one of these families (`/x/.test(s)`,
-// `new Set(a).union(b)`). So this module also answers the family question,
-// beside the type.
-
 import type { Expr, Kind, Type } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { CallArg } from "../../registry/ast.ts";
@@ -73,29 +57,8 @@ export type Known = Kind | "unknown";
 
 const NAMESPACES = namespaceNames();
 
-/**
- * Is the value `node` reads certainly THERE — never null, never missing?
- *
- * A literal is. The root document is present (`$.keys()`). A binding states
- * whether it is (a `$lookup`'s array, a `let` of a present value). A call
- * is present when its row states `neverNull`. Its receiver and every value
- * argument must also be present: `$map` over an array that is there gives an
- * array that is there. A row that states `"always"` reads a missing argument
- * itself, so only its receiver counts. For example `$.a.union($.b)` is there,
- * because a dot wraps `a` and the cell wraps `b`. A field path is present only
- * where the document's proof says so. The document may lack it, and every array
- * operator returns null for a missing input. A `? :` is present when both
- * branches are. A property read is present when the object's proof says so.
- * MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command.
- * So a cell guards with `$ifNull` exactly where this function returns false.
- */
 export const isPresent = (node: Expr, env: Env): boolean => !typeOf(node, env).absent;
 
-/**
- * What a ROW or the source states about presence. It is null where the proof's own
- * `absent` flag is the answer. A `? :` joins its branches. A property read
- * carries the object's proof. A binding carries what its value proved.
- */
 function statedPresence(node: Expr, env: Env): boolean | null {
   switch (node.type) {
     case "NumberLiteral":
@@ -108,18 +71,12 @@ function statedPresence(node: Expr, env: Env): boolean | null {
     case "ArrayLiteral":
       return true;
     case "ObjectLiteral":
-      // a raw `{ $op: … }` is the operator's answer, which may be null
       return namedRow(node) === null;
     case "Injected":
       return node.value !== null && node.value !== undefined && !isMqlShaped(node.value);
     case "MethodCall": {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
-      // A namespace (`Number.isInteger(n)`) is not a value; its arguments carry the answer.
-      // HR5: under a dot, a method runs on the safe value of its kind. This happens when its
-      // receiver is null or missing (`[]`, `{}`, `""`, `0`, or the value its row states).
-      // `lower.ts` wraps the receiver, so the receiver counts as there. A `?.` anywhere on
-      // the spine below stops the chain instead. The value is then null when the tested link is.
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name);
       const wrapped = !spineHasOptional(node) && emptyValueOf(name, family) !== null;
       const receiver =
@@ -129,8 +86,6 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       return receiver && argsThere(name, node.args, env);
     }
     case "OperatorCall":
-      // A literal object operand is a body (`$map({ input: …, as, in })`, `$hour({ date: … })`),
-      // and which of its keys is the input is no fact of the row: it proves nothing.
       return (
         neverNullOf(node.name) &&
         (neverNullAlwaysOf(node.name) ||
@@ -155,8 +110,6 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       return key !== undefined && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
     }
     case "MemberAccess":
-      // A property row (`Math.PI`) answers like a call: its row's `neverNull`
-      // over a present receiver. A field read carries the object's proof.
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
         return neverNullOf(node.name) && (sourceFamily(node.object) !== null || isPresent(node.object, env));
       }
@@ -175,7 +128,6 @@ function statedPresence(node: Expr, env: Env): boolean | null {
   }
 }
 
-/** Does this chain carry a `?.` anywhere on its spine — a call, an index, a member or the folded path? */
 function spineHasOptional(e: Expr): boolean {
   let cursor: Expr = e;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
@@ -185,7 +137,6 @@ function spineHasOptional(e: Expr): boolean {
   return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
-/** Does this access chain carry a `?.` anywhere on the way to its base — a folded path included? */
 export function chainHasOptional(e: Expr): boolean {
   let cursor: Expr = e;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess") {
@@ -195,19 +146,16 @@ export function chainHasOptional(e: Expr): boolean {
   return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
-/** The arguments of a `neverNull` call are there, or the row reads a missing one as a value of its own (`"always"`). */
 function argsThere(name: string, args: readonly CallArg[], env: Env): boolean {
   return neverNullAlwaysOf(name) || args.every((a) => argPresent(a, env));
 }
 
-/** An argument as written: a callback is not a value and says nothing; a spread is its list; a value must be present. */
 function argPresent(a: CallArg, env: Env): boolean {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);
   if (a.type === "Lambda") return true;
   return isPresent(a, env);
 }
 
-/** The field family a kind is, or null for a kind no field family covers (bool, objectId, …). */
 export function familyOfKind(k: Known): FieldFamily | null {
   switch (k) {
     case "string":
@@ -221,41 +169,16 @@ export function familyOfKind(k: Known): FieldFamily | null {
   }
 }
 
-/** The receiver family a node names as SOURCE, before any kind: a namespace or a regex — or null. */
 export function sourceFamily(node: Expr): FieldFamily | "regexp" | string | null {
   if (node.type === "Ident" && NAMESPACES.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
   return null;
 }
 
-/** The one kind `node` provably has under `env`, or "unknown". A reader of `typeOf` for a consumer that asks for one kind. */
 export const kindOf = (node: Expr, env: Env): Known => single(typeOf(node, env));
 
-/** The one kind of ONE element of the array `node` reads, or "unknown". */
 export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(typeOf(node, env)));
 
-/**
- * What a call's operands prove, for the kind check of select.ts (HR7). `env` is the Env in
- * which the operands are evaluated. `source` is the node whose elements a row reads, with its own
- * Env. It is the receiver of a method, the last operand of a production, or null where the
- * call has none.
- *
- * `objectForm` says that the row takes a document in place of its other slot kinds
- * (the date accessors take a date OR `{ date, timezone }`). An object literal then
- * proves nothing: the row's own `body` rule judges it. A spread proves nothing, because
- * its elements are the runtime's. This is the one reader of the operands' kinds, so no
- * call site builds a check of its own.
- *
- * `isField` is given on the query road only, and it says which operands name a field of
- * the document. SR2: a query compares a FIELD that holds an array through the elements
- * of the array, so `{ tags: "x" }` tests a string against the elements of `tags`. Such a
- * field proves the kinds of its elements in place of `array`. This rule lives in one
- * place, in this function. The array itself stays a possible kind when another operand
- * can be an array too, because `{ tags: ["a"] }` compares the whole array. An element of
- * unknown kind makes the field unproven. An `element` slot reads its own view
- * (`asElement`). A slot that takes an array reads the operand as one value (`whole`).
- * See `Proofs`.
- */
 export function proofsFor(
   args: readonly CallArg[],
   env: Env,
@@ -265,23 +188,16 @@ export function proofsFor(
 ): Proofs {
   const proven = (a: CallArg): Proof => {
     if (a.type === "SpreadElement" || (objectForm && a.type === "ObjectLiteral")) return "unknown";
-    // A value that is null proves the kind "null": a written `null`, a `null` that the call
-    // supplies, and a read that the proof shows is null (HR7). A read of a field that no
-    // stage wrote keeps its own refusal: the caller lowers the operands before a kind refusal.
     const t = typeOf(a, env);
     return isNothing(t) ? ["null"] : proofOf(t);
   };
   const sourceType = source === null ? null : typeOf(source.node, source.env);
   const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
-  // An element source of a fixed length, such as a literal, proves each position on its own.
   const items = sourceType === null ? undefined : itemProofsOf(sourceType);
-  // A call with a spread passes its arguments as ONE packed list (the desugar pass). Each
-  // element of the list is an argument, and a spread proves the kinds of its elements.
   const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
   if (list !== null) {
     const own = (e: CallArg): Proof =>
       e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);
-    // The desugar pass built the list out of the call's own arguments.
     const packedArgs = list.elements as readonly CallArg[];
     return {
       args: packedArgs.map(own),
@@ -306,8 +222,6 @@ export function proofsFor(
   };
   const proofs = args.map(throughElements);
   const tuple = items === undefined ? {} : { items };
-  // An element slot tests each element of a field that holds an array, whatever the other
-  // operands are. The whole array stays a kind only when the source can hold an array.
   const asElement = args.map((a, i): Proof | undefined => {
     const p = plain[i];
     if (isField === undefined || a.type === "SpreadElement" || !isField(a) || p === "unknown") return undefined;
@@ -322,7 +236,6 @@ export function proofsFor(
     : { args: proofs, elements, ...tuple, ...views };
 }
 
-/** The receiver family a node has, for a row's per-family `returns`: a source family, else its kind's. */
 export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | string | null {
   const src = sourceFamily(node);
   if (src !== null) return src;
@@ -330,7 +243,6 @@ export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" |
   return familyOfKind(kindOf(node, env));
 }
 
-/** The property names a list of string literals spells, or null when the list holds anything else. */
 function namesIn(arg: Expr | undefined): readonly string[] | null {
   if (arg === undefined) return null;
   if (arg.type === "StringLiteral") return [arg.value];
@@ -343,7 +255,6 @@ function namesIn(arg: Expr | undefined): readonly string[] | null {
   return out;
 }
 
-/** The site a row's `returns` evaluates at: the receiver, its source family, and the arguments. */
 function siteOf(name: string, receiver: Type, family: string | null, args: readonly CallArg[], env: Env): Site {
   const arg = (n: number): Type => {
     const a = args[n];
@@ -359,13 +270,6 @@ function siteOf(name: string, receiver: Type, family: string | null, args: reado
   };
 }
 
-/**
- * What the n-th callback argument RETURNS, its parameters bound as the row's
- * `params` say: the element (`value`), the index (a number), the key (a string),
- * the whole receiver (`receiver`), the seed (`accumulator`). Each carries its
- * own presence: an element the receiver proves present is present, the index and
- * the key always are. A callback that is not an arrow with a body proves nothing.
- */
 function callbackAnswer(
   name: string,
   receiver: Type,
@@ -397,18 +301,10 @@ function callbackAnswer(
   return typeOf(cb.body, bodyEnv);
 }
 
-/** A call's result when the receiver's family is PROVEN: the row's term for that family. */
 function callOn(name: string, receiver: Type, family: string | null, args: readonly CallArg[], env: Env): Type {
   return evaluate(returnsOf(name), siteOf(name, receiver, family, args, env));
 }
 
-/**
- * A call on an UNPROVEN receiver. The call is on one of the families the row
- * names, or the server raises an error. So the result is the row's answer over
- * the field families it accepts, joined. For example `.size()` is a number on an
- * array and on an object, so it is a number. The result is the one family's answer
- * when there is only one (`.map`). A receiver that may be more than one kind proves each of them.
- */
 function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], env: Env): Type {
   const r = returnsOf(name);
   const site = siteOf(name, receiver, null, args, env);
@@ -431,22 +327,12 @@ function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], 
 const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 
-/**
- * The proof of a value that the call supplies, as deep as a plain value can show it. A
- * value that reads as MQL is still a value (HR1), so `"$x"` is a string.
- */
 function injectedType(v: unknown): Type {
   const k = kindOfValue(v);
   return k === null ? ANY : of(k);
 }
 
-/**
- * What `node` provably is under `env`. `ANY` wherever the registry and the
- * document's proof cannot show anything. Presence is what the row or the
- * source states, else what the proof itself carries.
- */
 export function typeOf(node: Expr, env: Env): Type {
-  // A chain over another collection: the join road lowered it, and proved it from the body's stages.
   const joined = env.chain.proofOf(node);
   if (joined !== undefined) return joined;
   const t = kindsOf(node, env);
@@ -455,14 +341,12 @@ export function typeOf(node: Expr, env: Env): Type {
   return stated ? present(t) : maybeAbsent(t);
 }
 
-/** The kinds, elements and properties `node` proves — everything but presence. */
 function kindsOf(node: Expr, env: Env): Type {
   switch (node.type) {
     case "NumberLiteral":
     case "BigIntLiteral":
       return of("number");
     case "StringLiteral":
-      // `"$x"` in raw MQL IS the field `x` (HR1): its kind is the field's, unknown.
       return isFieldPathString(node) ? ANY : of("string");
     case "TemplateLiteral":
       return of("string");
@@ -482,20 +366,16 @@ function kindsOf(node: Expr, env: Env): Type {
         if (el.type === "SpreadElement") spread = true;
         else elements.push(typeOf(el as Expr, env));
       }
-      // a literal with no spread has a fixed length, so each position is its own item
       return spread ? arrayOf(ANY) : tupleOf(elements);
     }
     case "ObjectLiteral": {
-      // A raw `{ $op: … }` is an operator, and its result is the operator's.
       if (namedRow(node) !== null) return ANY;
-      // A spread of an object that may be absent spreads as `{}`: its properties may be missing.
       const props = new Map<string, Type>();
       let open = false;
       for (const entry of node.entries) {
         if (entry.type === "SpreadElement") {
           const spread = typeOf(entry.argument, env);
           if (spread.kinds === "any" || spread.open) {
-            // an unknown property of the spread may override any name written so far
             for (const [k, t] of props) props.set(k, join(t, spread.values ?? ANY));
             open = true;
           }
@@ -512,14 +392,12 @@ function kindsOf(node: Expr, env: Env): Type {
       return objectOf(props, open);
     }
     case "FieldRef":
-      // `$` is the ROOT document at every depth (HR4): level 0.
       return env.typeAt(node.path, 0);
     case "Ident":
       return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : ANY;
     case "StreamRef":
       return of("stream");
     case "MemberAccess": {
-      // A property row (`Math.PI`) states its result; a field read is the object's property.
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
         return callOn(node.name, typeOf(node.object, env), receiverFamilyOf(node.object, env), [], env);
       }
@@ -540,8 +418,6 @@ function kindsOf(node: Expr, env: Env): Type {
     case "OperatorCall":
       return callOn(node.name, ANY, null, node.args, env);
     case "CallExpression":
-      // An applied arrow `((x) => x > 1)(5)` is its body — the body's kind is provable
-      // wherever it does not hang on a parameter.
       if (node.callee.type === "Lambda" && node.callee.body !== undefined) return kindsOf(node.callee.body, env);
       if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
         const b = env.lookup(node.callee.name, node.callee.pos);
@@ -561,16 +437,12 @@ function kindsOf(node: Expr, env: Env): Type {
     }
     case "BinaryExpr": {
       if (node.op === "+") {
-        // The result is `$concat` when either operand is a string, and `$add`
-        // otherwise. `$add` of a field that holds a date returns a date. So only two
-        // numbers prove a number, and the row states what the rest of the `$add` road gives.
         const l = kindOf(node.left, env);
         const r = kindOf(node.right, env);
         if (l === "string" || r === "string") return of("string");
         if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
-        // `a ?? b` is `b` exactly when `a` is null or missing: the result is there when `b` is.
         const r = kindsOf(node.right, env);
         return { ...join(kindsOf(node.left, env), r), absent: r.absent };
       }
@@ -587,24 +459,12 @@ function kindsOf(node: Expr, env: Env): Type {
   }
 }
 
-// ── the proof of an EMITTED document ─────────────────────────────────────────
-
-/** Is this MQL value one operator call — `{ $sum: "$x" }`, or `{ $count: {}, window: … }`? Its name, or null. */
 function operatorKeyOf(v: unknown): string | null {
   if (!isPlainObject(v)) return null;
   const ops = Object.keys(v).filter((k) => k.startsWith("$"));
   return ops.length === 1 ? ops[0] : null;
 }
 
-/**
- * What an emitted MQL VALUE proves, read against the document `doc` it runs
- * over. This is how the compiler learns what a stage made of the document
- * without the stage's source. The emitted body names the output fields and the
- * operators that fill them, whatever road wrote it. A field path reads the
- * input document's proof. An operator answers its row's `returns`. A literal
- * proves itself. A `$$` variable proves nothing. See docs/specs/types.md § The
- * document after a stage.
- */
 export function typeOfEmitted(value: unknown, doc: Type): Type {
   if (value === null || value === undefined) return NOTHING;
   if (typeof value === "string") {
@@ -619,8 +479,6 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
   if (op !== null) {
     const raw = (value as Record<string, unknown>)[op];
     if (op === "$literal") return injectedType(raw);
-    // A raw `$op(…)` passes through as written (HR2), so a body here can have any
-    // shape; the reader answers `ANY` for one it does not recognise.
     if (op === "$cond") {
       if (Array.isArray(raw) && raw.length === 3) return join(typeOfEmitted(raw[1], doc), typeOfEmitted(raw[2], doc));
       if (isPlainObject(raw) && "then" in raw && "else" in raw) {
@@ -640,7 +498,6 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       return { ...joinAll(raw.map((v) => typeOfEmitted(v, doc))), absent: last.absent };
     }
     if (op === "$arrayToObject") {
-      // `[{ k, v }, …]` or `[[k, v], …]` — a record whose values are each pair's `v`.
       const pairs = typeOfEmitted(Array.isArray(raw) && raw.length === 1 ? raw[0] : raw, doc);
       const pair = elementOf(pairs);
       const value = pair.items !== undefined ? itemOf(pair, 1) : propOf(pair, "v");
@@ -656,7 +513,6 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       names: null,
     };
     const result = evaluate(returnsOf(op), site);
-    // A literal object operand is a body, and proves nothing: see `OperatorCall` in `statedPresence`.
     const body = (a: unknown): boolean => isPlainObject(a) && operatorKeyOf(a) === null;
     const isPresent =
       neverNullAlwaysOf(op) || (neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent));
@@ -670,7 +526,6 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
   return injectedType(value);
 }
 
-/** The document `Type` after one emitted stage ran over `doc` — the row's `document` effect, applied. */
 export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
   const name = Object.keys(stage)[0];
   const body = stage[name];
@@ -680,13 +535,10 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
     case "narrows":
       return narrowedBy(body, doc);
     case "fields": {
-      // `$group` and `$facet` state the output fields as their body. `$count` names
-      // the one number field it writes.
       if (typeof body === "string") return objectOf(new Map([[body, of("number")]]), false);
       if (!isPlainObject(body)) return DOCUMENT;
       const props = new Map<string, Type>();
       for (const [k, v] of Object.entries(body)) {
-        // A key whose value is a pipeline (`$facet`) holds that pipeline's documents.
         props.set(
           k,
           Array.isArray(v) && v.every((s) => isPlainObject(s))
@@ -719,7 +571,6 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
       return out;
     }
     case "element": {
-      // A `$stage(…)` body passes as written (HR2), so a body of another shape proves nothing.
       if (typeof body !== "string" && !isPlainObject(body)) return DOCUMENT;
       const spec =
         typeof body === "string" ? { path: body } : (body as { path?: string; preserveNullAndEmptyArrays?: boolean });
@@ -735,7 +586,6 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
   }
 }
 
-/** A `keeps` stage: its output fields land on the document, its removed fields leave it. */
 function keptDocument(name: string, body: unknown, doc: Type): Type {
   if (name === "$unset") {
     const paths: unknown[] = typeof body === "string" ? [body] : Array.isArray(body) ? body : [];
@@ -743,13 +593,10 @@ function keptDocument(name: string, body: unknown, doc: Type): Type {
     return paths.reduce<Type>((d, p) => removed(d, p as string), doc);
   }
   if (!isPlainObject(body)) return doc;
-  // `$set` / `$addFields`: every key is a written path. `$lookup` / `$graphLookup`
-  // write their `as`. `$setWindowFields` writes each `output` key.
   if (name === "$set" || name === "$addFields") {
     return Object.entries(body).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
   }
   if (typeof body.as === "string") {
-    // the `as` array holds the other collection's documents, after the body's own pipeline
     const pipeline = Array.isArray(body.pipeline) ? body.pipeline : [];
     return written(doc, body.as, arrayOf(documentsOf(pipeline, DOCUMENT)));
   }
@@ -759,30 +606,16 @@ function keptDocument(name: string, body: unknown, doc: Type): Type {
   return doc;
 }
 
-/** The document after every stage of `pipeline` ran over `doc`. */
 export function documentsOf(pipeline: readonly unknown[], doc: Type): Type {
   return pipeline.reduce<Type>((d, s) => (isPlainObject(s) ? documentAfter(s, d) : DOCUMENT), doc);
 }
 
-/**
- * An accumulator's answer. Over a missing operand it answers its empty value
- * (MEASURED: `$push` gives `[]`, `$sum` gives `0`), so its presence is the
- * row's `neverNull` alone, and never its operand's.
- */
 function accumulated(v: unknown, doc: Type): Type {
   const t = typeOfEmitted(v, doc);
   const op = operatorKeyOf(v);
   return op !== null && neverNullOf(op) ? present(t) : t;
 }
 
-// ── what a QUERY proves about the documents that pass it ─────────────────────
-
-/**
- * The kind a query `$type` name selects. The field families state their BSON
- * type names once (`FIELD_FAMILY_TYPES`); the three kinds no family covers are
- * their own `$type` name. `"number"` is the query language's alias for every
- * numeric type.
- */
 const KIND_OF_TYPE_NAME: ReadonlyMap<string, Kind> = new Map<string, Kind>([
   ...(["string", "array", "number", "object", "date"] as const).flatMap((family) =>
     FIELD_FAMILY_TYPES[family].map((t): [string, Kind] => [t, family]),
@@ -793,7 +626,6 @@ const KIND_OF_TYPE_NAME: ReadonlyMap<string, Kind> = new Map<string, Kind>([
   ["binData", "binData"],
 ]);
 
-/** The kind a query LITERAL is, or null for a literal that proves none (null, a regex). */
 function kindOfQueryLiteral(v: unknown): Kind | null {
   if (v === null || v === undefined || isRegExp(v)) return null;
   const t = injectedType(v);
@@ -801,10 +633,8 @@ function kindOfQueryLiteral(v: unknown): Kind | null {
   return k === "unknown" ? null : k;
 }
 
-/** What one field's query clause proves of the field, or null when it proves nothing. */
 type Proven = { readonly kinds: ReadonlySet<Kind> | "any"; readonly present: boolean };
 
-/** The kinds both proofs allow — `"any"` allows every kind. */
 function bothKinds(a: ReadonlySet<Kind> | "any", b: ReadonlySet<Kind> | "any"): ReadonlySet<Kind> | "any" {
   if (a === "any") return b;
   if (b === "any") return a;
@@ -816,14 +646,6 @@ const intersect = (a: Proven, b: Proven): Proven => ({
   present: a.present || b.present,
 });
 
-/**
- * A field clause in the QUERY language reads an array field element by element:
- * `{ a: 5 }` and `{ a: { $gt: 5 } }` select `a: 5` and `a: [5, 6]` alike, and
- * `{ a: { $type: "string" } }` selects `a: ["x"]`. So a clause that names a kind
- * proves that kind OR an array, and a clause that excludes null proves presence.
- * MEASURED, the comparison operators compare inside one BSON type bracket, so
- * `{ a: { $gt: 5 } }` never selects a string.
- */
 function provenByClause(clause: unknown): Proven | null {
   const orArray = (k: Kind): Proven => ({ kinds: new Set<Kind>([k, "array"]), present: true });
   if (isPlainObject(clause) && Object.keys(clause).some((k) => k.startsWith("$"))) {
@@ -880,7 +702,6 @@ function provenByClause(clause: unknown): Proven | null {
   return k === null ? null : orArray(k);
 }
 
-/** The document after a `$match`: each top-level field clause, and each `$and` member, narrows its field. `$or`, `$nor`, `$expr` and the rest prove nothing. */
 export function narrowedBy(query: unknown, doc: Type): Type {
   if (!isPlainObject(query)) return doc;
   let out = doc;

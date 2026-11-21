@@ -1,36 +1,7 @@
-// The date operators.
-//
-// A date here is a number of milliseconds since the epoch, and every rule works in
-// UTC. The server runs a named time zone through a table that the interpreter does
-// not hold. So a `timezone` operand runs only when it names UTC. `utcOnly` is the one
-// place that states this. Every other value for it is a refusal.
-//
-// The calendar arithmetic uses integers only (`daysFromCivil`), so it is exact for
-// every year that a JavaScript Date holds. The rules agree with the server on these
-// points, each one measured and not assumed:
-//   - `$dateAdd` clamps a day of month to the last day of the target month.
-//   - `$dateTrunc` bins from 2000-01-01. A week bin starts on `startOfWeek`
-//     (Sunday by default), at the first such day on or after that anchor.
-//   - `$dateDiff` counts the unit BOUNDARIES crossed, not the elapsed units.
-//   - `$dateFromParts` carries a part out of range into the next part, and refuses a
-//     part outside the range that the server accepts.
-//   - `$dateToString` knows a fixed list of format specifiers and fails on another.
-//   - A date string runs only in the few ISO 8601 spellings below. The server parser
-//     accepts far more forms, and some of its answers differ, so every other string
-//     is a refusal.
-//   - `$toDate` of a number fails on the server when the number is an int. The
-//     interpreter does not know the kind of a computed number, so only a fraction
-//     or an integer beyond 32 bits runs.
-// A result outside the range of a JavaScript Date is a refusal.
-//
-// See src/compiler/interpret/CLAUDE.md.
-
 import type { Answer, Rule, Walk } from "./values.ts";
 import { NO, isPlain, kindOf, ok } from "./values.ts";
 import { argsOf, keyed, positional } from "./operand.ts";
 import { bsonTagOf, objectIdHex } from "../../bson.ts";
-
-// ── time ─────────────────────────────────────────────────────────────────────
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -38,14 +9,11 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const MAX_MS = 8.64e15;
 
-/** Midnight UTC on 2000-01-01, the anchor of every `$dateTrunc` bin. It is a Saturday. */
 const ANCHOR_MS = 946_684_800_000;
 const ANCHOR_WEEKDAY = 6;
 
-/** The answer for an instant, or a refusal when a JavaScript Date cannot hold it. */
 const dateAt = (ms: number): Answer => (Number.isFinite(ms) && Math.abs(ms) <= MAX_MS ? ok(new Date(ms)) : NO);
 
-/** Days since 1970-01-01 of a calendar date in the proleptic Gregorian calendar. */
 function daysFromCivil(year: number, month: number, day: number): number {
   const y = month <= 2 ? year - 1 : year;
   const era = Math.floor(y / 400);
@@ -55,7 +23,6 @@ function daysFromCivil(year: number, month: number, day: number): number {
   return era * 146_097 + dayOfEra - 719_468;
 }
 
-/** The calendar date of a day number: the inverse of `daysFromCivil`. */
 function civilFromDays(days: number): { year: number; month: number; day: number } {
   const z = days + 719_468;
   const era = Math.floor(z / 146_097);
@@ -76,7 +43,6 @@ function civilFromDays(days: number): { year: number; month: number; day: number
 const daysInMonth = (year: number, month: number): number =>
   daysFromCivil(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1, 1) - daysFromCivil(year, month, 1);
 
-/** The calendar fields of an instant. `weekday` is 0 for Sunday. */
 type Fields = {
   year: number;
   month: number;
@@ -105,7 +71,6 @@ function fieldsOf(ms: number): Fields {
 
 const isoWeekday = (weekday: number): number => (weekday === 0 ? 7 : weekday);
 
-/** The ISO week and the year that the week belongs to: the year of the Thursday of the week. */
 function isoWeekOf(f: Fields): { year: number; week: number } {
   const thursday = f.days + 4 - isoWeekday(f.weekday);
   const { year } = civilFromDays(thursday);
@@ -114,19 +79,11 @@ function isoWeekOf(f: Fields): { year: number; week: number } {
 
 const dayOfYearOf = (f: Fields): number => f.days - daysFromCivil(f.year, 1, 1) + 1;
 
-/** `$week`: weeks start on Sunday, and the days before the first Sunday of the year are week 0. */
 const sundayWeekOf = (f: Fields): number => Math.floor((dayOfYearOf(f) - 1 + 7 - f.weekday) / 7);
 
-// ── the operands ──────────────────────────────────────────────────────────────
-
-/** The time zones that name UTC. Any other zone is a refusal. */
 const UTC_ZONES: readonly string[] = ["UTC", "+00:00", "+0000"];
 const utcOnly = (v: unknown): boolean => typeof v === "string" && UTC_ZONES.includes(v);
 
-/**
- * The instant of a value that the server turns into a date: a Date, or an ObjectId, which
- * holds a time in seconds. Any other value is undefined.
- */
 function instantOf(v: unknown): number | undefined {
   switch (kindOf(v)) {
     case "date":
@@ -143,18 +100,15 @@ function instantOf(v: unknown): number | undefined {
 const isInstant = (v: unknown): boolean => instantOf(v) !== undefined;
 const isBoolean = (v: unknown): boolean => typeof v === "boolean";
 
-/** An integer in the range, as a date part takes it. */
 const integerIn =
   (low: number, high: number) =>
   (v: unknown): boolean =>
     typeof v === "number" && Number.isInteger(v) && v >= low && v <= high;
 
-/** The units of `$dateAdd`, `$dateDiff` and `$dateTrunc`. */
 const UNITS = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
 type Unit = (typeof UNITS)[number];
 const isUnit = (v: unknown): v is Unit => typeof v === "string" && (UNITS as readonly string[]).includes(v);
 
-/** The length in milliseconds of every unit that has a fixed length. */
 const FIXED_MS: Readonly<Record<string, number>> = {
   week: 7 * DAY,
   day: DAY,
@@ -163,10 +117,8 @@ const FIXED_MS: Readonly<Record<string, number>> = {
   second: SECOND,
   millisecond: 1,
 };
-/** The months in each calendar unit. */
 const MONTHS_IN: Readonly<Record<string, number>> = { year: 12, quarter: 3, month: 1 };
 
-/** The day that a week starts on, by name. The index is the weekday, with 0 for Sunday. */
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const isWeekdayName = (v: unknown): boolean => typeof v === "string" && WEEKDAYS.includes(v);
 const startOfWeekOf = (v: Record<string, unknown>): number =>
@@ -174,16 +126,8 @@ const startOfWeekOf = (v: Record<string, unknown>): number =>
 
 type Check = (v: unknown) => boolean;
 
-/** `startOfWeek` matters to the week unit only. The server ignores it for any other unit, even a null. */
 const nullWeekStart = (v: Record<string, unknown>): boolean => v.startOfWeek === null && v.unit !== "week";
 
-/**
- * A keyed date operator. The rule evaluates every operand, and the first one with no value
- * stops the walk. A null operand makes the answer null, but only when every other operand
- * is valid. The server fails on an invalid operand beside a null one in some
- * cases and not in others. `shape` judges the written keys before the rule reads any operand.
- * `unread` names a case where a null operand is not the one that the server reads.
- */
 function dated(
   required: readonly string[],
   optional: readonly string[],
@@ -212,12 +156,6 @@ function dated(
 
 const TIMEZONE = { timezone: utcOnly };
 
-// ── the parts of a date ──────────────────────────────────────────────────────
-
-/**
- * `$year` and the operators like it take a date, `[date]`, or `{ date, timezone }`.
- * A document with a dollar key is an expression, and so it is one argument.
- */
 function part(read: (f: Fields) => number): Rule {
   const options = dated(["date"], ["timezone"], { date: isInstant, ...TIMEZONE }, (v) =>
     ok(read(fieldsOf(instantOf(v.date) as number))),
@@ -247,14 +185,11 @@ const dateToParts = dated(
   },
 );
 
-// ── a date from parts ────────────────────────────────────────────────────────
-
 const CALENDAR_PARTS = ["month", "day"];
 const ISO_PARTS = ["isoWeek", "isoDayOfWeek"];
 const CLOCK_PARTS = ["hour", "minute", "second", "millisecond"];
 const PART = integerIn(-32_768, 32_767);
 
-/** The calendar form has `year`, the ISO form has `isoWeekYear`, and a document has one form only. */
 function partsShape(keys: readonly string[]): boolean {
   const calendar = keys.includes("year");
   const iso = keys.includes("isoWeekYear");
@@ -281,11 +216,9 @@ const dateFromParts = dated(
     const n = (key: string, otherwise: number): number => (v[key] === undefined ? otherwise : (v[key] as number));
     let days: number;
     if (v.year !== undefined) {
-      // A month out of range carries into the year, and a day out of range into the month.
       const months = (v.year as number) * 12 + n("month", 1) - 1;
       days = daysFromCivil(Math.floor(months / 12), (((months % 12) + 12) % 12) + 1, 1) + n("day", 1) - 1;
     } else {
-      // Week 1 holds 4 January, and its Monday anchors the year.
       const fourth = daysFromCivil(v.isoWeekYear as number, 1, 4);
       const monday = fourth - (isoWeekday((((fourth + 4) % 7) + 7) % 7) - 1);
       days = monday + (n("isoWeek", 1) - 1) * 7 + n("isoDayOfWeek", 1) - 1;
@@ -297,19 +230,12 @@ const dateFromParts = dated(
   partsShape,
 );
 
-// ── a date moved, counted, and cut ───────────────────────────────────────────
-
-/**
- * The instant `amount` units after `ms`. A calendar unit keeps the day of month, up to the
- * last day of the target month. A fixed unit moves the instant.
- */
 function shift(ms: number, unit: Unit, amount: number): Answer {
   const months = MONTHS_IN[unit];
   if (months === undefined) {
     const moved = BigInt(ms) + BigInt(amount) * BigInt(FIXED_MS[unit]);
     return dateAt(Number(moved));
   }
-  // A shift of this size leaves the range of a Date, and the product below stays exact.
   if (Math.abs(amount * months) > 4_000_000) return NO;
   const f = fieldsOf(ms);
   const total = f.year * 12 + f.month - 1 + amount * months;
@@ -330,7 +256,6 @@ const shifting = (sign: 1 | -1): Rule =>
     shift(instantOf(v.startDate) as number, v.unit as Unit, sign * (v.amount as number) + 0),
   );
 
-/** The number of the unit that holds the instant. Two instants of one number are in one unit. */
 function unitIndex(ms: number, unit: Unit, startOfWeek: number): number {
   const f = fieldsOf(ms);
   switch (unit) {
@@ -341,7 +266,6 @@ function unitIndex(ms: number, unit: Unit, startOfWeek: number): number {
     case "month":
       return f.year * 12 + f.month - 1;
     case "week":
-      // The first day of this week, less the days that the epoch week starts after it.
       return (f.days - ((f.weekday - startOfWeek + 7) % 7) - ((startOfWeek + 3) % 7)) / 7;
     default:
       return Math.floor(ms / FIXED_MS[unit]);
@@ -377,14 +301,12 @@ const dateTrunc = dated(
     const bin = v.binSize === undefined ? 1 : (v.binSize as number);
     const months = MONTHS_IN[unit];
     if (months !== undefined) {
-      // Bins count calendar months from January 2000.
       const f = fieldsOf(ms);
       const size = bin * months;
       const since = f.year * 12 + f.month - 1 - 24_000;
       const start = Math.floor(since / size) * size + 24_000;
       return dateAt(daysFromCivil(Math.floor(start / 12), (((start % 12) + 12) % 12) + 1, 1) * DAY);
     }
-    // A week bin starts on the first `startOfWeek` day on or after the anchor.
     const anchor = ANCHOR_MS + (unit === "week" ? ((startOfWeekOf(v) - ANCHOR_WEEKDAY + 7) % 7) * DAY : 0);
     const size = BigInt(bin) * BigInt(FIXED_MS[unit]);
     return dateAt(Number(BigInt(anchor) + floorDiv(BigInt(ms) - BigInt(anchor), size) * size));
@@ -392,8 +314,6 @@ const dateTrunc = dated(
   undefined,
   nullWeekStart,
 );
-
-// ── a date as a string, and a string as a date ───────────────────────────────
 
 const pad = (n: number, width: number): string => String(n).padStart(width, "0");
 
@@ -412,7 +332,6 @@ const MONTH_NAMES = [
   "December",
 ];
 
-/** The text of one format specifier, or undefined for a specifier that the server fails on. */
 const SPECIFIERS: Readonly<Record<string, (f: Fields) => string | undefined>> = {
   Y: (f) => yearText(f.year),
   G: (f) => yearText(isoWeekOf(f).year),
@@ -434,15 +353,10 @@ const SPECIFIERS: Readonly<Record<string, (f: Fields) => string | undefined>> = 
   "%": () => "%",
 };
 
-/** The server writes a year from 0 to 9999 with four digits, and fails on any other year. */
 const yearText = (year: number): string | undefined => (year >= 0 && year <= 9999 ? pad(year, 4) : undefined);
 
 const DEFAULT_FORMAT = "%Y-%m-%dT%H:%M:%S.%LZ";
 
-/**
- * The text of the instant in the format. The server fails on a specifier it does not
- * know and on a `%` at the end. It also fails on a year specifier for a year outside 0 to 9999.
- */
 function formatInstant(ms: number, format: string): string | undefined {
   const f = fieldsOf(ms);
   let out = "";
@@ -462,7 +376,6 @@ function formatInstant(ms: number, format: string): string | undefined {
   return out;
 }
 
-/** The value of an optional operand that the answer needs: its walk, or null when it is not written. */
 function orNull(parts: Record<string, unknown>, key: string, walk: Walk): Answer {
   return key in parts ? walk.at(parts[key]) : ok(null);
 }
@@ -472,7 +385,6 @@ const dateToString = keyed(["date"], ["format", "timezone", "onNull"], (parts, w
   if (!date.ok) return date;
   const format = "format" in parts ? walk.at(parts.format) : ok(DEFAULT_FORMAT);
   if (!format.ok) return format;
-  // A null time zone, here, is a case that the server answers in a way the rule does not state.
   const zone = "timezone" in parts ? walk.at(parts.timezone) : ok("UTC");
   if (!zone.ok) return zone;
   if (!utcOnly(zone.value)) return NO;
@@ -485,14 +397,8 @@ const dateToString = keyed(["date"], ["format", "timezone", "onNull"], (parts, w
   return text === undefined ? NO : ok(text);
 });
 
-/** A string that the parser reads: a date, and an optional time with an optional offset. */
 const ISO_STRING = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?)?$/;
 
-/**
- * What the server does with a string. The value is the instant for a string that the server
- * reads and that the rule reads the same way. It is `fails` for a string in the shape above
- * with a part out of range. It is undefined for every other string.
- */
 type Parsed = number | "fails" | undefined;
 
 function parseIso(text: string): Parsed {
@@ -515,7 +421,6 @@ function parseIso(text: string): Parsed {
 }
 
 const dateFromString = keyed(["dateString"], ["format", "timezone", "onError", "onNull"], (parts, walk) => {
-  // A `format` operand makes the server read the string by a pattern that the rule does not hold.
   if ("format" in parts) return NO;
   const text = walk.at(parts.dateString);
   if (!text.ok) return text;
@@ -524,7 +429,6 @@ const dateFromString = keyed(["dateString"], ["format", "timezone", "onError", "
   if (!utcOnly(zone.value)) return NO;
   if (text.value === null) return orNull(parts, "onNull", walk);
   const failure = (): Answer => ("onError" in parts ? walk.at(parts.onError) : NO);
-  // A value that is not a string fails on the server, and `onError` then gives the answer.
   if (typeof text.value !== "string")
     return ["number", "boolean", "date"].includes(kindOf(text.value)) ? failure() : NO;
   const parsed = parseIso(text.value);
@@ -533,13 +437,6 @@ const dateFromString = keyed(["dateString"], ["format", "timezone", "onError", "
   return dateAt(parsed);
 });
 
-// ── conversions ──────────────────────────────────────────────────────────────
-
-/**
- * `$toDate` takes a date, an ObjectId, a number of milliseconds or a string in the forms
- * above. An int fails on the server and a double or a long does not. A computed
- * integer inside 32 bits could be either, so only a fraction or a larger integer runs.
- */
 const toDate = positional(1, 1, ([v]) => {
   if (v === null) return ok(null);
   if (typeof v === "number") {
@@ -554,7 +451,6 @@ const toDate = positional(1, 1, ([v]) => {
   return ms === undefined ? NO : dateAt(ms);
 });
 
-/** `$tsSecond` and `$tsIncrement` read one half of the 64 bits of a timestamp, as an unsigned number. */
 const timestampHalf = (half: "high" | "low"): Rule =>
   positional(1, 1, ([v]) => {
     if (v === null) return ok(null);

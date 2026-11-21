@@ -1,29 +1,4 @@
 #!/usr/bin/env node
-/**
- * Generate `src/globals.ts` from the canonical jsmql operator and stage registries
- * (the rows of `src/registry/names.ts`) and the vendored MongoDB MQL
- * specification YAMLs (`vendor/mql-specifications/definitions/{expression,
- * accumulator,stage}/`).
- *
- * The generated file is a `declare global` ambient module. When imported as
- * `import type "@koresar/jsmql/globals"`, it shows every stage and operator as a global
- * function with a precise signature, JSDoc description, version, and link to the MongoDB
- * docs. The runtime path stays unchanged. The jsmql parser already knows bare `$stage(...)`
- * and `$op(...)` calls through the registries. This generator only produces TypeScript types
- * for the user's IDE.
- *
- * This script runs as part of `prebuild` and `pretest` (after `vendor/fetch-mql-specs.mjs`)
- * so the emitted file always shows the pinned spec. The committed `src/globals.ts` is the
- * artefact that ships in the npm package.
- *
- * Drift protection: `test/operator-spec-coverage.test.ts` imports `generateGlobalsSource()`
- * from this file and asserts that the committed `src/globals.ts` is byte-equal to the
- * generator output on every `npm test`.
- *
- * Usage:
- *   node scripts/generate-globals.mjs            # rewrite src/globals.ts and run oxfmt
- *   import { generateGlobalsSource } from "..."  # for the drift test
- */
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -49,10 +24,6 @@ import {
 } from "../src/compiler/rows.ts";
 import { TIME_UNIT } from "../src/registry/names.ts";
 
-// The stages and the operators, read from the rows that the COMPILER reads. There is no
-// second table: a name is here because a row says so. Its shape and description are
-// that row's own. `$count` is both a stage and an accumulator, so it states a description
-// per meaning and appears in both maps.
 const STAGES = Object.fromEntries(
   everyStageName().map((name) => [name, { description: describes(name, "stage"), diagnostic: diagnosticOf(name) }]),
 );
@@ -78,43 +49,19 @@ const ROOT = resolve(HERE, "..");
 const SPEC_ROOT = resolve(ROOT, "vendor", "mql-specifications", "definitions");
 const OUT_PATH = resolve(ROOT, "src", "globals.ts");
 
-// MQL `timeUnit` enum. Date operators like $dateAdd, $dateDiff, and $dateTrunc use it,
-// as do all date methods that take a `unit`. The script narrows it to a literal union for autocomplete
-// and typo-check. It derives the union from the same `TIME_UNIT` that the runtime validator checks, so
-// the two cannot drift.
 const TIME_UNIT_LITERAL = TIME_UNIT.map((u) => `"${u}"`).join(" | ");
 
-// Options-object shapes for the diagnostic and system source stages reached through
-// the context-ref prefixes (`$$.collStats({...})`, `$$$$.currentOp({...})`). These field shapes
-// do not travel with the stage rows or the vendored YAML in a usable form. They matter only to
-// TypeScript completion, so they live here, keyed by stage name. The stages with no options
-// ($indexStats, $planCacheStats, $shardedDataDistribution) are absent: they take zero arguments.
-// The field sets copy the MongoDB manual (URLs below). Keep them in sync when
-// the pinned server version changes.
 const DIAGNOSTIC_OPTION_SHAPES = {
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/collStats/
   $collStats:
     "{ latencyStats?: { histograms?: boolean }; storageStats?: { scale?: number }; count?: Record<string, never>; queryExecStats?: Record<string, never> }",
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSearchIndexes/
   $listSearchIndexes: "{ id?: string; name?: string }",
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/currentOp/
   $currentOp:
     "{ allUsers?: boolean; idleConnections?: boolean; idleCursors?: boolean; idleSessions?: boolean; localOps?: boolean; targetAllNodes?: boolean }",
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSessions/
   $listSessions: "{ users?: { user: string; db: string }[]; allUsers?: boolean }",
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listLocalSessions/
   $listLocalSessions: "{ users?: { user: string; db: string }[]; allUsers?: boolean }",
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/listSampledQueries/
   $listSampledQueries: "{ namespace?: string }",
 };
 
-// Context-ref prefixes, in scope order. Each becomes an ambient declaration
-// (`var $$` (reassignable through `$$ = …`) plus `const $$$` and `const $$$$`). The named
-// members are the scope's diagnostic stages (the script derives them from the STAGES `diagnostic` field).
-// The `[key: string]: any` tail lets the rest of the reference's syntax type-check
-// (`$$.push(...)`, `$$$.coll.find(...)`, member access, stream methods). Trade-off: TypeScript
-// will not flag a typo in a non-diagnostic method. The jsmql parser still does. See
-// docs/specs/context-references.md.
 const CONTEXT_REFS = {
   collection: {
     name: "$$",
@@ -142,31 +89,10 @@ const CONTEXT_REFS = {
   },
 };
 
-// `$$.<method>(...)` completions beyond the diagnostic source stages: the
-// chainable / statement-level stream vocabulary on the root stream.
-// The generator checks each name against `streamMethodNames()` (src/compiler/rows.ts, over
-// the rows in src/registry/names.ts) below. So the registry stays the source of
-// truth: a new stream method without a signature here is a build-time error.
-// The code lists `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
-// by hand below. Only the stream ref (`$$`) gets these. `$$$` and
-// `$$$$` reach the same methods through member access on their permissive
-// `[key: string]: any` tail.
-//
-// Name of the ambient interface the `$$` stream ref is typed as. Stream
-// methods return it (not `any`). So chains keep their completion AND their
-// callback params stay contextually typed. Otherwise `$$.filter(d => …).map(d => …)`
-// trips `noImplicitAny` on the second lambda, because the first call
-// collapses to `any`.
 const STREAM_REF_TYPE = "JsmqlStreamRef";
 
-// Name of the ambient interface a FOREIGN collection (`$$$.<coll>`) is typed as,
-// and the base the stream ref extends. It holds the read surface both refs
-// share; the stream ref adds only what is unique to the root stream.
 const FOREIGN_REF_TYPE = "JsmqlForeignRef";
 
-// Each stream method's JSDoc + parameter list. `streamMethodMembers` appends the
-// return type (always the chainable ref). The table omits it, so
-// the chaining contract lives in one place.
 const STREAM_METHOD_SIGNATURES = {
   filter: {
     doc: "Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`).",
@@ -267,17 +193,9 @@ const STREAM_METHOD_SIGNATURES = {
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 
-// Stream methods listed by hand, not taken from `streamMethodNames()`:
-// `.filter` and `.reject` are special-case chain heads (their predicate reading is shared
-// with `$unionWith` and `$facet`). `.push` is the statement-level `$unionWith`. `.push` belongs
-// to the current stream alone. The other two are valid on a foreign collection too.
 const NON_REGISTRY_STREAM_METHODS = ["filter", "reject"];
 const ROOT_STREAM_ONLY_METHODS = ["push"];
 
-// Emission order for the chainable stream methods (registry order, then the non-registry entries).
-// The generator checks drift in BOTH directions: every registered stream method must have a signature, and
-// every signature must be a live registry name. The second check removes a method that jsmql
-// dropped, so it does not stay here as a false completion.
 function streamMethodMembers(returnType, names) {
   const registry = streamMethodNames();
   const missing = registry.filter((n) => STREAM_METHOD_SIGNATURES[n] === undefined);
@@ -304,15 +222,6 @@ function streamMethodMembers(returnType, names) {
   return members;
 }
 
-// `.$<stage>(body)` chain links. Every stage in the registry is a legal link
-// EXCEPT the diagnostic source stages. Those are source stages, so a link form
-// can never be first. They already appear under their own non-`$` spelling
-// (`$$.indexStats()`) with a different arity. The body is typed `any`, not
-// the stage's args object: some stages accept a bare string as well
-// (`.$unwind("$items")`, `.$merge("coll")`). A named member has no `any`
-// escape hatch, so a narrower type would reject valid JSMQL. Argument-key
-// completion lives on the statement form (`$group({ … })`). The generator builds
-// that form from the spec.
 function stageLinkMembers(spec, returnType) {
   const members = [];
   for (const name of Object.keys(STAGES).sort()) {
@@ -323,13 +232,7 @@ function stageLinkMembers(spec, returnType) {
   return members;
 }
 
-// The value terminals — `.head()`, `.sum()`, `.size()`, … — end a chain with a
-// value, not a stream. Names come from `valueTerminalMethodNames()`
-// (src/compiler/rows.ts, over the rows in src/registry/names.ts); the return types
-// are `any` because the result is a document or a field of one, except the
-// numeric aggregates.
 const VALUE_TERMINAL_RETURNS = { size: "number", sum: "number", mean: "number", sumBy: "number", meanBy: "number" };
-/** A stated signature wins; else the registry's arity: a no-argument terminal is `()`, anything else is typed loosely. */
 function terminalParams(name) {
   return VALUE_TERMINAL_PARAMS[name] ?? (argCountOf(name, "array")?.none === true ? "()" : "(...args: any[])");
 }
@@ -354,28 +257,7 @@ function valueTerminalMembers() {
   return members;
 }
 
-// ---------------------------------------------------------------------------
-// Value-method prototype augmentations (`@koresar/jsmql/globals`).
-//
-// jsmql's lodash-flavoured *value* methods (`.uniq()`, `.chunk()`, `.clamp()`, `.capitalize()`, …)
-// are called on array, string, and number *values*, not on a `$`-prefixed global. Completion needs
-// the *receiver* to have a real type. This code augments the built-in `Array<T>`, `String`, and
-// `Number` interfaces with these methods. Each carries a concrete return type so chains stay typed
-// (`items.uniq().chunk(2)` → `T[][]`). This activates only on a concretely typed receiver. A bare
-// `$.field` is `any`, and `any.uniq()` stays `any` (no completion, but no error either). Operators
-// like `$.age > 18` stay untouched. The win is for annotated documents,
-// literals, and mid-chain results. See docs/specs/globals-generation.md.
-//
-// Object-*receiver* methods (`.mapValues`, `.pick`, `.omit`, `.invert`) are deliberately NOT augmented.
-// The only interface to hang them on is `Object`, the base of every type. It would advertise them
-// (misleadingly) on numbers, strings, arrays, everything. Date getters are native on `Date`.
-// RegExp methods are native on `RegExp`. All such names sit in the skip sets below.
-
-// Names from the `METHODS` registry that are NOT emitted as augmentations. Native
-// methods already carry lib.d.ts types; object-receiver / regex / date / shimmed
-// names have no clean interface to hang on (see note above).
 const VALUE_METHOD_SKIP = {
-  // Native `Array.prototype`: already typed by TypeScript's library.
   nativeArray: new Set([
     "at",
     "slice",
@@ -414,7 +296,6 @@ const VALUE_METHOD_SKIP = {
     "values",
     "toLocaleString",
   ]),
-  // Native `String.prototype`.
   nativeString: new Set([
     "trim",
     "trimStart",
@@ -437,16 +318,9 @@ const VALUE_METHOD_SKIP = {
     "repeat",
     "indexOf",
     "includes",
-    // `.length()` reads the native `length` property; the call form is typed through `$`
     "length",
   ]),
-  // Native `Date.prototype`: the accessors plus `.getTime()` and `.toISOString()`,
-  // which lib.d.ts already types. The single source of truth is `nativeDateMethodNames()`
-  // (src/compiler/rows.ts). It reads off the rows that also state their zero-argument arity.
-  // jsmql's OTHER date methods (`.plus`, `.startOf`, `.format`) are NOT native, so they ARE
-  // augmented. See VALUE_METHOD_SIGNATURES.
   dateNative: new Set(NATIVE_DATE_METHODS),
-  // Object-receiver: no safe interface (Object is the base of everything).
   object: new Set([
     "mapValues",
     "mapKeys",
@@ -460,30 +334,17 @@ const VALUE_METHOD_SKIP = {
     "toPairs",
     "assign",
   ]),
-  // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
-  // Shimmed to a custom error message: not a real completable method.
   shimmed: new Set(["toNumber", "toLowerCase", "toUpperCase", "isBoolean", "isUndefined", "unzipWith"]),
 };
 
-// Per-method augmentation signature. `recv` is the interface to augment; `sig`
-// the `(params): Return` text (Array sigs may reference the element type `T`);
-// `doc` a one-line JSDoc. Return types are chosen to keep chains typed. The
-// element-typed iteratee/predicate params below are permissive on purpose.
-// jsmql validates the real argument at compile time. The TS type only needs to
-// not *reject* valid jsmql (so optional/loose beats strict).
 const ITER = "iteratee: string | number | ((value: T) => any)";
-// Optional-iteratee form for the collapse methods whose default is the identity
-// (`keyBy`/`groupBy`/`countBy` — without the iteratee, they count or group by identity).
 const OPT_ITER = "iteratee?: string | number | ((value: T) => any)";
 const PRED = "predicate: string | number | [string, any] | Record<string, any> | ((value: T) => any)";
-/** The interfaces of the values that a `$to…` conversion reads. */
 const CONVERTIBLE = ["String", "Number", "Date", "Boolean"];
-/** The interfaces of the values that a type test reads: every kind with an interface to augment. */
 const TYPE_TESTED = ["String", "Number", "Date", "Boolean", "Array"];
 
 const VALUE_METHOD_SIGNATURES = {
-  // ── conversions: MongoDB's `$to…` operators, on every kind of value ─────────
   toDouble: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a double — `$toDouble`." },
   toInt: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a 32-bit integer — `$toInt`." },
   toLong: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a 64-bit integer — `$toLong`." },
@@ -496,7 +357,6 @@ const VALUE_METHOD_SIGNATURES = {
   toDate: { recv: ["String", "Number", "Date"], sig: "(): Date", doc: "The value as a date — `$toDate`." },
   toObjectId: { recv: "String", sig: "(): any", doc: "A 24-hex string as an ObjectId — `$toObjectId`." },
   toUUID: { recv: "String", sig: "(): any", doc: "A UUID string as a UUID — `$toUUID`." },
-  // ── type tests: the BSON type of the value, on every kind of value ─────────
   isString: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a string? — `$type`." },
   isNumber: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a number of any BSON type? — `$isNumber`." },
   isDouble: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a double? — `$type`." },
@@ -511,7 +371,6 @@ const VALUE_METHOD_SIGNATURES = {
   isNaN: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value the number NaN?" },
   isObject: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a document? An array is not one. — `$type`." },
   isUUID: { recv: TYPE_TESTED, sig: "(): boolean", doc: "Is the value a UUID (a binData of subtype 4)?" },
-  // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
   uniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy — `_.uniq`." },
   uniqBy: { recv: "Array", sig: `(${ITER}): T[]`, doc: "Duplicate-free by iteratee — `_.uniqBy`." },
   sortedUniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy of a sorted array — `_.sortedUniq`." },
@@ -566,7 +425,6 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Trailing run matching the predicate — `_.takeRightWhile`.",
   },
   dropRightWhile: { recv: "Array", sig: `(${PRED}): T[]`, doc: "Drop the trailing matching run — `_.dropRightWhile`." },
-  // ── Array<T> — element / scalar returns ─────────────────────────────────────
   head: { recv: "Array", sig: "(): T", doc: "First element — `_.head`." },
   first: { recv: "Array", sig: "(): T", doc: "First element — `_.first`." },
   last: { recv: "Array", sig: "(): T", doc: "Last element — `_.last`." },
@@ -593,7 +451,6 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Does this array hold every element of `other`.",
   },
   isDisjointFrom: { recv: "Array", sig: "(other: any[]): boolean", doc: "Do the two arrays share no element." },
-  // ── Array<T> — returns of a new shape ────────────────────────────────────────────
   chunk: { recv: "Array", sig: "(size: number): T[][]", doc: "Split into groups of `size` — `_.chunk`." },
   partition: { recv: "Array", sig: `(${PRED}): [T[], T[]]`, doc: "Split into `[matching, rest]` — `_.partition`." },
   zip: { recv: "Array", sig: "(...arrays: any[][]): any[][]", doc: "Group by index across arrays — `_.zip`." },
@@ -625,7 +482,6 @@ const VALUE_METHOD_SIGNATURES = {
     sig: `(${OPT_ITER}): Record<string, number>`,
     doc: "Count elements by iteratee (omit for identity) — `_.countBy`.",
   },
-  // ── String → string / string[] ──────────────────────────────────────────────
   capitalize: {
     recv: "String",
     sig: "(): string",
@@ -678,11 +534,6 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(pattern?: string | RegExp): string[]",
     doc: "Split into an array of words — `_.words`.",
   },
-  // ── Number → number / boolean ───────────────────────────────────────────────
-  // Two dual-receiver methods: `.clamp` and `.inRange` bind a number OR a date.
-  // `.clamp`'s result follows its receiver (which is why the METHODS registry gives
-  // it no invariant `returns`). Both need a per-receiver `sig` map. A date takes both bounds.
-  // The one-argument form measures from 0, which only a number does.
   clamp: {
     recv: ["Number", "Date"],
     sig: { Number: "(lower: number, upper: number): number", Date: "(lower: Date, upper: Date): Date" },
@@ -700,7 +551,6 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(precision?: number): number",
     doc: "Round down to `precision` decimals — `_.floor`.",
   },
-  // ── Number → number: the JavaScript `Math` members, on the number ─────────────
   abs: { recv: "Number", sig: "(): number", doc: "The absolute value — `Math.abs`." },
   sqrt: { recv: "Number", sig: "(): number", doc: "The square root — `Math.sqrt`." },
   cbrt: { recv: "Number", sig: "(): number", doc: "The cube root — `Math.cbrt`." },
@@ -741,7 +591,6 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(upper?: number): number",
     doc: "Gives a random number between two bounds, with the API of lodash's `_.random`. Two whole bounds give a whole number.",
   },
-  // The receiver is lodash's `end` alone, and its `start` with more arguments.
   range: {
     recv: "Number",
     sig: "(end?: number, step?: number): number[]",
@@ -752,11 +601,6 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(end?: number, step?: number): number[]",
     doc: "The `.range()` array in reverse order — `_.rangeRight`.",
   },
-  // ── Date → Date / number / string / boolean ─────────────────────────────────
-  // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter list
-  // mirrors the `args` that the method's row states (src/registry/names.ts). Every `unit`
-  // is the MQL timeUnit union, not `string`, so the editor catches a typo with the
-  // same closed set that the row's `slotEnums` enforces at compile time (src/compiler/emit/check.ts).
   plus: {
     recv: "Date",
     sig: `(amount: number, unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
@@ -822,19 +666,14 @@ const VALUE_METHOD_SIGNATURES = {
   },
 };
 
-/** The receiver interfaces one signature entry augments (one, or more than one). */
 function recvsOf(entry) {
   return Array.isArray(entry.recv) ? entry.recv : [entry.recv];
 }
 
-/** That entry's signature text for a given receiver. */
 function sigFor(entry, recv) {
   return typeof entry.sig === "string" ? entry.sig : entry.sig[recv];
 }
 
-// The interface header each receiver augments. `Array` carries the element type
-// `T` so signatures like `head(): T` / `groupBy(...): Record<string, T[]>` stay
-// precise across a chain.
 const VALUE_METHOD_INTERFACES = {
   Array: "interface Array<T>",
   String: "interface String",
@@ -843,12 +682,6 @@ const VALUE_METHOD_INTERFACES = {
   Boolean: "interface Boolean",
 };
 
-// Emit the `interface Array<T> { … } interface String { … } interface Number { … }`
-// augmentation blocks. The generator checks drift against the `METHODS` registry. Every
-// non-skipped registry method must have a signature, and every signature must be
-// a real, non-skipped registry method. So a new value method in jsmql without
-// a signature (or a skip-set entry) fails the build here, exactly like
-// `streamMethodMembers()` does for the stream vocabulary.
 function valueMethodAugmentationBlock() {
   const skip = new Set([
     ...VALUE_METHOD_SKIP.nativeArray,
@@ -860,7 +693,6 @@ function valueMethodAugmentationBlock() {
   ]);
   const registry = new Set(valueMethodNames());
 
-  // A skip-set name that is not a real registry method is a typo. Catch it.
   const straySkip = [...skip].filter((n) => !registry.has(n));
   if (straySkip.length > 0) {
     throw new Error(
@@ -883,14 +715,7 @@ function valueMethodAugmentationBlock() {
     );
   }
 
-  // Return-category drift guard. Where the METHODS registry declares an invariant result category
-  // (`returns`), the augmentation's TypeScript return type must stay in that category. A registry change
-  // (for example, a method's result becomes an object) that the ambient signature does not mirror fails
-  // the build, and does not silently drift. Methods with no registry `returns` (result depends on the
-  // receiver and arguments: `.head` → element `T`, `.groupBy` value or stream) are skipped. There is no
-  // invariant to enforce.
   const registryReturns = valueMethodReturns();
-  // keyed by the Kind the registry states. Each tests the ambient signature's TypeScript return type.
   const inCategory = {
     string: (r) => r === "string",
     number: (r) => r === "number",
@@ -899,12 +724,6 @@ function valueMethodAugmentationBlock() {
     object: (r) => r.startsWith("Record<") || r === "object",
     array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
   };
-  // Receiver drift guard. The METHODS registry already declares which receiver family a
-  // single-receiver method needs. That is what gates the chain type-check at runtime. A
-  // signature on a different interface here would advertise a method on a type jsmql itself rejects.
-  // Methods with no declared family (`requiredReceiverFamily` → null) are the documented dual
-  // and universal ones (`.clamp`, `.nth`, `.size`). They choose their own receivers, which is
-  // exactly what the multi-receiver `recv` form is for.
   const familyInterface = { array: "Array", string: "String", number: "Number", date: "Date", object: "Object" };
   const wrongRecv = [];
   for (const name of augmentable) {
@@ -921,15 +740,9 @@ function valueMethodAugmentationBlock() {
     );
   }
 
-  // Note: the date-RETURNING methods (`.plus`, `.minus`, `.startOf`, `.endOf`, `.set`)
-  // are unprotected here by construction, not by omission. `MethodReturn` has no `"date"`
-  // member. These methods return "same as the receiver", so the registry deliberately leaves
-  // `returns` unset and they fall through the `undefined` skip below. Do not add `returns: "date"`
-  // to the registry without a new `date` row in `inCategory` too.
   const drift = [];
   for (const name of augmentable) {
     const category = registryReturns[name];
-    // "same" / "element" / "unknown" depend on the receiver — nothing a fixed signature can be held to
     if (category === undefined || !(category in inCategory)) continue;
     const entry = VALUE_METHOD_SIGNATURES[name];
     for (const recv of recvsOf(entry)) {
@@ -952,30 +765,14 @@ function valueMethodAugmentationBlock() {
   for (const name of augmentable.sort()) {
     const entry = VALUE_METHOD_SIGNATURES[name];
     for (const recv of recvsOf(entry)) {
-      // Method syntax, never property syntax: same-named methods merge as
-      // overloads and can never collide, but a property would hit TS2717
-      // against anyone else's augmentation of the same built-in.
       byRecv[recv].push(`/** ${entry.doc} */`, `${name}${sigFor(entry, recv)};`);
     }
   }
   return order.map((recv) => `${VALUE_METHOD_INTERFACES[recv]} {\n${byRecv[recv].join("\n")}\n}`).join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Spec load. This mirrors the strategy in test/operator-spec-coverage.test.ts:
-// strip the `tests:` block before js-yaml reads it. The test fixtures use custom
-// BSON tags (!bson_int64 and others) that the default schema rejects.
-// ---------------------------------------------------------------------------
-
 const SPEC_FOLDERS = ["expression", "accumulator", "stage"];
 
-/**
- * Load the vendored YAML specs into per-folder maps. A few names (now only `$count`)
- * appear in more than one folder with different meanings: stage or accumulator. A flat
- * single map would lose information.
- *
- * @returns {{ stage: Map<string, any>, expression: Map<string, any>, accumulator: Map<string, any> }}
- */
 export function loadSpec() {
   const out = { stage: new Map(), expression: new Map(), accumulator: new Map() };
   if (!existsSync(SPEC_ROOT)) {
@@ -995,12 +792,6 @@ export function loadSpec() {
   }
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// Type mapping. Each YAML type name maps to the TS type that the argument must resolve to,
-// and a multi-name type joins as a union. A name with no TS type maps to `any`, which
-// collapses the union. See docs/specs/globals-generation.md § Type mapping.
-// ---------------------------------------------------------------------------
 
 const TYPE_NAME_TO_TS = {
   resolvesToNumber: "number",
@@ -1035,11 +826,6 @@ function mapType(t) {
   if (types.length === 1) {
     const only = types[0];
     if (only === "pipeline") return "unknown[]";
-    // `query` and `object` could narrow to `Record<string, any>` in principle,
-    // but jsmql accepts richer inputs than the MQL spec shows. `$match` takes a
-    // boolean expression that jsmql wraps in `$expr` when it compiles, not just a
-    // query-document literal. A tighter type would reject the most common usage
-    // (`$match($.age >= 18)`). Stay permissive.
     if (only === "query") return "any";
     if (only === "object") return "any";
   }
@@ -1047,10 +833,6 @@ function mapType(t) {
   return out.includes("any") ? "any" : out.join(" | ");
 }
 
-// Named positional parameters, one per fixed spec argument. TypeScript refuses a
-// required parameter after an optional one. So an operator with such a list, for
-// example `$slice(expression, position?, n)`, gets two overloads. The first one has
-// no optional parameter, and the second one has every parameter as required.
 function positionalSigs(args) {
   const param = (a, required) => `${quoteKeyIfNeeded(a.name)}${a.optional && !required ? "?" : ""}: ${mapType(a.type)}`;
   const sig = (params) => `(${params.join(", ")}): any`;
@@ -1060,15 +842,9 @@ function positionalSigs(args) {
   return [sig(args.filter((a) => !a.optional).map((a) => param(a, true))), sig(args.map((a) => param(a, true)))];
 }
 
-// The element type of a rest parameter: a union needs parentheses before `[]`.
 function restOf(type) {
   return type.includes(" | ") ? `(${type})[]` : `${type}[]`;
 }
-
-// ---------------------------------------------------------------------------
-// JSDoc construction. The description is the value that AI tools and IDE hover
-// display. Include the full multi-line spec description plus version and documentation link.
-// ---------------------------------------------------------------------------
 
 function jsdocFor(name, spec, registryDef) {
   const description = (spec?.description ?? registryDef?.description ?? "").trim();
@@ -1088,22 +864,6 @@ function jsdocFor(name, spec, registryDef) {
   return `/**\n${lines.join("\n")}\n */`;
 }
 
-// ---------------------------------------------------------------------------
-// Signature builders. Stages and operators have slightly different rules:
-//
-// Stages: jsmql calls them as `$stage(<one argument>)`. The argument shape comes from
-//   the spec's `encode` field. Object stages get a typed arguments record. Single-argument
-//   stages get a typed positional, and so on.
-//
-// Expression operators: the operand shape that the row states is the authoritative call
-//   shape (that is what the parser accepts). The spec supplies argument names, optionality,
-//   and types.
-// ---------------------------------------------------------------------------
-
-// Every key is optional in the type, because the types never refuse a `$` call (see
-// CATCH_ALL). An incomplete object literal must still match this documented signature,
-// or TypeScript picks the catch-all as the developer types, and the key completion
-// is lost. The field's doc names a key that the server requires.
 function argsObjectForSpec(spec, registryKeys) {
   const specArgs = spec?.arguments ?? [];
   const byName = new Map(specArgs.map((a) => [a.name, a]));
@@ -1116,9 +876,6 @@ function argsObjectForSpec(spec, registryKeys) {
     const type = mapType(specArg?.type);
     const desc = specArg?.description?.trim();
     if (desc) {
-      // Collapse multi-line descriptions to a single line for the field JSDoc.
-      // The full multi-line description still lives on the function-level
-      // JSDoc; per-field is for at-a-glance hover info.
       const one = desc
         .split(/\n/)
         .map((s) => s.trim())
@@ -1132,9 +889,6 @@ function argsObjectForSpec(spec, registryKeys) {
   return lines.join("\n");
 }
 
-// TypeScript reserved-word object keys (for example `default`, `function`) need to be
-// quoted in an object type literal even though they're valid property names —
-// oxfmt will keep them quoted if we emit them that way. Identifiers stay bare.
 const TS_RESERVED_KEYS = new Set([
   "default",
   "function",
@@ -1158,8 +912,6 @@ const TS_RESERVED_KEYS = new Set([
 ]);
 function quoteKeyIfNeeded(k) {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)) return JSON.stringify(k);
-  // Reserved keys are valid as object-type keys in TypeScript with no quotes.
-  // This code quotes them for clarity and to satisfy stricter parsers.
   if (TS_RESERVED_KEYS.has(k)) return JSON.stringify(k);
   return k;
 }
@@ -1177,8 +929,6 @@ function stageCallableType(spec) {
     const argName = args[0]?.name ?? "items";
     return [`(${argName}: unknown[]): any`];
   }
-  // 'single' or no `encode`: one positional argument whose type and name are lifted
-  // from the first spec argument when present.
   const firstArg = args[0];
   const argName = firstArg?.name ?? "arg";
   const argType = mapType(firstArg?.type);
@@ -1193,18 +943,12 @@ function expressionOpCallableType(spec, opDef) {
     case "single": {
       const argName = firstArg?.name ?? "expression";
       const argType = mapType(firstArg?.type);
-      // YAML may flag a single-shape operator as variadic. Surface it as rest arguments.
       if (firstArg?.variadic === "array") {
         return [`(...${argName}: ${restOf(argType)}): any`];
       }
       return [`(${argName}: ${argType}): any`];
     }
     case "array": {
-      // jsmql 'array' shape means N positional arguments in jsmql, even though MQL
-      // serialises them as an array. From the user's view inside jsmql,
-      // it is `$op(a, b, c)`, not `$op([a, b, c])`. When the YAML names two or more
-      // fixed arguments, each one becomes a named positional parameter, so the hint
-      // reads `(string: string, start: number, length: number)`.
       const args = spec?.arguments ?? [];
       if (args.length >= 2 && args.every((a) => a.variadic === undefined)) return positionalSigs(args);
       const argName = firstArg?.name ?? "expressions";
@@ -1219,53 +963,32 @@ function expressionOpCallableType(spec, opDef) {
       return ["(): any"];
     }
     case "verbatim": {
-      // The operand is handed to the server untouched — one of it, whatever it is.
       const argName = firstArg?.name ?? "value";
       const argType = mapType(firstArg?.type);
       return [`(${argName}: ${argType}): any`];
     }
     case "flex": {
-      // Two call shapes — single expression OR N positional args.
       const argName = firstArg?.name ?? "expression";
       const argType = mapType(firstArg?.type);
       return [`(${argName}: ${argType}): any`, `(...${argName}s: ${restOf(argType)}): any`];
     }
     default: {
-      // Defensive: should be unreachable. The operand shapes form a closed set.
       return ["(...args: any[]): any"];
     }
   }
 }
 
-// A `$op(…)` or `$stage(…)` call is the developer's own MQL (HR2). The compiler
-// takes it with any arguments: the positional form of an object-form operator
-// (`$trim($.name, " ")`), a string body (`$unwind("$items")`), or a count that the
-// server refuses (`$size(1, 2)`). So each name gains one catch-all overload after
-// its documented signatures. The types never refuse a `$` call. The documented
-// signatures come first, so completion and hover still read them.
 const CATCH_ALL = "(...args: any[]): any";
 
 function emitFunctionDecls(name, callableSigs) {
-  // Emit one `function` declaration per call signature inside `declare global`.
-  // TypeScript merges identically-named function declarations as overloads, so a
-  // `flex`-shape operator naturally surfaces with both call shapes.
   const sigs = callableSigs.includes(CATCH_ALL) ? callableSigs : [...callableSigs, CATCH_ALL];
   return sigs.map((sig) => `function ${name}${sig.replace(/^\(/, "(")};`).join("\n");
 }
-
-// ---------------------------------------------------------------------------
-// Top-level generation.
-// ---------------------------------------------------------------------------
 
 function emitBlock(name, jsdoc, callableSigs) {
   return `${jsdoc}\n${emitFunctionDecls(name, callableSigs)}`;
 }
 
-// Emit the `$$`, `$$$`, and `$$$$` ambient declarations. `$$` is `var` (it is reassigned
-// by `$$ = …`). The other two are `const`: only their members are written. The generator derives the
-// diagnostic methods from each stage row's `diagnostic` fact (the scope tier and whether it takes options).
-// The same row states the sugar's own lowering. Each method reuses the same JSDoc that the
-// stage's own block gets, so descriptions stay consistent.
 function contextRefBlock(spec) {
   const methodsByScope = { collection: [], database: [], cluster: [] };
   for (const [stageName, def] of Object.entries(STAGES)) {
@@ -1289,18 +1012,11 @@ function contextRefBlock(spec) {
   const refJsdoc = (scope) =>
     `/**\n * ${CONTEXT_REFS[scope].doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
 
-  // Everything a chain link can be: the stream vocabulary plus the `.$<stage>()` links.
-  // The generator emits this once per reference with that reference as the return type, because a chain
-  // keeps the identity of its ROOT. That is the rule jsmql enforces. `.find` is legal at ANY
-  // position of a foreign chain and at NO position of a current-stream chain. So
-  // `$$$.<coll>.filter(p).find(q)` compiles and `$$.filter(p).find(q)` does not.
-  // A single shared return type cannot express that. Two can.
   const chainableMembers = (returnType) => [
     ...streamMethodMembers(returnType, [...streamMethodNames(), ...NON_REGISTRY_STREAM_METHODS]),
     ...stageLinkMembers(spec, returnType),
   ];
 
-  // ── A foreign collection (`$$$.<coll>`) ────────────────────────────────────
   const foreignMembers = [
     "/** Join and take the FIRST match → `$lookup` + `$first`. One document or null, not an array. */",
     "find(predicate: ((doc: any) => any) | Record<string, any> | string): any;",
@@ -1308,31 +1024,14 @@ function contextRefBlock(spec) {
     "/** The stream's document count. Always the ROOT stream, at any nesting depth. */",
     "readonly length: number;",
     ...valueTerminalMembers(),
-    // A stream spreads into `$$.push(...$$$.other)`, so it must be iterable
-    // as far as TypeScript is concerned. Without this, the spread is TS2488.
     "[Symbol.iterator](): Iterator<any>;",
-    // The permissive tail. The references carry more syntax than the named members:
-    // `$$ = …` replace-stream, `$$$.coll = …` (the `$out` operator), member access on a
-    // materialised result. A type for all of it needs the schema threading that DEF-013 tracks.
-    // The index signature keeps every such form as `any`, not an error. A named member
-    // has no escape hatch, so a missing name here would reject valid JSMQL. That costs more
-    // than a missed typo.
     "[key: string]: any;",
   ];
 
-  // ── The current stream (`$$`) ──────────────────────────────────────────────
-  // Extends the foreign reference. This lets ONE index type on `$$$` serve both the read head
-  // and the `$out` write target. TypeScript resolves a target's named members against the source's
-  // declared members, and never through its index signature. So `$$$.<coll> = $$` needs `$$` to
-  // actually declare them. Re-declare every chainable to return the stream reference. Add what
-  // only the root stream has. These are the diagnostic source stages of the current collection and the
-  // statement-level `.push` (the `$unionWith` operator).
   const streamRefMembers = [
     ...diagnosticMembers("collection"),
     ...streamMethodMembers(STREAM_REF_TYPE, ROOT_STREAM_ONLY_METHODS),
     ...chainableMembers(STREAM_REF_TYPE),
-    // Declared so the member exists for the assignment above, but uncallable:
-    // jsmql rejects `.find` anywhere in a `$$` chain, whatever its position.
     "/** @deprecated Not a stream method — a pipeline is an array. Use `.filter(p).slice(0, 1)`. */",
     "find(...args: never[]): never;",
   ];
@@ -1340,33 +1039,13 @@ function contextRefBlock(spec) {
   const blocks = [
     `interface ${FOREIGN_REF_TYPE} {\n${foreignMembers.join("\n")}\n}`,
     `interface ${STREAM_REF_TYPE} extends ${FOREIGN_REF_TYPE} {\n${streamRefMembers.join("\n")}\n}`,
-    // `$$` is `var`, not `const`. The `$$ = …` replace-stream and `$facet` sugar
-    // reassign it wholesale. `const` would reject that valid jsmql (TS2588).
     `${refJsdoc("collection")}\nvar ${CONTEXT_REFS.collection.name}: ${STREAM_REF_TYPE};`,
-    // `$$$` and `$$$$` stay `const`. They only take *property* writes (`$$$.coll = …` → the
-    // `$out` operator). `const` permits that, and `const` still flags the invalid
-    // `$$$ = …` whole-reassignment. `$$$` indexes to the foreign reference, which gives
-    // `$$$.orders.filter(…)` completion. The key stays a plain string because a collection
-    // name is arbitrary.
     `${refJsdoc("database")}\nconst ${CONTEXT_REFS.database.name}: { [collection: string]: ${FOREIGN_REF_TYPE} };`,
-    // The cluster reference keeps its own shape. Its second level is a DATABASE. Typing that
-    // would either advertise the cross-database reads jsmql rejects or re-open the `$out`
-    // write-assignability problem one level down.
     `${refJsdoc("cluster")}\nconst ${CONTEXT_REFS.cluster.name}: {\n${[...diagnosticMembers("cluster"), "[key: string]: any;"].join("\n")}\n};`,
   ];
   return blocks.join("\n");
 }
 
-// The BSON value constructors. Each has a JavaScript-shaped name, not a
-// `$`-prefixed operator. The arrow form needs an ambient declaration to type-check.
-// The generator DERIVES these from the global rows that list the value position. A new constructor
-// is one row in src/registry/names.ts, and nothing here needs an edit.
-//
-// The generator emits each as an interface with a call signature only, because JSMQL has no
-// `new` keyword (HR8): `Decimal128("1.50")` is the one spelling.
-// `Date` is excluded: TypeScript's own library already declares it, and a second
-// `var Date` would collide. Its mongosh spelling `ISODate` is not in that library,
-// so it is declared here.
 function constructionFormsBlock() {
   return constructorGlobals()
     .filter(({ name }) => name !== "Date")
@@ -1383,12 +1062,6 @@ function constructionFormsBlock() {
     .join("\n");
 }
 
-// The statement-form built-ins that are not `$`-prefixed operators or stages.
-// They have no registry entry, but they still need an ambient declaration for the arrow form to
-// type-check. `assert(condition[, message])` is a pipeline-statement guard with no value.
-// It lowers to a `$match`, so its return type is `void`. A use of it in expression
-// position is a compile error in jsmql too. See the `assert` row in src/registry/names.ts
-// and docs/specs/assert.md.
 function statementFormsBlock() {
   const jsdoc =
     "/**\n" +
@@ -1409,14 +1082,8 @@ function statementFormsBlock() {
 export function generateGlobalsSource() {
   const spec = loadSpec();
 
-  // Categorise every name by which map it appears in. `$count` is the only name today
-  // that is both a stage and an accumulator. It is emitted once with overloaded call
-  // signatures that span both meanings.
   const allNames = new Set([...Object.keys(STAGES), ...Object.keys(OPERATORS)]);
 
-  // For section ordering: a name appears in the Stages section if it is in STAGES,
-  // otherwise in the Expression-operators section. Names in BOTH (that is, `$count`)
-  // sit under Stages but include the operator overload too.
   const stageNames = [...allNames].filter((n) => n in STAGES).sort();
   const opOnlyNames = [...allNames].filter((n) => !(n in STAGES) && n in OPERATORS).sort();
 
@@ -1430,13 +1097,8 @@ export function generateGlobalsSource() {
     if (stageDef) sigs.push(...stageCallableType(stageSpec));
     if (opDef) sigs.push(...expressionOpCallableType(opSpec, opDef));
 
-    // Deduplicate identical signatures (for example, `(): any` from both registries).
     const uniqueSigs = [...new Set(sigs)];
 
-    // JSDoc preference: stage spec wins when present (the stage description is usually
-    // the higher-level one users want to see first). Otherwise, the operator spec wins.
-    // Otherwise, the registry wins. The reverse case (operator-only) falls through to
-    // the operator spec naturally.
     const jsdocSpec = stageSpec ?? opSpec;
     const jsdocDef = stageDef ?? opDef;
     const jsdoc = jsdocFor(name, jsdocSpec, jsdocDef);
@@ -1509,11 +1171,6 @@ function indent(block) {
     .map((ln) => (ln.length > 0 ? `  ${ln}` : ""))
     .join("\n");
 }
-
-// ---------------------------------------------------------------------------
-// CLI entry point. Write the file and run oxfmt for final formatting parity
-// with the rest of the codebase.
-// ---------------------------------------------------------------------------
 
 function isMain() {
   return import.meta.url === `file://${process.argv[1]}`;

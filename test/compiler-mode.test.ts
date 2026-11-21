@@ -1,11 +1,3 @@
-// Phase 5 of src/compiler/ — value versus truth.
-//
-// The truthiness check is SUBTRACTIVE over the value's proof: the four-way shape for a
-// value nothing is known about, fewer tests as the proof grows. This suite measures the
-// truth table that the full shape implements on mongod. It compares the table to JavaScript's own
-// `Boolean(v)` for every value class the language can produce (NaN is not supported).
-// It also states what each narrower proof leaves of it.
-
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { FALSE, TRUE, and, asValue, boolTruth, jsTruthy, not, or, truthOf } from "../src/compiler/emit/mode.ts";
@@ -29,14 +21,11 @@ describe("compiler/emit/mode — the truthiness check", () => {
   });
 
   it("keeps only the tests some part of the proof can fail", () => {
-    // a boolean or a number is its own truth: the server reads 0, false, null and missing as false
     expect(truthOf("$a", of("bool"))).toBe("$a");
     expect(truthOf("$a", maybeAbsent(of("bool")))).toBe("$a");
     expect(truthOf("$a", of("number", true))).toBe("$a");
-    // a string owes the "" test, and the null test when it may be absent
     expect(truthOf("$a", of("string"))).toEqual({ $ne: ["$a", ""] });
     expect(truthOf("$a", maybeAbsent(of("string")))).toEqual({ $and: [{ $gt: ["$a", null] }, { $ne: ["$a", ""] }] });
-    // an array, an object or a date owes nothing but presence
     expect(truthOf("$a", maybeAbsent(arrayOf(ANY)))).toEqual({ $gt: ["$a", null] });
     expect(truthOf("$a", arrayOf(ANY))).toBe(TRUE);
     expect(truthOf("$a", of("date"))).toBe(TRUE);
@@ -110,7 +99,6 @@ describe.skipIf(!up)("compiler/emit/mode — the truth table, measured", () => {
       ];
       await coll.insertMany([...cases.map(([label, a]) => ({ label, a })), { label: "missing" }]);
       const rows = await coll.aggregate([{ $addFields: { t: cond(jsTruthy("$a"), "T", "F") } }]).toArray();
-      // Every value class, and the missing field, reached the comparison below.
       expect(rows.map((r) => r.label).sort()).toEqual([...cases.map(([label]) => label), "missing"].sort());
       for (const row of rows) {
         const js = row.label === "missing" ? "F" : Boolean(row.a) ? "T" : "F";

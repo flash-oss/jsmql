@@ -1,22 +1,3 @@
-// Phase 5 — EMIT. The one record every lowering runs under.
-//
-// A context of optional fields invites one bug, over and over. A literal lists
-// most of the fields and loses one, invisibly. Then a `jsmql.compile` parameter
-// resolves inside `.map` and throws inside `.reduce`. Nothing here is optional.
-// A caller cannot write an Env as a literal. A lambda body inherits everything,
-// because the only way to make an Env is from an Env.
-//
-// Three services, no more:
-//   scope   what each JavaScript name means, and which variable names are taken
-//   site    where this node stands — phase 4's answer, the program's root, the
-//           `$literal` envelope, the sub-pipeline boundaries crossed to get here
-//   chain   the (sub-)pipeline under assembly, held BY REFERENCE: what it has
-//           emitted, what a value hoisted ahead of the stage it stands in, and the
-//           scratch-slot counter
-//
-// emit/inputs.ts builds a lowering's `In` record from an Env; the lowering
-// never sees the Env itself.
-
 import type { Position, Stage, Type } from "../../registry/vocabulary.ts";
 import type { BodyPath } from "../rows.ts";
 import type { Where } from "../passes/position.ts";
@@ -28,85 +9,31 @@ import { namesIn } from "../passes/fresh.ts";
 import { pipelineOverOf, preservesCountOf, statementBodyOf } from "../rows.ts";
 import { noCorrelationSlot, readInUpdateDocument, readsEnclosingVariable } from "./errors.ts";
 
-/**
- * A boundary crossed on the way here. It is a sub-pipeline (the stage whose body it
- * is, and the path to it), or an `$elemMatch` body. That body names the parameter
- * that is the ELEMENT there. Only that name has fields that are query paths inside.
- */
 export type Boundary = {
   readonly stage: string;
   readonly path: BodyPath;
   readonly element?: string;
-  /**
-   * For a body over ANOTHER collection: the stage's `let`, which the reads
-   * inside the body fill. It is null when the stage has no `let` (`$unionWith`).
-   * Then the compiler refuses a read of the outer document there, so no read
-   * is silently wrong.
-   */
   readonly capture?: Capture | null;
-  /** The chain the body was entered FROM — the enclosing pipeline. */
   readonly outer?: Chain;
 };
 
-/** Does this boundary start a new LEVEL of documents — a body over another collection? */
 export const isForeign = (b: Boundary): boolean => pipelineOverOf(b.stage) === "foreign";
 
-/** Where a node stands. Every field required — see the header. */
 export type Site = {
-  /** Phase 4's answer for this node, verbatim: a position or a waypoint. */
   readonly where: Where;
-  /** What the WHOLE program is: a pipeline, a filter, a bare expression, an update document. */
   readonly root: Position;
-  /** Inside `$literal(…)`, nothing is an operator or a field reference. */
   readonly envelope: "none" | "$literal";
-  /** The sub-pipeline boundaries crossed to reach here, outermost first. */
   readonly boundaries: readonly Boundary[];
-  /**
-   * The operator whose ARGUMENT this is, or null. A fragment like `$case` or `$box` is
-   * valid only inside such an operator. It stays set through a document, a list and a
-   * value under a `$` key, which are MQL structure. Any JavaScript node resets it,
-   * because that node lowers to MQL of its own. A regex literal reads it: set, the
-   * literal is in the developer's own MQL (HR1).
-   */
   readonly inside: string | null;
-  /**
-   * Does this lowering only ASK for a value? The constant engine lowers a closed subtree to
-   * learn its value, and it emits none of the nodes that it lowers. A check that refuses MQL
-   * that the server rejects (a literal zero divisor) does no work there. The interpreter
-   * answers the value. A value with no literal is the engine's own error.
-   */
   readonly settling: boolean;
 };
 
-/**
- * HR1's one gate, for a value that arrives at run time (a `jsmql.compile`
- * parameter or a template `${…}`). The gate applies when the value reads as MQL:
- * a string that starts with `$`, or a document with a `$` key. Such a value is a
- * value, never MQL. It may stand in three places only:
- *
- *   "literal"    a slot that the server EVALUATES as an expression, outside a
- *                `$literal` the developer already wrote. The value goes in
- *                `$literal`, so the server cannot read it as a field or an operator.
- *   "asWritten"  a place that evaluates nothing: inside the developer's own
- *                `$literal`, a query slot (the query language compares the value
- *                as written), and an update DOCUMENT (`{ $set: { x: "$b" } }`
- *                stores the string "$b"; measured).
- *   "refused"    every other slot: one that the server reads as written (a stage
- *                option, a name, a path), an accumulator, a window function, a
- *                statement. There the value becomes part of the MQL.
- *
- *   jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })         → { $add: ["$a", { $literal: "$b" }] }
- *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: { $literal: "$b" } } }]
- *   jsmql.update.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })   → { $set: { x: "$b" } }
- *   jsmql.pipeline.compile(({ p }, { $ }) => { $unwind(p); })({ p: "$items" })   → refused
- */
 export function injectedPlacement(site: Site): "literal" | "asWritten" | "refused" {
   if (site.envelope === "$literal" || site.root === "updateDoc" || site.where.at === "filter") return "asWritten";
   if (site.where.at === "value" && site.where.written === undefined) return "literal";
   return "refused";
 }
 
-/** What `Chain.mark` saves, and `Chain.rewind` puts back. */
 export type ChainMark = {
   readonly hoisted: number;
   readonly stamped: ReadonlySet<string>;
@@ -118,32 +45,14 @@ export type ChainMark = {
   readonly writes: number;
 };
 
-/**
- * The (sub-)pipeline under assembly. Held by reference on purpose: two
- * lowerings of one statement append to the same list, in order.
- */
 export class Chain {
-  /**
-   * Is there a pipeline to place a stage in? A bare expression (`jsmql.expr`)
-   * and a filter have none. A value that must materialise a stage, the
-   * stream count, has nowhere to go. The compiler refuses it instead of
-   * writing it into a list that nothing drains.
-   */
   readonly isPipeline: boolean;
   constructor(isPipeline = true) {
     this.isPipeline = isPipeline;
   }
-  /** The stages emitted so far. */
   readonly emitted: Stage[] = [];
-  /** Stages a value placed ahead of the stage it stands in; `ahead` drains them. */
   readonly hoisted: Stage[] = [];
   private slots = 0;
-  /**
-   * True when a field under `__jsmql` may be on the documents. It owns the
-   * trailing cleanup. `writes` counts each write under the namespace. So a
-   * statement can see that it wrote there, even when a later stage of the same
-   * statement removed the namespace.
-   */
   get dirty(): boolean {
     return this.holdsNamespace;
   }
@@ -153,34 +62,9 @@ export class Chain {
   }
   private holdsNamespace = false;
   writes = 0;
-  /**
-   * The chain whose documents flow into this one. It is a chain for a body over
-   * the SAME documents (a `$facet` branch), and null for a pipeline of its own.
-   * A read of the whole document here also reads the documents of that chain.
-   */
   source: Chain | null = null;
-  /**
-   * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
-   * and does not emit it. So nothing can land after it, and the cleanup
-   * always precedes it. `spelled` is how the source wrote it: `$out`, or the
-   * sugar `$$$.<coll> = …`. So a message names what the developer wrote.
-   */
   terminal: { readonly stage: Stage; readonly spelled: string } | null = null;
-  /**
-   * Where the stream's ELEMENT lives on its documents. It is `""` when the element IS
-   * the document. After `.flatMap("items")` it is the unwound field's path. A
-   * callback's parameter then stands for that field, and its fields stand for
-   * `items.<field>`. The documents themselves still carry their other fields
-   * (`$unwind` keeps them). A stage that replaces the document makes the
-   * document the element again. See docs/specs/stream-methods.md § The element
-   * after `.flatMap`.
-   */
   element = "";
-  /**
-   * The proof of a chain over another collection, by its node. The join road
-   * lowers the chain, and only then knows the body's document; `prove.ts` reads
-   * the answer here for the same node. See docs/specs/types.md § A join.
-   */
   private readonly proofs = new WeakMap<object, Type>();
   proved(node: object, type: Type): void {
     this.proofs.set(node, type);
@@ -189,45 +73,21 @@ export class Chain {
     return this.proofs.get(node);
   }
 
-  /**
-   * A stage lands: one that replaces the document leaves no unwound field to
-   * point at. `replaces` is the row's own fact; the caller judges it.
-   */
   placed(replaces: boolean): void {
     if (replaces) this.element = "";
   }
 
-  /** A `{ $unset: "__jsmql" }` comes before the next stage. No stamp is true after it. */
   namespaceRemoved(): void {
     this.stamped.clear();
   }
 
-  /** A fresh `__jsmql.tmp.<n>` scratch slot. */
   slot(): FieldSlot {
     this.dirty = true;
     return scratchSlot(this.slots++);
   }
 
-  /**
-   * The field paths a materialiser stamped, that are still FRESH — see
-   * docs/specs/stream-size.md § Compute-once / reuse / recompute. A second
-   * read of a stamped path costs no stage. A stage whose row does not state
-   * `preservesCount` clears the set, so the next read stamps again.
-   */
   private stamped = new Set<string>();
 
-  /**
-   * A mark for a lowering that the compiler may TAKE BACK. A chain that goes on
-   * after a join lowers the body twice, and it discards the first attempt's
-   * hoists. So the stamps from that attempt must go too. Otherwise the second
-   * attempt reuses a field that the discarded stage would have written.
-   *
-   * The scratch counter goes back too. Only the stages that went with a slot
-   * name it. If the compiler kept the discarded attempt's number, it would
-   * leave a gap, and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
-   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
-   * `__jsmql.tmp.0`. One lowering, one output.
-   */
   mark(): ChainMark {
     return {
       hoisted: this.hoisted.length,
@@ -241,7 +101,6 @@ export class Chain {
     };
   }
 
-  /** Undo each hoist, stamp, slot, write and read since `mark`. */
   rewind(m: ChainMark): void {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
@@ -253,21 +112,9 @@ export class Chain {
     this.writes = m.writes;
   }
 
-  /**
-   * How many times a lowering read the whole document as the bare `$$ROOT`. A
-   * statement can read it bare, and then hoist a stage that writes under
-   * `__jsmql` ahead of itself. That statement lowers again with `clearRoot`
-   * true. See `wholeDocument`.
-   */
   bareReads = 0;
-  /** Read the whole document without the namespace, also when `dirty` is false. */
   clearRoot = false;
 
-  /**
-   * The whole document as a value. When a field under `__jsmql` may be on the
-   * document, the value leaves the namespace out. The namespace is data of the
-   * compiler, never data of the developer. See docs/specs/let-bindings.md § The whole document as a value.
-   */
   wholeDocument(): unknown {
     const fed: Chain[] = [];
     for (let c: Chain | null = this; c !== null; c = c.source) fed.push(c);
@@ -276,7 +123,6 @@ export class Chain {
     return "$$ROOT";
   }
 
-  /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages: readonly Stage[], reads: string): string {
     if (!this.stamped.has(reads)) {
       this.hoisted.push(...stages);
@@ -286,11 +132,6 @@ export class Chain {
     return "$" + reads;
   }
 
-  /**
-   * A statement's stages land. A stage that does not state `preservesCount`
-   * changes how many documents there are, or what fields they carry. So every
-   * stamp taken before it now states something that is no longer true.
-   */
   advance(stages: readonly Stage[]): void {
     for (const stage of stages) {
       if (!preservesCountOf(Object.keys(stage)[0])) {
@@ -300,32 +141,16 @@ export class Chain {
     }
   }
 
-  /**
-   * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
-   * stages of the lowering that hoisted them.
-   *
-   * A hoisted stage reads the same documents as the stage it was written for. So
-   * it must land beside that stage and not at the front of the statement.
-   * MEASURED, the `$lookup` of `$$.$sortByCount($.productIds).map(g =>
-   * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
-   * joined on the SOURCE document's `_id`. Then `$sortByCount` replaced the
-   * document and dropped the slot. So every row came back without its joined
-   * field, and the server reported nothing wrong. A road that makes more than one
-   * stage out of one statement therefore drains at each of them. See
-   * docs/specs/lookup-stage.md § Where a hoisted stage lands.
-   */
   ahead(): Stage[] {
     const out = [...this.hoisted];
     this.hoisted.length = 0;
     return out;
   }
 
-  /** Move the hoisted stages into the emitted list — the drain of a statement that is ONE stage. */
   flush(): void {
     this.emitted.push(...this.ahead());
   }
 
-  /** The finished pipeline: the stages, the cleanup if anything wrote under `__jsmql`, and the terminal stage. */
   close(): Stage[] {
     this.flush();
     const out = [...this.emitted];
@@ -335,21 +160,12 @@ export class Chain {
   }
 }
 
-/** A variable bound for a body, and the Env under which that body lowers. */
 export type Bound = { readonly as: MongoVar; readonly ref: VarRef; readonly env: Env };
 
 export class Env {
   readonly scope: Scope;
   readonly site: Site;
   readonly chain: Chain;
-  /**
-   * What the compiler proves about the DOCUMENT on each level. Index 0 is the root
-   * pipeline's document, and each body over another collection adds one. A write
-   * records its value's proof at the written path. A read of `$.a.b` answers the
-   * proof at that path. A stage that replaces the document resets its level. A
-   * `?.` on the way in proves the guarded path present, so inside its chain the
-   * `$ifNull` a cell would otherwise put on it is dead. See docs/specs/types.md.
-   */
   readonly documents: readonly Type[];
 
   private constructor(scope: Scope, site: Site, chain: Chain, documents: readonly Type[] = [DOCUMENT]) {
@@ -359,93 +175,58 @@ export class Env {
     this.documents = documents;
   }
 
-  /** The proof at a dotted path of the document on `level` — this level unless said otherwise. */
   typeAt(path: string, level: number = this.level): Type {
     return at(this.documents[level], path);
   }
 
-  /** The same Env, with the document on this level changed. */
   private withDocument(doc: Type): Env {
     const documents = [...this.documents];
     documents[this.level] = doc;
     return new Env(this.scope, this.site, this.chain, documents);
   }
 
-  /** The same Env, with one field path proven to be there. */
   proving(path: string): Env {
     return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
   }
 
-  /**
-   * The same Env, with the value of one JavaScript name proven to be there. The second
-   * branch of a `?.` test on a callback parameter or a `let` name runs only when the
-   * test passed, as `proving` does for a field path.
-   */
   provingName(js: string): Env {
     const b = this.scope.lookup(js, 0);
     return new Env(this.scope.declare(js, { ...b, type: present(b.type) }), this.site, this.chain, this.documents);
   }
 
-  /** The same Env, after a write of a value proven `type` at `path` on this level. */
   written(path: string, type: Type): Env {
     return this.withDocument(written(this.documents[this.level], path, type));
   }
 
-  /** The same Env, after `delete` of the field at `path` on this level. */
   removed(path: string): Env {
     return this.withDocument(removed(this.documents[this.level], path));
   }
 
-  /** The same Env, with the document on this level replaced by `doc`. */
   document(doc: Type): Env {
     return this.withDocument(doc);
   }
 
-  /**
-   * The Env a program starts in. The compiler reserves every name the program
-   * introduces anywhere for the whole of it. So a compiler mint never shadows a
-   * parameter bound deeper in.
-   */
   static root(program: object, root: Position, chain: Chain = new Chain(root === "statement"), settling = false): Env {
     const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [], inside: null, settling };
     return new Env(Scope.root(namesIn(program)), site, chain);
   }
 
-  // ── the transitions: each answers a new Env and changes ONE thing ──────────
-
-  /** A name bound to something other than a variable — the document, a slot, a function. */
   bind(js: string, binding: Declared): Env {
     return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.documents);
   }
 
-  /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level(): number {
     return this.foreign().length;
   }
 
-  /**
-   * A located value as THIS level reads it. A variable reads as itself. A path on
-   * this level reads as the path. A path on a shallower level reads as `$$<var>`,
-   * through the `let` of the boundary that starts the level below it.
-   */
   render(loc: Located, pos: number): string {
     if (loc.kind === "var") {
-      // An EXPRESSION binds a MongoDB variable — `$map`, `$filter`, `$reduce`,
-      // `$let`. A body over another collection belongs to a STAGE hoisted
-      // out of it, where the name is never bound. MEASURED: mongod refuses the
-      // read of the unbound name, and the pipeline does not run at all.
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
     return this.hop(loc, loc.path === "" ? "$$ROOT" : "$" + loc.path, pos) as string;
   }
 
-  /**
-   * Read a located value as a VALUE at THIS level. This is `render`, except that
-   * the whole document comes from the chain of its own level
-   * (`Chain.wholeDocument`). A path stays a path, so a caller that builds on the
-   * path keeps `render`.
-   */
   value(loc: Located, pos: number): unknown {
     if (loc.kind === "var" || loc.path !== "") return this.render(loc, pos);
     if (this.site.root === "updateDoc") throw readInUpdateDocument("$$ROOT", pos);
@@ -453,83 +234,55 @@ export class Env {
     return this.hop(loc, chain.wholeDocument(), pos);
   }
 
-  /** Read `value` on level `loc.level`, and carry it to this level through each `$lookup.let`. */
   private hop(loc: Exclude<Located, { kind: "var" }>, value: unknown, pos: number): unknown {
     if (this.site.root === "updateDoc") throw readInUpdateDocument(value as string, pos);
     if (loc.level === this.level) return value;
-    // The boundary whose `let` evaluates against level-`loc.level` documents.
     const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === undefined) throw noCorrelationSlot(boundary.stage, pos);
     return "$$" + boundary.capture.take(loc.kind, loc.hint, value);
   }
 
-  /** The bodies over another collection enclosing this node, outermost first. */
   private foreign(): readonly Boundary[] {
     return this.site.boundaries.filter(isForeign);
   }
 
-  /** The stage whose body this is — the innermost one over another collection. */
   private foreignStage(): string {
     const boundaries = this.foreign();
     return boundaries[boundaries.length - 1].stage;
   }
 
-  /**
-   * The Env after a stage that replaced the document. Every field-carried
-   * binding is gone, and so is every proof about the document. The document
-   * that held those paths is not the document the next stage sees.
-   */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
 
-  /**
-   * Returns this Env after the compiler removed `__jsmql` ahead of the stages since
-   * `before`. The bindings that `before` held in fields are gone.
-   * The document keeps its proof, because only the compiler's fields left it.
-   */
   clearedSince(before: Env, message: (js: string, mutable: boolean) => string): Env {
     return new Env(this.scope.clearedSince(before.scope, message), this.site, this.chain, this.documents);
   }
 
-  /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js: string, type: Type, pos: number): Bound {
     return this.bound(this.scope.param(js, type, pos, this.level));
   }
 
-  /** A compiler mint, named after `hint`, that steps aside from every name the program uses. */
   fresh(hint: string): Bound {
     return this.bound(this.scope.bind(hint));
   }
 
-  /** Move to where phase 4 says a child stands. */
   at(where: Where): Env {
     return new Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
 
-  /**
-   * The same bindings and proofs, back where `parent` stands. A statement lowers
-   * its values under a child's Env, and the next statement stands where this one
-   * stood.
-   */
   backAt(parent: Env): Env {
     return new Env(this.scope, parent.site, this.chain, this.documents);
   }
 
-  /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name: string | null): Env {
     return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.documents);
   }
 
-  /** Inside `$literal(…)`. */
   literal(): Env {
     return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.documents);
   }
 
-  /**
-   * Into an `$elemMatch` body: the element is the root there, and the outer
-   * document has NO query path — a body that reads it has no native form.
-   */
   element(param: string): Env {
     const site: Site = {
       ...this.site,
@@ -538,12 +291,6 @@ export class Env {
     return new Env(this.scope, site, this.chain, this.documents);
   }
 
-  /**
-   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
-   * body over another collection starts a document level of its own. A pipeline
-   * body over the SAME documents (a `$facet` branch) gets each scratch field that
-   * the outer chain left on them. So the cleanup of the body owes those fields too.
-   */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = {
       ...this.site,
@@ -558,13 +305,11 @@ export class Env {
     return new Env(this.scope, site, chain, documents);
   }
 
-  /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
   get rootChain(): Chain {
     const first = this.site.boundaries[0];
     return first === undefined || first.outer === undefined ? this.chain : first.outer;
   }
 
-  /** What a JavaScript name means here, or the developer's positioned error. */
   lookup(js: string, pos: number): Binding {
     return this.scope.lookup(js, pos);
   }

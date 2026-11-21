@@ -1,7 +1,3 @@
-// HR7: the compiler refuses a value PROVEN to have another kind than its slot takes, even
-// where the server accepts the MQL. A value of unknown kind passes. The `$op(…)` escape
-// hatch passes every value as written. See docs/LANG_RULES.md and docs/specs/types.md.
-
 import { describe, expect, it } from "vitest";
 import { MinKey, ObjectId, Timestamp } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
@@ -9,7 +5,6 @@ import { select, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { CodegenError } from "../src/errors.ts";
 import { jsmql } from "../src/index.ts";
 
-/** The error a source raises, or fails the test. */
 function refusal(run: () => unknown): CodegenError {
   try {
     run();
@@ -90,12 +85,10 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
       "'.pick()' element 1 takes a field NAME to write: a plain string with no '$' and no dot, but got null.";
     expect(() => jsmql.expr("$.o.pick([null])")).toThrow(pickNull);
     expect(() => jsmql("$.o = { b: null }; $.r = $.o.pick([$.o.b]);")).toThrow(pickNull);
-    // A string that the server refuses as a name keeps its own refusal.
     expect(() => jsmql.expr('$.o.pick(["a.b"])')).toThrow(/'\.pick\(\)' element 1 names a field to WRITE/);
     expect(() => jsmql('$.o = { b: null }; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       "'.startOf()' timezone takes a string, but got null.",
     );
-    // A read of a field that no stage wrote keeps its own refusal.
     expect(() => jsmql('$.o = {}; $.r = $.d.startOf("week", { timezone: $.o.b });')).toThrow(
       /reads a field that '\$\.o' does not have/,
     );
@@ -113,7 +106,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
       "'.differenceBy()' argument 2 takes a key, but got null.",
     );
     expect(() => jsmql("$$.filter(null);")).toThrow("'.filter()' argument 1 takes a predicate, but got null.");
-    // A value of another kind keeps the message that names each spelling the slot takes.
     expect(() => jsmql.expr("$.a.groupBy(true)")).toThrow(/takes a key here — an arrow/);
     expect(() => jsmql("$$.push($.a, null);")).toThrow(
       "'$$.push()' argument 2 takes a document, but got null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
@@ -150,7 +142,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql("$$.toSorted($.n * 2);")).toThrow(
       "'.toSorted()' argument 1 takes a sort specification, but got a number.",
     );
-    // A value of another kind keeps the message that names each spelling.
     expect(() => jsmql.expr("$.a.toSorted($.k)")).toThrow(
       '.toSorted() takes a field name ("age"), a list of them (["age", "name"]), or directions ({ age: -1 }).',
     );
@@ -193,11 +184,9 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql.expr("$.a.sortBy([null])")).toThrow(
       `'.sortBy()' element 1 takes a field name, but got null. Write a field name, for example "age".`,
     );
-    // A number that is not a direction keeps the message that names each direction.
     expect(() => jsmql.expr("$.a.toSorted({ a: 2 })")).toThrow(
       '.toSorted({ a: … }) takes a direction: 1, -1, "asc" or "desc".',
     );
-    // The statement form `.sort(…)` reads its argument as `.toSorted(…)` does.
     expect(() => jsmql("$.a.sort(null);")).toThrow(
       "'.toSorted()' argument 1 takes a sort specification, but got null.",
     );
@@ -212,13 +201,10 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     );
     expect(() => jsmql.expr("[...($.n * 2)]")).toThrow("'...' argument 1 takes an array, but got a number.");
     expect(() => jsmql.expr("({ ...[1] })")).toThrow("'...' argument 1 takes a document, but got an array.");
-    // A string keeps its own refusal, because it names the character-wise spelling.
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(/spreads a string into its characters/);
   });
 
   it("a conversion and the condition of assert() take every kind but null", () => {
-    // A conversion is the value's own method, and a null receiver has no value to convert:
-    // written, after `?.`, passed in, or proven by a write. Each one is a compile error.
     expect(() => jsmql.expr("null.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
     expect(() => jsmql.expr("null.toString()")).toThrow(/always null or missing here, so '\.toString\(\)'/);
     expect(() => jsmql.expr("null?.toDouble()")).toThrow(/always null or missing here, so '\.toDouble\(\)'/);
@@ -237,7 +223,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
     expect(() => jsmql("$.o = { b: null }; $.r = $.a.slice($.o?.b);")).toThrow(
       "'.slice()' argument 1 takes an integer, but got null.",
     );
-    // A read of a field that no stage wrote keeps its own refusal, which names the field.
     expect(() => jsmql("$.o = {}; $.r = $.a.slice($.o?.b);")).toThrow(/reads a field that '\$\.o' does not have/);
   });
 
@@ -275,7 +260,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
       { $set: { a: [1, null] } },
       { $set: { r: { $indexOfArray: ["$a", null] } } },
     ]);
-    // A read that the proof shows is null is a null element too.
     expect(jsmql("$.o = { b: null }; $.r = [1, $.o.b].has(null);")).toEqual([
       { $set: { o: { $mergeObjects: [{ b: null }] } } },
       { $set: { r: { $in: [null, [1, "$o.b"]] } } },
@@ -294,7 +278,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 
   it("an element of unknown kind makes the elements unknown, as a field path does", () => {
-    // A regular expression and a Timestamp have no kind that the registry names.
     for (const v of [/a/, new Timestamp({ t: 1, i: 1 })]) {
       expect(jsmql.expr`[1, ${v}].has("x")`).toEqual({ $in: ["x", [1, v]] });
       expect(jsmql.expr`"x" in [1, ${v}]`).toEqual({ $in: ["x", [1, v]] });
@@ -309,7 +292,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
       const build = jsmql.compile(({ e }: { e: unknown }, { $ }: { $: any }) => [1, e].has("x"));
       expect(build({ e: v })).toEqual({ $expr: { $in: ["x", [1, v]] } });
     }
-    // The compiler still judges an element of a kind that the registry names.
     expect(() => jsmql.expr`[1, ${new MinKey()}].has("x")`).toThrow(/'\.has\(\)' argument 1 takes an element/);
   });
 
@@ -326,7 +308,6 @@ describe("kinds — an operator refuses operands of proven kinds that never comb
   });
 });
 
-/** The BSON type a value carries. `toEqual` holds MinKey equal to MaxKey, so a test reads the tag. */
 const tagOf = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsontype;
 
 describe("kinds — the query road obeys HR7 too", () => {
@@ -381,7 +362,6 @@ describe("kinds — the query road obeys HR7 too", () => {
     ]);
   });
 
-  // The query cell of an operator states the kinds of its value cell, so the two forms refuse alike.
   for (const op of ["<", ">", "<=", ">="]) {
     it(`'${op}' in a query takes the kinds of its value form`, () => {
       for (const src of [`$.x = null; $.r = $.x ${op} 1;`, `$.x = null; $match($.x ${op} 1);`]) {
@@ -401,7 +381,6 @@ describe("kinds — the query road obeys HR7 too", () => {
         "'in' argument 1 takes an element of the array, but got a number, and the array holds strings.",
       );
     }
-    // A query tests each element of an array field against the list (SR2).
     expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in ["a", "b"]);')).toEqual([
       { $set: { tags: ["a"] } },
       { $match: { tags: { $in: ["a", "b"] } } },
@@ -409,7 +388,6 @@ describe("kinds — the query road obeys HR7 too", () => {
     expect(() => jsmql.pipeline('$.tags = [1]; $match($.tags in ["a"]);')).toThrow(
       "'in' argument 1 takes an element of the array, but got an element of 'tags' that is a number, and the array holds strings.",
     );
-    // A list that holds an array also tests the whole field.
     expect(jsmql.pipeline('$.tags = ["a"]; $match($.tags in [["a"]]);')).toEqual([
       { $set: { tags: ["a"] } },
       { $match: { tags: { $in: [["a"]] } } },
@@ -567,7 +545,6 @@ describe("kinds — a row can demand one kind of every element of its receiver",
 
 describe("kinds — a value of two or more possible kinds is refused only when NO kind fits", () => {
   it("an array whose elements can be a number passes a row that takes numbers", () => {
-    // `x + 1` is a number or a date, so the elements are not proven wrong
     expect(jsmql.expr("$.nums.map(x => x + 1).sum()")).toEqual({
       $sum: { $map: { input: { $ifNull: ["$nums", []] }, as: "x", in: { $add: ["$$x", 1] } } },
     });
@@ -660,14 +637,11 @@ describe("kinds — a literal array is judged by each position, a computed array
         elements: ["number", "string"],
         ...proofs,
       } as never);
-    // a set of kinds: one kind fits, so the array passes
     expect(run({}).kind).not.toBe("wrongKind");
-    // the same kinds, as the positions of a tuple: the string position fits nothing
     expect(run({ items: [["number"], ["string"]] })).toMatchObject({
       kind: "wrongKind",
       fault: { rule: "elements", expected: "number", held: ["number", "string"] },
     });
-    // a position that can be a number or a string fits
     expect(run({ items: [["number"], ["number", "string"]] }).kind).not.toBe("wrongKind");
     expect(run({ items: [["number"], "unknown"] }).kind).not.toBe("wrongKind");
   });
@@ -771,8 +745,6 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     );
   });
 
-  // MEASURED on mongod: `$dateFromParts` refuses a fraction in each of the seven parts.
-  // JavaScript cuts the fraction off, and JSMQL does not cut a value silently.
   it.each([0, 1, 2, 3, 4, 5, 6])("a written fraction in calendar part %i is refused", (i) => {
     const parts = [2020, 1, 15, 4, 5, 6, 7].map((n, j) => (j === i ? "1.5" : String(n)));
     const source = `Date(${parts.join(", ")})`;
@@ -797,8 +769,6 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     expect(jsmql.expr("Date(2020, 1, 15)")).toEqual(new Date("2020-02-15T00:00:00.000Z"));
   });
 
-  // MEASURED on mongod: `$toDate` cuts a fraction toward zero. JavaScript does the same,
-  // and JSMQL does not cut a value silently.
   it.each([
     ["written", () => jsmql.expr("Date(2020.5)"), 5],
     ["folded", () => jsmql.expr("Date(3 / 2)"), 7],
@@ -836,7 +806,6 @@ describe("kinds — the BSON constructors take what their $to operator reads", (
     expect(() => jsmql.expr("Date(null)")).toThrow(
       "'Date()' argument 1 takes a string, a number or a date, but got null.",
     );
-    // A string that no date parser reads keeps the refusal that names the two date constants.
     expect(() => jsmql.expr('Date("not a date")')).toThrow(/only an ISO 8601 string or a millisecond count/);
   });
 

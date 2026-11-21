@@ -1,11 +1,3 @@
-// The public API: the `jsmql` callable and its properties. It is polymorphic over the
-// three call shapes — a string, an arrow, a template tag. It is also polymorphic over
-// the four shapes MQL takes: a Filter (`find`), a Pipeline (`aggregate`), a bare
-// expression (`jsmql.expr`) and an update document (`jsmql.update`). Every entry runs the
-// compiler in `src/compiler/` over the registry in `src/registry/`; this file
-// only turns the caller's input into source and values, and the compiler's
-// errors into `validate()` results. See docs/LANGUAGE.md and
-// docs/specs/strict-shape-entries.md.
 import { hasStreamValueCell } from "./compiler/rows.ts";
 import type { Expr, ParamBinding, Program } from "./registry/ast.ts";
 import { lex, LexError } from "./compiler/lex/lexer.ts";
@@ -30,13 +22,8 @@ import { CodegenError, UnknownIdentifierError } from "./errors.ts";
 import { stringify } from "./stringify.ts";
 
 export { CodegenError, UnknownIdentifierError, ParseError, LexError };
-// The nine types the language can spell. This file re-exports them from the peer `bson`.
-// A caller who writes `import { ObjectId } from "@koresar/jsmql"` thus provably gets the
-// copy that jsmql resolved. See docs/specs/bson-types.md.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "./bson.ts";
 import { bsonTagOf, isBytes, isDate, isMap, isPlainObject, isRegExp } from "./bson.ts";
-
-// ── the public types ─────────────────────────────────────────────────────────
 
 export type ValidationError = { message: string; pos: number; code: "SYNTAX_ERROR" | "CODEGEN_ERROR" };
 export type ValidationResult = { valid: boolean; errors: ValidationError[] };
@@ -85,25 +72,14 @@ type Mode = "auto" | "expr" | "filter" | "pipeline" | "update";
 type Values = ReadonlyMap<string, unknown>;
 const NONE: Values = new Map();
 
-// ── input → source ───────────────────────────────────────────────────────────
-
 function isTemplateStringsArray(x: unknown): x is TemplateStringsArray {
   return Array.isArray(x) && Array.isArray((x as { raw?: unknown }).raw);
 }
 
 const fnSource = (fn: (...args: never[]) => unknown): string => Function.prototype.toString.call(fn).trim();
 
-/**
- * The errors that already carry a frame. An entry can run inside another entry: a
- * parameter's `toBSON()` can call `jsmql`. Its error then leaves through both entries.
- * Its `.pos` is a position in the inner source only, so only the inner entry frames it.
- */
 const FRAMED = new WeakSet<Error>();
 
-/**
- * Run `run`. A compile error that it throws gets the line, the column and the source line
- * of its `.pos` at the end of its message. So a test runner shows where the fault is.
- */
 function framed<T>(src: string, run: () => T): T {
   try {
     return run();
@@ -114,10 +90,8 @@ function framed<T>(src: string, run: () => T): T {
       const line = before.length;
       const column = before[line - 1].length + 1;
       const gutter = `${line} | `;
-      // The caret line keeps each tab of the source line, so the caret stays under the fault.
       const pad = before[line - 1].replace(/[^\t]/g, " ");
       const frame = `\n  at line ${line}, column ${column}:\n${gutter}${src.split("\n")[line - 1]}\n${" ".repeat(gutter.length)}${pad}^`;
-      // Read the stack first: V8 builds it on the first read, from the message at that time.
       const stack = e.stack;
       const old = e.message;
       e.message += frame;
@@ -127,24 +101,6 @@ function framed<T>(src: string, run: () => T): T {
   }
 }
 
-/**
- * The value that a slot or a parameter carries, as the driver sends it.
- *
- * The driver converts some values before it sends them: it calls a value's own
- * `toBSON()`, and it sends a Map as a document of its entries. The walk makes the
- * same conversions, so the compiler and `jsmql.stringify` see the value that the
- * server gets. A mongoose document, subdocument, array or Buffer each has a
- * `toBSON()`. The walk refuses a built-in object that the driver sends as `{}` or
- * as index keys (a Set, an Error, an ArrayBuffer). That is never its data.
- * See docs/specs/function-form-params.md § The value the driver sends.
- *
- * The walk RECURSES, because a value with no MQL representation has no MQL
- * representation one level down either. `undefined` is the language's existence
- * TEST and never a value (docs/LANGUAGE.md § `undefined`). A nested `undefined`
- * must never reach the compiled document. The driver sends it as `null`, but
- * `jsmql.stringify` refuses it, so the document would have no text.
- */
-/** The kinds that `bson` finds by `Symbol.toStringTag` alone. MEASURED in bson 7.3. */
 const DRIVER_READS_TAG: ReadonlySet<string> = new Set(["Date", "RegExp", "Map"]);
 
 function driverValue(value: unknown, slot: number, key?: string): unknown {
@@ -152,10 +108,8 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
   const refuse = (message: string, path: string): never => {
     throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
   };
-  // The objects on the path from the root, so a cycle stops the walk.
   const above = new Set<object>();
   const walk = (given: unknown, path: string): unknown => {
-    // The driver calls `toBSON()` once, and sends the value it gives.
     const v =
       typeof (given as { toBSON?: unknown } | null | undefined)?.toBSON === "function"
         ? (given as { toBSON: () => unknown }).toBSON()
@@ -174,11 +128,9 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
       );
     }
     if (v === null || typeof v !== "object") return v;
-    // The driver sends an Invalid Date as the epoch, so a comparison with it silently answers.
     if (isDate(v) && Number.isNaN(Date.prototype.getTime.call(v))) {
       refuse("is an Invalid Date. The driver sends it as 1970-01-01. Pass a valid Date, or null.", path);
     }
-    // A BSON class carries its own value; its internals are not the developer's data.
     if (bsonTagOf(v) !== undefined || isDate(v) || isRegExp(v) || isBytes(v)) return v;
     if (above.has(v))
       throw new JsmqlInterpolationError(
@@ -207,7 +159,6 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
       }
       const kind = Object.prototype.toString.call(v).slice(8, -1);
       const article = /^[AEIOU]/.test(kind) ? "an" : "a";
-      // The slot readers above refuse the object, so it only sets `Symbol.toStringTag`.
       if (DRIVER_READS_TAG.has(kind)) {
         refuse(
           `sets Symbol.toStringTag to "${kind}", but it is not ${article} ${kind}. The driver reads the tag and sends the object as ${article} ${kind}. Remove the tag, or pass ${article} ${kind}.`,
@@ -215,14 +166,12 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
         );
       }
       if (kind === "Set") refuse("is a Set. The driver sends a Set as {}. Pass an array: [...set].", path);
-      // The driver also sends a plain object with any other tag as its fields.
       if (kind !== "Object" && !isPlainObject(v)) {
         refuse(
           `is ${article} ${kind}. This object has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, Map, array, plain object, or a value with toBSON().`,
           path,
         );
       }
-      // The driver sends the own enumerable fields of any other object.
       const entries = Object.keys(v).map((k) => [k, walk((v as Record<string, unknown>)[k], `${path}.${k}`)] as const);
       const same = isPlainObject(v) && entries.every(([k, x]) => x === (v as Record<string, unknown>)[k]);
       return same ? v : Object.fromEntries(entries);
@@ -233,7 +182,6 @@ function driverValue(value: unknown, slot: number, key?: string): unknown {
   return walk(value, "");
 }
 
-/** The template tag's parts as one source: each slot is a name bound to its value. */
 function templateSource(strings: TemplateStringsArray, values: readonly unknown[]): { src: string; values: Values } {
   let src = "";
   const bound = new Map<string, unknown>();
@@ -248,7 +196,6 @@ function templateSource(strings: TemplateStringsArray, values: readonly unknown[
   return { src, values: bound };
 }
 
-/** Does the source spell the entry form `(params, { $ }) => …` (or `async`/`function` forms of it)? */
 function isEntryForm(src: string): boolean {
   let tokens: ReturnType<typeof lex>;
   try {
@@ -263,10 +210,9 @@ function isEntryForm(src: string): boolean {
   const isFunction = tokens[i]?.type === "Ident" && tokens[i].text === "function";
   if (isFunction) {
     i++;
-    if (tokens[i]?.type === "Ident") i++; // a name
+    if (tokens[i]?.type === "Ident") i++;
   }
   if (tokens[i]?.type !== "LParen") return false;
-  // the parameter list, balanced
   let depth = 0;
   for (; i < tokens.length; i++) {
     const t = tokens[i];
@@ -278,8 +224,6 @@ function isEntryForm(src: string): boolean {
   }
   i++;
   if (!isFunction) return tokens[i]?.type === "Arrow";
-  // `function f(…) { … }` is the entry form only when the body is the WHOLE input; a
-  // declaration followed by more statements is a program that declares a function.
   if (tokens[i]?.type !== "LBrace") return false;
   depth = 0;
   for (; i < tokens.length; i++) {
@@ -295,7 +239,6 @@ function isEntryForm(src: string): boolean {
 
 type Parsed = { program: Program; params: readonly ParamBinding[] };
 
-/** Parse the source once: the entry form yields its parameters, plain source has none. */
 function parseInput(src: string): Parsed {
   if (isEntryForm(src)) {
     const entry = parseEntry(src);
@@ -304,8 +247,6 @@ function parseInput(src: string): Parsed {
   return { program: parse(src), params: [] };
 }
 
-// ── lowering, per mode ───────────────────────────────────────────────────────
-
 const DRIVER: Record<Exclude<Mode, "auto">, string> = {
   expr: "an aggregation expression (the value of a stage field, `jsmql.expr`)",
   filter: "a Filter (the document `db.coll.find(filter)` takes)",
@@ -313,11 +254,7 @@ const DRIVER: Record<Exclude<Mode, "auto">, string> = {
   update: "an update document (the object `db.coll.updateOne(filter, update)` takes)",
 };
 
-/** What a program IS, for a strict entry that wanted another shape. */
 function received(program: Program): { what: string; hint: string } {
-  // A `;` alone does not make a Pipeline. A binding in front of one expression is
-  // still the Filter that expression is. A Pipeline error would send the
-  // developer back to the pipeline entry the developer already called.
   if (program.type === "Pipeline" && shapeOf(program) === "pipeline") {
     return { what: "a `;`-separated Pipeline", hint: "jsmql.pipeline() (or jsmql(), which decides from the shape)" };
   }
@@ -348,7 +285,6 @@ function received(program: Program): { what: string; hint: string } {
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
-    // `$$.size()` is a VALUE the stream carries, not a stage: it materialises a stage, so it needs a pipeline.
     if (hasStreamValueCell(stage)) {
       return {
         what: `'$$.${stage}()', the stream's document count, which materialises a '$setWindowFields' stage`,
@@ -364,18 +300,6 @@ function received(program: Program): { what: string; hint: string } {
   };
 }
 
-/**
- * The defect inside a program that is a FILTER, found by lowering it as one.
- *
- * The compiler judges the shape of a program only once the program is correct. A value such as
- * `Date("nope")` is wrong under every entry. A message that tells the developer only to
- * call a different entry would send the developer to the same error on the next run. This function returns null when the only thing wrong is the
- * shape.
- *
- * The function searches only the filter reading, because that is the shape a
- * program the pipeline entry refuses actually has. A lowering of the program as
- * anything else would answer with a position the developer never asked for.
- */
 function defectAsFilter(injected: Program): CodegenError | null {
   try {
     const program = expressionOf(desugar(fold(injected), FILTER));
@@ -394,18 +318,12 @@ function wrongShape(api: string, wanted: Exclude<Mode, "auto">, program: Program
   );
 }
 
-/**
- * The one expression a Filter / expression program is, after the fold inlines
- * its `const` prelude. A binding the fold could not settle needs the pipeline form.
- */
 function expressionOf(program: Program): Expr {
   if (program.type !== "Pipeline") return program as Expr;
   const nodes = new Map<string, Expr>();
   const rest: Expr[] = [];
   for (const s of program.stmts) {
     if (s.type === "LetDecl") {
-      // `const` binds a value or an expression. The fold already inlines a constant;
-      // what reaches here reads the document, so it goes in as the expression.
       if (s.kind !== "const") {
         throw new CodegenError(
           "A Filter or an expression takes a 'const' prelude. A 'let' needs the pipeline form. There it becomes a field.",
@@ -432,17 +350,12 @@ function expressionOf(program: Program): Expr {
 
 function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): JsmqlOutput {
   const resolved = mode === "auto" ? (shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter") : mode;
-  // HR8 and HR6 read the source as written: a passed value is a name here, not raw MQL.
   refuseNew(parsed);
-  // Its marks go on `parsed`, so the injection runs after it.
   rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
   const injected = inject(parsed, values);
   switch (resolved) {
     case "expr":
     case "filter": {
-      // `$.a.assign($.b)` alone reads as a write. Asked for an expression, it is
-      // the `$mergeObjects` call it lowers to.
-      // An expression entry reads a bracketed literal as an array value, unless it is a stage list.
       const pipelineShaped =
         resolved === "expr" && injected.type === "ArrayLiteral"
           ? isStageList(injected)
@@ -454,16 +367,11 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
         : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      // A BRACKETED program is a pipeline the developer wrote as one, whatever it holds
-      // (`shapeOf`). The lowering names a wrong element, not the entry.
       if (shapeOf(injected) !== "pipeline") {
-        // The compiler judges the SHAPE of a program only once the program is correct.
-        // This reports a defect that the developer must fix under every entry before the entry mismatch.
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));
-      // `[]` is the empty pipeline that the developer wrote, and raw MQL passes unchanged (HR1).
       if (stages.length === 0 && injected.type !== "ArrayLiteral") throw noStages((program as { pos: number }).pos);
       return stages as object[];
     }
@@ -474,7 +382,6 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
   }
 }
 
-/** One-shot: a string, an arrow without parameters, or a template tag. */
 function oneShot(mode: Mode, api: string, input: JsmqlInput | TemplateStringsArray, values: unknown[]): JsmqlOutput {
   if (isTemplateStringsArray(input)) {
     const t = templateSource(input, values);
@@ -503,12 +410,10 @@ type CompileBuilder<R extends JsmqlOutput> = {
   (src: string): (params?: Record<string, any>) => R;
 };
 
-/** `compile`: parse once, bind the parameters at each call. */
 function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBuilder<R> {
   function compile<P extends Record<string, unknown>>(input: JsmqlCompileFn<P> | string): (params?: P) => R {
     let src: string;
     if (typeof input === "function") src = fnSource(input);
-    // The string as given: `.pos` counts from its first character, as `validate()` counts.
     else if (typeof input === "string") src = input;
     else {
       const ty = input === null ? "null" : typeof input;
@@ -540,8 +445,6 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
   }
   return compile;
 }
-
-// ── the entries ──────────────────────────────────────────────────────────────
 
 function jsmqlDispatch<F extends JsmqlFn>(input: F): JsmqlArrowOutput<F>;
 function jsmqlDispatch(input: JsmqlInput): JsmqlOutput;
@@ -575,8 +478,6 @@ function updateDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unk
   return oneShot("update", "jsmql.update", input, values) as object;
 }
 
-// ── validate ─────────────────────────────────────────────────────────────────
-
 function validateInput<P extends Record<string, any>>(fn: JsmqlCompileFn<P>): ValidationResult;
 function validateInput(input: JsmqlInput): ValidationResult;
 function validateInput(strings: TemplateStringsArray, ...values: unknown[]): ValidationResult;
@@ -591,11 +492,6 @@ function validateInput(
     } else {
       const src = typeof input === "function" ? fnSource(input as (...args: never[]) => unknown) : (input as string);
       const parsed = parseInput(src);
-      // This checks the entry form with every parameter bound to a value of no known
-      // kind. The shape of the program does not depend on the values. Only the
-      // document does. The check does not bind `null`, because each slot that takes a
-      // value other than `null` refuses `null` (HR7). The call can pass a value of the
-      // kind that the slot takes.
       const unknown = new Map(parsed.params.map((b) => [b.name, new ParameterValue()] as const));
       lowerMode("auto", "jsmql", parsed.program, unknown);
     }
@@ -605,11 +501,6 @@ function validateInput(
   }
 }
 
-/**
- * A parameter's value during the `validate()` check of a parameterised arrow. No literal writes
- * this value, so the inject pass gives it an `Injected` node. The proof shows no kind for
- * it, and no literal check or constant check reads it.
- */
 class ParameterValue {}
 
 function errorToValidationResult(err: unknown): ValidationResult {
@@ -628,8 +519,6 @@ function errorToValidationResult(err: unknown): ValidationResult {
   const message = err instanceof Error ? err.message : String(err);
   return { valid: false, errors: [{ message: `internal error: ${message}`, pos: 0, code: "CODEGEN_ERROR" }] };
 }
-
-// ── the callable ─────────────────────────────────────────────────────────────
 
 type Jsmql = typeof jsmqlDispatch & {
   compile: CompileBuilder<JsmqlOutput>;

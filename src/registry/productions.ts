@@ -1,22 +1,3 @@
-// REGISTRY 3 of 4 — the grammar. SYNTACTIC phase.
-//
-// A DESCRIPTIVE name keys each row, and never a symbol: `remainder`, not `"%"`. The
-// symbols of a rule are in its `tokens` field. That field names keys of tokens.ts or
-// keywords.ts, and the audit below tests it. So a rule cannot refer to a token that
-// does not exist, and a token that no rule combines shows as an unused key.
-//
-// `precedence` goes from 1 (loosest, `conditional`) to 14 (tightest, postfix). It
-// follows the order of the 14 cascade methods of the parser. It is absent on a row
-// that is not an operator. `++` and `--` sit at 14, because JavaScript binds a
-// postfix `++` tighter than every prefix and binary operator: `-$.x++` is
-// `-($.x++)`, and `1 + $.x++` is `1 + ($.x++)`.
-//
-// `becomes` holds a LIST where one rule builds more than one node (`namespacedCall`
-// covers seven). It holds `{ notANode: … }` where a rule makes something that the
-// parser keeps beside the tree, and not in it (`destructuringParam`).
-//
-// MQL enters the language side here. tokens.ts and keywords.ts hold no MQL.
-
 import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
@@ -25,7 +6,6 @@ import { cond } from "./mql.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
-/** What the `tokens` of a rule can name: a token, or a reserved word. */
 export type Lexeme = TokenKey | KeywordKey;
 
 export type ProductionSpec<
@@ -33,107 +13,32 @@ export type ProductionSpec<
   W extends readonly Position[],
   O extends On,
   A extends readonly string[] = readonly never[],
-  /** The owners that the one `composedInto` cell of this rule names. See the `C` of Cell. */
   C extends readonly string[] = readonly never[],
-  /** The rules that `noMixWith` names. The generic carries them, so the audit reads the literal. */
   M extends readonly string[] = readonly never[],
-  /** The rules that `leftOperandNot` names, in the same way. */
   L extends readonly string[] = readonly never[],
 > = {
   doc: string;
-  /**
-   * The symbols that this rule consumes: keys of tokens.ts or keywords.ts.
-   *
-   * THE FIRST ENTRY IS THE TRIGGER. It is the lexeme that selects this rule. A
-   * parser builds its dispatch tables from `tokens[0]`. So the order of the rest
-   * is free, and the order of the head is not. `conditional` leads with `?` and
-   * not with `:`. `methodCall` leads with `.` and not with `(`.
-   */
   tokens: T;
-  /**
-   * How a developer WRITES this rule: the string by which every refusal names it.
-   *
-   * The key is descriptive (`conditional`, `remainder`), so that two rules cannot
-   * collide on a symbol. A descriptive key must never reach a user, because nobody
-   * types the word "conditional". `tokens` cannot give this string either, because
-   * it lists every lexeme that the rule consumes. Joined, `methodCall` reads
-   * `.(),?.$identifier`. So the row states the spelling here, once.
-   */
   spelling: string;
-  /** The AST node that the rule builds. It is a list when the rule builds more than one, and nothing at all for some rules. */
   becomes: NodeName | readonly NodeName[] | { notANode: string };
-  /** 1 = loosest … 14 = tightest. It is absent when the rule is not in the cascade. */
   precedence?: number;
-  /** "none" for an operator that cannot chain: `1 === 2 === 3` is a parse error. */
   associativity?: "left" | "right" | "none";
   fixity?: "prefix" | "infix" | "postfix" | "ternary" | "prefixOrPostfix";
   on: O;
   returns: TypeExpr;
-  /**
-   * The operator answers a missing operand as it answers `null`, so a `?.` read as an
-   * operand needs no `$ifNull: [x, null]`. MEASURED: `{ $add: ["$nope", 1] }` and
-   * `{ $add: [null, 1] }` are both null. The comparisons do not state it, because
-   * `{ $eq: ["$nope", null] }` is false. test/compiler-methods.test.ts measures each row.
-   */
   passesNull?: true;
   where: W;
   only?: readonly Only[];
-  /** Rules that the parser must try BEFORE this one, when two triggers overlap. The audit below tests them. */
   after?: A;
-  /**
-   * The literal identifier text that this rule needs, when its trigger is the
-   * `identifier` class and not a fixed spelling.
-   *
-   * `function` is NOT a reserved word here. The lexer reads it as a name, so
-   * keywords.ts correctly has no row for it. The parser must still recognise the
-   * text, to parse `function f(x) { return x }`. The word belongs on the rule that
-   * needs it, so no phase carries a hard-coded name.
-   */
   word?: string;
-  /**
-   * Levels that cannot sit beside this one without parentheses, on EITHER side,
-   * because JavaScript refuses the pair. `a ?? b || c` and `a || b ?? c` are both
-   * SyntaxErrors. This rule is symmetric. See `leftOperandNot` for the one-sided
-   * rule.
-   */
   noMixWith?: M;
-  /**
-   * Levels that the LEFT operand cannot be, without parentheses. This rule is
-   * one-sided, because JavaScript states it that way for `**`. `-a ** 2` and
-   * `typeof a ** 2` are SyntaxErrors, and `2 ** -1` and `2 ** typeof a` parse
-   * (node --check). A symmetric `noMixWith` here refuses the valid right-hand
-   * forms, and that breaks the strict-subset rule in the other direction.
-   */
   leftOperandNot?: L;
-  /**
-   * A left-nested chain of this operator lowers as ONE operator over every
-   * operand: `a * b * c` → `{ $multiply: [a, b, c] }`, and not as two nested
-   * pairs. The row states it, because associativity alone does not say it. `-` is
-   * left-associative, and `a - b - c` is two subtractions.
-   */
   flattensChain?: true;
-  /**
-   * The node that this rule builds can never be the left side of `=`, `+=`, `++`
-   * or `--`. This cell also gives the alternative to write. `a?.b = 1` is a
-   * JavaScript SyntaxError, for an optional chain anywhere in the target, and not
-   * only at its end. So the parser refuses it from the row. The message names the
-   * `spelling` of the row, and ends with the `instead` text. This does not cover
-   * `delete`, because `delete a?.b` is legal.
-   */
   neverAWriteTarget?: { instead: string };
-  /**
-   * The rule builds a write that JavaScript also reads as a VALUE: `$.y = $.x++`.
-   * A write stands only as a statement, so the parser refuses the value reading.
-   * The refusal names this compound write as the statement to write instead:
-   * `$.x += 1;`. A postfix spelling gives the value from before the write, so the
-   * refusal places the statement after the read. A prefix spelling places it before.
-   */
   asStatement?: string;
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, FilterOut<Lists<W, "value">>, C>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, OutOf["value"], C>;
-  /** A link in a `$$ = $$…` chain. */
   stream: Cell<Lists<W, "stream">, Of<O>, StageIn, OutOf["stream"], C>;
-  /** A statement between two `;` marks. It is SEPARATE from `stream`. See Position. */
   statement: Cell<Lists<W, "statement">, Of<O>, StageIn, OutOf["statement"], C>;
 };
 
@@ -147,9 +52,6 @@ export type ProductionEntry<
   L extends readonly string[] = readonly never[],
 > = ProductionSpec<T, W, O, A, C, M, L> & { kind: "production" };
 
-// Every generic defaults to the EMPTY type, and never to its constraint. If it did
-// not, a rule with no `after` would widen `A` to `readonly string[]`. The audit
-// below would then pass but test nothing.
 const production = <
   const T extends readonly Lexeme[],
   const W extends readonly Position[],
@@ -162,13 +64,6 @@ const production = <
   e: ProductionSpec<T, W, O, A, C, M, L>,
 ): ProductionEntry<T, W, O, A, C, M, L> => ({ ...e, kind: "production" });
 
-// ── the query cells the comparison productions share ─────────────────────────
-//
-// A query document compares a FIELD PATH with a CONSTANT. Each helper answers null
-// when the operands are not that pair. A null from the cell is the stated signal for
-// "put an $expr wrap around my value form" (see `FilterOut`).
-
-/** The pair of a path and a constant that a two-operand comparison holds, in either order, or null. */
 function pathAndConstant(input: FilterIn): { path: string; value: unknown; flipped: boolean } | null {
   const [l, r] = input.args;
   const lp = input.pathOf(l);
@@ -184,7 +79,6 @@ function pathAndConstant(input: FilterIn): { path: string; value: unknown; flipp
   return null;
 }
 
-/** `$.x in [c, …]`: the own value of a field among constants. This is the native `$in`, which the planner reads. */
 function membershipQuery(input: FilterIn): QueryDoc | null {
   const [l, r] = input.args;
   const path = input.pathOf(l);
@@ -194,7 +88,6 @@ function membershipQuery(input: FilterIn): QueryDoc | null {
   return queryAmong(path, c.value);
 }
 
-/** `typeof x === "s"` in either order: the path of the operand and the BSON alias, or null. */
 function typeTest(input: FilterIn): { path: string; alias: string } | null {
   const [l, r] = input.args;
   const pick = (a: Expr, b: Expr) =>
@@ -208,7 +101,6 @@ function typeTest(input: FilterIn): { path: string; alias: string } | null {
   return path === null || alias === null ? null : { path, alias };
 }
 
-/** `x === undefined` in either order: the path of the operand, or null. */
 function presenceTest(input: FilterIn): string | null {
   const [l, r] = input.args;
   const operand =
@@ -222,16 +114,12 @@ function presenceTest(input: FilterIn): string | null {
   return operand === null ? null : input.pathOf(operand);
 }
 
-/** `x % d === m` in either order, with an integer `d` and an integer `m`: the path and the pair, or null. */
 function moduloTest(input: FilterIn): { path: string; divisor: number; remainder: number } | null {
   const [l, r] = input.args;
-  // The remainder can be negative. `$.a % 3 === -1` is `{ $mod: [3, -1] }`. The
-  // server takes that, and JavaScript agrees with it.
   const isNat = (e: Expr) => e.type === "NumberLiteral" && Number.isInteger(e.value);
   const asMod = (e: Expr, other: Expr) => {
     if (e.type !== "BinaryExpr" || e.op !== "%" || !isNat(other)) return null;
     const path = input.pathOf(e.left);
-    // A divisor of zero never reaches a query cell. The `nonZero` of the `remainder` row refuses it first.
     if (path === null || e.right.type !== "NumberLiteral" || !Number.isInteger(e.right.value) || e.right.value === 0)
       return null;
     return { path, divisor: e.right.value, remainder: (other as { value: number }).value };
@@ -239,37 +127,23 @@ function moduloTest(input: FilterIn): { path: string; divisor: number; remainder
   return asMod(l, r) ?? asMod(r, l);
 }
 
-/** `x === null` in either order: the path of the operand, or null. */
 function nullTest(input: FilterIn): string | null {
   const [l, r] = input.args;
   if (l.type === "NullLiteral") return r.type === "NullLiteral" ? null : input.pathOf(r);
   return r.type === "NullLiteral" ? input.pathOf(l) : null;
 }
 
-/**
- * `x === undefined` is the presence test: the field is absent. An array at a path
- * PREFIX also reads as absent in JavaScript. So the positive form takes it as an
- * alternative, and the negated form excludes it.
- */
 const presenceQuery = (path: string, negated: boolean): QueryDoc => queryOwnValue(path, { $exists: negated });
 
-/** `.length` against a natural number is a LENGTH, and no query form states one. */
 function comparesALength(input: FilterIn): boolean {
   const isLength = (e: Expr) => e.type === "MemberAccess" && e.name === "length";
   const [l, r] = input.args;
   return isLength(l) || isLength(r);
 }
 
-/**
- * The cells for strict equality. The compiler tries them in this order: the type
- * test, the presence test, the modulo test, the null test, and then a field against
- * a constant. A `.length` comparison has no query form, because the server has
- * `$size` for an array only.
- */
 function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
   const typed = typeTest(input);
   if (typed !== null) {
-    // The `array` spelling asks if the value IS an array, so it excludes no value.
     if (typed.alias === "array") {
       return negated
         ? queryOwnValue(typed.path, { $not: { $type: "array" } })
@@ -293,41 +167,19 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
-  // An ARRAY has no own-value query form. The query language reads `{ f: [1, 2] }` as
-  // "f equals [1, 2], OR f is an array that holds the ELEMENT [1, 2]". An own-value
-  // guard that excludes an array then excludes every document that the equality
-  // selects, and the clause can never hold. So the comparison takes the expression
-  // road. There `$eq` compares the whole value, as a comparison of a document does.
   if (Array.isArray(pc.value)) return null;
-  // A RegExp that the call supplied is the regex query of MongoDB, as the developer
-  // gave it. The query language reads `{ field: /re/ }` as a match, and `$eq` compares
-  // a value.
   if (isRegExp(pc.value)) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated ? queryOwnValue(pc.path, { $ne: pc.value }) : queryOwnValue(pc.path, { $eq: pc.value });
 }
 
-/** `==` and `!=` against null only. `{ f: null }` matches null OR missing, which is the loose meaning. */
 function looseEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
   const path = nullTest(input);
   if (path === null) return null;
-  // `$eq: null` is the loose meaning. It selects a null field AND a missing field.
-  // So `== null` holds for an absent field, and `!= null` does not. Only the negated
-  // form holds for an array, because `[null] == null` is false in JavaScript.
   return negated ? queryOwnValue(path, { $ne: null }) : queryOwnValue(path, { $eq: null });
 }
 
 const FLIPPED = { $gt: "$lt", $gte: "$lte", $lt: "$gt", $lte: "$gte" } as const;
 
-/**
- * An ordered comparison of a field with a value that BSON orders. The operator
- * turns around when the field is on the right.
- *
- * Every BSON value qualifies, because BSON defines a total order across the types,
- * and the two sentinels sit at its ends. MEASURED: `{ g: { $gt: MinKey() } }`
- * returns every document whose `g` is anything else. Off this road the comparison
- * becomes `$expr`, which compares a whole ARRAY with a scalar. That answers a
- * different question on an array field.
- */
 function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | null {
   if (comparesALength(input)) return null;
   const pc = pathAndConstant(input);
@@ -338,8 +190,6 @@ function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | nul
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 
-// A `filter` cell of a comparison states the kinds of its `expr` cell, so the two forms
-// refuse the same operands. A query reads an array field through its elements: see `proofsFor`.
 export const PRODUCTIONS = {
   conditional: production({
     doc: "Chooses between two values on a condition.",
@@ -428,7 +278,6 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    // MEASURED: `$bitOr` over each pair of operand kinds gives an int, a long, null or an error.
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -450,7 +299,6 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    // MEASURED: `$bitXor` over each pair of operand kinds gives an int, a long, null or an error.
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -472,7 +320,6 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    // MEASURED: `$bitAnd` over each pair of operand kinds gives an int, a long, null or an error.
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -667,7 +514,6 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
     filter: {
       args: { sig: "value, list", exact: 2, slotType: { 0: "element", 1: "array" } },
       emit: (input) => membershipQuery(input),
@@ -690,11 +536,6 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // This row states the `$add` road. A string operand makes it `$concat`, which
-    // src/compiler/emit/prove.ts proves a string. The compiler refuses a proven date, because a date
-    // takes `.plus()`. A field of unknown kind can still hold a date, so the result can be
-    // a date. MEASURED: `$add` over each pair of operand kinds gives a number, a date, null
-    // or an error. `$add` of a date and 1000 is the date one second later.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -718,11 +559,6 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // The compiler refuses a proven date, because a date takes `.minus()` and `.diff()`. A
-    // field of unknown kind can still hold a date, so the result can be a date. MEASURED:
-    // `$subtract` over each pair of operand kinds gives a number, a date, null or an error.
-    // A date minus a date is a long, the milliseconds between them (86400000 for one day).
-    // A date minus 1000 is the date one second earlier. A number minus a date is an error.
     passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
@@ -745,7 +581,6 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
     passesNull: true,
     returns: "number",
     where: ["value"],
@@ -767,7 +602,6 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
     passesNull: true,
     returns: "number",
     where: ["value"],
@@ -789,7 +623,6 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
     passesNull: true,
     returns: "number",
     where: ["value"],
@@ -812,7 +645,6 @@ export const PRODUCTIONS = {
     fixity: "infix",
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
-    // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
     passesNull: true,
     returns: "number",
     where: ["value"],
@@ -854,7 +686,6 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
     passesNull: true,
     returns: "number",
     where: ["value"],
@@ -876,7 +707,6 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    // MEASURED: `$bitNot` over each operand kind gives an int, a long, null or an error.
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -892,7 +722,6 @@ export const PRODUCTIONS = {
     doc: "The type name of a value.",
     tokens: ["typeof"],
     spelling: "typeof",
-    // `typeof` is a prefix operator, so it needs no node of its own.
     becomes: "UnaryExpr",
     precedence: 13,
     associativity: "right",
@@ -974,7 +803,6 @@ export const PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    // A key of any kind reads as its string, as JavaScript reads `o[k]`. A null key reads no field.
     expr: inCode("src/compiler/emit/lower.ts", { sig: "index", exact: 1, slotType: { 0: "value" } }),
     stream: unsupported("'[…]' produces a value, not a stage."),
     statement: unsupported("'[…]' is not a statement — see its 'where'."),
@@ -1032,9 +860,6 @@ export const PRODUCTIONS = {
     doc: "`Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
-    // `Date.UTC(y, m)` is a MethodCall whose object is the name `Date`. `Math.PI` is a
-    // MemberAccess. Every namespace shares these two node types. The parser does not
-    // know which namespace it reads, and it does not need to know.
     becomes: ["MethodCall", "MemberAccess"],
     on: "any",
     returns: "unknown",
@@ -1049,7 +874,6 @@ export const PRODUCTIONS = {
     doc: "`new X(…)`: parsed, then refused (HR8). JSMQL has no `new` keyword; the refusal names `X(…)`.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`, so the refusal can name the callee.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",
@@ -1071,8 +895,6 @@ export const PRODUCTIONS = {
     doc: "`Number(x)`, `String(x)`, `Boolean(x)` — a bare global conversion.",
     tokens: ["(", ")", "identifier"],
     spelling: "Number(x)",
-    // `Number($.s)` is a call whose callee is a name. Nothing about it is special
-    // until names.ts resolves `Number`.
     becomes: "CallExpression",
     on: "any",
     returns: "unknown",
@@ -1087,8 +909,6 @@ export const PRODUCTIONS = {
     doc: "A callable given to a higher-order name, but not applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
-    // A bare name that the developer does not apply is still only a name. The
-    // `asReference` field on its row says if the developer MAY do that.
     becomes: "Ident",
     on: "any",
     returns: "unknown",
@@ -1140,7 +960,6 @@ export const PRODUCTIONS = {
     doc: "`$$` — the root stream.",
     tokens: ["$$"],
     spelling: "$$",
-    // `$$` — the root stream, at every depth (HR4).
     becomes: "StreamRef",
     on: "any",
     returns: "unknown",
@@ -1155,7 +974,6 @@ export const PRODUCTIONS = {
     doc: "`$$$.<coll>` — another collection.",
     tokens: ["$$$"],
     spelling: "$$$.<coll>",
-    // `$$$` — database scope. `$$$.<coll>` names a collection.
     becomes: "DatabaseRef",
     on: "any",
     returns: "unknown",
@@ -1170,7 +988,6 @@ export const PRODUCTIONS = {
     doc: "`$$$$` — cluster scope, for the diagnostic source stages.",
     tokens: ["$$$$"],
     spelling: "$$$$",
-    // `$$$$` — cluster scope.
     becomes: "ClusterRef",
     on: "any",
     returns: "unknown",
@@ -1185,8 +1002,6 @@ export const PRODUCTIONS = {
     doc: "A name bound by the parameter destructure. At the call it becomes its value: a literal when the source could have spelled it, an `Injected` node otherwise.",
     tokens: ["identifier"],
     spelling: "<param>",
-    // At parse time no reader can tell this from any other bare name. Scope decides.
-    // The injection pass then puts the value that the call supplied in its place.
     becomes: ["Ident", "Injected"],
     on: "any",
     returns: "unknown",
@@ -1563,7 +1378,6 @@ export const PRODUCTIONS = {
     stream: unsupported("';' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
-  // ── sugar: the triggers overlap, so each row declares its precedence ───────
   letReassignment: production({
     doc: "`name = <expr>` rebinds a `let`. Tried before every other assignment form.",
     tokens: ["identifier", "=", "+=", "-=", "*=", "/=", "++", "--"],
@@ -1643,8 +1457,6 @@ export const PRODUCTIONS = {
 
 export type ProductionKey = keyof typeof PRODUCTIONS;
 
-// ── audits ───────────────────────────────────────────────────────────────────
-
 type FieldOf<K extends ProductionKey, F extends string> = F extends keyof (typeof PRODUCTIONS)[K]
   ? NonNullable<(typeof PRODUCTIONS)[K][F]>
   : never;
@@ -1657,41 +1469,12 @@ type Mentioned<F extends string> = {
       : FieldOf<K, F>;
 }[ProductionKey];
 
-// There is deliberately NO audit over `tokens`. `T extends readonly Lexeme[]` on
-// the row itself already applies the rule that every entry is a key of tokens.ts or
-// keywords.ts. It applies the rule BETTER. The error lands on the row that
-// breaks it, and not on a line at the foot of the file.
-//
-// An audit here cannot work. When the literal of a row breaks the constraint,
-// TypeScript reports it and then instantiates `T` with the CONSTRAINT. So
-// `Mentioned<"tokens">` gives `Lexeme`, and the audit reads `never`. MEASURED: a
-// false lexeme gives exactly one error, at the row, and the audit stays silent.
-// `after` needs its audit, because `A extends readonly string[]` applies no
-// equivalent constraint.
-
-/** Every `after` entry must be a rule in this same file. */
 type DanglingAfter = Exclude<Mentioned<"after">, ProductionKey>;
 const _afterResolves: [DanglingAfter] extends [never] ? true : DanglingAfter = true;
 
-/**
- * Every `composedInto` owner must be a rule in this same file.
- *
- * Without it, a cell can name an owner that never touches it. An example is
- * `methodCall` and `operatorCall`, which both point at `strictEquality`. That rule
- * consumes neither of them, and both render natively on their own. A loose
- * pointer reads as "another row handles this", and it hides two whole native query
- * forms.
- */
 type CellName = "filter" | "expr" | "stream" | "statement";
 
 type OwnersNamedBy<K extends ProductionKey> = {
-  // Extract FIRST. The type of a cell is a union, and a union never satisfies the
-  // object pattern on its own. A match against the union directly gives `never` for
-  // every row, which is an audit that always passes.
-  //
-  // Then guard the `never` case BEFORE the inference. `never extends readonly
-  // (infer V)[]` succeeds with `V = unknown`, and one `unknown` in the union
-  // destroys the whole audit. This line stops that fault.
   [C in CellName]: [Extract<(typeof PRODUCTIONS)[K][C], { composedInto: readonly string[] }>] extends [never]
     ? never
     : Extract<(typeof PRODUCTIONS)[K][C], { composedInto: readonly string[] }> extends {
@@ -1707,7 +1490,6 @@ const _composedIntoResolves: [DanglingComposedInto] extends [never] ? true : Dan
 void _afterResolves;
 void _composedIntoResolves;
 
-/** Every `noMixWith` and `leftOperandNot` entry must be a rule in this same file. */
 type DanglingNoMixWith = Exclude<Mentioned<"noMixWith">, ProductionKey>;
 const _noMixWithResolves: [DanglingNoMixWith] extends [never] ? true : DanglingNoMixWith = true;
 type DanglingLeftOperandNot = Exclude<Mentioned<"leftOperandNot">, ProductionKey>;

@@ -1,78 +1,52 @@
-// Phase 3 of src/compiler/ — the desugar pass.
-//
-// The test for a rewrite is not "what tree did it build" but "is that the SAME
-// tree the explicit form builds". Written that way a rule cannot pass by
-// producing something merely plausible, and the table doubles as the
-// documentation of what each sugar MEANS.
-
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
 import { desugar, desugarVerbose } from "../src/compiler/passes/desugar.ts";
 import { RULES } from "../src/compiler/passes/desugar-rules.ts";
-// The fold asks the emitter for the lowering of a constant, which the emitter lends at load.
 import "../src/compiler/emit/lower.ts";
 import { edge, STATEMENT } from "../src/compiler/passes/position.ts";
 import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
-/** The tree, with source offsets erased — two spellings sit at different columns. */
-// `mutates` is the emitter's note that a write came from a mutator, not part of what the source means.
-// `pos`, `mutates`, `wrote` and `minted` are provenance, not meaning. `wrote` records the name the
-// source spelled so a refusal can name it. `minted` marks a parameter name that no source
-// spells. A sugar still MEANS the plain form.
 const shape = (src: string): string =>
   JSON.stringify(desugar(parse(src)), (k, v) =>
     k === "pos" ? 0 : k === "mutates" || k === "wrote" || k === "minted" ? undefined : v,
   );
 
-/** Each pair: the sugar, and the source it means. */
 const EQUIVALENT: [string, string][] = [
-  // a bare callable global is the arrow that applies it
   ["$.items.map(String)", "$.items.map(x => String(x))"],
   ["$.items.filter(Boolean)", "$.items.filter(x => Boolean(x))"],
   ["$.items.map(Math.random)", "$.items.map(x => Math.random(x))"],
-  // compound assignment on a field
   ["$.a += 1;", "$.a = $.a + 1;"],
   ["$.a -= 2;", "$.a = $.a - 2;"],
   ["$.a *= 2;", "$.a = $.a * 2;"],
   ["$.a /= 2;", "$.a = $.a / 2;"],
-  // a dotted path is written back to the same path
   ["$.u.score += 5;", "$.u.score = $.u.score + 5;"],
-  // string concatenation falls out of the ordinary `+` once desugared
   ['$.s += "x";', '$.s = $.s + "x";'],
-  // increment and decrement, all four spellings
   ["$.a++;", "$.a = $.a + 1;"],
   ["++$.a;", "$.a = $.a + 1;"],
   ["$.a--;", "$.a = $.a - 1;"],
   ["--$.a;", "$.a = $.a - 1;"],
-  // the same rewrite on a binding, where the slot is resolved much later
   ["let x = 1; x += 1;", "let x = 1; x = x + 1;"],
   ["let x = 1; x++;", "let x = 1; x = x + 1;"],
   ["let x = 1; x--;", "let x = 1; x = x - 1;"],
-  // a block whose only statement is the return
   ["$.items.map(x => { return x * 2 });", "$.items.map(x => x * 2);"],
   ["$.items.filter(x => { return x > 1 });", "$.items.filter(x => x > 1);"],
-  // a mutator whose row names an immutable twin, arguments forwarded untouched
   ["$.items.sort();", "$.items = $.items.toSorted();"],
   ["$.items.sort(x => x.n);", "$.items = $.items.toSorted(x => x.n);"],
   ["$.items.reverse();", "$.items = $.items.toReversed();"],
   ["$.items.splice(1, 2);", "$.items = $.items.toSpliced(1, 2);"],
   ["$.items.splice(1, 2, 7, 8);", "$.items = $.items.toSpliced(1, 2, 7, 8);"],
   ["$.a.b.sort();", "$.a.b = $.a.b.toSorted();"],
-  // a mutator whose immutable spelling is a shape, not a name
   ["$.items.push(9);", "$.items = [...$.items, 9];"],
   ["$.items.push(9, 10);", "$.items = [...$.items, 9, 10];"],
   ["$.items.unshift(0);", "$.items = [0, ...$.items];"],
   ["$.items.unshift(0, 1);", "$.items = [0, 1, ...$.items];"],
-  // the same rewrite reached through the other two statement spellings
   ["$.a = 1; $.items.sort();", "$.a = 1; $.items = $.items.toSorted();"],
   ["[$match($.x > 1), $.items.sort()]", "[$match($.x > 1), $.items = $.items.toSorted()]"],
-  // an iteratee shorthand is the shortest sugar there is: a spelling of an arrow
   ['$.items.map("name")', "$.items.map(x => x.name)"],
   ['$.items.map("a.b")', "$.items.map(x => x.a.b)"],
   ["$.items.filter({ active: true })", "$.items.filter(x => x.active === true)"],
   ["$.items.filter({ a: 1, b: 2, c: 3 })", "$.items.filter(x => x.a === 1 && x.b === 2 && x.c === 3)"],
   ['$.items.filter({ "a.b": 1 })', "$.items.filter(x => x.a.b === 1)"],
-  // lodash's `_.matches` is a PARTIAL deep match: nested objects are paths, arrays are subsets
   ["$.items.filter({ a: { b: { c: 3 } }, e: 1 })", "$.items.filter(x => x.a.b.c === 3 && x.e === 1)"],
   ["$.items.filter({ qty: { $gt: 5 } })", "$.items.filter(x => x.qty.$gt === 5)"],
   ['$.items.filter({ tags: ["a", "b"] })', '$.items.filter(x => x.tags.has("a") && x.tags.has("b"))'],
@@ -85,7 +59,6 @@ const EQUIVALENT: [string, string][] = [
   ['$$ = $$.groupBy("k");', "$$ = $$.groupBy(x => x.k);"],
 ];
 
-/** The one statement of a program, or the program when it is not a `;` run. */
 const only = (node: unknown): { type: string } & Record<string, unknown> => {
   const n = node as { type: string; stmts?: unknown[] } & Record<string, unknown>;
   return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
@@ -105,7 +78,6 @@ describe("compiler/passes/desugar — a sugar becomes the source it means", () =
 });
 
 describe("compiler/passes/desugar — a compound write on a field is its '=' form", () => {
-  // The parser refuses the same operators on `$` and `$$` (see compiler-parse.test.ts).
   it("still allows the same operators on a field of the document", () => {
     expect(shape("$.n += 1;")).toBe(shape("$.n = $.n + 1;"));
     expect(shape("$.n++;")).toBe(shape("$.n = $.n + 1;"));
@@ -114,9 +86,7 @@ describe("compiler/passes/desugar — a compound write on a field is its '=' for
 
 describe("compiler/passes/desugar — the driver", () => {
   it("stops as soon as a round changes nothing", () => {
-    // One round to rewrite, one to observe that nothing more fires.
     expect(desugarVerbose(parse("$.a += 1;")).rounds).toBe(2);
-    // Nothing to do at all.
     expect(desugarVerbose(parse("$.a = 1;")).rounds).toBe(1);
   });
 
@@ -125,7 +95,6 @@ describe("compiler/passes/desugar — the driver", () => {
   });
 
   it("reaches a fixpoint on every input in the equivalence table", () => {
-    // A fixpoint is a tree that one more round leaves unchanged.
     for (const [sugar] of EQUIVALENT) {
       const settled = desugarVerbose(parse(sugar)).program;
       expect(desugarVerbose(settled).rounds, sugar).toBe(1);
@@ -146,7 +115,6 @@ describe("compiler/passes/desugar — the walker cannot skip a node type", () =>
 });
 
 describe("compiler/passes/desugar — a field path is ONE node", () => {
-  /** The path a source spells, or the node type when it did not become one. */
   const pathOf = (src: string): string => {
     const node = desugar(parse(src)) as { type: string; path?: string };
     return node.type === "FieldRef" ? (node.path as string) : node.type;
@@ -155,14 +123,11 @@ describe("compiler/passes/desugar — a field path is ONE node", () => {
   it("folds a dotted read into a single FieldRef", () => {
     expect(pathOf("$.a.b")).toBe("a.b");
     expect(pathOf("$.a.b.c.d")).toBe("a.b.c.d");
-    // `?.` and `.` are the same path in MQL: a missing prefix yields missing.
     expect(pathOf("$.a?.b")).toBe("a.b");
-    // A method NAME with no call behind it is an ordinary field.
     expect(pathOf("$.a.map")).toBe("a.map");
   });
 
   it("folds `.length` as a field, because every computed value is a call", () => {
-    // `length` with no call behind it is the field named `length`; `.length()` is the call.
     expect(pathOf("$.a.length")).toBe("a.length");
     expect(pathOf("$.a.length.b")).toBe("a.length.b");
     expect(pathOf("$.a.length()")).toBe("MethodCall");
@@ -176,14 +141,12 @@ describe("compiler/passes/desugar — a field path is ONE node", () => {
 });
 
 describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement", () => {
-  /** What the program became, named closely enough to tell a write from a call. */
   const became = (src: string): string => {
     const t = only(desugar(parse(src))) as { type: string; ops?: { value: { type: string } }[] };
     return t.type === "UpdateFilter" ? `write(${t.ops?.[0].value.type})` : t.type;
   };
 
   it("declines a mutator in every position that is not a statement", () => {
-    // The row's own refusal has to survive to phase 5 to be seen at all.
     expect(became("$.a = $.items.sort()")).toBe("write(MethodCall)");
     expect(became("$.a = [1, $.items.push(2)]")).toBe("write(ArrayLiteral)");
   });
@@ -199,9 +162,6 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
   });
 
   it("writes a mutator with no same-argument twin through the form its row states", () => {
-    // `.toSpliced(-1, 1)` computes what `.pop()` does, but from arguments the
-    // caller never wrote. So the row states the write form instead, and the
-    // form spreads the receiver to prove it an array.
     expect(became("$.items.pop();")).toBe("write(MethodCall)");
     expect(became("$.items.shift();")).toBe("write(MethodCall)");
     expect(became("$.items.fill(0);")).toBe("write(MethodCall)");
@@ -211,7 +171,6 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
 });
 
 describe("compiler/passes/position — the position each node stands in", () => {
-  /** Every node, tagged with the position that reached it. */
   const positions = (src: string): string[] => {
     const seen: string[] = [];
     mapTreeIn(parse(src), STATEMENT, edge, (node, where) => {
@@ -230,7 +189,6 @@ describe("compiler/passes/position — the position each node stands in", () => 
     expect(at("$.items.sort()", "statement")).toContain("MethodCall.sort");
     expect(at("$.a = 1; $.items.sort();", "statement")).toContain("MethodCall.sort");
     expect(at("[$match($.x > 1), $.items.sort()]", "statement")).toContain("MethodCall.sort");
-    // The sub-pipeline slot comes from the stage's own `subPipelineFields`.
     expect(at('$lookup({ from: "x", pipeline: [$.items.sort()], as: "y" });', "statement")).toContain(
       "MethodCall.sort",
     );
@@ -240,7 +198,6 @@ describe("compiler/passes/position — the position each node stands in", () => 
   it("finds no statement where the same shape is a value", () => {
     expect(at("$.a = $.items.sort()", "statement")).not.toContain("MethodCall.sort");
     expect(at("$.a = [1, $.items.push(2)]", "statement")).not.toContain("MethodCall.push");
-    // A key of a stage body that holds no pipeline stays a value.
     expect(at('$lookup({ from: "x", localField: $.a.sort(), as: "y" });', "statement")).not.toContain(
       "MethodCall.sort",
     );
@@ -248,15 +205,11 @@ describe("compiler/passes/position — the position each node stands in", () => 
 
   it("carries the stream down every link of a `$$ = …` chain, but not into a callback", () => {
     const src = "$$ = $$.filter(d => d.x).map(d => d.y);";
-    // Children first — the walk is bottom-up, so the chain reads inside out.
     expect(at(src, "stream")).toEqual(["StreamRef", "MethodCall.filter", "MethodCall.map"]);
-    // The lambda reads one document, so it is an ordinary expression.
     expect(at(src, "value")).toContain("Lambda");
   });
 
   it("carries the stream through a foreign source, whose `$$$` is not itself one", () => {
-    // `$$$` is a scope, not a source: only `$$$.<coll>` names a stream. So the
-    // bare `DatabaseRef` belongs to its own row, which refuses it.
     expect(at("$$ = $$$.orders.filter(d => d.x);", "stream")).toEqual(["MemberAccess.orders", "MethodCall.filter"]);
   });
 
@@ -265,16 +218,12 @@ describe("compiler/passes/position — the position each node stands in", () => 
     expect(at("$.a = 1;", "target")).toEqual(["FieldRef"]);
     expect(at("delete $.a;", "target")).toEqual(["FieldRef"]);
     expect(at("$.a = 1;", "value")).toEqual(["NumberLiteral"]);
-    // The write itself is a statement, not a value: the run groups writes into
-    // one stage, it does not turn them into expressions. The trailing `;` keeps
-    // the `Pipeline` wrapper, because that `;` is what says pipeline.
     expect(at("$.a = 1;", "statement")).toEqual(["AssignExpr", "UpdateFilter", "Pipeline"]);
     expect(at("delete $.a;", "statement")).toEqual(["DeleteStmt", "UpdateFilter", "Pipeline"]);
   });
 });
 
 describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW says so", () => {
-  /** What the first (or given) argument became. */
   const arg = (src: string, slot = 0): string => {
     const t = only(desugar(parse(src))) as {
       type: string;
@@ -293,8 +242,6 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
   });
 
   it("leaves a sort SPEC alone, which wears the same three spellings", () => {
-    // `{f: 1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`.
-    // `["a", "b"]` is a path/value pair to one and two sort keys to the other.
     expect(arg('$.items.toSorted("name")')).toBe("StringLiteral");
     expect(arg("$.items.toSorted({ rank: 1 })")).toBe("ObjectLiteral");
     expect(arg('$.items.toSorted(["a", "b"])')).toBe("ArrayLiteral");
@@ -309,32 +256,25 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
   it("leaves a slot the row declares arrow-only alone", () => {
     expect(arg('$.o.mapValues("f")')).toBe("StringLiteral");
     expect(arg("$.items.reduce((a, v) => a + v, 0)")).toBe("Lambda");
-    // `Object.groupBy(items, discriminator)` puts the array FIRST, so a
-    // layout keyed by position, not by receiver, would rewrite the wrong slot.
     expect(arg('Object.groupBy($.items, ["a", 1])')).toBe("FieldRef");
     expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");
   });
 
   it("applies a bare callable global, and leaves a binding alone", () => {
-    // Which slots take a bare callable is the row's decision (`iterateeSlots`); the
-    // rewrite only knows a callable global from everything else.
     expect(arg("$.items.map(Number)")).toBe("Lambda");
     expect(arg("$.items.map(Math.floor)")).toBe("Lambda");
     expect(arg("$.items.map(Date)")).toBe("Lambda");
     expect(arg("$.items.map(Decimal128)")).toBe("Lambda");
-    // `Set` is a global too; its row refuses the call that the rewrite makes.
     expect(arg("$.items.map(Set)")).toBe("Lambda");
     expect(arg("$.items.map(f)")).toBe("Ident");
   });
 
   it("does not capture a name the rewritten value mentions", () => {
     expect(shape("let x = 1; $.items.filter({ a: x });")).toBe(shape("let x = 1; $.items.filter(x2 => x2.a === x);"));
-    // Nothing claims `x`, so the ordinary case keeps the plain name.
     expect(shape('$.items.filter({ a: "x" });')).toBe(shape('$.items.filter(x => x.a === "x");'));
   });
 
   it("declines a matcher whose key is not written out", () => {
-    // A computed key or a spread is not a matcher: there is no path to compare.
     expect(arg("$.items.filter({ [$.k]: 1 })")).toBe("ObjectLiteral");
     expect(arg("$.items.filter({ ...$.spec })")).toBe("ObjectLiteral");
     expect(arg("$.items.filter({})")).toBe("ObjectLiteral");

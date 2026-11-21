@@ -1,7 +1,3 @@
-// Tests for the `$$.push(...)` → `$unionWith` lowering.
-// See docs/specs/union-stage.md for the design and docs/LANGUAGE.md for
-// the user-facing reference.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { truthy } from "./truthy.ts";
@@ -106,10 +102,6 @@ describe("$$.push — inline document(s)", () => {
 });
 
 describe("$$.push / $$ = [ … ] — a written document holds only what the program spells", () => {
-  // `$documents` runs inside the `$unionWith` with NO input document, and it is the FIRST stage of that body.
-  // So nothing there can read the outer document, and nothing can stand ahead of it to produce a value. Both
-  // spellings of the list refuse alike. `$$ = [ … ]` must lower its documents INSIDE the boundary. Outside it,
-  // the emitted field path makes the server answer `{}`, in silence.
   it("refuses an outer-document read, in either spelling", () => {
     const outer = /'\$unionWith' has no 'let': its body cannot read the outer document/;
     expect(() => jsmql("$$.push({ n: $.a });")).toThrow(outer);
@@ -123,9 +115,7 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
     expect(() => jsmql('$$.push({ n: $$$.p.find({ _id: "x" }).n });')).toThrow(made);
     expect(() => jsmql('$$.concat([{ n: $$$.p.find({ _id: "x" }).n }]);')).toThrow(made);
     expect(() => jsmql('$$ = [{ n: $$$.p.find({ _id: "x" }).n }];')).toThrow(made);
-    // the message names the spelling the developer wrote
     expect(() => jsmql('$$.concat([{ n: $$$.p.find({ _id: "x" }).n }]);')).toThrow(/'\.concat\(\[\{ … \}\]\)'/);
-    // and the way out it names does compile: append the collection's own documents
     expect(jsmql('$$.push($$$.p.find({ _id: "x" }));')).toEqual([
       { $unionWith: { coll: "p", pipeline: [{ $match: { _id: "x" } }, { $limit: 1 }] } },
     ]);
@@ -140,10 +130,6 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
 });
 
 describe("$$.push — cross-database through $$$$ is rejected", () => {
-  // Both spread sources resolve through `lookupOf` (src/compiler/emit/join.ts), whose
-  // chain base refuses a `$$$$.<db>.` root: the `.filter`/`.find` form carries a
-  // sub-pipeline, the bare collection carries none. Each gets a test so a refactor
-  // that bypasses the guard on either path is caught.
   it("a cross-DB .filter() spread source throws (sub-pipeline form)", () => {
     expect(() => jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toThrow(
       "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
@@ -213,9 +199,6 @@ describe("$$.push — error cases", () => {
   });
 
   it("an unrecognised method on $$ → registry error that still names .push", () => {
-    // A name nobody recognises takes the generic path, which lists what IS chainable
-    // and names both append routes. A method jsmql KNOWS but cannot lower on a stream
-    // (`.pop`, `.flat`, …) gets its own reason instead — see STREAM_UNSUPPORTED.
     expect(() => jsmql('$$.nosuchmethod("x")')).toThrow(
       "'.nosuchmethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
     );
@@ -235,7 +218,6 @@ describe("$$.push — error cases", () => {
   });
 
   it("push inside a sub-pipeline ([...] form) → a $unionWith stage in that sub-pipeline", () => {
-    // Construct a sub-pipeline through $facet's `*` slot — every value is a pipeline.
     expect(jsmql("[{ $facet: { archive: [$$.push(...$$$.archive)] } }]")).toEqual([
       { $facet: { archive: [{ $unionWith: "archive" }] } },
     ]);
@@ -269,21 +251,14 @@ describe("$$.push — error positions", () => {
       jsmql(src);
       throw new Error("expected throw");
     } catch (e) {
-      // pos should land on the inner MethodCall, which starts at `$$$.archive.find`
       const err = e as { pos: number };
       expect(typeof err.pos).toBe("number");
-      // The .find call's pos is at the start of the `$$$.archive.find(...)` expr
-      // (DatabaseRef position). Roughly past the `$$.push(...`. We do not pin
-      // the exact byte; just that it points into the arg, not at index 0.
       expect(err.pos).toBeGreaterThanOrEqual(8);
     }
   });
 });
 
-// An error must never recommend syntax that does not work at the position the
-// user writes in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
-  // A chain on the stream takes '.push' (the union road), so a near-miss of it names '.push'.
   it("names '.push()' for a near-miss of it on the stream", () => {
     expect(() => jsmql("$$ = $$.pushh({ a: 1 });")).toThrow(
       "'.pushh()' is not a method of the stream '$$'. Did you mean '.push()'? A stage is a link too: '$$.$match(…)'.",
@@ -301,19 +276,13 @@ describe("chain errors only ever name syntax that works here", () => {
     expect(jsmql("$$ = $$.concat({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
   });
 
-  // A `$facet` branch has no statement position, so the compiler must not offer the statement form there. But
-  // it must still offer it where it does work.
   it("offers the statement form only where a statement position exists", () => {
-    // A facet branch is the one container that bans the stage a written list makes, at any depth. MEASURED: the
-    // server refuses `$documents` inside a `$unionWith` inside a `$facet`. A branch that appends a COLLECTION
-    // is fine.
     expect(() => jsmql("$ = { k: $$.push({ a: 1 }) };")).toThrow(
       "'.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere inside a '$facet' — however deeply it is nested. Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
     );
     expect(jsmql("$ = { k: $$.push(...$$$.archive) };")).toEqual([{ $facet: { k: [{ $unionWith: "archive" }] } }]);
   });
 
-  // The compiler must not answer a near-miss with `.push`, which is not a chain method either.
   it("suggests a real chain method for a near-miss", () => {
     expect(() => jsmql("$$ = $$.dropp();")).toThrow(
       "'.dropp()' is not a method of the stream '$$'. Did you mean '.drop()'? A stage is a link too: '$$.$match(…)'.",
@@ -322,8 +291,6 @@ describe("chain errors only ever name syntax that works here", () => {
 });
 
 describe("$$.push detection reaches every lambda body form", () => {
-  // The gate walks the whole tree, so a `$$.push(...)` buried in any callback
-  // body shape gets the purpose-built rejection, not a downstream one.
   const cases: [string, string][] = [
     ["expression body", "$.x = $.a.map(d => $$.push({n:d}));"],
     ["block body with a const", "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });"],

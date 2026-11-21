@@ -1,40 +1,5 @@
-// The registry — pure MQL shape builders the method cells share.
-//
-// Every function here takes LOWERED operands, or a source node it only reads, and
-// answers a document. None of them reads a registry row or a compiler service, so
-// the registry stays a leaf. A builder that can fold a constant folds it:
-// `strLenOf("ab")` is 2, and `foldedSubtract(5, 2)` is 3. A constant that stays a
-// constant is what lets a later `$substrCP` take a plain number.
-//
-// See docs/specs/emit-pass.md § The method cells for the cells that use these.
-
 import type { Expr } from "./ast.ts";
 
-// ── a field name the DEVELOPER chose ─────────────────────────────────────────
-//
-// MongoDB reserves no field names, so `__proto__` is ordinary data. It is also the
-// one name that JavaScript refuses to store the ordinary way. Four operations go
-// wrong, and only the first one writes:
-//
-//   out[name] = v      writes the PROTOTYPE slot and makes no own property, so the
-//                      field disappears from the emitted document
-//   out[name]          reads a method off `Object.prototype` for "constructor",
-//                      "toString", "valueOf", … so an accumulator sees a value it
-//                      never stored
-//   name in out        answers true for every one of those names, so a guard
-//                      against duplicates refuses a program that has no duplicate
-//   seen[name] = true  the same, when a plain object stands in for a set
-//
-// `setKey` answers the first one. The other three have no helper, because the
-// correct fix is to use no object at all. A `Map` and a `Set` hold exactly what
-// the caller puts in them.
-
-/**
- * `out[name] = value`, which makes an OWN property even when `name` is `__proto__`.
- * `Object.defineProperty` is the escape, because it never reads the prototype.
- * (`Object.fromEntries` and object spread are already safe. A site that uses
- * either one needs no change.)
- */
 export function setKey<T>(out: Record<string, T>, name: string, value: T): Record<string, T> {
   if (name === "__proto__") {
     Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true });
@@ -44,46 +9,27 @@ export function setKey<T>(out: Record<string, T>, name: string, value: T): Recor
   return out;
 }
 
-/**
- * `{ $cond: [if, then, else] }` — the one spelling of a condition, in the short array
- * form. A test the compiler settled to a constant picks its branch here, so a `? :`
- * whose test cannot fail emits the branch alone.
- */
 export const cond = (ifExpr: unknown, thenExpr: unknown, elseExpr: unknown): unknown => {
   if (ifExpr === true) return thenExpr;
   if (ifExpr === false) return elseExpr;
   return { $cond: [ifExpr, thenExpr, elseExpr] };
 };
 
-/**
- * Is the value missing or null? Null sorts below every other value but `MinKey`, so one
- * comparison covers both. MEASURED: `{ $lte: [v, null] }` is true for a missing `v` and for
- * `null`, and false for `0`, `""`, `false`, `[]` and `{}`.
- */
 export const isNullish = (value: unknown): Record<string, unknown> => ({ $lte: [value, null] });
 
-/** Is the value there and not null? The negation of `isNullish`, measured on the same values. */
 export const isNotNullish = (value: unknown): Record<string, unknown> => ({ $gt: [value, null] });
 
-/** Is `value` already `{ $ifNull: [ … ] }`? A second wrap says nothing more. */
 export const isIfNullWrapped = (value: unknown): boolean =>
   typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
 
-/** A string operand that reads as "" when it is missing or null, so a string operator does not fail on it. */
 export const coerceStringBinding = (v: unknown): unknown => (isIfNullWrapped(v) ? v : { $ifNull: [v, ""] });
 
-/** `Math.max(0, n)`. It folds for a constant. */
 export const clampNonNegative = (value: unknown): unknown =>
   typeof value === "number" ? Math.max(0, value) : { $max: [0, value] };
 
-/** `a - b`. It folds for two constants. */
 export const foldedSubtract = (a: unknown, b: unknown): unknown =>
   typeof a === "number" && typeof b === "number" ? a - b : { $subtract: [a, b] };
 
-/**
- * The text a lowered value holds as a constant, or null. A plain string that starts
- * with `$` is a field path. `{ $literal: "…" }` is text, whatever it starts with.
- */
 export function constantText(value: unknown): string | null {
   if (typeof value === "string") return value.startsWith("$") ? null : value;
   if (typeof value === "object" && value !== null && Object.keys(value).length === 1) {
@@ -93,20 +39,17 @@ export function constantText(value: unknown): string | null {
   return null;
 }
 
-/** Is the lowered value ONE character, as a literal? A pad of one character repeats cleanly. */
 export const isSingleCodePointLiteral = (value: unknown): boolean => {
   const text = constantText(value);
   return text !== null && [...text].length === 1;
 };
 
-/** The regex options MongoDB knows, from JavaScript's flags. `g` and `y` have no MongoDB meaning. */
 export function mongoRegexOptions(jsFlags: string): string {
   let out = "";
   for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
   return out;
 }
 
-/** The integer a source node spells as a literal — `3`, `-3` — or null when the node is not one. */
 export function literalIndexValue(node: Expr): number | null {
   if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
   if (
@@ -120,42 +63,28 @@ export function literalIndexValue(node: Expr): number | null {
   return null;
 }
 
-/** An index with a clamp at 0. A literal folds, and a runtime value takes `$max`. */
 export const clampNonNegativeIndex = (node: Expr, lowered: unknown): unknown => {
   const lit = literalIndexValue(node);
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
 
-/**
- * The length of a string value. A literal counts its code points. A value takes
- * `$strLenCP` over "" for a missing one, because `$strLenCP` refuses null. The exception is a
- * caller that knows the value is there (`present`), as the body of a null test does.
- */
 export function strLenOf(value: unknown, present = false): unknown {
   const text = constantText(value);
   if (text !== null) return [...text].length;
   return { $strLenCP: present || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 
-/** A JavaScript slice index on a string. A negative index counts from the end, with a clamp at 0. */
 export function normaliseSliceIndex(node: Expr, lowered: unknown, recv: unknown, present = false): unknown {
   const lit = literalIndexValue(node);
   if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present), -lit));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present)] }), lowered);
 }
 
-/** A negative literal's magnitude — `-3` → 3 — or null. */
 export function negativeLiteralValue(node: Expr): number | null {
   const lit = literalIndexValue(node);
   return lit !== null && lit < 0 ? -lit : null;
 }
 
-/**
- * The string operand of `$substrCP`. That operator reads a null string as `""`, so the
- * dot rule's `{ $ifNull: [s, ""] }` (HR5) is not necessary there. This function removes it.
- * A `$strLenCP` beside it keeps the wrap, because `$strLenCP` stops the command on null.
- * MEASURED: `{ $substrCP: [null, 1, 2] }` is "".
- */
 export const substrOperand = (s: unknown): unknown => {
   const operands =
     typeof s === "object" && s !== null && !Array.isArray(s) ? (s as { $ifNull?: unknown }).$ifNull : undefined;
@@ -164,25 +93,20 @@ export const substrOperand = (s: unknown): unknown => {
     : s;
 };
 
-/** Everything from `from` on. */
 export const strTail = (s: unknown, from: number, present = false): unknown => ({
   $substrCP: [substrOperand(s), from, strLenOf(s, present)],
 });
 
-/** lodash `capitalize`: first character up, the rest down. */
 export const capitalizeExpr = (s: unknown, present = false): unknown => ({
   $concat: [{ $toUpper: { $substrCP: [substrOperand(s), 0, 1] } }, { $toLower: strTail(s, 1, present) }],
 });
 
-/** lodash `upperFirst` / `lowerFirst`: it changes the first character and keeps the rest. */
 export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower", present = false): unknown => ({
   $concat: [{ [op]: { $substrCP: [substrOperand(s), 0, 1] } }, strTail(s, 1, present)],
 });
 
-/** lodash's word boundary: a capitalised word, an acronym, a lone capital, a number. */
 export const ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 
-/** The five characters that lodash `escape` replaces, in the order of lodash. */
 export const HTML_ESCAPE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ["&", "&amp;"],
   ["<", "&lt;"],
@@ -191,16 +115,13 @@ export const HTML_ESCAPE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ["'", "&#39;"],
 ];
 
-/** A variable that the compiler mints for a body: its `as` name and the `$$name` that reads it. */
 export type Minted = { as: string; ref: string };
 
-/** lodash `words`: every ASCII word of the string, as an array. */
 export function wordsExpr(s: unknown, mint: (hint: string) => Minted): unknown {
   const w = mint("word");
   return { $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: w.as, in: `${w.ref}.match` } };
 }
 
-/** The words with `sep` between them. `transform`, when the caller gives one, changes each word first. */
 export function joinWords(
   words: unknown,
   sep: string,
@@ -218,19 +139,12 @@ export function joinWords(
   };
 }
 
-/** lodash `escape`: it replaces the five HTML characters, with one `$replaceAll` for each. */
 export function escapeHtmlExpr(s: unknown): unknown {
   let e: unknown = s;
   for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
 
-/**
- * The body that a string operator with a regex reads. It holds the pattern and the
- * options of a literal, or a value. The compiler lowers the value only when it is
- * not a literal, because a regex literal has no value of its own outside these
- * operators.
- */
 export function regexBody(recv: unknown, pattern: Expr, lower: () => unknown): Record<string, unknown> {
   if (pattern.type !== "RegexLiteral") return { input: recv, regex: lower() };
   const body: Record<string, unknown> = { input: recv, regex: pattern.pattern };
@@ -239,11 +153,7 @@ export function regexBody(recv: unknown, pattern: Expr, lower: () => unknown): R
   return body;
 }
 
-// ── dates ────────────────────────────────────────────────────────────────────
-
-/** The calendar parts `$dateFromParts` takes, in its order. */
 export const DATE_PARTS_CALENDAR = ["year", "month", "day", "hour", "minute", "second", "millisecond"] as const;
-/** The ISO-week parts, in its order. */
 export const DATE_PARTS_ISO = [
   "isoWeekYear",
   "isoWeek",
@@ -253,16 +163,9 @@ export const DATE_PARTS_ISO = [
   "second",
   "millisecond",
 ] as const;
-/** The parts that name a family. Any one of these decides which `$dateFromParts` spelling the emitter builds. */
 export const DATE_PARTS_ISO_MARKERS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"] as const;
-/** The trailing options a date method takes, in MongoDB's key order. */
 export const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"] as const;
 
-/**
- * The trailing options of a date method, as the keys the operator takes. A bare
- * string is the timezone, and a document names each option. The rule on the row
- * checks the keys and their types first, so this function only reads.
- */
 export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown): Record<string, unknown> {
   if (arg === undefined) return {};
   if (arg.type !== "ObjectLiteral") return { timezone: value(arg) };
@@ -277,75 +180,33 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
   return out;
 }
 
-// ── sorts ────────────────────────────────────────────────────────────────────
-
-/**
- * The most keys a sort spec may name where the server sorts documents. MEASURED on
- * :27018: the server runs 32 keys and refuses 33 keys in each of these slots:
- *   { $sort: {…} }                                   the stage
- *   { $setWindowFields: { sortBy: {…}, output } }    the window order
- *   { $group: { t: { $top: { output, sortBy } } } }  also $topN, $bottom, $bottomN, and the window form
- * Two slots take more, so they state no limit: `$sortArray.sortBy` and the `$sort`
- * modifier of an update `$push` both run with 33 keys.
- */
 export const SORT_KEY_LIMIT = 32;
 
-// ── arrays ───────────────────────────────────────────────────────────────────
-
-/** A literal array as ONE operand. The server reads `{ $size: [1, 2] }` as two operands, and `{ $size: [[1, 2]] }` as one. */
 export const singleArrayArg = (operand: unknown): unknown => (Array.isArray(operand) ? [operand] : operand);
-/**
- * The size of an array. An array LITERAL holds one element per entry, whatever each
- * entry holds, so it needs no count at run time: `["$a", "$b"]` is 2. MEASURED:
- * `{ $size: [["$nope", "$x"]] }` → 2, because a missing field is still an element.
- */
 export const sizeOf = (a: unknown): unknown => (Array.isArray(a) ? a.length : { $size: a });
 export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
 export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
 export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
 
-/**
- * A JavaScript aggregate in an ACCUMULATOR slot — a `$group` output, a
- * `$setWindowFields.output` entry. The receiver is the accumulator's operand:
- * `$.a.sum()` is `{ $sum: "$a" }`. A receiver that renders as an array LITERAL holds
- * one array on each document. The slot reads `{ $sum: [ … ] }` as an operand LIST.
- * MEASURED: a `$group` slot refuses it, because the accumulator takes one operand
- * there. A window slot answers 0. So `perDocument` reduces the array on each document
- * first, as `.sumBy` does. The slot then accumulates that value:
- *   [$.n, $.m].sum()     → { $sum: { $sum: ["$n", "$m"] } }          → Σ (n + m)
- *   [$.n, $.m].first()   → { $first: { $first: [["$n", "$m"]] } }    → n of the first document
- */
 export const slotAggregate = (
   op: string,
   recv: unknown,
   perDocument: (a: unknown) => unknown,
 ): Record<string, unknown> => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 
-/** `0 - n`. It folds for a constant. */
 export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });
 
-/**
- * A computed key (`{ [k]: v }`) as the string that `$arrayToObject` takes. JavaScript
- * turns a key into a string (`{ [7]: 1 }` is `{ "7": 1 }`), and the server refuses a key
- * of any other kind. A key that is null or missing becomes `""`, the name that a read of
- * it (`o[k]`) uses. MEASURED: the server refuses an int key and a null key.
- */
 export const propertyKeyExpr = (key: unknown): unknown => ({ $toString: { $ifNull: [key, ""] } });
 
-/** A group key as the string that a document key must be. A missing key becomes `"null"`. */
 export const stringKeyExpr = (value: unknown): unknown => ({ $ifNull: [{ $toString: value }, "null"] });
 
-/** An iteratee over an array: the element variable, and the body that reads it. */
 export type Iter = { as: string; ref: string; in: unknown };
 
-/** The distinct keys that an iteratee gives over the array, as strings. */
 export const distinctKeysExpr = (arr: unknown, it: Iter): unknown => ({
   $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.in) } }, []],
 });
-/** Every key that an iteratee gives over the array. */
 export const iterateeKeys = (arr: unknown, it: Iter): unknown => ({ $map: { input: arr, as: it.as, in: it.in } });
 
-/** lodash `uniqBy`: the first element per key, in order. One `$reduce` carries the keys it saw. */
 export function uniqByReduce(input: unknown, it: Iter, mint: (hint: string) => Minted): unknown {
   const key = mint("key");
   const keyExpr = it.in === it.ref ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.in } };
@@ -377,7 +238,6 @@ export function uniqByReduce(input: unknown, it: Iter, mint: (hint: string) => M
   };
 }
 
-/** lodash `takeWhile` / `dropWhile`: the prefix over which a predicate holds. It keeps or drops that prefix. */
 export function takeDropWhile(arrExpr: unknown, pred: Iter, drop: boolean, mint: (hint: string) => Minted): unknown {
   const arr = mint("arr");
   const fi = mint("fi");
@@ -393,7 +253,6 @@ export function takeDropWhile(arrExpr: unknown, pred: Iter, drop: boolean, mint:
   };
 }
 
-/** A JavaScript slice index on an array of `size`. A negative index counts from the end, and both ends have a clamp. */
 export function resolveSliceIndex(node: Expr, lowered: unknown, size: unknown): unknown {
   const lit = literalIndexValue(node);
   if (lit !== null) {
@@ -404,7 +263,6 @@ export function resolveSliceIndex(node: Expr, lowered: unknown, size: unknown): 
   return { $cond: [{ $lt: [lowered, 0] }, { $max: [{ $add: [lowered, size] }, 0] }, { $min: [lowered, size] }] };
 }
 
-/** `arr.slice(start[, end])` on an array value. */
 export function sliceArray(
   recv: unknown,
   args: readonly Expr[],
@@ -461,25 +319,6 @@ export function sliceArray(
   };
 }
 
-/**
- * `arr.join(sep)`: every element as a string, with `sep` between them. An empty
- * array gives "".
- *
- * JavaScript does two things that the obvious `$reduce` does not do.
- *
- * The accumulator starts at `null`, not at `""`. `""` cannot tell "no element so
- * far" from "the result so far is empty". With `""` as the marker, an array whose
- * FIRST element is the empty string loses its separator. MEASURED:
- * `["", "a"].join(",")` then gives "a", where JavaScript gives ",a".
- *
- * Also, the join writes a `null` or missing element as "" and does not drop it —
- * `[1, null, 2].join(",")` is "1,,2". `$toString` of null answers null, and `$concat`
- * with a null operand answers null. Without the test the whole join answers null.
- *
- * The reduce keeps its `null` for an empty array, and `$ifNull` turns that into the
- * "" that JavaScript gives. That reading also covers a null or missing RECEIVER, the
- * empty-array neutral that the rest of the language uses.
- */
 export const joinedWith = (recv: unknown, separator: unknown): unknown => {
   const piece = cond(isNullish("$$this"), "", { $toString: "$$this" });
   return {
@@ -496,14 +335,6 @@ export const joinedWith = (recv: unknown, separator: unknown): unknown => {
   };
 };
 
-// ── the JavaScript globals ───────────────────────────────────────────────────
-
-/**
- * `$dateFromParts` from the positional `(year, month, day, hour, minute, second,
- * ms)` of `new Date(…)` and `Date.UTC(…)`. JavaScript counts months from 0 and
- * MongoDB from 1, so the month moves up by one. The emitter folds that step when
- * the month is a literal.
- */
 export function dateFromParts(parts: readonly unknown[], timezone: string | null): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   DATE_PARTS_CALENDAR.forEach((key, i) => {
@@ -515,60 +346,34 @@ export function dateFromParts(parts: readonly unknown[], timezone: string | null
   return { $dateFromParts: body };
 }
 
-/** The `[index, element]` pairs of an array, for a lowering that needs the position of each element. */
 export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
   $zip: { inputs: [{ $range: [0, sizeOf(arr)] }, arr] },
 });
 
-/**
- * `.ceil(p)` / `.floor(p)` at a precision. Only `$round` takes a precision on the
- * server. So the lowering multiplies the value by 10^p, rounds it to a whole number,
- * and divides it back. MEASURED on 1.234: ceil(2) → 1.24, floor(2) → 1.23, and
- * ceil(2) of -1.234 → -1.23. Each one is the answer of JavaScript.
- */
 export const atPrecision = (op: "$ceil" | "$floor", value: unknown, precision: unknown): unknown => {
-  // A constant precision folds: MEASURED, `{ $pow: [10, p] }` is `10 ** p` for -7 ≤ p ≤ 15.
   const scale = typeof precision === "number" ? 10 ** precision : { $pow: [10, precision] };
   return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
 };
 
-/** `.cbrt()` keeps the sign, because `$pow` of a negative base to a fractional exponent is NaN on the server. */
 export const cbrt = (v: unknown): Record<string, unknown> => ({
   $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, 1 / 3] }],
 });
 
-/** A number, and neither NaN nor an infinity. The test reads `$toString`, because the server holds NaN equal to itself. */
 export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
   $and: [{ $isNumber: v }, { $not: [{ $in: [{ $toString: v }, ["NaN", "Infinity", "-Infinity"]] }] }],
 });
 
-/**
- * A list of `[key, value]` pairs as a document. `$toString` renders the key,
- * because JavaScript reads `[[7, 1]]` as the object `{ "7": 1 }`, and
- * `$arrayToObject` refuses a non-string key outright. The `in` body reads `$$this`, the
- * default name of `$map`, because the body is this fixed text and holds no expression of
- * the developer's.
- * MEASURED: the server refuses a pair whose key is not a string.
- */
 export const pairsToObject = (pairs: unknown): unknown => ({
   $arrayToObject: {
     $map: { input: pairs, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] },
   },
 });
 
-/**
- * These objects keep the bare `$$ROOT` on purpose. They are the stages of a row that
- * returns each document unchanged (`.uniq()`). The document keeps every field,
- * `__jsmql` included. The compiler's check for a raw `$$ROOT` leaves these objects out.
- * See docs/specs/let-bindings.md § The whole document as a value.
- */
 const CARRIES_ROOT = new WeakSet<object>();
 
-/** Mark `o` as an object that keeps the bare `$$ROOT` on purpose. */
 export function carriesRoot<T extends object>(o: T): T {
   CARRIES_ROOT.add(o);
   return o;
 }
 
-/** Does `o` keep the bare `$$ROOT` on purpose? */
 export const isRootCarrier = (o: object): boolean => CARRIES_ROOT.has(o);

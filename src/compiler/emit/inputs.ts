@@ -1,12 +1,3 @@
-// Phase 5 — EMIT. The `In` record that a renderer receives. One function builds it
-// from an Env.
-//
-// A renderer never sees the Env. It receives its arguments, its receiver, and
-// SERVICES — `value`, `truth`, `iteratee`, `predicate`, `bind`, `hoist`, `slot`
-// — each closed over the Env the call stands in. Every field is required by
-// type, and there is exactly one constructor. So the compiler never gives a
-// renderer a record with a service missing.
-
 import { bsonConstant, bsonNullary, regexValue } from "../../bson.ts";
 import { constantOf, settled } from "../passes/evaluate.ts";
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth, Type } from "../../registry/vocabulary.ts";
@@ -51,12 +42,6 @@ import { truthOf } from "./mode.ts";
 import { indexedPairs, mongoRegexOptions, sizeOf } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
-/**
- * A sort by NAME reads each key off the documents, or off the elements. The compiler
- * refuses a key that the proof `t` shows gives no value, as it refuses a read of it.
- * A sort key keeps MongoDB's path through an array, as a query does: `{ "items.qty": 1 }` sorts by
- * an element's `qty`. `holder` names what `t` proves, for the message.
- */
 function readableSort<A extends SortAsk>(ask: A, t: Type, holder: string, pos: number): A {
   if (ask.kind !== "keys") return ask;
   for (const key of Object.keys(ask.spec)) {
@@ -69,29 +54,16 @@ function readableSort<A extends SortAsk>(ask: A, t: Type, holder: string, pos: n
   return ask;
 }
 
-/** The two readings of an expression, supplied by lower.ts. */
 export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: Expr, env: Env) => Truth };
 
-/** The Env under which the compiler lowers a child at property `key` of `node`. It is the answer of phase 4. */
 export const childEnv = (env: Env, node: object, key: string): Env => {
   const at = env.at(edge(node, key, env.site.where));
   const n = node as { type?: string; name?: string };
-  // An operator's arguments are INSIDE it. A fragment like `$case` or `$box` is valid only inside it.
   if (n.type === "OperatorCall" && key === "args") return at.inside(n.name ?? null);
-  // A document or a list keeps the operator it stands in: `$switch({ branches: [$case(…)] })`,
-  // `$regexMatch({ regex: /x/ })`. Every other node is JavaScript that lowers to MQL of its
-  // own. For example `===` is `$eq`, and a method is its operator. So a value below it is inside nothing.
   if (n.type === "ObjectLiteral" || n.type === "KeyValueEntry" || n.type === "ArrayLiteral") return at;
   return at.inside(null);
 };
 
-/**
- * `.keyBy(5)` means `x => x[5]`, and the elements must be able to hold index 5. An
- * array or a document can. A proof of another kind, or of an array of a fixed length
- * that ends before the index, refuses the call. An element of unknown kind passes.
- * `elements` holds one proof per position of a receiver of fixed length, else the one
- * proof of every element. See docs/specs/desugar-pass.md § The iteratee shorthands.
- */
 export function checkIndexHeld(node: Extract<Expr, { type: "IndexAccess" }>, elements: readonly Type[]): void {
   if (node.iteratee === undefined) return;
   const { method, slot } = node.iteratee;
@@ -107,25 +79,13 @@ export function checkIndexHeld(node: Extract<Expr, { type: "IndexAccess" }>, ele
   }
 }
 
-/** The proofs that `checkIndexHeld` reads off a receiver: one per position when its length is fixed. */
 const elementsOf = (recv: Type): readonly Type[] => recv.items ?? [flattenOnce(recv)];
 
-/**
- * A callback bound for a body. The one element parameter is a variable, and the
- * compiler lowers the body under it. Rows with a real renderer bind one parameter here.
- * An index or receiver parameter is a different lowering. No row that
- * reaches this constructor states one.
- */
 function callback(
   cb: Expr,
   env: Env,
   read: (body: Expr, e: Env) => unknown,
-  /**
-   * The refusal for an argument that is no arrow. A row that states its iteratee slots never reaches the
-   * internal error.
-   */
   refusal: () => CodegenError,
-  /** The receiver's proof. The parameter stays unproven; only the index shorthand reads it. */
   receiver: () => Type,
 ): { as: string; ref: string; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined) throw refusal();
@@ -137,7 +97,6 @@ function callback(
   return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
 }
 
-/** Does the arrow's body read its parameter `name`? */
 function readsParam(node: unknown, name: string): boolean {
   if (node === null || typeof node !== "object") return false;
   if (Array.isArray(node)) return node.some((n) => readsParam(n, name));
@@ -146,11 +105,6 @@ function readsParam(node: unknown, name: string): boolean {
   return Object.entries(n).some(([k, v]) => k !== "type" && readsParam(v, name));
 }
 
-/**
- * An ARRAY callback — `(x[, i[, arr]]) => …` — as what a `$map`/`$filter` takes.
- * The element is the parameter. An index READ makes the input the `[i, x]` pairs
- * of a `$zip`, and the array parameter is the receiver, which the compiler binds by name.
- */
 function arrayCallback(
   cb: Expr,
   recv: unknown,
@@ -158,26 +112,16 @@ function arrayCallback(
   env: Env,
   read: (body: Expr, e: Env) => unknown,
   name: string,
-  /** Is the input certainly there? The third parameter binds that same input, so it carries the same presence. */
   present = false,
 ): { input: unknown; as: string; ref: string; paired: boolean; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined) throw notAnArrowCallback(name, (cb as { pos: number }).pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  // What ONE element of the receiver is, where the registry can show it: a written
-  // list of strings, a `.split()`, a row whose `returns` states its element. Without it a
-  // string key read as `$.m[k]` would take the runtime array/object dispatch. Its
-  // array arm hands `$arrayElemAt` a string, and the server refuses that (MEASURED).
-  // The element's own presence holds, not the array's. `$map` over null never runs
-  // the body. An element that the row proves present (`.keys()`, `.split()`) is never null.
   const recvType = recvNode === undefined ? ANY : typeOf(recvNode, env);
   const element = flattenOnce(recvType);
   if (cb.body.type === "IndexAccess" && cb.body.iteratee !== undefined) checkIndexHeld(cb.body, elementsOf(recvType));
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
-    // A callback that names no parameter still needs a binder. The binder must be a name
-    // that the program cannot spell. `() => v` bound as `_` collides with a developer's
-    // own `_`, which encodes to the same MongoDB variable.
     const bound = elem === undefined ? env.fresh("unused") : env.param(elem, element, cb.pos);
     let bodyEnv = bound.env;
     const vars: Record<string, unknown> = {};
@@ -219,7 +163,6 @@ function arrayCallback(
   };
 }
 
-/** Does the body call anything? A call may lower to a `$reduce` of its own, whose `$$value`/`$$this` shadow the reducer's. */
 function callsSomething(node: unknown): boolean {
   if (node === null || typeof node !== "object") return false;
   if (Array.isArray(node)) return node.some(callsSomething);
@@ -229,13 +172,6 @@ function callsSomething(node: unknown): boolean {
   return Object.entries(n).some(([k, v]) => k !== "type" && callsSomething(v));
 }
 
-/**
- * A REDUCER — `(acc, x[, i]) => …` — as what a `$reduce` takes. The accumulator IS
- * `$$value` and the element IS `$$this` when the body is plain arithmetic. A body
- * that calls anything reads them through a `$let`, because the call may lower to
- * a `$reduce` of its own and shadow both. An index read makes the input the
- * `[i, x]` pairs, bound the same way.
- */
 function reducerCallback(
   cb: Expr,
   seed: Expr,
@@ -288,7 +224,6 @@ function reducerCallback(
   return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
 
-/** An arrow of `count` parameters over one array's elements — each parameter bound to its position. */
 function elementsCallback(
   cb: Expr,
   count: number,
@@ -310,12 +245,6 @@ function elementsCallback(
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
 
-/**
- * The record for a call of `name` on `recv` with `args`, under `env`. `keys` is
- * the row's positional key order. `overrides` lets the dispatcher substitute a
- * lowering for one argument. An example is the `$let` arrow, whose body the compiler
- * lowers under its variables. The renderer does not know.
- */
 export function exprInputs(
   name: string,
   recv: unknown,
@@ -325,25 +254,18 @@ export function exprInputs(
   node: object,
   read: Reader,
   overrides: ReadonlyMap<Expr, unknown> = new Map(),
-  /** The receiver as WRITTEN, where a callback needs the kind of one of its elements. */
   recvNode?: Expr,
-  /** Is the receiver certainly there, proven from the source? */
   present = false,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
-  // The fold does not visit a node that the cell BUILT (`list.map(key)` from its arguments), so this code settles it.
   const value = (e: Expr): unknown =>
     overrides.has(e) ? overrides.get(e) : read.value(env.site.settling ? e : settled(e), argEnv);
-  // What one element of the receiver is, for a sort by name.
   const recvType = (): Type => (recvNode === undefined ? ANY : typeOf(recvNode, env));
   const elementOfRecv = (): Type => flattenOnce(recvType());
-  // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
-  // rewrites each short spelling that the row accepts, so the refusal names the spellings left.
   const notArrow = (cb: Expr, what: string): CodegenError => {
     const slot = Math.max(0, args.indexOf(cb));
     return notAnArrow(name, what, slotFormsOf(name, "array", slot), cb, slot);
   };
-  // A `null` where the slot takes an arrow is a value of the wrong kind (HR7).
   const refuseNull = (cb: Expr): void => {
     if (cb.type === "NullLiteral") throw nullCallback(name, Math.max(0, args.indexOf(cb)), "a callback", cb.pos);
   };
@@ -398,7 +320,6 @@ export function exprInputs(
         throw objIterateeShape(name, (cb as { pos: number }).pos);
       }
       const kv = env.fresh("kv");
-      // `value` and `key` are variables over the pair. The compiler binds them as the developer's own names
       let bodyEnv = kv.env;
       const vars: Record<string, unknown> = {};
       const v = bodyEnv.param(cb.params[0], ANY, cb.pos);
@@ -422,15 +343,6 @@ export function exprInputs(
       return { as: b.as, ref: b.ref };
     },
     hoist: (stages: readonly Stage[], reads: string) => {
-      // The stream that the count NAMES decides where the stamp goes. `$$` is the
-      // TOP-MOST stream at every depth (HR4), so it is level 0. A callback's third
-      // parameter is the stream of the body that BOUND it — this body's, or an
-      // ancestor's when the read crosses back out. Either way the stamp lands
-      // on that level's own pipeline, ahead of the stage that holds the read.
-      // The read comes back down through each `$lookup.let` on the way.
-      // This is the same hop that an outer field takes. A stamp of an ancestor's count
-      // on THIS chain would write this body's count under the same field and answer it
-      // instead. That gives two different counts, one field, silently equal.
       const source = (node as { object?: Expr }).object ?? null;
       const handle = streamHandleOf(source, env);
       const chain = handle === null ? env.rootChain : handle.chain;
@@ -457,17 +369,6 @@ export function exprInputs(
   };
 }
 
-/**
- * The first stage in this callback's block that changes what a stamped count MEANS, or
- * null. The count is a FIELD on the body's documents, so a stage that drops the fields
- * loses it (`$group`). A stage that changes how many documents there are makes it
- * stale (`$unwind`, `$match`, `$limit`). Only the stages whose rows state
- * `preservesCount` keep its original meaning.
- *
- * This is a syntactic question. The compiler asks it of the source, once for the whole body.
- * A per-read answer would turn on where in the block the read sits. Also, a stage BODY
- * reads the documents that its own stage receives, which is not where the source writes the read.
- */
 function staleCountStage(cb: Expr): string | null {
   const stmts = (cb as { stages?: { stmts?: readonly { type: string; name?: string }[] } }).stages?.stmts;
   if (stmts === undefined) return null;
@@ -478,22 +379,12 @@ function staleCountStage(cb: Expr): string | null {
   return null;
 }
 
-/**
- * The stream `recv` names, when it is a callback's receiver parameter: the chain
- * whose documents it stands for and their level. Null for `$$`. `$$` is the ROOT
- * stream at every depth (HR4), so it belongs to the top-most chain at level 0.
- *
- * Both halves come from the BINDING, not from where the read sits. The compiler reads a
- * handle inside bodies nested under the one that bound it. Each of those bodies assembles a
- * chain of its own.
- */
 function streamHandleOf(recv: Expr | null, env: Env): { chain: Chain; level: number } | null {
   if (recv === null || recv.type !== "Ident" || !env.scope.has(recv.name)) return null;
   const b = env.lookup(recv.name, recv.pos);
   return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 
-/** Is `recv` the body's OWN stream — a callback's receiver parameter — and not `$$`, the root stream? */
 export function onOwnStream(recv: Expr | null, env: Env): boolean {
   return (
     recv !== null &&
@@ -503,18 +394,12 @@ export function onOwnStream(recv: Expr | null, env: Env): boolean {
   );
 }
 
-/** The two query readings, supplied by filter.ts. */
 export type QueryReader = {
   lowerValue: (node: Expr, env: Env) => unknown;
   lowerFilter: (node: Expr, env: Env) => QueryDoc;
   lowerNativeFilter: (node: Expr, env: Env) => QueryDoc | null;
 };
 
-/**
- * The record for a query cell. It holds the receiver and arguments as SOURCE, the path
- * and constant readers, and the two query readings. One reading always answers
- * (with `$expr`). One answers only natively.
- */
 export function filterInputs(
   name: string,
   recv: Expr | null,
@@ -536,7 +421,6 @@ export function filterInputs(
     nativeQuery: (e) => read.lowerNativeFilter(e, argEnv),
     elementQuery: (cb) => {
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== 1) return null;
-      // The element is the root inside `$elemMatch`: the parameter stands for the document.
       const bodyEnv = argEnv
         .element(cb.params[0])
         .bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
@@ -567,7 +451,6 @@ export function filterInputs(
       return q;
     },
     orMissing: (path, test) => {
-      // After a `?.` the call gives null. A receiver that is there reads as itself.
       const optionalCall = (node as { optional?: boolean }).optional === true;
       if (optionalCall || recv === null || isPresent(recv, env.at({ at: "value" }))) return queryOwnValue(path, test);
       return chainHasOptional(recv) ? null : queryOrMissing(path, test);
@@ -575,22 +458,14 @@ export function filterInputs(
   };
 }
 
-/** The three readings a STAGE cell asks of an argument, supplied by statement.ts. */
 export type StageReader = {
   value: (node: Expr, env: Env) => unknown;
   truth: (node: Expr, env: Env) => Truth;
   predicate: (body: Expr, env: Env) => QueryDoc;
   reshape: (body: Expr, env: Env) => unknown;
-  /** The statements of a stage-block callback, under the env the parameter is bound in. */
   block: (stages: Pipeline, env: Env) => Stage[];
 };
 
-/**
- * The record a STAGE cell receives — a stage's body, never an operand list. Its
- * `value` is the reading that the BODY's own position asks for. This is how
- * `$match`'s row makes its body a query document and makes the elements of a sub-pipeline
- * stages. The cell does not know that it asked for anything but a value.
- */
 export function stageInputs(
   name: string,
   args: readonly Expr[],
@@ -598,18 +473,11 @@ export function stageInputs(
   env: Env,
   node: object,
   read: StageReader,
-  /** The stages the current chain produced before this link — not yet emitted, but before it in the pipeline. */
   soFar: readonly Stage[] = [],
-  /**
-   * The method the SOURCE wrote, which is `name` unless the link runs as another
-   * row: `$$$.users.find(p)` runs `filter` and must still be refused as `.find()`.
-   * Messages use this one; everything else uses the row.
-   */
   written: string = name,
 ): StageIn & { keys: readonly string[] } {
   const argEnv = childEnv(env, node, "args");
   const before: readonly Stage[] = [...env.chain.emitted, ...soFar];
-  // A sort by name reads its keys off the documents at the chain's element.
   const readableKeys = <A extends SortAsk>(ask: A, pos: number): A =>
     readableSort(
       ask,
@@ -617,19 +485,10 @@ export function stageInputs(
       env.chain.element === "" ? "the document" : `'$.${env.chain.element}'`,
       pos,
     );
-  /**
-   * A callback's FIRST parameter IS the stream's element: the document itself, so
-   * its fields are top-level paths. After `.flatMap("items")` it is the unwound
-   * field, so its fields are `items.<field>` (the chain's `element`). A callback
-   * can also name an index and the receiver. A stream has no per-document
-   * index, and the receiver is the stream itself. So the compiler binds each one
-   * as a name. When the code reads the name, the error says what to write instead.
-   */
   const bound = (cb: Expr): Env | null => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
     let e = argEnv;
     if (cb.params.length >= 1) {
-      // The parameter holds what the document's proof holds at the element.
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
         type: env.typeAt(env.chain.element),
@@ -650,11 +509,6 @@ export function stageInputs(
       });
     }
     if (cb.params.length === 3) {
-      // The receiver parameter IS the stream that the callback runs over. At the top
-      // it is the same as `$$`. Inside a body over another collection it is that body's stream.
-      // A body whose stages change the count or the fields cannot carry one: the stamp
-      // is a FIELD, hoisted ahead of the body's stages. So the compiler refuses the handle for the
-      // whole body, wherever the read sits.
       const replaces = staleCountStage(cb);
       e = e.bind(cb.params[2], {
         ref:
@@ -672,11 +526,6 @@ export function stageInputs(
     }
     return e;
   };
-  /**
-   * Why this argument is not the callback the slot wanted, worded as the mistake
-   * it is: too many parameters, a matcher naming no field, a pair that is not one,
-   * or a shape the slot never takes. Four fixes, so four sentences.
-   */
   const callbackRefusal = (cb: Expr, what: string): CodegenError => {
     if (cb.type === "Lambda") return tooManyCallbackParams(written, cb.params.length, cb.pos);
     const forms = slotFormsOf(written, "stream", args.indexOf(cb));
@@ -684,19 +533,11 @@ export function stageInputs(
       const entries = (cb as { entries?: readonly unknown[] }).entries;
       if (entries !== undefined && entries.length === 0) return emptyMatcherObject(written, cb.pos);
     }
-    // An earlier pass rewrites a well-formed pair to an arrow. So one that
-    // arrives here is malformed: not two elements, or a first that is not a name.
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
       return badMatchesPropertyPair(written, cb.pos);
     }
     return notAnArrow(written, what, forms, cb, Math.max(0, args.indexOf(cb)));
   };
-  /**
-   * A callback's body and the env that the compiler lowers it under. The parameter IS the
-   * document. Not an arrow at all — `.countBy(String)` — is the developer's
-   * mistake, worded. An earlier pass rewrites the shorthands a row accepts to
-   * arrows, so what arrives here is the arrow or the error.
-   */
   const body = (cb: Expr, what: string): { body: Expr; env: Env } => {
     const e = bound(cb);
     if (e === null) throw callbackRefusal(cb, what);
@@ -743,8 +584,6 @@ export function stageInputs(
     },
     block: (cb) => {
       const e = bound(cb);
-      // Not an arrow at all. The block form is the only spelling, so the sentence
-      // that shows it is the same one that an arrow with a value body already gets.
       if (e === null) {
         throw cb.type === "Lambda"
           ? tooManyCallbackParams(written, cb.params.length, cb.pos)

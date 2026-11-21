@@ -1,8 +1,3 @@
-// Cheap Levenshtein distance + closest-name lookup. It builds the suggestion tail
-// for every refusal against a CLOSED SET of names. The `didYouMean` helper is the
-// only way to write that tail, so each new closed-set refusal gets the same suggestion
-// automatically. See the DX rules in CLAUDE.md.
-
 export function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
@@ -22,19 +17,9 @@ export function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
-/**
- * Find the candidate string closest to `name` by edit distance. Returns null
- * when no candidate is close enough to be a likely typo (max 2 edits). The
- * distance must be strictly less than the length of the input, so a totally
- * unrelated short name does not trigger.
- */
 export function closestNameTo(name: string, candidates: Iterable<string>): string | null {
   let best: { name: string; dist: number } | null = null;
   for (const candidate of candidates) {
-    // Never echo the name the user typed. A candidate set can contain it,
-    // because the name can be valid in a *different* position. A refusal of
-    // `.push(...)` in one position that then suggests `.push` gives no help,
-    // and it can recommend syntax that does not work here.
     if (candidate === name) continue;
     const d = levenshtein(name, candidate);
     if (best === null || d < best.dist) best = { name: candidate, dist: d };
@@ -44,17 +29,6 @@ export function closestNameTo(name: string, candidates: Iterable<string>): strin
   return null;
 }
 
-/**
- * Build the trailing hint that names the closest candidate, for a rejection
- * against a closed set of names. This is the canonical way to satisfy the
- * closest-name DX mandate (see the error-consistency rules in CLAUDE.md).
- * Returns "" when no candidate is close enough, so the call site can
- * interpolate the result unconditionally.
- *
- * `format` renders the suggestion the way the surrounding message spells the
- * name: the default is the instance-method form (`.foo()`); pass
- * `(s) => \`Class.\${s}\`` for statics, or `(s) => s` for bare names (stages).
- */
 export function didYouMean(
   name: string,
   candidates: Iterable<string>,

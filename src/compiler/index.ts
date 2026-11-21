@@ -1,14 +1,3 @@
-// The compiler's entry: source in, MQL out, through the five phases.
-//
-//   LEX + PARSE   parse/parser.ts     source → tree
-//   CHECK         passes/no-new.ts    HR8: no `new`;  passes/raw-mql.ts  HR6
-//   FOLD          passes/fold.ts      constants settled
-//   DESUGAR       passes/desugar.ts   sugar rewritten to the forms the rows know (phase 4 runs inside)
-//   EMIT          emit/lower.ts       tree → document, every name checked against its row first
-//
-// One entry per shape of program. `expr` is the bare aggregation expression —
-// what `jsmql.expr(…)` returns: no `$expr` wrap, no query translation.
-
 import { parse, parseExpression } from "./parse/parser.ts";
 import { fold } from "./passes/fold.ts";
 import { desugar } from "./passes/desugar.ts";
@@ -23,7 +12,6 @@ import { rawMqlBoundary } from "./passes/raw-mql.ts";
 import { refuseNew } from "./passes/no-new.ts";
 import { noStages, notAPipeline } from "./emit/errors.ts";
 
-/** A bare aggregation expression: `$.qty * $.price` → `{ $multiply: ["$qty", "$price"] }`. */
 export function expr(source: string): unknown {
   const parsed = parseExpression(source);
   refuseNew(parsed);
@@ -32,10 +20,6 @@ export function expr(source: string): unknown {
   return lowerValue(program as Parameters<typeof lowerValue>[0], Env.root(program, "value"));
 }
 
-/**
- * A query document for `find(filter)`: `$.age > 18` → `{ age: { $gt: 18 } }`. A predicate
- * with no native form becomes `{ $expr: … }`; a raw `{ … }` document is the developer's own.
- */
 export function filter(source: string): Record<string, unknown> {
   const parsed = parseExpression(source);
   refuseNew(parsed);
@@ -44,17 +28,8 @@ export function filter(source: string): Record<string, unknown> {
   return lowerFilter(program as Parameters<typeof lowerFilter>[0], Env.root(program, "filter"));
 }
 
-/**
- * The pipeline for `aggregate(pipeline)`: `$.total = $.qty * $.price;` →
- * `[{ $set: { total: { $multiply: ["$qty", "$price"] } } }]`. Every statement
- * of the program becomes stages, in the order it was written.
- */
 export function pipeline(source: string): unknown[] {
   const parsed = parse(source);
-  // Which DOCUMENT the program becomes is phase 4's other answer, and no single
-  // step can see it. The compiler asks it of the WRITTEN program. A folded constant
-  // array is a value: `[1,2].slice(2,2)` settles to `[]`. But `[]` as written is
-  // the empty pipeline.
   if (shapeOf(parsed) !== "pipeline") throw notAPipeline((parsed as { pos: number }).pos);
   refuseNew(parsed);
   rawMqlBoundary(parsed, "other");
@@ -64,7 +39,6 @@ export function pipeline(source: string): unknown[] {
   return stages;
 }
 
-/** The object form of an update — `updateOne(filter, { $set: { … }, $inc: { … } })` — from writes and update operators. */
 export function update(source: string): Record<string, unknown> {
   const parsed = parse(source);
   refuseNew(parsed);

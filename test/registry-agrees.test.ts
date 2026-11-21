@@ -1,10 +1,3 @@
-// The cross-references inside the registry that no type-level audit can hold.
-//
-// names.ts holds seven audits at its foot, each a type that goes `never` when a reference dangles. Four
-// references escape that form. They relate one field's PRESENCE to another's CONTENT (`only` to `where`,
-// `params` to `iterateeSlots`). Or they relate a vocabulary member to the rows that use it. Those are runtime
-// facts over the whole table, so they live here. The author made each one fail before the author trusted it.
-
 import { readFileSync, readdirSync } from "node:fs";
 import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
@@ -28,15 +21,9 @@ type Row = {
 
 const rows = Object.entries(NAMES) as [string, Row][];
 
-/** The families a row's `on` names, or none for `"any"` — a namespace family included. */
 const familiesOf = (row: Row): readonly string[] =>
   row.on === undefined || row.on === "any" ? [] : Array.isArray(row.on) ? row.on : [row.on as string];
 
-/**
- * Is this family REFUSED in value position? A refused family takes no callback, so it states no iteratee
- * layout. The row spells `groupBy` on `Object` only to give `Object.groupBy(…)` a message that names the
- * receiver form.
- */
 const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
   const cell = row.expr as { perFamily?: Record<string, unknown> } | undefined;
   const branch = cell?.perFamily?.[family];
@@ -48,11 +35,6 @@ const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
 };
 describe("registry — every name that takes a callback states its slot layout", () => {
   it("states iterateeSlots for every family in `on`: a layout, arrowOnly, or sortSpec", () => {
-    // A row with `params` takes a callback. Without a layout the desugar pass cannot tell
-    // `$.o.mapValues("name")` (refused: a two-parameter arrow only) from `$.rows.uniqBy("id")` (a property-path
-    // shorthand). Then phase 5 receives a string where an arrow belongs, with no row text to quote. `arrowOnly`
-    // is the stated form of "nothing stands in for the arrow here". An omission and a decision look alike, so
-    // the row must state the decision.
     const missing: string[] = [];
     for (const [name, row] of rows) {
       if (row.kind !== "name" || row.params === undefined) continue;
@@ -67,8 +49,6 @@ describe("registry — every name that takes a callback states its slot layout",
 
 describe("registry — a row that reads null as the empty value", () => {
   it("states it only where the receiver has an empty value: an array or an object", () => {
-    // HR5 runs an array method on `[]` and an object method on `{}`. The fact says the
-    // operator already gives that answer for null, so it means nothing on a string row.
     const stray = rows
       .filter(([, row]) => row.readsNullAsEmpty === true)
       .filter(([, row]) => !familiesOf(row).some((f) => f === "array" || f === "object"))
@@ -80,9 +60,6 @@ describe("registry — a row that reads null as the empty value", () => {
 
 describe("registry — the reserved names it spells for itself", () => {
   it("every slot the registry spells is the one src/namespace.ts reserves", () => {
-    // The registry imports nothing outside itself, so the project writes a reserved name that it needs twice.
-    // Nothing else holds the two spellings together. A rename on one side alone would give a stage that writes
-    // one field and a read of another.
     expect(GROUP_SLOT).toBe(GROUP_TMP);
     expect(SIZE_SLOT).toBe(NS_SIZE_SLOT);
   });
@@ -92,19 +69,11 @@ describe("registry — `only` and the positions it qualifies", () => {
   const ONLY: readonly Only[] = ["stageFirst", "stageLast", "update", "afterSort"];
 
   it("uses every member of the Only vocabulary on at least one row", () => {
-    // `afterSort` had a declaration and a documented example, but no row stated it. So `$$ = $$.takeWhile(p)`
-    // would emit the $setWindowFields mongod refuses (Location5339901), and not the refusal that asks for a
-    // sort first.
     const unused = ONLY.filter((o) => !rows.some(([, row]) => row.only?.includes(o) === true));
     expect(unused).toEqual([]);
   });
 
   it("states `only` on a row that can stand as a stage, a chain link, or in a stage's body", () => {
-    // Every Only member qualifies a stage or a link: "first stage", "last stage", "an update-pipeline stage",
-    // "a link after a sort". The placement may belong to an OPERATOR that the stage carries, not to the stage
-    // itself: MEASURED, the server allows a `$match` with `$text` only as the first stage. So the rule is
-    // `$text`'s, and the stage it qualifies is whichever `$match` holds it. A row that stands in none of those
-    // three positions has nothing to qualify.
     const stray: string[] = [];
     for (const [name, row] of rows) {
       if (row.only === undefined || row.only.length === 0) continue;
@@ -115,10 +84,6 @@ describe("registry — `only` and the positions it qualifies", () => {
   });
 
   it("states `document` on every stage row, and on no other", () => {
-    // The document `Type` changes at a STAGE — `$group`, `$replaceRoot`, `$set` — and a stage is the row with a
-    // body layout (`bodyPositions`). On a value row the fact would tell the scope tracker to drop bindings
-    // after an expression. On a stage row without it the tracker would have to guess. So the two come as a
-    // pair.
     const wrong: string[] = [];
     for (const [name, row] of rows) {
       const isStage = row.bodyPositions !== undefined;
@@ -131,18 +96,12 @@ describe("registry — `only` and the positions it qualifies", () => {
 });
 
 describe("registry — a `statement` body slot says WHAT it holds", () => {
-  /** Every row with a body key it files as `statement`, at any depth of the layout. */
   const withStatementSlot = Object.entries(NAMES as Record<string, Row>).filter(([, r]) =>
     Object.values(r.bodyPositions ?? {}).some(
       (v) => v === "statement" || (typeof v === "object" && v !== null && Object.values(v).includes("statement")),
     ),
   );
 
-  // A `statement` slot holds one of two things, and they are not alike. A pipeline of its own
-  // (`$lookup.pipeline`) has a FIRST position and its own placement rules. An update spec
-  // (`$merge.whenMatched`) has neither and runs a closed set of stages. No other field tells them apart, so the
-  // row states it. This test fails the build for a row that forgets, which is how the distinction stays honest
-  // as rows are added.
   it("every row with one states `statementBody`", () => {
     expect(withStatementSlot.length).toBeGreaterThan(0);
     const silent = withStatementSlot.filter(([, r]) => r.statementBody === undefined).map(([n]) => n);
@@ -157,8 +116,6 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
     expect(spurious).toEqual([]);
   });
 
-  // An update spec's list is a set of STAGE names. A name that is not one could never match the stage `place`
-  // asks about, so the allowance would silently never apply.
   it("every name an update spec allows is a stage this registry has", () => {
     const stages = new Set(
       Object.entries(NAMES as Record<string, Row>)
@@ -175,8 +132,6 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
 });
 
 describe("registry — each `valueTwin` names an operator with a value form", () => {
-  // `$.items.$match(…)` names the twin in its refusal. So the twin must be a real operator that a value takes,
-  // and the fact must sit on a stage.
   it("states `valueTwin` on a stage, naming an operator whose row lists `value`", () => {
     const wrong: string[] = [];
     let stated = 0;
@@ -194,8 +149,6 @@ describe("registry — each `valueTwin` names an operator with a value form", ()
 });
 
 describe("registry — each `renamedTo` names a method that runs", () => {
-  // A typo of a renamed name gets the new name as its suggestion. So the new name must
-  // be a method that runs. The old row must refuse everywhere.
   it("states `renamedTo` only on a row that refuses in every position, and its target lists a position", () => {
     const wrong: string[] = [];
     let stated = 0;
@@ -229,8 +182,6 @@ describe("registry — `keys` and `takesLet` sit on the rows they describe", () 
   });
 
   it("states `takesLet` on a stage exactly when its vendored spec has a `let` argument", () => {
-    // The spec YAML holds the stage's arguments; its `tests:` block uses BSON tags that
-    // the default schema rejects, and nothing here reads it.
     const dir = new URL("../vendor/mql-specifications/definitions/stage/", import.meta.url);
     const withLet = new Set<string>();
     for (const file of readdirSync(dir)) {

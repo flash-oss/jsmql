@@ -2,15 +2,12 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
 
-/** The refusal of a declaration as an array element. JavaScript refuses it there too. */
 const NOT_AN_ELEMENT = (wrote: string, pos: number): string =>
   `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`;
 
-/** The refusal of a second declaration of one name in one block. */
 const DECLARED_AGAIN = (wrote: string, pos: number): string =>
   `\`${wrote}\` at position ${pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`;
 
-/** The message and the position a compile raises. */
 const refusal = (src: string): { message: string; pos: number } => {
   try {
     jsmql(src);
@@ -30,9 +27,6 @@ describe("let bindings — basic shape", () => {
   });
 
   it("multiple lets that build on each other emit one $set stage each", () => {
-    // Canonical example from the plan + realistic test. Read-after-write splits
-    // each let into its own $set stage. The inner refs need this to
-    // see the outer writes.
     expect(
       jsmql(`
         let subtotal = $.price * $.qty;
@@ -73,9 +67,6 @@ describe("let bindings — basic shape", () => {
   });
 
   it("a let used inside a method-call lambda body resolves correctly", () => {
-    // The lambda parameter shadows nothing in this case — `tax` is the let.
-    // (Runtime RHS `$.rate` so it stays a `$set` binding; a constant RHS would
-    // fold — see the const-folding suite.)
     expect(jsmql("let tax = $.rate; $project({ totals: $.items.map(x => x.price * (1 + tax)) })")).toEqual([
       { $set: { "__jsmql.var.tax": "$rate" } },
       {
@@ -94,9 +85,6 @@ describe("let bindings — basic shape", () => {
   });
 
   it("lambda parameter shadows a let with the same name inside the lambda body", () => {
-    // `total` is bound by `let` at pipeline scope and by the lambda inside it.
-    // The lambda wins inside its body (lexical: closer scope wins). Outside the
-    // lambda, the let is still visible.
     expect(jsmql("let total = $.grand; $project({ doubled: $.items.map(total => total * 2), grand: total })")).toEqual([
       { $set: { "__jsmql.var.total": "$grand" } },
       {
@@ -122,8 +110,6 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("shares ONE $set across the declarators a `,` joined", () => {
-    // The `,` is the merge and the `;` is the stage boundary — the rule
-    // `$.a = …, $.b = …` already follows.
     expect(jsmql("let a = $.p, b = $.q; $match(a > b);")).toEqual([
       { $set: { "__jsmql.var.a": "$p", "__jsmql.var.b": "$q" } },
       { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
@@ -138,16 +124,12 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("breaks the shared $set exactly where a declarator reads a sibling, and nowhere else", () => {
-    // A `$set` evaluates every field against the stage's INPUT document, so `y`
-    // could not read an `x` bound beside it. Measured: merged answers `y: null`.
     expect(jsmql("let x = $.a, y = x + 1; $.c = y;")).toEqual([
       { $set: { "__jsmql.var.x": "$a" } },
       { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
       { $set: { c: "$__jsmql.var.y" } },
       { $unset: "__jsmql" },
     ]);
-    // The break is only at the dependency: `c` reads neither `a` nor `b`, so it
-    // joins `b`, and does not open a third stage.
     expect(jsmql("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
@@ -157,11 +139,6 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("keeps a declarator that hoists a $lookup OUT of the shared $set", () => {
-    // A foreign read in a value position puts its `$lookup` AHEAD of the statement
-    // it belongs to. Suppose the `$lookup` shares a `$set` with the sibling it correlates on.
-    // Then it would run BEFORE the `$set` that binds the sibling, and it would join on a
-    // missing field. This gives silently wrong data, and a server rejection when two joins chain.
-    // Such a declarator therefore ends the run and takes a stage of its own.
     expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
@@ -169,9 +146,6 @@ describe("let bindings — declaration lists", () => {
       { $set: { o: "$__jsmql.var.b" } },
       { $unset: "__jsmql" },
     ]);
-    // One lowering, one output: the `;` spelling of this program is the SAME
-    // document, scratch-slot numbers included. The taken-back lowering gives its
-    // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
     expect(jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
@@ -182,17 +156,12 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("does not let a folded-away declarator bridge a `;` the developer wrote", () => {
-    // `b` folds to a constant and leaves the statement list, so `a` and `c` become
-    // neighbours. They belong to DIFFERENT declarations — the developer put a `;`
-    // between them — so they must not share a stage. Membership is the keyword's
-    // offset, not adjacency.
     expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $set: { "__jsmql.var.c": "$y" } },
       { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
       { $unset: "__jsmql" },
     ]);
-    // …the same document as three separate declarations.
     expect(jsmql("let a = $.x; let b = 5; let c = $.y; $.o = a + b + c;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $set: { "__jsmql.var.c": "$y" } },
@@ -202,8 +171,6 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("shares ONE $let across the declarators a `,` joined inside a block", () => {
-    // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds.
-    // Independent vars share one `$let`, and a dependent one opens the next.
     expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });")).toEqual([
       {
         $set: {
@@ -240,7 +207,6 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("gives a declarator that takes no stage the meaning its own statement has", () => {
-    // A folded constant and a function each emit nothing, list or no list.
     for (const [list, separate] of [
       ["const k = 2, n = k * 3; $.c = $.a * n;", "const k = 2; const n = k * 3; $.c = $.a * n;"],
       ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
@@ -269,7 +235,6 @@ describe("let bindings — declaration lists", () => {
   });
 
   it("refuses a declaration as a bracketed pipeline's element, and the statement form keeps the stages", () => {
-    // `[let x = …]` is a JavaScript SyntaxError, so each declaration is a statement.
     expect(refusal("[let x = $.a, let y = x + 1, $match(y > 5)]")).toEqual({
       message: NOT_AN_ELEMENT("let x = …", 1),
       pos: 1,
@@ -298,9 +263,6 @@ describe("let bindings — a declaration is not an element of a bracketed pipeli
       message: NOT_AN_ELEMENT("let y = …", 18),
       pos: 18,
     });
-    // The update op buffer flushes around the let, so `$.flag = true` and the let
-    // each contribute their own stage. The trailing `$unset` is for the let,
-    // not the update op.
     expect(jsmql("$match($.x > 0); let y = $.x * 2; $.flag = true; $sort({ y: 1 });")).toEqual([
       { $match: { x: { $gt: 0 } } },
       { $set: { "__jsmql.var.y": { $multiply: ["$x", 2] } } },
@@ -368,16 +330,12 @@ describe("let bindings — duplicate declaration", () => {
 
 describe("let bindings — context rules", () => {
   it("errors when `let` appears at top-level without a pipeline boundary", () => {
-    // Expression-mode input: a single `let` with no `;` is meaningless.
     expect(() => jsmql("let x = 5")).toThrow(
       "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
     );
   });
 
   it("a single runtime let with trailing `;` is valid (pipeline of one binding + auto-unset)", () => {
-    // Useless but legal. The parser flips to pipeline mode at the `;`. The RHS
-    // is a runtime value (`$.a`), so it stays a `$set`. A constant `const x = 5;` on its own
-    // errors instead, because nothing reads it (see the const-folding suite).
     expect(jsmql("let x = $.a;")).toEqual([{ $set: { "__jsmql.var.x": "$a" } }, { $unset: "__jsmql" }]);
   });
 
@@ -388,7 +346,6 @@ describe("let bindings — context rules", () => {
 
 describe("let bindings — sub-pipeline boundaries", () => {
   it("a sub-pipeline over another collection can declare its own lets independently", () => {
-    // The block of `.aggregate` holds statements. `$` is still the outer document (HR4).
     expect(
       jsmql(`
         $.userOrders = $$$.orders.aggregate(() => {
@@ -413,9 +370,6 @@ describe("let bindings — sub-pipeline boundaries", () => {
   });
 
   it("outer lets are NOT visible inside a sub-pipeline", () => {
-    // The outer `cutoff` does not reach into the $lookup pipeline. (The RHS `$.start`
-    // is a runtime value, so it is a per-document `$set` binding. Such bindings do not cross a
-    // sub-pipeline boundary. A compile-time constant would inline everywhere.)
     expect(
       jsmql(`
         let cutoff = $.start;
@@ -442,7 +396,6 @@ describe("let bindings — sub-pipeline boundaries", () => {
 
 describe("let bindings — jsmql.validate() integration", () => {
   it("a duplicate-let error surfaces as SYNTAX_ERROR through jsmql.validate(), with the position of the second `let`", () => {
-    // JavaScript raises a SyntaxError for this program, so the parser refuses it.
     expect(jsmql.validate("let x = 1; let x = 2; $project({ x })")).toEqual({
       valid: false,
       errors: [{ message: DECLARED_AGAIN("let x", 11), pos: 11, code: "SYNTAX_ERROR" }],
@@ -465,8 +418,6 @@ describe("let bindings — does not affect pipelines without `let`", () => {
   });
 });
 
-// ── Parser-level errors ───────────────────────────────────────────────────────
-
 describe("let bindings — parser errors", () => {
   it("rejects `let` with no identifier", () => {
     expect(() => jsmql("let = 5;")).toThrow("Expected identifier but got '=' at position 4");
@@ -476,7 +427,6 @@ describe("let bindings — parser errors", () => {
     const named = "'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'let x = <expr>'.";
     expect(() => jsmql("let x 5;")).toThrow(named);
     expect(() => jsmql("let x;")).toThrow(named);
-    // The compiler refuses a later declarator the same way, at its OWN name.
     expect(() => jsmql("let a = 1, x;")).toThrow(
       "'let x' binds no value at position 11. jsmql has no 'undefined' to bind — write 'let x = <expr>'.",
     );
@@ -499,20 +449,11 @@ describe("let bindings — parser errors", () => {
   });
 
   it("rejects unknown bare identifiers in pipelines with no lets", () => {
-    // Smoke check that the normal `UnknownIdentifierError` still fires for
-    // unbound bare identifiers when no let machinery is in play. The trailing
-    // `;` puts the input in Pipeline mode so the stage-call-without-`;` guard
-    // does not intercept.
     expect(() => jsmql("$match(zzz > 5);")).toThrow(/Unknown identifier 'zzz'/);
   });
 });
 
-// ── Various RHS expression types ──────────────────────────────────────────────
-
 describe("let bindings — RHS expression coverage", () => {
-  // A pure-literal RHS is a compile-time constant, so it folds and inlines
-  // (no `$set`/`$unset`), and does not materialise a runtime binding. See the
-  // const-folding suite for the full surface.
   it("number literal RHS folds and inlines", () => {
     expect(jsmql("let n = 42; $project({ n })")).toEqual([{ $project: { n: 42 } }]);
   });
@@ -550,9 +491,6 @@ describe("let bindings — RHS expression coverage", () => {
   });
 
   it("$op-call RHS — accumulator inside a let value is fine syntactically", () => {
-    // The accumulator runs in the context of the surrounding stage. The compiler emits
-    // the $set wrapper, and Mongo evaluates accumulators per document
-    // in normal $set context (effectively as the first element of an array).
     expect(jsmql("let avg = $avg($.scores); $project({ avg })")).toEqual([
       { $set: { "__jsmql.var.avg": { $avg: "$scores" } } },
       { $project: { avg: "$__jsmql.var.avg" } },
@@ -593,8 +531,6 @@ describe("let bindings — RHS expression coverage", () => {
   });
 });
 
-// ── Member / method / index access on let-bound identifiers ───────────────────
-
 describe("let bindings — member / method / index access", () => {
   it("member access on a let folds to a dotted field path", () => {
     expect(jsmql("let user = $.user; $project({ name: user.name })")).toEqual([
@@ -621,9 +557,6 @@ describe("let bindings — member / method / index access", () => {
   });
 
   it("index access on a let resolves the receiver to its field path", () => {
-    // The compiler never types a `let` statically, because the program can reassign it.
-    // `$.items` is not provable anyway. So `xs[0]` emits the run-time three-way dispatch for
-    // an integer key: array position, string character, field named "0".
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
       { $set: { "__jsmql.var.xs": "$items" } },
       {
@@ -646,8 +579,6 @@ describe("let bindings — member / method / index access", () => {
     ]);
   });
 });
-
-// ── Update op interaction ──────────────────────────────────────────────────────
 
 describe("let bindings — interaction with update ops", () => {
   it("a update op's RHS can read a let from the enclosing pipeline scope", () => {
@@ -677,8 +608,6 @@ describe("let bindings — interaction with update ops", () => {
   });
 });
 
-// ── Re-declaration across scope boundaries ────────────────────────────────────
-
 describe("let bindings — re-declaration across boundaries", () => {
   it("a second declaration of the same name after $group is refused, as in JavaScript: the name stays declared", () => {
     expect(refusal("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })")).toEqual({
@@ -695,8 +624,6 @@ describe("let bindings — re-declaration across boundaries", () => {
   });
 });
 
-// ── Multi-stage visibility ────────────────────────────────────────────────────
-
 describe("let bindings — multi-stage visibility", () => {
   it("one let is visible in many downstream stages", () => {
     expect(jsmql("let s = $.a + $.b; $match(s > 0); $sort({ x: 1 }); $project({ value: s, doubled: s * 2 })")).toEqual([
@@ -709,10 +636,9 @@ describe("let bindings — multi-stage visibility", () => {
   });
 
   it("ten independent lets produce ten $set stages and one trailing $unset", () => {
-    // Runtime RHS (`$.f<i>`) so each stays a `$set`; constant RHS would fold.
     const src = Array.from({ length: 10 }, (_, i) => `let v${i} = $.f${i};`).join(" ") + " $match($.a > 0)";
     const result = jsmql(src) as object[];
-    expect(result).toHaveLength(12); // 10 $set + 1 $match + 1 $unset
+    expect(result).toHaveLength(12);
     expect(result[0]).toEqual({ $set: { "__jsmql.var.v0": "$f0" } });
     expect(result[9]).toEqual({ $set: { "__jsmql.var.v9": "$f9" } });
     expect(result[10]).toEqual({ $match: { a: { $gt: 0 } } });
@@ -730,11 +656,8 @@ describe("let bindings — multi-stage visibility", () => {
   });
 });
 
-// ── Lambda interaction nuances ────────────────────────────────────────────────
-
 describe("let bindings — lambda interaction", () => {
   it("a let is visible inside a .map() lambda body and resolves to a field path", () => {
-    // Runtime RHS keeps it a `$set` binding (a constant would fold).
     expect(jsmql("let mult = $.rate; $project({ adj: $.items.map(x => x * mult) })")).toEqual([
       { $set: { "__jsmql.var.mult": "$rate" } },
       {
@@ -775,7 +698,6 @@ describe("let bindings — lambda interaction", () => {
   });
 
   it("a lambda param of the same name shadows the let inside the lambda body only", () => {
-    // Runtime RHS keeps it a `$set` binding (a constant would fold).
     expect(jsmql("let i = $.start; $project({ a: $.xs.map(i => i + 1), b: i })")).toEqual([
       { $set: { "__jsmql.var.i": "$start" } },
       {
@@ -788,8 +710,6 @@ describe("let bindings — lambda interaction", () => {
     ]);
   });
 });
-
-// ── Sub-pipeline depth ────────────────────────────────────────────────────────
 
 describe("let bindings — sub-pipeline depth", () => {
   it("a sub-pipeline let with the same name as an outer let is independent", () => {
@@ -826,7 +746,6 @@ describe("let bindings — sub-pipeline depth", () => {
       message: NOT_AN_ELEMENT("let avg = …", 22),
       pos: 22,
     });
-    // A `$facet` branch.
     expect(jsmql("$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };")).toEqual([
       {
         $facet: {
@@ -838,7 +757,6 @@ describe("let bindings — sub-pipeline depth", () => {
         },
       },
     ]);
-    // A `$lookup`.
     expect(jsmql("$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });")).toEqual([
       {
         $lookup: {
@@ -853,14 +771,11 @@ describe("let bindings — sub-pipeline depth", () => {
         },
       },
     ]);
-    // A `$unionWith`.
     expect(jsmql("$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));")).toEqual([
       { $unionWith: { coll: "archive", pipeline: [{ $match: { y: 1 } }] } },
     ]);
   });
 });
-
-// ── Field-named `let` regression coverage ─────────────────────────────────────
 
 describe("let bindings — `let` is still usable as a field name and operator name", () => {
   it("`$.let` reads a document field literally named `let`", () => {
@@ -884,9 +799,6 @@ describe("let bindings — `let` is still usable as a field name and operator na
   });
 
   it("the pipeline-level `let` and a deeper $let-operator with same var name coexist", () => {
-    // Pipeline let `x` materialises as `__jsmql.var.x`; the MongoDB $let var `x`
-    // is a user-variable `$$x` — different namespaces, no collision. (Runtime
-    // RHS so the pipeline `let` stays a `$set` binding; a constant would fold.)
     expect(jsmql("let x = $.n; $project({ y: $let({ x: 10 }, x => x * 2), z: x })")).toEqual([
       { $set: { "__jsmql.var.x": "$n" } },
       { $project: { y: { $let: { vars: { x: 10 }, in: { $multiply: ["$$x", 2] } } }, z: "$__jsmql.var.x" } },
@@ -894,8 +806,6 @@ describe("let bindings — `let` is still usable as a field name and operator na
     ]);
   });
 });
-
-// ── Function-form input ───────────────────────────────────────────────────────
 
 describe("let bindings — function-form input", () => {
   it("block-body arrow with let works the same as the string form", () => {
@@ -913,16 +823,11 @@ describe("let bindings — function-form input", () => {
   });
 
   it("an expression-body arrow cannot hold a `let`, and a call to `eval` is an unknown function", () => {
-    // `({ $ }) => let x = 5` is a JavaScript syntax error, so an expression body
-    // can never declare a binding. The block-body form above is the way to get
-    // pipeline mode here. A string passed to `eval` is not JSMQL source.
     expect(() => jsmql(({ $ }) => (eval as any)("let x = 5"))).toThrow(
       "Unknown function 'eval(...)'. Declare it first with `const eval = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$eval(...)`; for a method, `receiver.eval(...)`.",
     );
   });
 });
-
-// ── Stage-clearing matrix (each clearing stage) ───────────────────────────────
 
 describe("let bindings — all reshape-clearing stages drop the scope", () => {
   it("$bucketAuto clears the let scope", () => {
@@ -932,9 +837,6 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
   });
 
   it("the stage body itself can still read the let — only later stages cannot", () => {
-    // $group is the canonical reshape stage. Its body runs *with* the scope
-    // intact, so accumulators can reference the let. Only the *next*
-    // stage sees the cleared scope.
     expect(jsmql("let weighted = $.x * $.weight; $group({ _id: $.cat, total: $sum(weighted) })")).toEqual([
       { $set: { "__jsmql.var.weighted": { $multiply: ["$x", "$weight"] } } },
       { $group: { _id: "$cat", total: { $sum: "$__jsmql.var.weighted" } } },
@@ -942,26 +844,16 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
   });
 });
 
-// ── $project subtlety (NOT a reshape-clearing stage) ──────────────────────────
-
 describe("let bindings — $project in inclusion mode clears the let scope", () => {
   it("an inclusion-mode $project clears the let scope, so a later read is refused", () => {
-    // A list of the fields to keep drops `__jsmql` with the rest, so the binding is
-    // gone at runtime. The compiler refuses the read at compile time, as it does
-    // after `$group` (docs/specs/let-bindings.md § Stages that replace the document).
     expect(() => jsmql("let x = $.a; $project({ x: 1 }); $match(x > 0)")).toThrow(
       "`x` is a `let` binding. It cannot be read after `$project`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.",
     );
   });
 });
 
-// ── `let` reassignment (DEF-009) ──────────────────────────────────────────────
-
 describe("let bindings — reassignment", () => {
   it("re-`$set`s a `let`'s materialised slot on reassignment", () => {
-    // The second statement reads the current value of the binding and writes back to
-    // the same `__jsmql.var.<name>` slot. This is how `let x = 1; x = x + 1` reads
-    // in JavaScript.
     expect(
       jsmql(`
         let basePrice = $.price * $.qty;
@@ -1024,11 +916,9 @@ describe("let bindings — reassignment", () => {
     const result = jsmql.validate("x = 5");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Unknown identifier 'x'. Did you mean '$.x'?");
-    expect(result.errors[0].pos).toBe(0); // the `x` itself
+    expect(result.errors[0].pos).toBe(0);
   });
 });
-
-// ── a merge written back to a binding ────────────────────────────────────────
 
 describe("let bindings — a merge written back to the binding", () => {
   it("`r = { ...r, … }` re-`$set`s the binding's slot through $mergeObjects", () => {
@@ -1040,7 +930,6 @@ describe("let bindings — a merge written back to the binding", () => {
   });
 
   it("refuses `.assign()` as a statement, because it writes nothing, and names the write", () => {
-    // lodash's `_.assign` writes its target. JSMQL's `.assign()` answers a new object.
     expect(() => jsmql("const result = {}; result.assign({ a: $.foo });")).toThrow(
       "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
     );
@@ -1057,15 +946,12 @@ describe("let bindings — a merge written back to the binding", () => {
     const result = jsmql.validate("$.x = { ...zzz, a: 1 };");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Unknown identifier 'zzz'. Did you mean '$.zzz'?");
-    expect(result.errors[0].pos).toBe("$.x = { ...".length); // the `zzz` read
+    expect(result.errors[0].pos).toBe("$.x = { ...".length);
   });
 });
 
-// ── `const` keyword (DEF-009) ─────────────────────────────────────────────────
-
 describe("let bindings — `const` is a read-only alias for `let`", () => {
   it("`const` lowers identically to `let` for declaration + read", () => {
-    // Declaration and reads are identical; only reassignment differs.
     const fromConst = jsmql("const x = $.foo; $match($.parent === x);");
     const fromLet = jsmql("let x = $.foo; $match($.parent === x);");
     expect(fromConst).toEqual([
@@ -1091,8 +977,6 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
   });
 
   it("`const` is still usable as a field name and object key", () => {
-    // The keyword token must keep `const` valid as a plain identifier in
-    // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
     expect(jsmql("$project({ const: 1 }); $match($.const > 1);")).toEqual([
@@ -1103,10 +987,6 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 });
 
 describe("a let tombstone survives every lambda depth", () => {
-  // A lambda body is inside everything that its surroundings are inside. So the scope
-  // travels with the Env, and the Env does not list it again field by field.
-  // The Env captures a binding that the program declares before the switch at every
-  // nesting depth, not only the first. The actionable message holds just as deep.
   const SWITCH = /replaces the stream with a different collection/;
 
   it("reports the source switch at depth 1", () => {

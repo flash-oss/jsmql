@@ -1,7 +1,3 @@
-// The registry's type contracts, run as a test. The fixture holds every rule the vocabulary states as a type,
-// twice: a value that must compile and one under `@ts-expect-error` that must not. So a rule that no longer
-// fires fails here. See test/types/registry-contracts.ts.
-
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";

@@ -1,8 +1,3 @@
-// Tests for `assert(condition[, message])` → conditional-error `$match` guard. See docs/specs/assert.md for the
-// design and docs/LANGUAGE.md for the user-facing reference. The lowering targets a `$convert` whose `to` is a
-// `$cond`. A holding assertion converts `true`→bool (no-op). A failing one names the message as a bson type.
-// MongoDB rejects that type name at runtime, and its error text holds the message.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -43,7 +38,6 @@ describe("assert — lowering", () => {
   });
 
   it("defaults the message when omitted", () => {
-    // The compiler wraps bare `$.active` in JS-truthiness, like every other boolean context.
     expect(jsmql("assert($.active)")).toEqual([
       {
         $match: {
@@ -98,8 +92,6 @@ describe("assert — lowering", () => {
   });
 
   it("prefixes a message that is itself a valid type name (correctness, not cosmetic)", () => {
-    // Without the prefix, `to: "int"` would make $convert SUCCEED and silently
-    // skip the assertion — the prefix guarantees it is never a real type name.
     expect(jsmql("assert($.ok, 'int')")).toEqual([
       {
         $match: {
@@ -206,8 +198,6 @@ describe("assert — rejections", () => {
   });
 
   it("yields to a user-declared `const assert` (no shadowing surprise)", () => {
-    // A reusable function named `assert` takes precedence; a call of it as a bare
-    // statement is not a stage, so the generic not-a-stage error fires.
     expect(() => jsmql("const assert = (x) => x; assert($.y)")).toThrow(
       "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",
     );

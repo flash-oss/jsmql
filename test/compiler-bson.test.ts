@@ -1,9 +1,3 @@
-// The BSON value constructors: `ObjectId`, `Decimal128`, `Long`, `Int32`,
-// `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, each written without `new` (HR8).
-//
-// The suite asserts every document here as MQL. When a mongod is reachable, the suite also RUNS
-// each document, because a `toEqual` proves what jsmql emits and never that the server accepts it
-// (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   BSONRegExp,
@@ -26,18 +20,9 @@ const up = await liveUp();
 
 const HEX = "507f1f77bcf86cd799439011";
 
-/**
- * The BSON type a value carries. `toEqual` holds `MinKey` equal to `MaxKey`, and
- * `Int32(3)` equal to `Double(3)`, because neither class has an own property that
- * differs. `toStrictEqual` cannot help either: the driver's classes and jsmql's are
- * two builds of `bson` (CJS and ESM), so their constructors always differ.
- */
 const bsonType = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsontype;
 const UUID_TEXT = "6ac24965-7917-4323-8d44-920ad1d69b94";
 
-// Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`.
-// A Decimal128 as a plain object makes the server refuse `$multiply`, because an
-// object is not a number — MEASURED.
 const doc = () => ({
   _id: 1,
   price: Decimal128.fromString("9.99"),
@@ -52,7 +37,6 @@ const doc = () => ({
   tags: [Long.fromNumber(5), Long.fromNumber(7)],
 });
 
-// Each assertion also queues the document, so the live block runs every one.
 const FILTERS: string[] = [];
 const filter = (src: string): unknown => {
   FILTERS.push(src);
@@ -88,16 +72,12 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(filter(`$.oid === 0x${HEX}`)).toEqual({ oid: new ObjectId(HEX) });
     expect(filter("$.grade === MinKey()")).toEqual({ grade: new MinKey() });
     expect(filter("$.grade < MaxKey()")).toEqual({ grade: { $lt: new MaxKey() } });
-    // The classes that `toEqual` cannot tell apart.
     expect(bsonType((jsmql.filter("$.count === Int32(3)") as { count: unknown }).count)).toBe("Int32");
     expect(bsonType((jsmql.filter("$.ratio === Double(1)") as { ratio: unknown }).ratio)).toBe("Double");
     expect(bsonType((jsmql.filter("$.grade === MinKey()") as { grade: unknown }).grade)).toBe("MinKey");
     expect(bsonType((jsmql.filter("$.grade < MaxKey()") as { grade: { $lt: unknown } }).grade.$lt)).toBe("MaxKey");
   });
 
-  // MEASURED: for `tags: [Long(5), Long(7)]` the query road matches and
-  // `{ $expr: { $eq: ["$tags", Long(5)] } }` does not — it compares the whole
-  // ARRAY to a scalar. A BSON value off this road answers a different question.
   it("matches an ELEMENT of an array field", () => {
     expect(filter(`$.tags === Long("5")`)).toEqual({ tags: Long.fromString("5") });
   });
@@ -112,7 +92,6 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     );
     expect(jsmql.filter("$.count === NumberInt(3)")).toEqual(jsmql.filter("$.count === Int32(3)"));
     expect(jsmql.filter(`$.t > ISODate("2020-01-01")`)).toEqual(jsmql.filter(`$.t > Date("2020-01-01")`));
-    // JavaScript's bare `Date()` answers a string; JSMQL keeps the syntax, not that meaning.
     expect(jsmql.pipeline("$.a = Date();")).toEqual([{ $set: { a: "$$NOW" } }]);
   });
 
@@ -122,7 +101,6 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(() => jsmql.pipeline("$.a = Int32($.numText);")).toThrow(/Write '<value>\.toInt\(\)'/);
     expect(() => jsmql.pipeline("$.a = Double($.numText);")).toThrow(/Write '<value>\.toDouble\(\)'/);
     expect(() => jsmql.pipeline("$.a = ObjectId($.hexText);")).toThrow(/Write '<value>\.toObjectId\(\)'/);
-    // the method converts on the server
     expect(pipeline("$.a = $.numText.toDecimal();")).toEqual([
       { $set: { a: { $toDecimal: { $ifNull: ["$numText", 0] } } } },
     ]);
@@ -132,9 +110,6 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
 });
 
 describe("compiler — a BSON number is a number to the checker and a value to the fold", () => {
-  // The whole reason Decimal128 exists is that the SERVER answers 0.3 where a
-  // double answers 0.30000000000000004 — MEASURED. A fold in JavaScript would
-  // destroy exactly the guarantee the source asked for when it wrote the type.
   it("never evaluates BSON arithmetic", () => {
     expect(pipeline(`$.a = Decimal128("0.1") + Decimal128("0.2");`)).toEqual([
       { $set: { a: { $add: [Decimal128.fromString("0.1"), Decimal128.fromString("0.2")] } } },
@@ -151,7 +126,6 @@ describe("compiler — a BSON number is a number to the checker and a value to t
     ]);
   });
 
-  // The one fold that cannot lose anything: the text the value prints.
   it("folds an exact read", () => {
     expect(jsmql.pipeline(`$.a = Decimal128("1.50").toString();`)).toEqual([{ $set: { a: "1.50" } }]);
     expect(jsmql.pipeline(`$.a = Long("5").toString();`)).toEqual([{ $set: { a: "5" } }]);
@@ -160,8 +134,6 @@ describe("compiler — a BSON number is a number to the checker and a value to t
 });
 
 describe("compiler — jsmql refuses what bson would silently corrupt", () => {
-  // MEASURED against bson 7.2.0: `new Int32(5000000000)` is 705032704 and
-  // `Long.fromString("1.5")` is 1. A wrapped integer in a report is undetectable.
   it("names the type that holds the value", () => {
     expect(() => jsmql.pipeline("$.a = Int32(5000000000);")).toThrow(/32-bit range.*Write 'Long\(…\)'/s);
     expect(() => jsmql.pipeline("$.a = Int32(3.7);")).toThrow(/not a whole number.*'Double\(…\)'/s);
@@ -179,15 +151,11 @@ describe("compiler — jsmql refuses what bson would silently corrupt", () => {
     expect(errors[0].pos).toBe(src.indexOf("(5000000000)"));
   });
 
-  // A JavaScript number past 2^53 has already lost the integer it was written as.
   it("points a too-large number literal at the spellings that keep it", () => {
     expect(() => jsmql.pipeline("$.a = Long(9007199254740993);")).toThrow(/spell it as a string.*BigInt/s);
   });
 });
 
-// A conversion takes a value of its own type. The value's own method converts the value on
-// the server. MEASURED: each `$to…` operator gives a value of
-// its own type back unchanged.
 const OWN_TYPE: readonly [string, unknown][] = [
   [
     `$.x = 0x${HEX}; $.r = $.x.toObjectId();`,
@@ -224,7 +192,6 @@ describe("compiler — a conversion takes a value of its own type", () => {
     for (const [src, mql] of OWN_TYPE) expect(pipeline(src), src).toEqual(mql);
   });
 
-  // A type name is no conversion function. A type name builds a constant. The value's own method converts a value.
   it("refuses a type name over a value of its own type", () => {
     expect(() => jsmql.pipeline(`$.r = Long(Long("5"));`)).toThrow(/'Long\(<constant>\)'/);
     expect(() => jsmql.pipeline(`$.r = UUID(UUID("${UUID_TEXT}"));`)).toThrow(
@@ -290,10 +257,6 @@ describe.skipIf(!up)("compiler — each constant finds the stored document", () 
   });
 });
 
-// The driver sends a DBRef as the document `{ $ref, $id, $db }`. An expression slot
-// reads that document as an operator call, and the server refuses it — MEASURED.
-// So a passed-in DBRef reads as MQL (HR1). The compiler writes `$literal` where the server evaluates the
-// slot. It writes the value as given in a query and in an update document.
 describe("compiler — a passed-in DBRef is a value in every slot", () => {
   const ref = new DBRef("users", new ObjectId(HEX));
 
@@ -336,9 +299,6 @@ describe("compiler — a passed-in DBRef is a value in every slot", () => {
   });
 });
 
-// The driver stores a Map as its entries and a value with `toBSON()` as what that
-// method gives. A filter with the same value passed in must find that document.
-// See docs/specs/function-form-params.md § The value the driver sends.
 describe("compiler — a passed-in value finds what the driver stored for it", () => {
   class Money {
     cents = 500;
@@ -365,9 +325,6 @@ describe("compiler — a passed-in value finds what the driver stored for it", (
 });
 
 describe("compiler — a regex keeps its MongoDB options on the wire", () => {
-  // The driver writes a JavaScript RegExp through `bson`, which writes only `i`, `m`,
-  // and the `global` flag as `s`. So the compiler emits a BSONRegExp where the options
-  // hold `s`, and it drops a JavaScript `g` before the regex reaches `bson`.
   it("emits a BSONRegExp for dotAll, and a RegExp otherwise", () => {
     expect(jsmql.filter("$.s.match(/a.b/s)")).toEqual({ s: { $regex: new BSONRegExp("a.b", "s") } });
     expect(jsmql.filter("$.s.match(/a/gi)")).toEqual({ s: { $regex: /a/i } });

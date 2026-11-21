@@ -1,9 +1,3 @@
-// A cursor over the token list. This file is the only place that words a parse error.
-//
-// The friendly name of a token comes from its registry key. tokens.ts uses the SPELLING
-// as the key, so `'('` reads as `'('` and a class-named row reads as `number`. No
-// TokenName reaches a message, so a user never sees an internal name such as `LParen`.
-
 import { KEYWORDS } from "../../registry/keywords.ts";
 import { TOKENS } from "../../registry/tokens.ts";
 import type { TokenName } from "../../registry/vocabulary.ts";
@@ -12,9 +6,6 @@ import type { Token } from "../lex/token.ts";
 export class ParseError extends Error {
   pos: number;
   constructor(message: string, pos: number) {
-    // Every message states the position. The code does not add it twice when the
-    // message already places the position in the middle of the sentence. A message
-    // that ends with a full stop takes the position before the stop.
     super(
       /\bat position \d+/.test(message)
         ? message
@@ -27,7 +18,6 @@ export class ParseError extends Error {
   }
 }
 
-/** Token type to its spelling in a message. The registry keys give this spelling. */
 const DISPLAY: ReadonlyMap<TokenName, string> = (() => {
   const out = new Map<TokenName, string>();
   for (const [key, row] of Object.entries(TOKENS)) {
@@ -41,7 +31,6 @@ const DISPLAY: ReadonlyMap<TokenName, string> = (() => {
 
 export const spell = (t: TokenName): string => DISPLAY.get(t) ?? `'${t}'`;
 
-/** How a message names the token that the parser found. */
 export function found(t: Token): string {
   if (t.type === "EOF") return "end of input";
   return t.text.length > 0 ? `'${t.text}'` : spell(t.type);
@@ -59,18 +48,10 @@ export class Cursor {
     return this.toks[Math.min(this.at + ahead, this.toks.length - 1)];
   }
 
-  /** Use this only for a table lookup. Do not compare it. See `is`. */
   get type(): TokenName {
     return this.peek().type;
   }
 
-  /**
-   * Does the next token match this type?
-   *
-   * This is a method, not a comparison against `type`, because TypeScript narrows
-   * a getter and keeps the narrowing across a `next()` call. After one
-   * `this.c.type !== "LBrace"` check, TypeScript refused every later comparison.
-   */
   is(type: TokenName): boolean {
     return this.peek().type === type;
   }
@@ -81,21 +62,12 @@ export class Cursor {
     return t;
   }
 
-  /** Returns true and consumes the token, or returns false and leaves it. */
   eat(type: TokenName): boolean {
     if (this.type !== type) return false;
     this.at++;
     return true;
   }
 
-  /**
-   * Is the next token a reserved word in a place where a NAME can stand?
-   *
-   * Every keyword qualifies. JavaScript lets any IdentifierName follow `.` or
-   * precede `:` in an object literal, so `{ null: 1 }` and `$let({ in: … })` are
-   * names here. The lexer already turns the ones after an introducer into plain
-   * `Ident` tokens. This method catches the rest, mostly an object key.
-   */
   isNameLike(): boolean {
     const row = (KEYWORDS as Record<string, { token: TokenName } | undefined>)[this.peek().text];
     return row !== undefined && row.token === this.peek().type;
@@ -108,12 +80,10 @@ export class Cursor {
     return this.next();
   }
 
-  /** The offset just after the last token that the cursor consumed. A message quotes the source span up to it. */
   lastEnd(): number {
     return this.at === 0 ? 0 : this.toks[this.at - 1].end;
   }
 
-  /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark(): number {
     return this.at;
   }

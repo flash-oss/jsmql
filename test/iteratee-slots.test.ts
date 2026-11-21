@@ -1,10 +1,3 @@
-// `iterateeSlots` says which argument slots stand in for an arrow, on which receiver, and with which spellings.
-// The claim has value only if something checks it. So this re-measures every declared form against the arrow it
-// means, and every form a slot leaves out, to confirm that the compiler refuses it.
-//
-// The comparison erases binding names first. Two spellings of one meaning differ only in what the compiler
-// called its own `$let` vars and `$map` `as`. That is not a difference in meaning. See support/canon.ts.
-
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { elementOnlyOf } from "../src/compiler/rows.ts";
@@ -13,7 +6,6 @@ import type { Family, IterateeSlots, SlotForm } from "../src/registry/vocabulary
 import { isSlotLayout } from "../src/registry/vocabulary.ts";
 import { canon } from "./support/canon.ts";
 
-/** Each form, and the arrow that spells the same meaning. `null` = no arrow does. */
 const SPELLINGS: Readonly<Record<SlotForm, readonly [string, string | null]>> = {
   propertyPath: ['"name"', "x => x.name"],
   propertyIndex: ["0", "x => x[0]"],
@@ -33,17 +25,9 @@ const rows = (): [string, Row][] =>
 const familiesOf = (r: Row): readonly Family[] =>
   r.on === undefined || r.on === "any" ? [] : Array.isArray(r.on) ? r.on : [r.on as Family];
 
-/**
- * The source that calls `name` on `family` with `arg` in slot `slot`.
- *
- * One receiver per family, and the family fixes the position too: an array
- * receiver is a value, a stream receiver is a chain link.
- */
 function source(name: string, family: Family, slot: number, arg: string): { src: string; expr: boolean } {
   const withLead = (a: string): string => (slot === 0 ? a : `$.other${a === "" ? "" : ", " + a}`);
   if (family === "stream") {
-    // Two names keep only a leading or trailing run, so they need an order first. A row that reads the ELEMENT
-    // needs an unwound field to read.
     const head =
       name === "takeWhile" || name === "dropWhile"
         ? '$$.toSorted("n")'
@@ -58,11 +42,6 @@ function source(name: string, family: Family, slot: number, arg: string): { src:
 
 const compile = (src: string, expr: boolean): string => canon(expr ? jsmql.expr(src) : jsmql(src));
 
-/**
- * Is this family REFUSED in value position? A refused family takes no callback, so it states no iteratee
- * layout. The row spells `groupBy` on `Object` only to give `Object.groupBy(…)` a message that names the
- * receiver form.
- */
 const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
   const cell = row.expr as { perFamily?: Record<string, unknown> } | undefined;
   const branch = cell?.perFamily?.[family];
@@ -89,7 +68,6 @@ describe("registry — iterateeSlots covers exactly the receivers the row lists"
 });
 
 describe("registry — every declared spelling compiles and means its arrow", () => {
-  /** Every (name, family, slot, form) with a layout that names a slot. */
   const declared = (): { name: string; family: Family; slot: number; form: SlotForm }[] => {
     const out: { name: string; family: Family; slot: number; form: SlotForm }[] = [];
     for (const [name, row] of rows()) {
@@ -113,7 +91,6 @@ describe("registry — every declared spelling compiles and means its arrow", ()
       const { src, expr } = source(c.name, c.family, c.slot, SPELLINGS[c.form][0]);
       try {
         compile(src, expr);
-        // No static is a JSMQL name in a callback, so a bare callable reads as its arrow, and the row of the static refuses it.
         if (c.form === "bareCallable") broken.push(`${c.name} <${c.family}> slot ${c.slot} accepts a bare static`);
       } catch (e) {
         const message = (e as Error).message;
@@ -128,20 +105,20 @@ describe("registry — every declared spelling compiles and means its arrow", ()
     const differ: string[] = [];
     for (const c of declared()) {
       const [short, long] = SPELLINGS[c.form];
-      if (long === null) continue; // `omitted` is identity; no arrow spells it
+      if (long === null) continue;
       const a = source(c.name, c.family, c.slot, short);
       const b = source(c.name, c.family, c.slot, long);
       let got: string;
       try {
         got = compile(a.src, a.expr);
       } catch {
-        continue; // covered by the test above
+        continue;
       }
       let want: string;
       try {
         want = compile(b.src, b.expr);
       } catch {
-        continue; // the arrow itself is refused here, which is a separate fact
+        continue;
       }
       if (got !== want) differ.push(`${c.name} <${c.family}> as ${c.form}`);
     }
@@ -162,9 +139,7 @@ describe("registry — a spelling a slot leaves out is refused", () => {
             try {
               compile(src, expr);
               accepted.push(`${name} <${family}> accepts undeclared ${form}`);
-            } catch {
-              // refused, as declared
-            }
+            } catch {}
           }
         }
       }
@@ -173,11 +148,6 @@ describe("registry — a spelling a slot leaves out is refused", () => {
   });
 
   it("accepts a sort specification where the row says the argument is one", () => {
-    // `"k"` here is an ORDER, not `x => x.k`. It is the same spelling as a property-path shorthand with a
-    // different meaning. So it is its own state and not a slot form: its spelling identifies a form. Every row
-    // that takes a sort shares one spelling, the key string. Which OTHER forms each row takes (an object, an
-    // array of keys, no argument) is that row's arity and src/compiler/emit/sort-spec.ts's business. A mutator
-    // is a statement, so the compiler tries it where a statement stands.
     const orders: string[] = [];
     for (const [name, row] of rows()) {
       for (const [family, layout] of Object.entries(row.iterateeSlots as object) as [Family, Layout][]) {
@@ -207,9 +177,7 @@ describe("registry — a spelling a slot leaves out is refused", () => {
             try {
               compile(src, expr);
               accepted.push(`${name} <${family}> accepts ${form} in slot ${slot}, declared arrow-only`);
-            } catch {
-              // refused, as declared
-            }
+            } catch {}
           }
         }
       }

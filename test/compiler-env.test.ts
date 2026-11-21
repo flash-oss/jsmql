@@ -1,12 +1,3 @@
-// Phase 5 of src/compiler/ — the environment record.
-//
-// Three invariants, each the negative of a context bug:
-//   a lambda body inherits EVERYTHING from its surroundings — a transition changes one thing
-//   the HR1 gate is one predicate with a stated truth table
-//   a chain closes in one order: stages, cleanup, terminal — nothing after `$out`
-// The type-level half — no optional field, no literal, no spread — is in
-// test/types/registry-contracts.ts.
-
 import { describe, expect, it } from "vitest";
 import { Chain, Env, injectedPlacement, type Site } from "../src/compiler/emit/env.ts";
 import { parse } from "../src/compiler/parse/parser.ts";
@@ -23,11 +14,10 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
       .at({ at: "value" });
     const body = outer.param("x", "unknown", 3).env;
     expect(body.site.envelope).toBe("$literal");
-    // the boundary remembers the chain it came FROM — how `$$` reaches the root stream from inside
     expect(body.site.boundaries).toEqual([{ stage: "$lookup", path: ["pipeline"], outer: chain }]);
     expect(body.site.where).toEqual({ at: "value" });
     expect(body.site.root).toBe("statement");
-    expect(body.chain).toBe(chain); // the SAME chain, by reference
+    expect(body.chain).toBe(chain);
     expect(body.lookup("x", 0).ref).toEqual({ kind: "var", ref: "$$x" });
   });
 
@@ -38,7 +28,6 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
   });
 
   it("reserves every name the program introduces before any mint", () => {
-    // `x` is a lambda parameter deep in the program; a mint named after it steps aside.
     const root = Env.root(parse("$.a.map(jsmqlArr => jsmqlArr)"), "value");
     expect(root.fresh("arr").as).toBe("jsmqlArr2");
   });
@@ -65,19 +54,13 @@ describe("compiler/emit/env — the HR1 gate is one function", () => {
   it("places an injected `$…` by the slot: $literal where the server evaluates, as written where nothing is read, refused elsewhere", () => {
     expect(injectedPlacement(site({ at: "value" }, "value", "none"))).toBe("literal");
     expect(injectedPlacement(site({ at: "value" }, "filter", "none"))).toBe("literal");
-    // a pipeline's `$set` value and an evaluated stage slot take the wrap too
     expect(injectedPlacement(site({ at: "value" }, "statement", "none"))).toBe("literal");
-    // an update DOCUMENT stores the string as written
     expect(injectedPlacement(site({ at: "value" }, "updateDoc", "none"))).toBe("asWritten");
-    // a $literal the developer wrote already protects it
     expect(injectedPlacement(site({ at: "value" }, "value", "$literal"))).toBe("asWritten");
-    // a stage slot that the server reads as written: there the value becomes part of the MQL
     expect(injectedPlacement(site({ at: "value", written: { stage: "$unwind", path: [] } }, "statement", "none"))).toBe(
       "refused",
     );
-    // a query slot is not an expression: the query language compares the value as written
     expect(injectedPlacement(site({ at: "filter" }, "filter", "none"))).toBe("asWritten");
-    // an accumulator and a window function are MQL syntax, never a value
     expect(injectedPlacement(site({ at: "group" }, "statement", "none"))).toBe("refused");
     expect(injectedPlacement(site({ at: "window" }, "statement", "none"))).toBe("refused");
     expect(injectedPlacement(site({ at: "target" }, "value", "none"))).toBe("refused");
@@ -102,9 +85,6 @@ describe("compiler/emit/env — a chain closes in one order", () => {
     ]);
   });
 
-  // A statement that becomes MORE THAN ONE stage drains at each of them. The hoisted
-  // stage reads the documents that the stage it was written for reads. So it stands
-  // beside that stage and not at the front of the statement.
   it("hands the hoisted stages back so a road can place them between two of its own", () => {
     const c = new Chain();
     c.emitted.push({ $sortByCount: "$tag" });
@@ -112,7 +92,6 @@ describe("compiler/emit/env — a chain closes in one order", () => {
     expect(c.ahead()).toEqual([
       { $lookup: { from: "o", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
     ]);
-    // taken out: a second drain has nothing left to give
     expect(c.ahead()).toEqual([]);
   });
 

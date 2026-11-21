@@ -1,5 +1,3 @@
-// A synthesised lambda parameter must not capture a name its body mentions.
-
 import { describe, expect, it } from "vitest";
 import { parse, parseExpression } from "../src/compiler/parse/parser.ts";
 import { freshParam, namesIn } from "../src/compiler/passes/fresh.ts";
@@ -9,7 +7,6 @@ const names = (src: string): string[] => [...namesIn(parseExpression(src))].sort
 describe("compiler/passes/fresh — every name the tree mentions", () => {
   it("collects bare names", () => {
     expect(names("n + m")).toEqual(["m", "n"]);
-    // A field path is not a name: `$.n` cannot be shadowed by a parameter.
     expect(names("$.n + $.m")).toEqual([]);
   });
 
@@ -43,8 +40,6 @@ describe("compiler/passes/fresh — the parameter it picks", () => {
   });
 
   it("steps aside for an enclosing lambda's parameter", () => {
-    // `$.rows.map(x => x.items.filter({ a: x.b }))` — the inner rewrite may not
-    // reuse `x`, or `x.b` would read the inner element.
     expect(freshParam("x", parseExpression("{ a: x.b }"))).toBe("x2");
   });
 });

@@ -14,8 +14,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
 - **Every fact is stated, never derived.** A phase might compute a fact from
   other fields, but the registry still writes it down, so a reader sees it and
   a test can check it. Each of `bodyPositions`, `evaluates`, `returns`, `document`
-  and `binds` comes from a measurement on `mongod`. The `// MEASURED:` comment
-  beside each one shows the command and the answer. `neverNull`, `readsNullAsEmpty`
+  and `binds` comes from a measurement on `mongod`. An ADR in `docs/adr/`
+  records the command and the answer. `neverNull`, `readsNullAsEmpty`
   and `passesNull` are measured by a table in test/compiler-methods.test.ts (and, for an
   operator, by test/compiler-returns-agrees.test.ts). The test fails when a row
   states one of them and has no measurement.
@@ -66,8 +66,8 @@ confirm.
   `viaFallback`. The types hold both rules.
 - **A construct** (an operator spelling, a statement form) needs a row in
   `productions.ts`. Its lexemes are keys of `tokens.ts` and `keywords.ts`.
-- **A new fact about rows** needs a field on the spec type. Give it a doc
-  comment that shows the measured case. Add the type that holds its rule, a
+- **A new fact about rows** needs a field on the spec type. Record the
+  measured case in an ADR in `docs/adr/`. Add the type that holds its rule, a
   `@ts-expect-error` pair in the contracts fixture, and the rows that state
   the fact. Never add it as a list in the compiler.
 - **A new position** needs changes in more than one place. Add it to `Position`

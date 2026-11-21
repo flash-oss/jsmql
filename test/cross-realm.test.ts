@@ -1,13 +1,3 @@
-/**
- * A value from another realm is the value it is.
- *
- * `instanceof Date` is false for a real Date made in another realm: a `vm` context, a test runner's sandbox, a
- * worker. Each realm has its own `Date`, `RegExp`, `Uint8Array` and `Object.prototype`. A parameter value can
- * arrive from any of them. A value that failed the test would take a road it should not. For example, a Date
- * compared on the `$expr` road loses the index, and a `$`-keyed object skips the `$literal` gate. The compiler
- * recognises a value by what it IS, never by which realm made it, so the document it emits is the same one. See
- * docs/specs/bson-types.md § Recognition across realms.
- */
 import { describe, it, expect } from "vitest";
 import vm from "node:vm";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -15,14 +5,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { jsmql } from "../src/index.ts";
 
-/** The value `src` makes, made in another realm. */
 const far = <T>(src: string): T => vm.runInNewContext(src) as T;
 
-/**
- * A document with every Uint8Array written as its bytes. `toEqual` compares a Date or a RegExp from another
- * realm by value. It holds two typed arrays equal only when they share a constructor, and two realms never do.
- * The bytes are what the driver sends.
- */
 const bytesAsArrays = (v: unknown): unknown => {
   if (Object.prototype.toString.call(v) === "[object Uint8Array]") return { bytes: Array.from(v as Uint8Array) };
   if (Array.isArray(v)) return v.map(bytesAsArrays);
@@ -32,7 +16,6 @@ const bytesAsArrays = (v: unknown): unknown => {
   return v;
 };
 
-/** What a build did — its document, or the message it refused with — so two roads compare whole. */
 const outcome = (build: () => unknown): { value: unknown } | { error: string } => {
   try {
     return { value: bytesAsArrays(build()) };
@@ -69,7 +52,6 @@ describe("a value from another realm is the value it is", () => {
     expect(jsmql.expr.compile(({ p }) => p.keys())({ p: far("({ a: 1, b: 2 })") })).toEqual(["a", "b"]);
   });
 
-  /** Each pair: the value made in this realm, and the source that makes it in another. */
   const PAIRS: readonly [label: string, here: unknown, there: string][] = [
     ["a Date", new Date("2026-01-01T00:00:00Z"), 'new Date("2026-01-01T00:00:00Z")'],
     ["a RegExp", /^a/i, "/^a/i"],
@@ -84,7 +66,6 @@ describe("a value from another realm is the value it is", () => {
     ["an object holding a BigInt", { n: 5n }, "({ n: 5n })"],
     ["an array of Dates", [new Date(0), new Date(1)], "[new Date(0), new Date(1)]"],
   ];
-  /** The roads a parameter value travels. */
   const ROADS: readonly [label: string, build: (p: unknown) => unknown][] = [
     ["an equality filter", (p) => jsmql.compile(({ p }, { $ }) => $.a === p)({ p })],
     ["an ordered filter", (p) => jsmql.compile(({ p }, { $ }) => $.a > p)({ p })],
@@ -116,11 +97,6 @@ describe("a value from another realm is the value it is", () => {
   }
 });
 
-/**
- * The rule is a test, because the next `instanceof Date` reads as the obvious thing to
- * write. The recognisers live in src/registry/vocabulary.ts, and src/stringify.ts holds
- * twins of the slot readers so it stays a leaf — neither tests a class.
- */
 describe("the source recognises a value by its kind, never by its realm", () => {
   const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const HOME = "src/registry/vocabulary.ts";

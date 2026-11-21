@@ -1,5 +1,3 @@
-// The template tag and the compile parameters take VALUES. The compiler never reads anything a caller supplies
-// as syntax, as an operator, or as a field reference (HR1).
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
@@ -29,7 +27,6 @@ describe("jsmql template-tag interpolation guards", () => {
     expect(() => jsmql.compile("({ d }, { $ }) => $.t > d")({ d: invalid })).toThrow(
       /parameter 'd' is an Invalid Date/,
     );
-    // A valid Date still passes as it is.
     expect(jsmql.compile("({ d }, { $ }) => $.t > d")({ d: new Date(0) })).toEqual({ t: { $gt: new Date(0) } });
   });
   it("rejects circular objects", () => {
@@ -59,7 +56,6 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
     expect(jsmql`$.a === ${"$b"}`).toEqual({ a: "$b" });
     expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $concat: ["$a", { $literal: "$b" }] });
     expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $concat: ["$a", { $literal: "$b" }] });
-    // a pipeline evaluates its values too: a `$set` value, a stage body, a group key
     expect(jsmql.pipeline`$.x = ${"$b"};`).toEqual([{ $set: { x: { $literal: "$b" } } }]);
     expect(
       jsmql.pipeline.compile(({ s }, { $ }) => {
@@ -69,7 +65,6 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
     expect(jsmql.pipeline`$group({ _id: ${"$b"}, n: $sum(1) })`).toEqual([
       { $group: { _id: { $literal: "$b" }, n: { $sum: 1 } } },
     ]);
-    // an update DOCUMENT evaluates nothing: the server stores the string as written
     expect(jsmql.update`$.x = ${"$b"}`).toEqual({ $set: { x: "$b" } });
   });
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
@@ -106,14 +101,6 @@ describe("jsmql.validate() error contract", () => {
   });
 });
 
-// ── a field name JavaScript refuses to store the ordinary way ────────────────
-//
-// MongoDB reserves no field names, so `__proto__` is ordinary data — and it is the
-// one name `out[name] = value` sends to the PROTOTYPE slot, and creates no own property.
-// Three more names read back a method that was never stored (`constructor`,
-// `toString`, `valueOf`), and `name in out` answers true for all of them. Each of the
-// four goes wrong differently, so each is asserted here, not assumed.
-// See the `setKey` header in src/registry/mql.ts.
 describe("a developer-authored field name survives to the output", () => {
   const HOSTILE = ["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"];
 
@@ -143,8 +130,6 @@ describe("a developer-authored field name survives to the output", () => {
     }
   });
 
-  // `key in branches` answers true for every name on `Object.prototype`, so the
-  // duplicate guard must not refuse a program that has no duplicate at all.
   it("a $facet branch may be named after a prototype member, and a real duplicate is still refused", () => {
     expect(jsmql.pipeline("$ = { toString: $$ };")).toEqual([{ $facet: { toString: [] } }]);
     expect(jsmql.pipeline("$ = { valueOf: $$, hasOwnProperty: $$ };")).toEqual([
@@ -153,8 +138,6 @@ describe("a developer-authored field name survives to the output", () => {
     expect(() => jsmql.pipeline("$ = { dup: $$, dup: $$ };")).toThrow("names two '$facet' branches");
   });
 
-  // The fold reads its accumulator back, and a plain object answers a FUNCTION for
-  // `constructor` — a value the fold never stored.
   it("a fold keyed by a prototype member answers what it stored", () => {
     expect(jsmql.pipeline("$.r = [{ k: 'constructor' }].groupBy(x => x.k);")).toEqual([
       { $set: { r: { $mergeObjects: [{ constructor: [{ k: "constructor" }] }] } } },
@@ -165,11 +148,7 @@ describe("a developer-authored field name survives to the output", () => {
   });
 });
 
-// A run-time value that reads as MQL (a string that starts with `$`, a document with a `$` key) is a value in
-// both forms. Where the server evaluates the slot, it takes `$literal`. The query compares it as written. Every
-// slot where it becomes part of the MQL refuses it. See docs/LANG_RULES.md (HR1).
 describe("a run-time value that reads as MQL is a value, in both forms", () => {
-  /** The template tag and a `jsmql.compile` parameter give ONE answer for the same value. */
   const both = (tag: (v: unknown) => unknown, compiled: (p: { v: unknown }) => unknown, v: unknown): unknown => {
     const run = (f: () => unknown): { ok: unknown } | { error: string } => {
       try {
@@ -373,7 +352,6 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
         { $gt: 1 },
       ),
     ).toThrow(query);
-    // The compiler writes a document with no `$` in it as the source could write it, and it stays the query.
     expect(jsmql`$match(${{ a: 1 }});`).toEqual([{ $match: { a: 1 } }]);
   });
 
@@ -388,14 +366,8 @@ describe("a run-time value that reads as MQL is a value, in both forms", () => {
   });
 });
 
-// The driver converts some values before it sends them: it calls `toBSON()`, and it
-// sends a Map as a document of its entries. JSMQL makes the same conversions, so the
-// compiled document and its printed text hold the value that the server gets.
-// See docs/specs/function-form-params.md § The value the driver sends.
 describe("a passed-in value is the value the driver sends", () => {
-  /** The value an update document stores for `v`. The update document keeps it as written. */
   const sent = (v: unknown): unknown => (jsmql.update`$.x = ${v}` as { $set: { x: unknown } }).$set.x;
-  /** The bytes the driver sends for `{ x: v }`. */
   const wire = (v: unknown): string => Buffer.from(BSON.serialize({ x: v })).toString("base64");
 
   class Money {
@@ -458,7 +430,6 @@ describe("a passed-in value is the value the driver sends", () => {
     expect(() => jsmql`$.x === ${{ deep: [new Set()] }}`).toThrow(/at \.deep\[0\] is a Set/);
   });
 
-  // `bson` finds a Date, a RegExp and a Map by `Symbol.toStringTag` alone.
   it("refuses an object that only sets a tag the driver reads", () => {
     for (const tag of ["Date", "RegExp", "Map"]) {
       expect(() => jsmql`$.x === ${{ [Symbol.toStringTag]: tag }}`).toThrow(/Symbol\.toStringTag/);

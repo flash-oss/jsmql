@@ -1,37 +1,11 @@
-// REGISTRY 1 of 4 — the token table. LEXICAL phase.
-//
-// Keyed by the SPELLING, except for the 6 tokens that have no spelling —
-// number, bigint, string, regex, templateText, identifier. A class name keys
-// those, and they carry the mark `variable`.
-//
-// `token` holds a LIST where one spelling maps to more than one token type, because the
-// lexer classifies it by position. A backtick is TemplateStart at the start and
-// TemplateEnd at the end. A `/` is Slash or RegexLiteral, and the token before it
-// decides. A single `TokenName` cannot state either fact.
-//
-// This file holds NO MQL. The lexer is its only reader, and a lexer cannot use a
-// renderer. A renderer here is thus a fact in the wrong phase. The meaning of each
-// token lives in productions.ts. The meaning of each NAME lives in names.ts.
-//
-// A reserved word has no row here. The lexer promotes each one to its own token
-// type, and keywords.ts holds that promotion.
-//
-// `tmp/gen-tokens.mjs` generates this table from the lexer's TOKEN_DISPLAY, so the
-// table cannot drift from the tokeniser it describes.
-
 import type { TokenName } from "./vocabulary.ts";
 
 export type TokenSpec<C extends string = never> = {
   doc: string;
-  /**
-   * The lexer TokenType this row describes. It holds every possible type when the
-   * lexer decides between them by position.
-   */
   token: TokenName | readonly TokenName[];
   role:
     | "open"
     | "close"
-    /** It opens and closes itself, so it has no separate closer row. */
     | "delimiter"
     | "separator"
     | "binder"
@@ -41,48 +15,17 @@ export type TokenSpec<C extends string = never> = {
     | "literal"
     | "name"
     | "reference";
-  /** For a closer: the key of its opener. Audited below. */
   closes?: C;
-  /** true when the token has no fixed spelling, so the key is a class name. */
   variable?: true;
-  /**
-   * A cap on how many times this spelling can repeat. A longest-match table
-   * cannot state it. `$$$$$` matches `$$$$` and then `$`, which gives two valid
-   * tokens and no error. The lexer instead refuses the longer run, and the
-   * `tooLong` text is its message.
-   */
   maxRun?: { limit: number; tooLong: string };
-  /**
-   * When one spelling maps to more than one token type, this cell says which type
-   * the lexer takes, and from what. A `/` is division after a value, and a regex in
-   * all other places. Thus the PRECEDING token decides, not this one.
-   */
   chooseBy?: { afterValue: TokenName; otherwise: TokenName };
-  /**
-   * The lexeme AFTER this one is a name, even when it spells a reserved word.
-   *
-   * `$.typeof`, `x.delete`, `$in(…)` and `a?.null` are all legal JavaScript, and
-   * a MongoDB field can have any name. So after these four the lexer emits
-   * `Ident` and never promotes. The introducer holds this cell, because the
-   * introducer changes the reading. The same word one token later is the
-   * operator again (`$.typeof in xs`).
-   */
   introducesName?: true;
-  /** This opener adds 1 to the depth counter that a template interpolation reads. */
   tracksDepth?: true;
-  /**
-   * When the depth of this closer agrees with an open template interpolation, it
-   * ends the interpolation and emits no token at all. It is the one closer that
-   * makes nothing.
-   */
   resumesTemplateAtDepth?: true;
 };
 
 export type TokenEntry<C extends string = never> = TokenSpec<C> & { kind: "token" };
 
-// `C` defaults to `never`, never to its constraint. If it did not, a row with no
-// `closes` would resolve `C` to `string` and flood the union of the audit. The
-// check would then pass, but test nothing.
 const token = <const C extends string = never>(e: TokenSpec<C>): TokenEntry<C> => ({ ...e, kind: "token" });
 
 export const TOKENS = {
@@ -90,25 +33,8 @@ export const TOKENS = {
   ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
   "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
   "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
-  "{": token({
-    doc: "The `{` token.",
-    token: "LBrace",
-    role: "open",
-    // It counts depth, so a template interpolation can tell its OWN closing brace
-    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
-    // the outer one ends the interpolation.
-    tracksDepth: true,
-  }),
-  "}": token({
-    doc: "The `}` token.",
-    token: "RBrace",
-    role: "close",
-    closes: "{",
-    // When its depth agrees with an open interpolation, this brace emits NO token
-    // at all. It ends the interpolation, and template text continues. It is the
-    // one closer whose row makes nothing.
-    resumesTemplateAtDepth: true,
-  }),
+  "{": token({ doc: "The `{` token.", token: "LBrace", role: "open", tracksDepth: true }),
+  "}": token({ doc: "The `}` token.", token: "RBrace", role: "close", closes: "{", resumesTemplateAtDepth: true }),
   ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
   ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
   ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
@@ -207,22 +133,6 @@ export const TOKENS = {
 
 export type TokenKey = keyof typeof TOKENS;
 
-/**
- * The token types after which a `/` is DIVISION, not the start of a regex.
- *
- * `chooseBy` on the `/` row states the rule: the preceding token decides. It does
- * not say which tokens count as a value, and that list is the other half of the
- * same fact. This is one declaration, not a flag per row, because the backtick row
- * covers two token types and only `TemplateEnd` ends a value.
- *
- *   `$.a / 2`      → Slash        the preceding token is a field reference
- *   `/ab/.test`    → RegexLiteral nothing precedes it
- *   `$.typeof / 2` → Slash        `typeof` after `$.` is an `Ident` (see
- *                                 `introducesName`), and an Ident ends a value
- *
- * The list holds no keyword token. A reserved word in the role of an OPERATOR
- * never ends a value, and one in the role of a NAME is already an `Ident`.
- */
 export const ENDS_A_VALUE: readonly TokenName[] = [
   "Number",
   "BigInt",
@@ -236,8 +146,6 @@ export const ENDS_A_VALUE: readonly TokenName[] = [
   "RBracket",
   "TemplateEnd",
 ];
-
-// ── audit: every `closes` names a key of this same table ─────────────────────
 
 type FieldOf<K extends TokenKey, F extends string> = F extends keyof (typeof TOKENS)[K]
   ? NonNullable<(typeof TOKENS)[K][F]>

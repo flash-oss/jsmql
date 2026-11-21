@@ -1,14 +1,3 @@
-// The two targets must select the same documents — where the language says they do.
-//
-// A predicate reaches MQL by two roads: the QUERY language (`filter`) and the
-// aggregation EXPRESSION language (`expr`, under `$expr`). This suite runs both
-// roads on the same documents on a real mongod and compares the document ids that
-// come back. The language documents some divergences (docs/specs/emit-pass.md §
-// The filter target). These live in a table with a reason. A repair to a divergence
-// must move the row, not land silently.
-//
-// This suite self-skips (reports green) when no mongod is reachable, with an all-or-nothing guard.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { expr, filter } from "../src/compiler/index.ts";
@@ -44,13 +33,9 @@ const DOCS = [
   { _id: 14, a: false, s: "x ", b: 1 },
 ];
 
-/** Sources whose two roads must select the SAME documents. */
 const AGREE: readonly string[] = [
-  // A PREFIX array: both roads map over it now, so both answer the same.
   "$.a.q == null",
   "$.a === 0",
-  // A JavaScript spelling reads the field's OWN value on BOTH roads, so an array
-  // element never divides them (src/registry/vocabulary.ts § queryOwnValue).
   "$.o.k === 2",
   "$.o.k === 1 || $.n * 2 > 10",
   "$.o.k === 1 && $.b === 2",
@@ -69,7 +54,6 @@ const AGREE: readonly string[] = [
   '$.d >= Date("2024-06-01")',
   'typeof $.a === "string"',
   'typeof $.a !== "bool"',
-  // a type test takes the query form of `typeof`
   "$.a.isString()",
   "!$.a.isBool()",
   "$.a.isDate() || $.a.isBool()",
@@ -80,8 +64,6 @@ const AGREE: readonly string[] = [
   "$.a",
   "$.a && $.b",
   "$.a || $.b",
-  // HR5: a dot reads a missing string as "". A test that is true for "" selects the
-  // document with no `s` on both roads. A `?.` selects it on neither road.
   '$.s.includes("")',
   '$.s.startsWith("")',
   '$.s.endsWith("")',
@@ -89,28 +71,19 @@ const AGREE: readonly string[] = [
   "!$.s.match(/^$/)",
   "$.s?.match(/^$/)",
   '$.s.includes("b")',
-  // HR5: a dot reads a missing array as [], which holds no null. `h` is an array, null or missing.
   "$.h.has(null)",
   "!$.h.has(null)",
   "$.h?.has(null)",
   "$.h.has(null) && $.h.has(1)",
-  // `.has()` tests membership as `===` does: a missing field is not null. `s` is a string or missing.
   '[null, "x"].has($.s)',
   '![null, "x"].has($.s)',
   '$.s in [null, "x"]',
   "$.it.some(i => [null, 5].has(i.n))",
-  // an `$elemMatch` body keeps `$or` and `$nor` over the fields of an element; `it` holds documents
   "$.it.some(i => i.n.inRange(10))",
   "$.it.some(i => i.n > 2 || i.m === 1)",
   "$.it.some(i => !(i.n === 5))",
 ];
 
-/**
- * Sources with no query clause. The query road wraps the expression road's own
- * document in `$expr`, so the two roads run one query, and a server comparison
- * proves nothing. The test asserts that identity instead. A source that gains a
- * query form fails here, and moves to AGREE or DIVERGE.
- */
 const SAME_QUERY: readonly string[] = [
   "!$.a",
   "$.a ? $.b === 1 : $.b === 2",
@@ -120,15 +93,9 @@ const SAME_QUERY: readonly string[] = [
   "$.a.isUUID()",
 ];
 
-/**
- * The query road emits the document a MongoDB developer writes by hand, so the
- * server reads an ARRAY value element-wise there. The expression road compares the
- * value itself. Every row below that carries this reason is that one difference.
- */
 const ARRAY_ELEMENT_WISE =
   "The query road emits the plain query document, and MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. The expression road compares the whole value, so an array document is selected by one road and not the other.";
 
-/** Sources that, as the language DOCUMENTS, select different documents, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a === 1", why: ARRAY_ELEMENT_WISE },
   { src: 'typeof $.a === "object"', why: ARRAY_ELEMENT_WISE },
@@ -156,8 +123,6 @@ let coll: Collection | null = null;
 
 beforeAll(async () => {
   client = await liveClient();
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_query_expr_agreement").collection("t");
@@ -172,7 +137,6 @@ afterAll(async () => {
 const ids = async (q: Record<string, unknown>): Promise<number[]> =>
   (await coll!.find(q).toArray()).map((d) => d._id as number).sort((x, y) => x - y);
 
-/** Both roads' ids, or null when no server is up. */
 async function bothRoads(src: string): Promise<{ query: number[]; expr: number[] } | null> {
   if (coll === null) return null;
   return { query: await ids(filter(src)), expr: await ids({ $expr: expr(src) }) };
@@ -181,11 +145,9 @@ async function bothRoads(src: string): Promise<{ query: number[]; expr: number[]
 let ran = 0;
 let skipped = 0;
 
-/** True when the query road is the expression road's document under `$expr`. */
 const sameQuery = (src: string): boolean => JSON.stringify(filter(src)) === JSON.stringify({ $expr: expr(src) });
 
 describe("compiler — every compared source has two different queries", () => {
-  // A row whose two roads emit one query compares the server with itself.
   it("no AGREE or DIVERGE row emits the same query on both roads", () => {
     const same = [...AGREE, ...DIVERGE.map((d) => d.src)].filter(sameQuery);
     expect(same, "move these rows to SAME_QUERY").toEqual([]);
@@ -226,7 +188,6 @@ describe("compiler — the documented divergences still diverge, in both directi
 
 describe("compiler — the agreement suite says whether it ran", () => {
   it("compared every source, or none", () => {
-    // A suite that silently degrades to compile-only looks exactly like one that passed.
     expect(ran === 0 || skipped === 0).toBe(true);
     if (ran === 0)
       console.warn(`\n[agreement] no mongod on ${URI} — the query/expression agreement was NOT compared.\n`);

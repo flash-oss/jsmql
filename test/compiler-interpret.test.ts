@@ -1,23 +1,14 @@
-// The interpreter for MQL expressions, with no server: the value of each rule, each
-// refusal, the NaN and infinity that make a result unspellable, and the scope of a variable.
-//
-// An answer here is a value that a rule computes. Whether the server computes the same
-// value is checked by compiler-interpret-agrees.test.ts. The rows in each table
-// are the cases where the rule says something that a reader can verify by hand.
-
 import { describe, expect, it } from "vitest";
 import { BSONRegExp, Decimal128, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from "bson";
 import { interpret } from "../src/compiler/interpret/index.ts";
 import { MAX_DEPTH, MAX_SIZE, OrderedDocument } from "../src/compiler/interpret/values.ts";
 
-/** The value of the expression. A refusal fails the test. */
 function value(mql: unknown): unknown {
   const answer = interpret(mql);
   if (!answer.ok) throw new Error(`no value for ${JSON.stringify(mql)}: ${JSON.stringify(answer)}`);
   return answer.value;
 }
 
-/** Each of these has no value, and the reason is not a NaN or an infinity. */
 const refused = (mql: unknown): void => expect(interpret(mql)).toEqual({ ok: false });
 
 const OID = "507f1f77bcf86cd799439011";
@@ -78,7 +69,6 @@ describe("the walk", () => {
 
   it("reads a key that looks like an array index only in a document of one key", () => {
     expect(value({ "1": "x" })).toEqual({ "1": "x" });
-    // A JavaScript object lists "1" before "b", so the BSON order would be lost.
     refused({ b: 1, "1": 2 });
     refused({ $mergeObjects: [{ b: 1 }, { "1": 2 }] });
   });
@@ -105,7 +95,6 @@ describe("the walk", () => {
         ],
       }),
     ).toEqual(pairs(["b", 1], ["0", 2]));
-    // A key that two pairs share keeps its first place and the value of its last pair.
     expect(
       value({
         $arrayToObject: [
@@ -117,7 +106,6 @@ describe("the walk", () => {
         ],
       }),
     ).toEqual(pairs(["1", "c"], ["0", "b"]));
-    // A document at a deeper level keeps its order too.
     expect(
       value({
         $arrayToObject: [
@@ -138,7 +126,6 @@ describe("the walk", () => {
         ],
       }),
     ).toEqual(pairs(["1", pairs(["1", 1], ["0", 2])], ["0", 5]));
-    // A document of one key, and a document with no such key, stay plain.
     expect(value({ $arrayToObject: [[["1", 1]]] })).toEqual({ "1": 1 });
     expect(
       Object.keys(
@@ -152,7 +139,6 @@ describe("the walk", () => {
         }) as object,
       ),
     ).toEqual(["b", "a"]);
-    // No rule reads the keys of the pairs. A call that reads them is refused.
     refused({
       $objectToArray: {
         $arrayToObject: [
@@ -391,7 +377,6 @@ describe("comparison", () => {
     [{ $cmp: [2, 1] }, 1],
     [{ $cmp: ["a", "a"] }, 0],
     [{ $cmp: [null, 1] }, -1],
-    // Two kinds: equality is false, and an order follows the place of each kind in the BSON order.
     [{ $eq: [1, "a"] }, false],
     [{ $ne: [1, "a"] }, true],
     [{ $eq: [new Long(1), "a"] }, false],
@@ -405,7 +390,6 @@ describe("comparison", () => {
     [{ $cmp: [new MaxKey(), new Date(0)] }, 1],
     [{ $lt: [[1], ["a"]] }, true],
     [{ $gt: [{ a: 1 }, { a: 2 }] }, false],
-    // A document compares each field by its place, then its name, then its value.
     [{ $cmp: [{ b: 1 }, { a: "x" }] }, -1],
     [{ $cmp: [{ a: 1 }, { b: 0 }] }, -1],
     [{ $cmp: [{ a: 1 }, { a: 1, b: 0 }] }, -1],
@@ -528,7 +512,6 @@ describe("variables", () => {
         $map: { input: [[1, 2], [3]], as: "row", in: { $map: { input: "$$row", in: { $add: ["$$this", 10] } } } },
       }),
     ).toEqual([[11, 12], [13]]);
-    // After the $map, the variable is gone.
     refused({ $concatArrays: [{ $map: { input: [1], in: "$$this" } }, ["$$this"]] });
   });
 
@@ -704,7 +687,6 @@ describe("set operators", () => {
   const set = { $setUnion: [[3, 1], [2]] };
 
   it("passes the order of a set through the operators that build a value one element at a time", () => {
-    // `$map` and `$filter` give a list in the order of the set, so a rule that reads a position still refuses it.
     expect(value({ $size: { $map: { input: set, in: { $add: ["$$this", 1] } } } })).toBe(3);
     expect(value({ $in: [4, { $map: { input: set, in: { $add: ["$$this", 1] } } }] })).toBe(true);
     expect(value({ $size: { $filter: { input: set, cond: { $gt: ["$$this", 1] } } } })).toBe(2);
@@ -714,7 +696,6 @@ describe("set operators", () => {
     refused({ $reduce: { input: set, initialValue: 0, in: { $add: ["$$value", "$$this"] } } });
     refused({ $zip: { inputs: [set, [1, 2, 3]] } });
     refused({ $indexOfArray: [{ $map: { input: set, in: "$$this" } }, 3] });
-    // A limit keeps the first elements of the set, which the server does not specify.
     refused({ $filter: { input: set, cond: true, limit: 2 } });
     expect(value({ $filter: { input: set, cond: true, limit: null } })).toEqual([3, 1, 2]);
   });
@@ -726,9 +707,7 @@ describe("set operators", () => {
     expect(value({ $size: { $objectToArray: { $mergeObjects: [{ $arrayToObject: pairs }, { z: 1 }] } } })).toBe(4);
     refused({ $first: { $objectToArray: { $arrayToObject: pairs } } });
     refused({ $getField: { field: "1", input: { $arrayToObject: pairs } } });
-    // A key that two pairs share keeps the value of the last pair, and the set has no last pair.
     refused({ $arrayToObject: { $map: { input: set, in: { k: "a", v: "$$this" } } } });
-    // The same holds for documents that one list holds.
     refused({ $mergeObjects: { $map: { input: set, in: { a: "$$this" } } } });
     const keyed = { $map: { input: set, in: { $arrayToObject: [[[{ $toString: "$$this" }, 1]]] } } };
     expect(value({ $size: { $objectToArray: { $mergeObjects: keyed } } })).toBe(3);
@@ -882,7 +861,6 @@ describe("strings", () => {
     [{ $substr: ["abcd", 1, 2] }, "bc"],
     [{ $indexOfCP: ["😀a😀", "a"] }, 1],
     [{ $indexOfCP: [null, "a"] }, null],
-    // an empty search string: the start, or -1 at or past the end unless the start is 0
     [{ $indexOfCP: ["abc", "", 1] }, 1],
     [{ $indexOfCP: ["abc", "", 3] }, -1],
     [{ $indexOfCP: ["", ""] }, 0],
@@ -904,7 +882,6 @@ describe("strings", () => {
     [{ $toString: new Decimal128("1.50") }, "1.50"],
     [{ $toString: new Long(5) }, "5"],
     [{ $toString: new Int32(-7) }, "-7"],
-    // The text of a fraction is not known, but it is never the text of NaN or an infinity.
     [{ $in: [{ $toString: 4.5 }, ["NaN", "Infinity", "-Infinity"]] }, false],
     [{ $eq: [{ $toString: 1e-7 }, "NaN"] }, false],
     [{ $ne: ["Infinity", { $toString: 2.5 }] }, true],
@@ -1048,7 +1025,7 @@ describe("accumulators in their expression form", () => {
 });
 
 describe("dates", () => {
-  const WHEN = new Date("2024-03-10T13:45:30.123Z"); // a Sunday
+  const WHEN = new Date("2024-03-10T13:45:30.123Z");
   const at = (iso: string): Date => new Date(iso);
 
   it.each<[unknown, unknown]>([

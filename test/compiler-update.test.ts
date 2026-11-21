@@ -1,9 +1,3 @@
-// The update-document target: the object form of an update,
-// `updateOne(filter, { $set: … })`. The suite asserts each document as MQL. When a mongod
-// is reachable, the suite applies the update to a fixture with `updateMany` and
-// compares the result with what JavaScript would leave behind. This suite self-skips
-// (reports green) without a server, with the all-or-nothing guard. See
-// docs/specs/emit-pass.md § The update-document target.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { update } from "../src/compiler/index.ts";
@@ -106,7 +100,6 @@ describe("compiler/emit/update — writes become their operators", () => {
     expect(() => update("$set({ a: $.b })")).toThrow(/takes constants/);
     expect(() => update("$.a = $.b")).toThrow(/copies a field/);
     expect(() => update("$.a = 1; $.a = 2;")).toThrow(/written twice/);
-    // The compiler merges two writes of one operator, so it refuses a merge it cannot make.
     expect(() => update("$set(5); $set({ b: 2 });")).toThrow(
       "'$set' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '$set' once.",
     );
@@ -117,12 +110,8 @@ describe("compiler/emit/update — writes become their operators", () => {
   });
 
   it("passes an update operator that you call through as written", () => {
-    // DELIBERATELY invalid shapes: each one is your own MQL, and the server judges it.
-    // mongod: the server refuses `$each`, because it is not an update operator.
     expect(update("$each([1])")).toEqual({ $each: [1] });
-    // mongod: the server refuses `$sort`, because it is not an update operator.
     expect(update("$sort({ a: 1 })")).toEqual({ $sort: { a: 1 } });
-    // mongod: the server refuses the number, because `$set` takes a document of fields.
     expect(update("$set(5)")).toEqual({ $set: 5 });
   });
 
@@ -134,19 +123,16 @@ describe("compiler/emit/update — writes become their operators", () => {
   });
 
   it("refuses a copy of the whole document with the pipeline form alone", () => {
-    // no `$rename` can move the root, so the field-copy advice does not apply
     expect(() => update("$.a = $")).toThrow(
       "'$.a = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline(\"$.a = $;\")'). 'updateOne' also accepts this form.",
     );
   });
 
   it("refuses a server-computed value with what to write instead", () => {
-    // `Date()` is `$currentDate` only as the whole write; anywhere else the row says so.
     for (const src of ["$.a = { t: Date() }", "$.tags.push(Date())", "$.t = Date($.x)"])
       expect(() => update(src)).toThrow(/'\$\.<field> = Date\(\)' is '\$currentDate'.*pipeline form/s);
     expect(() => update("$.id = ObjectId()")).toThrow(/Pass an id from your code.*pipeline form/s);
     expect(() => update("$.t = Date.now()")).toThrow(/'\$currentDate'.*for milliseconds, use the pipeline form/s);
-    // A name whose row has no update-document cell gets the position's own sentence.
     expect(() => update("$.t = typeof $.x")).toThrow(
       "'typeof' is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline(\"$.<field> = typeof…;\")'). 'updateOne' also accepts this form. Or pass the value from your code.",
     );
@@ -157,8 +143,6 @@ let client: MongoClient | null = null;
 let coll: Collection | null = null;
 beforeAll(async () => {
   client = await liveClient();
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   coll = client.db("jsmql_compiler_update").collection("docs");
 });

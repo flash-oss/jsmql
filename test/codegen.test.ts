@@ -58,26 +58,15 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$gt($.age, 18)")).toEqual({ $gt: ["$age", 18] });
   });
 
-  // Comparison operators are dual-form (`flex`). The single-argument shape is the valid QUERY
-  // predicate `{ field: { $gt: v } }`. Two args are the aggregation operands `{ $gt: [a, b] }`
-  // (HR2 — see docs/LANG_RULES.md). In aggregation-expression position the single-value form is
-  // your own MQL, and it passes through as written. DELIBERATELY invalid: mongod refuses it,
-  // because `$gt` takes exactly two operands.
   it("a comparison single arg in aggregation position passes through as written", () => {
     expect(jsmql.expr("$gt($.x)")).toEqual({ $gt: "$x" });
     expect(jsmql.expr("$eq(5)")).toEqual({ $eq: 5 });
     expect(jsmql.expr("$lte($.score)")).toEqual({ $lte: "$score" });
   });
 
-  // …but the single-value form still compiles as a query predicate under a field.
   it("comparison single arg → valid query single-value form under a field (HR2)", () => {
-    // A CONSTANT operand is the developer's own MQL and passes through as written.
     expect(jsmql("{ score: $lte(80) }")).toEqual({ score: { $lte: 80 } });
     expect(jsmql('{ x: $gt("$y") }')).toEqual({ x: { $gt: "$y" } });
-    // A field READ has no query form, because the query language would compare the field
-    // with the two-character string. So it takes the expression twin of the operator, as the
-    // document spelling of the same operator already did. One operator has one meaning,
-    // whichever way you spell it.
     expect(jsmql("{ x: $gt($.y) }")).toEqual({ $expr: { $gt: ["$x", "$y"] } });
     expect(jsmql("{ x: { $gt: $.y } }")).toEqual({ $expr: { $gt: ["$x", "$y"] } });
   });
@@ -91,10 +80,6 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
 
-  // List-only operators — HR1/HR2/HR3:
-  //   2+ args → array; 1 array literal → the array IS the operand list; 1 other operand →
-  //   that one operand as written, where the row's count takes one (MEASURED: the server
-  //   reads `{ $add: "$x" }` as one operand), and the count's refusal where it does not.
   it("list-only op: a single array literal is the operand list (HR2 round-trip)", () => {
     expect(jsmql.expr("$setUnion([$.a, $.b])")).toEqual({ $setUnion: ["$a", "$b"] });
     expect(jsmql.expr("$setUnion($.a, $.b)")).toEqual({ $setUnion: ["$a", "$b"] });
@@ -107,17 +92,13 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$concat($.s)")).toEqual({ $concat: "$s" });
   });
 
-  // HR1 governs raw MQL: every document passes unchanged. HR3 does not apply to it,
-  // so the server judges it.
   it("list-only op: a raw `{ $op: <one operand> }` object passes unchanged (HR1)", () => {
     expect(jsmql.expr("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
     expect(jsmql.expr("({ $add: 5 })")).toEqual({ $add: 5 });
-    // the output of `.uniq()` pastes back in and round-trips
     const uniq = jsmql.expr("$.a.uniq()");
     expect(uniq).toEqual({ $setUnion: { $ifNull: ["$a", []] } });
     expect(jsmql.expr('({ $setUnion: { $ifNull: ["$a", []] } })')).toEqual(uniq);
     expect(jsmql.expr("({ $setUnion: [$.a, $.b] })")).toEqual({ $setUnion: ["$a", "$b"] });
-    // DELIBERATELY invalid: mongod refuses it, because `$divide` takes exactly two operands.
     expect(jsmql.expr("({ $divide: 10 })")).toEqual({ $divide: 10 });
   });
 
@@ -219,30 +200,19 @@ describe("object-shape operators (positional → object mapping)", () => {
   });
 });
 
-// An operator that you call by name is your own MQL (HR2). HR3 does not apply to it
-// (docs/LANG_RULES.md), so the compiler checks no key, count, enum or literal type.
-// The expected documents in the "passes through" tests below are DELIBERATELY
-// invalid: each comment says why mongod refuses the document.
 describe("an operator's object form is your own MQL (required / unknown keys)", () => {
   it("a missing required key passes through as written", () => {
-    // mongod: the required `unit` key is missing
     expect(jsmql.expr("$dateAdd({ startDate: $.t, amount: 5 })")).toEqual({ $dateAdd: { startDate: "$t", amount: 5 } });
-    // mongod: the required `else` key is missing
     expect(jsmql.expr("$cond({ if: $.a, then: 1 })")).toEqual({ $cond: { if: "$a", then: 1 } });
-    // mongod: the required `cond` key is missing
     expect(jsmql.expr("$filter({ input: $.a })")).toEqual({ $filter: { input: "$a" } });
-    // mongod: the required `to` key is missing
     expect(jsmql.expr("$convert({ input: $.v })")).toEqual({ $convert: { input: "$v" } });
   });
 
   it("an unknown key passes through as written", () => {
-    // mongod: `iff` is an unknown key of `$cond`
     expect(jsmql.expr("$cond({ iff: $.a, then: 1, else: 2 })")).toEqual({ $cond: { iff: "$a", then: 1, else: 2 } });
-    // mongod: `startdate` is an unknown key of `$dateAdd`; use `startDate` instead
     expect(jsmql.expr('$dateAdd({ startdate: $.t, unit: "day", amount: 1 })')).toEqual({
       $dateAdd: { startdate: "$t", unit: "day", amount: 1 },
     });
-    // mongod: `conds` is an unknown key of `$filter`
     expect(jsmql.expr("$filter({ input: $.a, conds: $.x })")).toEqual({ $filter: { input: "$a", conds: "$x" } });
   });
 
@@ -253,32 +223,24 @@ describe("an operator's object form is your own MQL (required / unknown keys)", 
     expect(jsmql.expr("$filter({ input: $.a, cond: $.keep, as: 'i', limit: 3 })")).toEqual({
       $filter: { input: "$a", cond: "$keep", as: "i", limit: 3 },
     });
-    // positional form is keyed by position, so it cannot have unknown keys
     expect(jsmql.expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
   });
 
   it("non-object-shape operators given an object literal treat it as a VALUE (no key check)", () => {
-    // $mergeObjects is flex — a lone object is its operand, not named keys.
     expect(jsmql.expr("$mergeObjects({ a: 1, bogus: 2 })")).toEqual({ $mergeObjects: { a: 1, bogus: 2 } });
   });
 });
 
 describe("an operator's operand count is your own MQL (array / flex shapes)", () => {
   it("a wrong fixed count passes through as written (both positional and single-array forms)", () => {
-    // mongod: `$divide` takes exactly two operands, not three
     expect(jsmql.expr("$divide(6, 2, 1)")).toEqual({ $divide: [6, 2, 1] });
-    // mongod: `$cmp` takes exactly two operands, not three
     expect(jsmql.expr("$cmp([1, 2, 3])")).toEqual({ $cmp: [1, 2, 3] });
-    // mongod: `$substrCP` takes exactly three operands, not four
     expect(jsmql.expr("$substrCP($.s, 0, 2, 3)")).toEqual({ $substrCP: ["$s", 0, 2, 3] });
-    // mongod: `$arrayElemAt` takes exactly two operands, not three
     expect(jsmql.expr("$arrayElemAt($.a, 0, 1)")).toEqual({ $arrayElemAt: ["$a", 0, 1] });
   });
 
   it("a count outside a bounded range passes through as written", () => {
-    // mongod: `$slice` takes two or three operands, not one
     expect(jsmql.expr("$slice([$.a])")).toEqual({ $slice: ["$a"] });
-    // mongod: `$ifNull` takes at least two operands, not one
     expect(jsmql.expr("$ifNull([$.x])")).toEqual({ $ifNull: ["$x"] });
   });
 
@@ -286,14 +248,10 @@ describe("an operator's operand count is your own MQL (array / flex shapes)", ()
     expect(jsmql.expr("$size([[1, 2, 3]])")).toEqual({ $size: [[1, 2, 3]] });
     expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
     expect(jsmql.expr("$size($.a)")).toEqual({ $size: "$a" });
-    // Three spellings of the one document `{ $size: [1, 2] }`. DELIBERATELY invalid:
-    // `$size` takes one operand, not two.
     expect(jsmql.expr("$size([1, 2])")).toEqual({ $size: [1, 2] });
     expect(jsmql.expr("({ $size: [1, 2] })")).toEqual({ $size: [1, 2] });
     expect(jsmql.expr("$size(1, 2)")).toEqual({ $size: [1, 2] });
-    // mongod: `$size` takes exactly one operand, not zero
     expect(jsmql.expr("$size([])")).toEqual({ $size: [] });
-    // mongod: `$size` needs an array, and gets an int
     expect(jsmql.expr("$size([1])")).toEqual({ $size: [1] });
   });
 
@@ -301,12 +259,10 @@ describe("an operator's operand count is your own MQL (array / flex shapes)", ()
     expect(jsmql.expr("[1, 2, 3].size()")).toBe(3);
     expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
     expect(jsmql("$.n === [1, 2, 3].size()")).toEqual({ n: 3 });
-    // a spread makes the count a runtime one
     expect(jsmql.expr("[...$.a, 1].size()")).toEqual({ $size: { $concatArrays: [{ $ifNull: ["$a", []] }, [1]] } });
   });
 
   it("one operand to a two-operand list operator passes through, in both spellings", () => {
-    // mongod: `$divide` takes exactly two operands, not one
     expect(jsmql.expr("$divide(10)")).toEqual({ $divide: 10 });
     expect(jsmql.expr("({ $divide: 10 })")).toEqual({ $divide: 10 });
   });
@@ -319,24 +275,17 @@ describe("an operator's operand count is your own MQL (array / flex shapes)", ()
   it("valid fixed / ranged / single-array forms compile", () => {
     expect(jsmql.expr("$divide(6, 2)")).toEqual({ $divide: [6, 2] });
     expect(jsmql.expr("$divide([6, 2])")).toEqual({ $divide: [6, 2] });
-    expect(jsmql.expr("$round($.x)")).toEqual({ $round: "$x" }); // flex 1-arg ok
+    expect(jsmql.expr("$round($.x)")).toEqual({ $round: "$x" });
     expect(jsmql.expr("$round($.x, 2)")).toEqual({ $round: ["$x", 2] });
     expect(jsmql.expr("$slice($.a, 0, 3)")).toEqual({ $slice: ["$a", 0, 3] });
   });
 });
 
 describe("comparison-operator arity is aggregation-only (query single-value form stays valid)", () => {
-  // In aggregation position $eq/$ne/$gt/$gte/$lt/$lte need exactly 2 operands;
-  // the 1-arg / array forms are the valid QUERY predicate forms. The call is your
-  // own MQL, so every count passes through as written, and the server judges it.
   it("a non-2 operand count in aggregation position passes through (jsmql.expr + stage body)", () => {
-    // DELIBERATELY invalid: mongod refuses it, because `$gt` takes exactly two operands, not one.
     expect(jsmql.expr("$gt($.a)")).toEqual({ $gt: "$a" });
-    // mongod: `$gt` takes exactly two operands, not three
     expect(jsmql.expr("$gt($.a, $.b, $.c)")).toEqual({ $gt: ["$a", "$b", "$c"] });
-    // mongod: the `$project` is invalid, because `$lt` takes exactly two operands, not one
     expect(jsmql("$project({ r: $lt($.a) });")).toEqual([{ $project: { r: { $lt: "$a" } } }]);
-    // mongod: the `$addFields` is invalid, because `$eq` takes exactly two operands, not three
     expect(jsmql("$addFields({ r: $eq($.a, $.b, $.c) });")).toEqual([
       { $addFields: { r: { $eq: ["$a", "$b", "$c"] } } },
     ]);
@@ -344,8 +293,6 @@ describe("comparison-operator arity is aggregation-only (query single-value form
 
   it("allows the single-value / array form as a query predicate (not aggregation)", () => {
     expect(jsmql("{ tier: $eq(5) }")).toEqual({ tier: { $eq: 5 } });
-    // A field read takes the expression twin. MEASURED: { age: { $gt: "$x" } } compares
-    // the field with the two-character string and matches nothing.
     expect(jsmql("{ age: $gt($.x) }")).toEqual({ $expr: { $gt: ["$age", "$x"] } });
     expect(jsmql("$match({ age: $gte($.threshold) });")).toEqual([
       { $match: { $expr: { $gte: ["$age", "$threshold"] } } },
@@ -365,34 +312,28 @@ describe("comparison-operator arity is aggregation-only (query single-value form
 
 describe("an operator's enum slot is your own MQL (closed string sets)", () => {
   it("a bad timeUnit passes through as written", () => {
-    // mongod: `fortnight` is not a time unit
     expect(jsmql.expr('$dateAdd({ startDate: $.t, unit: "fortnight", amount: 5 })')).toEqual({
       $dateAdd: { startDate: "$t", unit: "fortnight", amount: 5 },
     });
-    // mongod: `Day` is not a time unit
     expect(jsmql.expr('$dateTrunc({ date: $.t, unit: "Day" })')).toEqual({ $dateTrunc: { date: "$t", unit: "Day" } });
   });
 
   it("a bad startOfWeek passes through, and any case compiles", () => {
-    // mongod: `funday` names no day of the week
     expect(jsmql.expr('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day", startOfWeek: "funday" })')).toEqual({
       $dateDiff: { startDate: "$a", endDate: "$b", unit: "day", startOfWeek: "funday" },
     });
-    // mongod accepts "Monday"/"monday"/"MONDAY".
     expect(jsmql.expr('$dateTrunc({ date: $.t, unit: "week", startOfWeek: "Monday" })')).toEqual({
       $dateTrunc: { date: "$t", unit: "week", startOfWeek: "Monday" },
     });
   });
 
   it("a bad $convert target type passes through, and a numeric type code compiles", () => {
-    // mongod: `intt` names no BSON type
     expect(jsmql.expr('$convert({ input: $.s, to: "intt" })')).toEqual({ $convert: { input: "$s", to: "intt" } });
     expect(jsmql.expr('$convert({ input: $.s, to: "int" })')).toEqual({ $convert: { input: "$s", to: "int" } });
     expect(jsmql.expr("$convert({ input: $.s, to: 16 })")).toEqual({ $convert: { input: "$s", to: 16 } });
   });
 
   it("a JS-only regex flag (g/y) in the options string passes through", () => {
-    // mongod: the regex options take no `g` flag
     expect(jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "gi" })')).toEqual({
       $regexMatch: { input: "$s", regex: "a", options: "gi" },
     });
@@ -402,11 +343,9 @@ describe("an operator's enum slot is your own MQL (closed string sets)", () => {
   });
 
   it("a bad method / lang enum passes through", () => {
-    // mongod: `method` takes only `approximate`
     expect(jsmql("$group({ _id: 1, m: $median({ input: $.v, method: 'exact' }) });")).toEqual([
       { $group: { _id: 1, m: { $median: { input: "$v", method: "exact" } } } },
     ]);
-    // mongod: `lang` takes only `js`
     expect(jsmql.expr('$function({ body: "function(){}", args: [], lang: "python" })')).toEqual({
       $function: { body: "function(){}", args: [], lang: "python" },
     });
@@ -421,36 +360,29 @@ describe("an operator's enum slot is your own MQL (closed string sets)", () => {
 
 describe("an operator's literal operand is your own MQL — date slots", () => {
   it("a literal non-date in a date-accessor argument passes through", () => {
-    // mongod: a string does not convert to a date
     expect(jsmql.expr('$year("2020-01-01")')).toEqual({ $year: "2020-01-01" });
-    // mongod: an int does not convert to a date
     expect(jsmql.expr("$hour(5)")).toEqual({ $hour: 5 });
   });
 
   it("a literal non-date / bad amount / bad timezone in $dateAdd passes through", () => {
-    // mongod: the `startDate` value does not convert to a date
     expect(jsmql.expr('$dateAdd({ startDate: "2020-01-01", unit: "day", amount: 1 })')).toEqual({
       $dateAdd: { startDate: "2020-01-01", unit: "day", amount: 1 },
     });
-    // mongod: `amount` needs an integer
     expect(jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: "3" })')).toEqual({
       $dateAdd: { startDate: "$t", unit: "day", amount: "3" },
     });
     expect(jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: 3.5 })')).toEqual({
       $dateAdd: { startDate: "$t", unit: "day", amount: 3.5 },
     });
-    // mongod: `timezone` needs a string, and gets an int
     expect(jsmql.expr('$dateAdd({ startDate: $.t, unit: "day", amount: 1, timezone: 5 })')).toEqual({
       $dateAdd: { startDate: "$t", unit: "day", amount: 1, timezone: 5 },
     });
   });
 
   it("a literal non-date in $dateDiff / $dateTrunc passes through", () => {
-    // mongod: `startDate` needs a date, and gets a string
     expect(jsmql.expr('$dateDiff({ startDate: "2020", endDate: $.b, unit: "day" })')).toEqual({
       $dateDiff: { startDate: "2020", endDate: "$b", unit: "day" },
     });
-    // mongod: `date` needs a date, and gets a string
     expect(jsmql.expr('$dateTrunc({ date: "2020", unit: "day" })')).toEqual({
       $dateTrunc: { date: "2020", unit: "day" },
     });
@@ -458,11 +390,10 @@ describe("an operator's literal operand is your own MQL — date slots", () => {
 
   it("a field ref, a $-string field path, and Date(...) in a date slot compile", () => {
     expect(jsmql.expr("$year($.createdAt)")).toEqual({ $year: "$createdAt" });
-    expect(jsmql.expr('$year("$createdAt")')).toEqual({ $year: "$createdAt" }); // HR1: a $-string is a field ref
+    expect(jsmql.expr('$year("$createdAt")')).toEqual({ $year: "$createdAt" });
     expect(jsmql.expr('$dateAdd({ startDate: Date("2020-01-01"), unit: "day", amount: 1 })')).toEqual({
       $dateAdd: { startDate: new Date("2020-01-01T00:00:00.000Z"), unit: "day", amount: 1 },
     });
-    // a negative integer amount is fine
     expect(jsmql.expr("$dateAdd({ startDate: $.t, unit: 'day', amount: -3 })")).toEqual({
       $dateAdd: { startDate: "$t", unit: "day", amount: -3 },
     });
@@ -471,41 +402,29 @@ describe("an operator's literal operand is your own MQL — date slots", () => {
 
 describe("an operator's literal operand is your own MQL — numeric / bitwise / object / array / timestamp", () => {
   it("a literal non-number to a numeric operator passes through", () => {
-    // mongod: `$abs` needs a number, and gets a string
     expect(jsmql.expr('$abs("x")')).toEqual({ $abs: "x" });
-    // mongod: `$sqrt` needs a number, and gets a bool
     expect(jsmql.expr("$sqrt(true)")).toEqual({ $sqrt: true });
-    // mongod: `$multiply` needs numbers, and gets a string
     expect(jsmql.expr('$multiply($.a, "x")')).toEqual({ $multiply: ["$a", "x"] });
-    // mongod: `$add` needs numbers or dates, and gets a string
     expect(jsmql.expr('$add($.price, "x")')).toEqual({ $add: ["$price", "x"] });
   });
 
   it("a non-integer operand to a bitwise operator passes through", () => {
-    // mongod: `$bitNot` needs an int or a long, and gets a double
     expect(jsmql.expr("$bitNot(5.5)")).toEqual({ $bitNot: 5.5 });
-    // mongod: `$bitAnd` needs int or long operands
     expect(jsmql.expr("$bitAnd($.a, 2.5)")).toEqual({ $bitAnd: ["$a", 2.5] });
-    // mongod: `$bitNot` needs a number, and gets a string
     expect(jsmql.expr('$bitNot("x")')).toEqual({ $bitNot: "x" });
   });
 
   it("an object, array or timestamp shape mismatch passes through", () => {
-    // mongod: `$mergeObjects` needs documents, and gets a string
     expect(jsmql.expr('$mergeObjects("hello")')).toEqual({ $mergeObjects: "hello" });
-    // mongod: `$objectToArray` needs a document, and gets an int
     expect(jsmql.expr("$objectToArray(5)")).toEqual({ $objectToArray: 5 });
-    // mongod: `$size` needs an array, and gets a string
     expect(jsmql.expr('$size("hello")')).toEqual({ $size: "hello" });
-    // mongod: `$reverseArray` needs an array, and gets an int
     expect(jsmql.expr("$reverseArray(5)")).toEqual({ $reverseArray: 5 });
-    // mongod: `$tsSecond` is not a `$group` accumulator
     expect(jsmql("$group({ _id: 1, t: $tsSecond('x') });")).toEqual([{ $group: { _id: 1, t: { $tsSecond: "x" } } }]);
   });
 
   it("field refs, $-string field paths, and valid literals compile", () => {
     expect(jsmql.expr("$abs($.delta)")).toEqual({ $abs: "$delta" });
-    expect(jsmql.expr('$abs("$delta")')).toEqual({ $abs: "$delta" }); // $-string = field ref
+    expect(jsmql.expr('$abs("$delta")')).toEqual({ $abs: "$delta" });
     expect(jsmql.expr("$add($.price, 10)")).toEqual({ $add: ["$price", 10] });
     expect(jsmql.expr("$bitNot($.flags)")).toEqual({ $bitNot: "$flags" });
     expect(jsmql.expr("$mergeObjects($.a, { x: 1 })")).toEqual({ $mergeObjects: ["$a", { x: 1 }] });
@@ -514,9 +433,6 @@ describe("an operator's literal operand is your own MQL — numeric / bitwise / 
 });
 
 describe("do-not-over-validate — server-accepted shapes must compile (coverage proof)", () => {
-  // mongod ACCEPTS every shape here (verified), so jsmql must NOT reject it. These lock the gaps
-  // closed: a future arity/range rule that threw on one of them would be a regression (a false
-  // positive on valid MQL).
   it("variadic ops accept an empty operand list (no min-arity)", () => {
     expect(jsmql.expr("$and([])")).toEqual({ $and: [] });
     expect(jsmql.expr("$or([])")).toEqual({ $or: [] });
@@ -551,14 +467,9 @@ describe("do-not-over-validate — server-accepted shapes must compile (coverage
 
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }, a $match condition", () => {
-    // MongoDB has no expression form for $sampleRate, so the query form is the ONLY valid lowering.
-    // An $expr wrap emits MQL that the server refuses. It composes
-    // with ordinary predicates inside `$and(…)`.
     expect(jsmql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
     expect(jsmql("$match($sampleRate(0.1));")).toEqual([{ $match: { $sampleRate: 0.1 } }]);
     expect(jsmql("$and($.age > 18, $sampleRate(0.1))")).toEqual({ $and: [{ age: { $gt: 18 } }, { $sampleRate: 0.1 }] });
-    // In an expression the call is still your own MQL, and it passes through.
-    // DELIBERATELY invalid: mongod refuses it, because `$sampleRate` has no expression form.
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
   });
 });
@@ -583,13 +494,9 @@ describe("zero-arg operators", () => {
     );
   });
 
-  // A none-shape operator keeps the arguments that you give it: the call is your own MQL, so the
-  // compiler drops nothing. DELIBERATELY invalid shapes: each comment says why mongod refuses one.
   it("arguments to a none-shape operator pass through as written", () => {
-    // mongod: `$rand` takes no arguments
     expect(jsmql.expr("$rand(1, 2)")).toEqual({ $rand: [1, 2] });
     expect(jsmql.expr("$rand({ x: 1 })")).toEqual({ $rand: { x: 1 } });
-    // mongod: `$createObjectId` takes only the empty document; `$toObjectId` converts a value to an ObjectId
     expect(jsmql.expr("$createObjectId($.x)")).toEqual({ $createObjectId: "$x" });
     expect(() => jsmql.expr("$count(5)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$count' stage call instead. Use jsmql.pipeline().",
@@ -597,7 +504,6 @@ describe("zero-arg operators", () => {
   });
 
   it("an argument to a window ranking operator passes through as written", () => {
-    // mongod: `$rank` takes only the empty document `{}`
     expect(jsmql("$setWindowFields({ sortBy: { t: 1 }, output: { r: $rank($.x) } });")).toEqual([
       { $setWindowFields: { sortBy: { t: 1 }, output: { r: { $rank: "$x" } } } },
     ]);
@@ -628,8 +534,6 @@ describe("array literals", () => {
   });
 
   it("nested array", () => {
-    // `$foo` is an unknown-op shape probe (no arg validation) — this exercises
-    // array-literal codegen, not operator semantics.
     expect(jsmql.expr("$foo([1, [2, 3]])")).toEqual({ $foo: [1, [2, 3]] });
   });
 });
@@ -639,8 +543,6 @@ describe("array spread", () => {
     expect(jsmql.expr("$foo([...$.arr])")).toEqual({ $foo: { $ifNull: ["$arr", []] } });
   });
 
-  // JavaScript spreads a string into its characters; MongoDB has no operator that does,
-  // and the bare string "abc" as the answer for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
       "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '<string>.length().range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
@@ -652,7 +554,6 @@ describe("array spread", () => {
   });
 
   it("a field path proves nothing, so its spread still compiles", () => {
-    // the compiler cannot know the type; the server answers
     expect(jsmql.expr("[...$.s]")).toEqual({ $ifNull: ["$s", []] });
     expect(jsmql.expr('[...$.a.split(",")]')).toEqual({ $split: [{ $ifNull: ["$a", ""] }, ","] });
   });
@@ -754,9 +655,6 @@ describe("object spread", () => {
   });
 
   it("works inside .reduce — the README $accumulator replacement", () => {
-    // Reduce-codegen narrows the accumulator to "object" (initialValue is `{}` and the body returns
-    // an `ObjectLiteral`). So `acc[s]` emits `$getField` directly, with no runtime `$cond` on
-    // `$isArray`.
     expect(jsmql.expr("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})")).toEqual({
       $reduce: {
         input: { $ifNull: ["$statuses", []] },
@@ -835,12 +733,6 @@ describe("jsmql template-tag form", () => {
   });
 
   describe("opaque BSON value interpolation", () => {
-    // JSON.stringify mangles these instances — `new Date(...)` becomes an ISO
-    // string (BSON compares as a string), `RegExp` becomes "{}", `Uint8Array`
-    // becomes a sparse object. The template-tag path routes them through a
-    // synthesized ParamRef binding. So the original instance reaches the MQL
-    // output untouched. This is the shape that the MongoDB driver expects in-situ.
-
     it("Date interpolation lands in query-doc form as a real Date", () => {
       const cutoff = new Date("2026-01-01");
       const out = jsmql`$.method === ${"postalDelivery"} && $.createdAt >= ${cutoff}` as {
@@ -890,7 +782,6 @@ describe("jsmql template-tag form", () => {
     });
 
     it("ordered comparison through template tag is index-friendly (no $expr fallback)", () => {
-      // The bug-report shape, expressed through the template tag form.
       const out = jsmql`$.createdAt >= ${new Date("2026-01-01")}` as Record<string, unknown>;
       expect("$expr" in out).toBe(false);
       expect((out.createdAt as { $gte: unknown }).$gte).toBeInstanceOf(Date);
@@ -903,12 +794,6 @@ describe("jsmql template-tag form", () => {
       expect(out.tier).toEqual("gold");
       expect(out.createdAt.$gte).toEqual(new Date("2026-01-01T00:00:00.000Z"));
     });
-
-    // Nested-interp cases — opaque BSON instances inside an interpolated
-    // object or array still reach the MQL output as live JS instances. The
-    // walker substitutes each instance with a marker that carries a unique binding
-    // name. It JSON-stringifies the rewritten tree. Then it replaces the
-    // markers with bare identifiers, so the parser resolves them as ParamRefs.
 
     it("Date nested inside an interpolated object preserves the instance", () => {
       const since = new Date("2026-01-01");
@@ -953,9 +838,6 @@ describe("jsmql template-tag form", () => {
     });
 
     it("$dateDiff with an interpolated object that carries Date instances — realistic shape", () => {
-      // The canonical use case: a `$dateDiff` body with computed
-      // bounds. The interpolated object lives in operator-call position.
-      // The compiler preserves the two Date instances at their nested keys.
       const startDate = new Date("2026-01-01");
       const endDate = new Date("2026-02-01");
       const out = jsmql.expr`$dateDiff(${{ startDate, endDate, unit: "day" }})` as {
@@ -967,9 +849,6 @@ describe("jsmql template-tag form", () => {
     });
 
     it("circular references inside an interpolated object surface as JsmqlInterpolationError", () => {
-      // Cycle detection in the walker returns the cyclic value as-is, so the
-      // next JSON.stringify produces its standard error for a circular
-      // structure. The compiler surfaces it as `JsmqlInterpolationError`.
       const cyclic: { since: Date; self?: unknown } = { since: new Date("2026-01-01") };
       cyclic.self = cyclic;
       expect(() => jsmql.expr`${cyclic}`).toThrow(/circular structure/);
@@ -986,7 +865,6 @@ describe("ObjectId literal (in-source constant)", () => {
     expect(out._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
     expect((out._id as unknown as ObjectId)._bsontype).toBe("ObjectId");
     expect((out._id as unknown as ObjectId).toHexString()).toBe("698a76556c10b90d8bd0497e");
-    // index-friendly: a query-doc value, not an $expr wrap
     expect("$expr" in out).toBe(false);
   });
 
@@ -1043,7 +921,6 @@ describe("ObjectId literal (in-source constant)", () => {
   it("a dynamic argument is refused, and .toObjectId() converts on the server", () => {
     expect(() => jsmql.expr(`ObjectId($.idStr)`)).toThrow(/Write '<value>\.toObjectId\(\)'/);
     expect(jsmql.expr(`$.idStr.toObjectId()`)).toEqual({ $toObjectId: "$idStr" });
-    // In a filter the converted value is not a query-doc literal, so it rides in $expr.
     expect(jsmql(`$._id === $.idStr.toObjectId()`)).toEqual({ $expr: { $eq: ["$_id", { $toObjectId: "$idStr" }] } });
   });
 
@@ -1082,9 +959,6 @@ describe("ObjectId from a 0x hex literal", () => {
     expect(out._id.$in.map((o) => o.toHexString())).toEqual(["507f1f77bcf86cd799439011", "698a76556c10b90d8bd0497e"]);
   });
 
-  // The canonical "look up one doc by its _id" form: a raw filter doc as
-  // an object literal, with the id as a `0x…` value. It mirrors what you paste
-  // into db.coll.find(...). → { _id: ObjectId("…") }.
   it("a 0x literal as an object-literal value mints an ObjectId (the canonical _id lookup)", () => {
     expect(jsmql(`{ _id: 0x${HEX} }`)).toEqual({ _id: new ObjectId("507f1f77bcf86cd799439011") });
   });
@@ -1100,7 +974,6 @@ describe("ObjectId from a 0x hex literal", () => {
   });
 
   it("the lexer accepts an 0X prefix and uppercase hex digits (normalised to lowercase)", () => {
-    // Timestamp 0xabcdef78 → year 2061, comfortably after the 2009 floor.
     const out = jsmql.expr(`0XABCDEF781234567812345678`) as ObjectId;
     expect(out).toBeInstanceOf(ObjectId);
     expect(out.toHexString()).toBe("abcdef781234567812345678");
@@ -1108,29 +981,19 @@ describe("ObjectId from a 0x hex literal", () => {
 
   it("a short hex literal stays a plain integer", () => {
     expect(jsmql.expr(`0xff`)).toBe(255);
-    // 0x1FFFFFFFFFFFFF === Number.MAX_SAFE_INTEGER (the largest exactly-representable int)
     expect(jsmql.expr(`0x1FFFFFFFFFFFFF`)).toBe(9007199254740991);
   });
 
   it("rejects a hex literal that is neither 24 digits nor a safe integer, with guidance", () => {
-    // 16 digits, > MAX_SAFE_INTEGER, not an ObjectId width.
     expect(() => jsmql(`$.x === 0xFFFFFFFFFFFFFFFF`)).toThrow(/neither a 24-character ObjectId nor an integer/);
-    // 14 digits, exactly one past MAX_SAFE_INTEGER (0x20000000000000 === 2**53).
     expect(() => jsmql.expr(`0x20000000000000`)).toThrow(/neither a 24-character ObjectId/);
-    // 23 digits — one short of an ObjectId.
     expect(() => jsmql(`$._id === 0x507f1f77bcf86cd79943901`)).toThrow(/neither a 24-character ObjectId/);
-    // 25 digits — one past an ObjectId.
     expect(() => jsmql.expr(`0x1234567812345678123456789`)).toThrow(/neither a 24-character ObjectId/);
   });
 });
 
 describe("ObjectId plausibility floor (a timestamp before MongoDB = typo)", () => {
-  // An ObjectId's first 4 bytes are a Unix timestamp. MongoDB did not exist
-  // before 2009, so an older one cannot be real. Floor: 0x4a000000 (2009-05-05).
-
   it("rejects an all-zeros / leading-zeros id (1970) — a 24-digit shape, but impossibly old", () => {
-    // The compiler recognises it as an ObjectId by width, then floors it. The error is about the
-    // timestamp, not the digit count.
     expect(() => jsmql.expr(`0x000000000000000000000001`)).toThrow(/older than the smallest valid ObjectId/);
   });
 
@@ -1164,10 +1027,6 @@ describe("ObjectId plausibility floor (a timestamp before MongoDB = typo)", () =
 });
 
 describe("jsmql.compile — opaque BSON bindings outside query-doc position", () => {
-  // A bound value that the source could not spell (a Date, a RegExp, an ObjectId) enters the tree
-  // as the value itself (`spellValue` in src/compiler/passes/inject.ts). So it arrives intact in
-  // an update op body, an aggregation expression or a similar place.
-
   it("Date binding lands as a real Date inside an update op", () => {
     const q = jsmql.compile(({ at }: { at: Date }, { $ }) => ($.lastSeenAt = at));
     const at = new Date("2026-01-01");
@@ -1181,11 +1040,6 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
     const out = q({ pat }) as Array<{ $set: { name: RegExp } }>;
     expect(out[0].$set.name).toEqual(/^alice/i);
   });
-
-  // Nested-BSON cases, symmetric with the template-tag nested-interp tests.
-  // A bound value goes in whole, so a Date or a RegExp inside a plain
-  // object or array keeps its instance. The same shapes work through
-  // interpolation and through parameter bindings. The call site needs no unpack by hand.
 
   it("Date nested inside a binding object preserves the instance", () => {
     const q = jsmql.compile(({ window }: { window: { since: Date; until: Date; unit: string } }) => $set({ window }));
@@ -1251,10 +1105,6 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   });
 
   it("nested ObjectId (duck-typed) inside a binding object preserves the instance", () => {
-    // Mirrors the template-tag side. The project accepts the legacy
-    // `_bsontype: "ObjectID"` (uppercase D) tag and the newer
-    // `_bsontype: "ObjectId"` (lowercase d) tag. BSON library versions
-    // disagree on the casing.
     const q = jsmql.compile(({ ids }: { ids: { primary: unknown; secondary: unknown } }) => $set({ ids }));
     const primary = { _bsontype: "ObjectID", id: "abc" };
     const secondary = { _bsontype: "ObjectId", id: "xyz" };
@@ -1266,9 +1116,6 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   });
 
   it("Date inside a binding lands in $set body alongside JSON-shaped siblings (realistic shape)", () => {
-    // The realistic call-site shape: a single `cfg` parameter that bundles a
-    // BSON Date with plain-JSON fields. Mirrors how a caller packages
-    // a typed config object from elsewhere in their codebase.
     const q = jsmql.compile(({ cfg }: { cfg: { startedAt: Date; mode: string; retries: number } }) => $set({ cfg }));
     const startedAt = new Date("2026-01-01");
     const out = q({ cfg: { startedAt, mode: "fast", retries: 3 } }) as Array<{
@@ -1405,11 +1252,6 @@ describe("comparison operators", () => {
 });
 
 describe("jsBool truthiness normalizes missing → null", () => {
-  // A missing field is NOT `== null` under MongoDB's $eq/$ne (`$eq:["$absent",null]`
-  // is false). So a bare `$ne:[v,null]` would treat a missing value as truthy,
-  // unlike JS, where `undefined` is falsy. jsBool wraps the null-check operand in
-  // `$ifNull(v, null)` so missing collapses to null first. Verified on mongod:
-  // `arr.filter(x => x.name)` drops elements whose `name` is absent.
   it("the truthy null-clause is $ifNull-normalized (catches missing AND null)", () => {
     expect(jsmql.expr("$.items.filter(x => x.name)")).toEqual({
       $filter: {
@@ -1491,7 +1333,6 @@ describe("logical operators", () => {
     expect(jsmql.expr("!($.a > 0)")).toEqual({ $not: { $gt: ["$a", 0] } });
   });
   it("&& with non-pure-ref LHS uses $let to bind once", () => {
-    // `$add` gives a number, a date or null, so only the null test and the zero test can fail.
     expect(jsmql.expr("($.a + $.b) && $.c")).toEqual({
       $let: {
         vars: { jsmqlV: { $add: ["$a", "$b"] } },
@@ -1642,14 +1483,6 @@ describe("string-context +", () => {
 
 describe("bracket access", () => {
   it("constant index on bare field → runtime three-way dispatch", () => {
-    // Bare $.items receiver (type unknown) and an INTEGER key. The key has three live JS
-    // readings, so all three run at query time: array position, string character, document
-    // field named "0". Verified on a live server against a doc that holds each of the three
-    // types. The `$getField` field is the STRING "0", because mongod refuses `field: 0`: a
-    // field name must be a string. The dispatch is a `$switch` and never a nested `$cond`.
-    // The server optimises the branches of a `$cond` before it reads the test. So a receiver
-    // that it holds as a constant folds the branch that does not apply, and the server
-    // refuses the whole pipeline.
     expect(jsmql.expr("$.items[0]")).toEqual({
       $switch: {
         branches: [
@@ -1661,12 +1494,8 @@ describe("bracket access", () => {
     });
   });
   it("rejects a negative constant index — brackets never count from the end", () => {
-    // JS `arr[-1]` reads a property named "-1" (undefined); only `.at(-1)` counts
-    // from the end. $arrayElemAt WOULD return the last element, so to emit it
-    // would silently disagree with JavaScript.
     expect(() => jsmql.expr("$.items[-1]")).toThrow(/Negative bracket index '\[-1\]' is not allowed/);
     expect(() => jsmql.expr("$.items[-1]")).toThrow(/Use '\.at\(-1\)' to index from the end/);
-    // Same for a provably-string receiver, and for a provably-array one.
     expect(() => jsmql.pipeline("const s = $.name.trim(); $set({ v: s[-1] });")).toThrow(/Negative bracket index/);
     expect(() => jsmql.expr("$.tags.uniq()[-2]")).toThrow(/Negative bracket index '\[-2\]'/);
   });
@@ -1678,11 +1507,6 @@ describe("bracket access", () => {
     });
   });
   it("coerces an unprovable computed key — $getField.field must be a String", () => {
-    // A live mongod run confirms this. Without the coercion, `$.doc[$.k]` aborts the
-    // whole command (`$getField` takes only a string name) on every
-    // document where `$.k` holds a number. It also aborts, far more commonly, where `$.k` is
-    // ABSENT (a missing field reaches $getField as null). This mirrors JavaScript's
-    // own coercion: a property key always coerces, so `obj[0]` is `obj["0"]`.
     expect(jsmql.expr("$.doc[$.k]")).toEqual({
       $switch: {
         branches: [
@@ -1691,10 +1515,7 @@ describe("bracket access", () => {
         default: { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: { $ifNull: ["$doc", {}] } } },
       },
     });
-    // A PROVABLE string key needs no coercion and keeps the lean shape.
     expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: { $ifNull: ["$doc", {}] } } });
-    // A string method answers null for a missing string, and `$getField` refuses a null
-    // name, because it takes only a string. So the key takes the `""` guard.
     expect(jsmql.expr("$.doc[$.k.toLower()]")).toEqual({
       $getField: { field: { $toLower: { $ifNull: ["$k", ""] } }, input: { $ifNull: ["$doc", {}] } },
     });
@@ -1703,26 +1524,17 @@ describe("bracket access", () => {
     ]);
   });
   it("a numeric object KEY builds the stringified field name, as JavaScript does", () => {
-    // `({ 0: 1, 1.5: 2, 0x10: 3 })` in JS has the keys "0", "1.5", "16". Each key is the
-    // numeric VALUE as a string, not the source text. This is the write-side
-    // counterpart of the read `doc[0]`.
     expect(jsmql.expr("({ 0: 1, 1.5: 2, 0x10: 3 })")).toEqual({ "0": 1, "16": 3, "1.5": 2 });
-    // An ObjectId literal is not a field name, and JS would read the 24-hex as a
-    // number that loses precision — neither reading is useful, so name the one that is.
     expect(() => jsmql.expr("({ 0x507f1f77bcf86cd799439011: 1 })")).toThrow(
       /An ObjectId literal cannot be an object key.*Quote it/s,
     );
   });
   it("a known-object receiver stringifies the integer key ($getField needs a String field)", () => {
-    // The bare root is a structural object, so no dispatch at all.
     expect(jsmql.expr("$[0]")).toEqual({ $getField: { field: "0", input: "$$ROOT" } });
-    // Same for an object-typed `const`.
     const p = jsmql.pipeline('const o = { "0": $.first }; $set({ v: o[0] });');
     expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
       v: { $getField: { field: "0", input: "$__jsmql.var.o" } },
     });
-    // `$.doc["a"]` is NOT provably an object — a `$getField` result can be any
-    // type — so a following `[0]` keeps the three-way dispatch.
     expect(jsmql.expr('$.doc["a"][0]')).toEqual({
       $switch: {
         branches: [
@@ -1758,50 +1570,29 @@ describe("bracket access", () => {
     });
   });
   it("string-literal key on bare field → $getField directly (a string key is never a numeric array index)", () => {
-    // A provably-string key means object property access. The compiler emits $getField and
-    // skips the $isArray/$arrayElemAt guard. Otherwise MongoDB would reject the string index
-    // whenever the receiver is an array at runtime.
     expect(jsmql.expr('$.config["host"]')).toEqual({
       $getField: { field: "host", input: { $ifNull: ["$config", {}] } },
     });
   });
   it("string-producing key expression on bare field → $getField directly", () => {
-    // `.toLower()` is statically a string, so the key cannot be an array
-    // index — the same $getField lowering as a literal key. It may be null, so it
-    // takes the `""` guard that `$getField` needs.
     expect(jsmql.expr("$.map[$.key.toLower()]")).toEqual({
       $getField: { field: { $toLower: { $ifNull: ["$key", ""] } }, input: { $ifNull: ["$map", {}] } },
     });
   });
   it("const-string-bound key → $getField directly (folds; binding type still string)", () => {
-    // `const k = "host"` folds to the literal "host". The compiler tracks the static type of the
-    // folded value ("string") on the binding, so `$.config[k]` still lowers
-    // to a direct `$getField` property getter. It never emits the `$isArray` guard, whose
-    // dead `$arrayElemAt[array, "host"]` branch some engines reject.
     expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
       { $replaceWith: { v: { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } } } },
     ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
-    // `$["x"]` is just `$.x`. The bracket form is the escape hatch for field
-    // names that are not bare identifiers (dots, dashes). It also reads
-    // a nested `length` field, where `.length` does not fold to the
-    // string-or-array length operator.
     expect(jsmql.expr('$["field.length"]')).toBe("$field.length");
     expect(jsmql.expr('$["weird-name"]')).toBe("$weird-name");
     expect(jsmql.expr('$["field.length"] * $.field.width')).toEqual({ $multiply: ["$field.length", "$field.width"] });
   });
   it("computed (non-literal) key on the bare root $ → $getField, not the $isArray guard", () => {
-    // The bare root is always a BSON object, so a computed key is an
-    // unambiguous field getter: `$getField` with `input: $$ROOT`. An `$isArray`
-    // dual guard would carry the key into a dead `$arrayElemAt` branch as an
-    // array index. Engines that do not prune unreachable branches reject a non-numeric
-    // index there at *pipeline-optimization* time.
     expect(jsmql.expr("$[$.fieldName]")).toEqual({
       $getField: { field: { $toString: { $ifNull: ["$fieldName", ""] } }, input: "$$ROOT" },
     });
-    // An index into the root by a value read from a const map (`$[SSTM_PROP[party]]`). The map
-    // folds to an object literal, and a key that it may not hold reads as `""`.
     expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M[$.k]] };')).toEqual([
       {
         $replaceWith: {
@@ -1816,7 +1607,6 @@ describe("bracket access", () => {
         },
       },
     ]);
-    // A const map folds to a closed object. A key that it does not hold names no field.
     expect(() => jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toThrow(
       `'["k"]' reads a field that this object does not have. It holds 'a'.`,
     );
@@ -1910,12 +1700,6 @@ describe("bracket access", () => {
 });
 
 describe("lambda element-type inference (array-method param typed from a provable element type)", () => {
-  // The compiler types the *element* param of a lambda over an array with a provable uniform
-  // element type in bindingTypes, the same as reduce-accumulator
-  // narrowing. So `element[k]` lowers precisely. The headline win: a
-  // string-element key is never a numeric index, so `obj[element]` → $getField
-  // directly, and drops the runtime $isArray guard (and its dead, server-
-  // rejected $arrayElemAt-with-string-index branch).
   it("map over a string-literal array → element key → $getField", () => {
     expect(jsmql.expr('["sender", "recipient"].map(party => $.cre.result[party])')).toEqual({
       $map: {
@@ -1986,7 +1770,6 @@ describe("lambda element-type inference (array-method param typed from a provabl
     });
   });
   it("NON-string element type (numbers) keeps the runtime $isArray guard", () => {
-    // A numeric element is a plausible array index, so the dispatch must stay.
     expect(jsmql.expr("[1, 2, 3].map(i => $.m[i])")).toEqual({
       $map: {
         input: [1, 2, 3],
@@ -2017,10 +1800,6 @@ describe("lambda element-type inference (array-method param typed from a provabl
     });
   });
   it("types only the element param — the index param is a number and keeps the guard", () => {
-    // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
-    // must NOT collapse to $getField.
-    // The receiver is a constant array, so its size is a constant: `$range: [0, 2]`,
-    // with no `$size` to count it at run time.
     expect(jsmql.expr('["a", "b"].map((k, i) => $.m[i])')).toEqual({
       $map: {
         input: { $zip: { inputs: [{ $range: [0, 2] }, ["a", "b"]] } },
@@ -2186,8 +1965,6 @@ describe("string methods", () => {
     });
   });
   it("includes on a bare field reads a substring, under a null guard", () => {
-    // `.includes` has one family, string. An unproven receiver takes it with no
-    // runtime dispatch. The compiler refuses a proven array and names `.has(x)`.
     expect(jsmql.expr('$.email.includes("@")')).toEqual({
       $gte: [{ $indexOfCP: [{ $ifNull: ["$email", ""] }, "@"] }, 0],
     });
@@ -2216,8 +1993,6 @@ describe("string methods", () => {
     });
   });
   it("length on string-producing expression → $strLenCP", () => {
-    // `$strLenCP` aborts on a missing field, so `.length()` of an absent string
-    // answers null instead of an executor error.
     expect(jsmql.expr("$.name.trim().length()")).toEqual({
       $strLenCP: { $trim: { input: { $ifNull: ["$name", ""] } } },
     });
@@ -2231,9 +2006,6 @@ describe("string methods", () => {
     });
   });
   it("length on an unknown field reads a string; size reads an array", () => {
-    // Each method has one family. An unproven receiver takes that family's operator,
-    // and the server judges the value. `.length()` guards a null receiver; `.size()`
-    // reads a missing array as empty.
     expect(jsmql.expr("$.name.length()")).toEqual({ $strLenCP: { $ifNull: ["$name", ""] } });
     expect(jsmql.expr("$.items.size()")).toEqual({ $size: { $ifNull: ["$items", []] } });
     expect(() => jsmql.expr("$.items.uniq().length()")).toThrow(
@@ -2241,14 +2013,9 @@ describe("string methods", () => {
     );
   });
   it('["length"] is RAW access — a property named "length", never a count', () => {
-    // Bracket access never folds to $size/$strLenCP — it reads a property called
-    // "length" like any other key. "length" is a string literal, so it cannot be
-    // a numeric array index → $getField directly (no $isArray dispatch).
     expect(jsmql.expr('$.items["length"]')).toEqual({
       $getField: { field: "length", input: { $ifNull: ["$items", {}] } },
     });
-    // On a known array the same read gives no value: an array has no fields, and
-    // `$getField` on an array answers missing. So the compiler refuses it, and names `.size()`.
     expect(() => jsmql.expr('$.csv.split(",")["length"]')).toThrow(
       `'["length"]' reads a field, and an array has no fields. For the number of elements, write '.size()'.`,
     );
@@ -2266,25 +2033,18 @@ describe("string methods", () => {
 });
 
 describe("a registry cell says what the compiler actually emits", () => {
-  // `%` states its value form on the `remainder` production. It states its query form through the
-  // equality cells that compose it (src/registry/productions.ts). That is fine only when the
-  // declared cell and the emitted MQL agree; a cell nobody checks is a comment that looks like code.
   it("the value cell of `%` matches the generic binary lowering", () => {
     expect(jsmql.expr("$.a % 5 === 0")).toEqual({ $eq: [{ $mod: ["$a", 5] }, 0] });
     expect(jsmql.expr("$.a % 5 !== 0")).toEqual({ $ne: [{ $mod: ["$a", 5] }, 0] });
   });
 
   it("the query cell of `%` keeps $mod's [divisor, remainder] order", () => {
-    // The single most swappable pair in the surface — 5 is the divisor, 0 the remainder.
     expect(jsmql("$.a % 5 === 0")).toEqual({ a: { $mod: [5, 0] } });
     expect(jsmql("$.a % 5 !== 0")).toEqual({ a: { $not: { $mod: [5, 0] } } });
   });
 });
 
 describe("`=== undefined` is an existence test in both targets", () => {
-  // The aggregation language CAN tell a missing field from a present-but-null one.
-  // `$type` answers "missing" for absent and "null" for null, which is the same line
-  // that `$exists` draws. So expression position answers the test, and does not refuse it.
   it("lowers to $exists as a query and to a $type test as an expression", () => {
     expect(jsmql("$.a === undefined")).toEqual({ a: { $exists: false } });
     expect(jsmql.expr("$.a === undefined")).toEqual({ $eq: [{ $type: "$a" }, "missing"] });
@@ -2297,38 +2057,28 @@ describe("`=== undefined` is an existence test in both targets", () => {
   });
 
   it("does not treat an explicit null as absent", () => {
-    // Verified on a live mongod: over docs {a:5}, {a:null}, {} the existence test selects
-    // only the third from BOTH targets, but `=== null` selects only the second.
     expect(jsmql.expr("$.a === null")).not.toEqual(jsmql.expr("$.a === undefined"));
   });
 
   it("works on an operand no query could index", () => {
-    // The Query cell needs a static path; the Expr cell does not — the operand-kind gate.
     expect(jsmql.expr("$.a.b.c === undefined")).toEqual({ $eq: [{ $type: "$a.b.c" }, "missing"] });
   });
 });
 
 describe("enum slots: an operator's is an expression slot, a stage's is not", () => {
-  // Verified on a live mongod: an operator's enum slot evaluates an expression, but the enum
-  // slot of a stage reads its value literally. Both are your own MQL, so both pass through as written.
   it("an operator's enum slot accepts a field reference — the server evaluates it", () => {
     expect(jsmql.expr("$dateTrunc({ date: $.d, unit: $.u })")).toEqual({ $dateTrunc: { date: "$d", unit: "$u" } });
-    // Written as an HR1 `$`-string, same thing.
     expect(jsmql.expr('$dateTrunc({ date: $.d, unit: "$u" })')).toEqual({ $dateTrunc: { date: "$d", unit: "$u" } });
   });
 
   it("a stage's enum slot reads a `$`-string as itself, and the server refuses it", () => {
-    // DELIBERATELY invalid: mongod refuses it, because `$g` names no rounding granularity.
     expect(jsmql('$bucketAuto({ groupBy: $.x, buckets: 2, granularity: "$g" });')).toEqual([
       { $bucketAuto: { groupBy: "$x", buckets: 2, granularity: "$g" } },
     ]);
-    // mongod: `$g` is not one of the `whenMatched` words
     expect(jsmql('$merge({ into: "x", whenMatched: "$g" });')).toEqual([{ $merge: { into: "x", whenMatched: "$g" } }]);
-    // mongod: `$g` is not one of the `whenNotMatched` words
     expect(jsmql('$merge({ into: "x", whenNotMatched: "$g" });')).toEqual([
       { $merge: { into: "x", whenNotMatched: "$g" } },
     ]);
-    // The same slot takes an update pipeline, and a bracketed list there is stages.
     expect(jsmql('$merge({ into: "x", whenMatched: [$set({ a: 1 })] });')).toEqual([
       { $merge: { into: "x", whenMatched: [{ $set: { a: 1 } }] } },
     ]);
@@ -2339,8 +2089,6 @@ describe("enum slots: an operator's is an expression slot, a stage's is not", ()
 });
 
 describe("typeof: the Query and Expr targets agree", () => {
-  // The two targets read ONE alias table. A name outside it would make the expression
-  // `$type` comparison false for every document, so BOTH targets refuse it.
   const never = (s: string) =>
     `'typeof' compares against one of MongoDB's type names, and "${s}" is not one, so the comparison is never true.`;
 
@@ -2405,31 +2153,21 @@ describe("typeof: the Query and Expr targets agree", () => {
   });
 
   it("refuses 'boolean' on a deep path too", () => {
-    // The refusal reads the type name, not the operand, so a deep path gets the same message.
     expect(() => jsmql.expr('typeof $.a.b.c === "boolean"')).toThrow(`${never("boolean")} Did you mean 'bool'?`);
   });
 });
 
 describe("method arg-count errors (one formatter over the row's `args`)", () => {
-  // One formatter in src/compiler/emit/errors.ts words every arg-count error as
-  // `.<method>(<signature>) <quantity-clause>`. The signature shows the
-  // intended call shape. The quantity clause is uniform across methods.
   it("exact count names the parameters in the signature", () => {
     expect(() => jsmql.expr("$.s.charAt()")).toThrow("'.charAt(index)' requires exactly 1 argument, got 0");
     expect(() => jsmql.expr('$.s.split("a", "b")')).toThrow("'.split(separator)' requires exactly 1 argument, got 2");
   });
-  // MEASURED on mongod: the server refuses `{ $split: ["$s", ""] }`, because `$split`
-  // needs a separator that is not empty. MongoDB has no operator that splits a string
-  // into its characters (HR3).
   it(".split() refuses an empty separator, and names a spelling that works", () => {
     const message =
       "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$.<field>.length().range().map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
-    // The `$split` call is your own MQL, and it passes through as written (HR2).
-    // DELIBERATELY invalid: mongod refuses it, because the separator is empty.
     expect(jsmql.expr('$split($.s, "")')).toEqual({ $split: ["$s", ""] });
-    // the spelling the refusal names does compile, and answers per code point
     expect(jsmql.expr("$.s.length().range().map(i => $.s.charAt(i))")).toEqual({
       $map: {
         input: {
@@ -2458,7 +2196,6 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   });
   it("at-least and no-argument forms", () => {
     expect(() => jsmql.expr("$.arr.concat()")).toThrow("'.concat(...items)' requires at least 1 argument, got 0");
-    // the escape hatch takes no spread, whatever the operator — see docs/DEFERRED.md § B
     expect(() => jsmql.expr("$foo(...$.arr)")).toThrow(/Spread \(\.\.\.\) is not supported in \$foo\(\.\.\.\)/);
     expect(() => jsmql.expr("$foo(1, ...$.arr)")).toThrow(/Spread \(\.\.\.\) is not supported in \$foo\(\.\.\.\)/);
     expect(() => jsmql.expr("$.arr.toSpliced()")).toThrow(
@@ -2467,18 +2204,12 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
     expect(() => jsmql.expr("$.arr.toReversed(1)")).toThrow("'.toReversed()' takes no arguments, got 1");
   });
   it("a callback method rejects JavaScript's trailing thisArg, and does not drop it", () => {
-    // `.map(fn, thisArg)` is valid JavaScript, so a compile that silently discards the
-    // second argument gives the wrong answer — the same shape as `.trim("x")`. The message names what
-    // the argument is for, because a count of arguments alone does not help a reader
-    // who knows the JS signature.
     for (const src of ["$.a.map(x => x, 1)", "$.a.filter(x => x, 1)", "$.a.some(x => x, 1)"]) {
       expect(() => jsmql.expr(src)).toThrow(/got 2 — JavaScript's trailing 'thisArg'/);
     }
-    // The shape check still wins where it says more than a count could.
     expect(() => jsmql.expr("$.a.map(true)")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
     );
-    // `.reduce` legitimately takes two, and is unaffected.
     expect(jsmql.expr("$.a.reduce((acc, x) => acc + x, 0)")).toEqual({
       $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
@@ -2503,8 +2234,6 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
 });
 
 describe("array methods (no lambda)", () => {
-  // `.at()` reads an array. It is the only way to spell a negative index, because
-  // brackets reject one. The compiler refuses a proven string and names `.charAt`.
   it("at(n) on a bare field → $arrayElemAt", () => {
     expect(jsmql.expr("$.items.at(0)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] });
     expect(() => jsmql.expr("$.name.trim().at(0)")).toThrow(
@@ -2518,8 +2247,6 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("$.tags.uniq().at(-1)")).toEqual({
       $arrayElemAt: [{ $setUnion: { $ifNull: ["$tags", []] } }, -1],
     });
-    // `$substrCP` refuses a negative start, so the string form resolves -1 against
-    // the length.
     const p = jsmql.pipeline("const s = $.name.trim(); $set({ v: s.substr(-1) });");
     expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
       v: {
@@ -2532,17 +2259,11 @@ describe("array methods (no lambda)", () => {
     });
   });
   it("at() on a missing field answers null, as JavaScript's undefined — so ?? still applies", () => {
-    // Live-verified: on a doc with no `aliases`, `$arrayElemAt` answers null, so
-    // `$ifNull` yields "anonymous".
     expect(jsmql.expr('$.aliases.at(0) ?? "anonymous"')).toEqual({
       $ifNull: [{ $arrayElemAt: [{ $ifNull: ["$aliases", []] }, 0] }, "anonymous"],
     });
   });
   it("slice(start) on a bare field → drop the first `start`, under a null guard", () => {
-    // JS `slice(start)` = drop the first `start` — position + a `max(1, size)` count
-    // (NOT the 2-arg "first `start`" that MQL `$slice` would give). count 1 (not 0)
-    // keeps an empty array valid. The compiler refuses a proven string and names
-    // `.substring`.
     expect(jsmql.expr("$.items.slice(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$items", []] } },
@@ -2557,7 +2278,6 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({ $slice: [{ $ifNull: ["$items", []] }, 3] });
   });
   it("slice(start, end) on known array → count is end - start (JS end-exclusive)", () => {
-    // NOT `$slice: [arr, 1, 3]` (which MQL reads as "3 elements from index 1").
     expect(jsmql.expr("[1,2,3,4,5].slice(1, 3)")).toEqual([2, 3]);
   });
   it("slice(start, end) with end <= start (both non-neg literals) → []", () => {
@@ -2571,13 +2291,9 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("[1,2,3].slice(0)")).toEqual([1, 2, 3]);
   });
   it("slice(0, -n) on known array → all-but-last-n, with a guard for empty input", () => {
-    // start 0 + negative end resolves to "first max(size - n, 0)" through 2-arg $slice.
     expect(jsmql.expr("[1,2,3,4,5].slice(0, -1)")).toEqual([1, 2, 3, 4]);
   });
   it("slice(start, negative-end) → resolve both indices, guard the empty range", () => {
-    // The general form: k/f are the JS-resolved indices, count = f - k, and the
-    // $cond returns [] for an empty range. The slice's own count is max(count, 1)
-    // so a constant-array input stays foldable (never a rejected 0-count $slice).
     expect(jsmql.expr("[1,2,3,4,5].slice(1, -1)")).toEqual([2, 3, 4]);
   });
   it("toReversed()", () => {
@@ -2639,12 +2355,6 @@ describe("array methods (with lambda)", () => {
 });
 
 describe("reduce accumulator type narrowing", () => {
-  // The reduce codegen narrows the accumulator parameter to "object" or
-  // "array". It does this when initialValue and the lambda body are statically the same
-  // compound type. The IndexAccess codegen then skips the runtime $cond on
-  // $isArray and emits the type-specific operator directly. Both sides must
-  // agree because $$value after iteration i ≥ 1 is the body's return from
-  // iteration i-1, not the initialValue.
   it("object accumulator: acc[k] emits $getField directly", () => {
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: 1 }), {})")).toEqual({
       $reduce: {
@@ -2655,8 +2365,6 @@ describe("reduce accumulator type narrowing", () => {
         },
       },
     });
-    // Read the accumulator with bracket access in the body — confirms the
-    // narrowing reaches IndexAccess and emits $getField, not $cond.
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: a[k] }), {})")).toEqual({
       $reduce: {
         input: { $ifNull: ["$xs", []] },
@@ -2699,8 +2407,6 @@ describe("reduce accumulator type narrowing", () => {
     expect(jsmql.expr("$.xs.reduce((a, x) => x.foo, {})")).toEqual({
       $reduce: { input: { $ifNull: ["$xs", []] }, initialValue: {}, in: "$$this.foo" },
     });
-    // When the body returns a member-access on the element, the accumulator
-    // is not narrowed, so a bracket access on it still emits the cond.
     expect(jsmql.expr("$.xs.reduce((a, x) => a[0], {})")).toEqual({
       $reduce: {
         input: { $ifNull: ["$xs", []] },
@@ -2736,8 +2442,6 @@ describe("reduce accumulator type narrowing", () => {
   });
 
   it("narrows only the accumulator param, not the element param", () => {
-    // `x[0]` should keep the cond — `x` is the element binding and could be
-    // anything; only `a` is narrowed to object.
     expect(jsmql.expr("$.xs.reduce((a, x) => ({ ...a, k: x[0] }), {})")).toEqual({
       $reduce: {
         input: { $ifNull: ["$xs", []] },
@@ -2763,9 +2467,6 @@ describe("reduce accumulator type narrowing", () => {
   });
 
   it("nested reduce shadows the outer accumulator type", () => {
-    // Outer `acc` is object-typed. Inner reduce reuses the name `acc` with
-    // initialValue `[]` and an array-producing body. So the inner `acc[0]`
-    // must emit $arrayElemAt, not the $getField of the outer one.
     expect(
       jsmql.expr("$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})"),
     ).toEqual({
@@ -2801,9 +2502,6 @@ describe("reduce accumulator type narrowing", () => {
   });
 
   it("optional-chain default flips to {} for known-object accumulator", () => {
-    // `a?.[k]` on a known-object binding wraps with `$ifNull(_, {})`, not
-    // with `$ifNull(_, [])` — an array given to `$getField` on null receivers
-    // would be a type error in MongoDB.
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: a?.[k] }), {})")).toEqual({
       $reduce: {
         input: { $ifNull: ["$xs", []] },
@@ -2838,12 +2536,6 @@ describe("reduce accumulator type narrowing", () => {
   });
 });
 
-// The Env records a `const` whose initialiser has a provable static type as the
-// `Binding.type` that it carries (src/compiler/emit/names.ts). Every
-// receiver-type dispatch reads it. So a method on
-// that binding picks its branch at compile time. It does not emit a runtime
-// `$cond` on `$isArray` whose other branch can never run. A `let` stays
-// conservative on purpose: the code can reassign it, so its type can drift.
 describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   const setOf = (pipeline: unknown[], i: number) => (pipeline[i] as { $set: Record<string, unknown> }).$set;
 
@@ -2881,13 +2573,11 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   it("a `let` binding carries its type until a reassignment to an unproven value", () => {
     const p = jsmql.pipeline(`let a = $.tags.uniq(); $set({ inc: a.has("b") });`);
     expect(setOf(p, 1)).toEqual({ inc: { $in: ["b", "$__jsmql.var.a"] } });
-    // After `a = $.name` the binding is unproven, so `.length()` takes its string family.
     const q = jsmql.pipeline(`let a = $.tags.uniq(); a = $.name; $set({ len: a.length() });`);
     expect(setOf(q, 2)).toEqual({ len: { $strLenCP: { $ifNull: ["$__jsmql.var.a", ""] } } });
   });
 
   it("a chained const inherits its source's type", () => {
-    // `.slice` preserves the receiver type, so `b` is array-typed through `a`.
     const p = jsmql.pipeline(`const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.has("b") });`);
     expect(setOf(p, 1)).toEqual({
       "__jsmql.var.b": {
@@ -2901,10 +2591,6 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   });
 
   it("jsmql types its OWN materialised lookup slot, so a chained method resolves at compile time", () => {
-    // The rewritten receiver is a plain field path (`__jsmql.tmp.N`), but jsmql
-    // filled it from `$lookup.as` and binds the slot with what the join yields
-    // (src/compiler/emit/join.ts). So a method after it needs no runtime
-    // guard over the scratch of the compiler.
     const setOfLast = (src: string) => {
       const p = jsmql.pipeline(src);
       return (p[p.length - 2] as { $set: Record<string, unknown> }).$set;
@@ -2912,14 +2598,11 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const lk = "$$$.users.filter(u => u._id === $._id)";
     expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
     expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
-    // HR7: the slot holds documents, so a membership test of a number is refused
     expect(() => jsmql.pipeline(`$.b = ${lk}.has(1);`)).toThrow("'.has()' argument 1 takes an element of the array");
     expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.0" } });
     expect(() => jsmql.pipeline(`$.i = ${lk}.indexOf(1);`)).toThrow(
       "'.indexOf()' argument 1 takes an element of the array",
     );
-    // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
-    // so the registry records "object", and `.keys().size()` counts its fields.
     expect(setOfLast(`$.k = ${lk}.countBy("tier").keys().size();`)).toEqual({
       k: { $size: { $map: { input: { $objectToArray: "$__jsmql.tmp.0" }, in: "$$this.k" } } },
     });
@@ -2928,7 +2611,6 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   it("a `$$$.<coll>` lookup const is an array — `.filter` / `.aggregate` keep the `as` array", () => {
     const p = jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ n: orders.size() });`);
     expect(setOf(p, 1)).toEqual({ n: { $size: "$__jsmql.var.orders" } });
-    // HR7: the const holds documents, so a membership test of a number is refused
     expect(() =>
       jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`),
     ).toThrow("'.has()' argument 1 takes an element of the array");
@@ -2944,9 +2626,6 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   });
 });
 
-// A `$lookup.let` var that captures a WHOLE outer binding holds exactly what the
-// binding holds, so the sub-pipeline inherits its type. See
-// docs/specs/lookup-stage.md § Correlation-var types.
 describe("$lookup.let correlation vars inherit the outer binding's type", () => {
   it("expression-body predicate: `.has` on a captured array const is a plain $in", () => {
     const p = jsmql.pipeline(
@@ -2969,10 +2648,6 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   });
 
   it("a nested lookup inherits the ancestor's correlation-var type", () => {
-    // The inner `$lookup` reads the OUTER level's `$$jsmql_v0_ids` (MQL `$$` vars
-    // are lexically scoped through sub-pipeline boundaries), so it allocates no
-    // `let` of its own. The type has to travel down with the binding. The Env
-    // carries the binding across the sub-pipeline boundary (`Binding.level`).
     const p = jsmql.pipeline(
       `const ids = $.tags.uniq();
        const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.has(i.pid)); });`,
@@ -2987,7 +2662,6 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   });
 
   it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
-    // An untyped receiver of `.indexOf` is an array by the row's claim, and the dot reads a missing one as [].
     const p = jsmql.pipeline(
       `const cfg = ({}).assign($.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
     );
@@ -2998,8 +2672,6 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
 });
 
 describe("bare built-in callbacks", () => {
-  // A type name as a conversion function is not part of JSMQL, in a callback too. Each
-  // refusal names the arrow that the value's own method makes.
   it("refuses a type name as a callback, and names the arrow form", () => {
     expect(() => jsmql.expr("$.ids.map(ObjectId)")).toThrow(/In a callback, write 'x => x\.toObjectId\(\)'/);
     expect(() => jsmql.expr("$.xs.sumBy(Number)")).toThrow(/In a callback, write 'x => x\.toDouble\(\)'/);
@@ -3024,7 +2696,6 @@ describe("bare built-in callbacks", () => {
     expect(jsmql.expr("$.ids.map(x => x.toObjectId())")).toEqual({
       $map: { input: { $ifNull: ["$ids", []] }, as: "x", in: { $toObjectId: "$$x" } },
     });
-    // a dot reads a missing element as the safe value of the kind that the method gives
     expect(jsmql.expr("$.nums.map(x => x.toDouble())")).toEqual({
       $map: { input: { $ifNull: ["$nums", []] }, as: "x", in: { $toDouble: { $ifNull: ["$$x", 0] } } },
     });
@@ -3041,7 +2712,6 @@ describe("bare built-in callbacks", () => {
     expect(jsmql.expr("$.items.compact()")).toEqual({
       $filter: { input: { $ifNull: ["$items", []] }, as: "jsmqlItem", cond: truthy },
     });
-    // the proof of the element leaves out each test it cannot fail: a part of a split is a string
     expect(jsmql.expr('$.s.split(",").compact()')).toEqual({
       $filter: {
         input: { $split: [{ $ifNull: ["$s", ""] }, ","] },
@@ -3079,8 +2749,6 @@ describe("bare built-in callbacks", () => {
   it("a refused type name read as a value answers with its own refusal", () => {
     expect(() => jsmql.expr("Boolean + 5")).toThrow(/^'Boolean\(x\)' is not part of JSMQL/);
   });
-  // A stream element is a document, so a bare built-in is meaningless there. The
-  // rejection must stay the method's own form list — never an internal var name.
   it("a stream method rejects a bare built-in with its own spelling list", () => {
     expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).toThrow(
       "'.countBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), an index ('0'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got the name 'String'.",
@@ -3136,9 +2804,6 @@ describe("date methods", () => {
     });
   });
 
-  // The accessors read the whole date, so an argument has nowhere to go. To drop
-  // it in silence is the one error that a user cannot see in the output, so the compiler refuses it.
-  // `.week("UTC")` & co. DO take a timezone; only these do not.
   it("rejects an argument on a zero-argument accessor", () => {
     expect(() => jsmql.expr('$.ts.getFullYear("UTC")')).toThrow("'.getFullYear()' takes no arguments, got 1");
     expect(() => jsmql.expr("$.ts.getMonth(1, 2, 3)")).toThrow("'.getMonth()' takes no arguments, got 3");
@@ -3147,9 +2812,6 @@ describe("date methods", () => {
     expect(() => jsmql.expr('$.ts.toISOString("UTC")')).toThrow("'.toISOString()' takes no arguments, got 1");
   });
   it("still accepts the timezone argument on the methods that take one", () => {
-    // The compiler keeps a timezone that the developer TYPED, even when it names the default:
-    // the object form carries it. Only the implicit UTC that `.getUTCxxx()` names
-    // through its own method name collapses to the single-argument form (see "date methods (UTC variants)").
     expect(jsmql.expr('$.ts.week("UTC")')).toEqual({
       $week: { date: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "UTC" },
     });
@@ -3241,10 +2903,6 @@ describe("date arithmetic (.plus / .minus)", () => {
 });
 
 describe("replacing date parts (.set)", () => {
-  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z:
-  // { year: 2030 } → 2030-08-12T15:47:03.123Z, { month: 1, day: 1 } →
-  // 2026-01-01T15:47:03.123Z, the four time parts at 0 → 2026-08-12T00:00:00Z,
-  // { isoWeek: 5 } → 2026-01-28T15:47:03.123Z (the Wednesday of ISO week 5).
   it("reads the parts, overrides the named ones, rebuilds", () => {
     expect(jsmql.expr("$.t.set({ year: 2030 })")).toEqual({
       $let: {
@@ -3264,7 +2922,6 @@ describe("replacing date parts (.set)", () => {
     });
   });
   it("months count from 1, as in $dateFromParts, not from 0 as in .getMonth()", () => {
-    // { month: 1 } is January — MQL's base, not JavaScript's 0-based one.
     expect(jsmql.expr("$.t.set({ month: 1, day: 1 })")).toEqual({
       $let: {
         vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } } } },
@@ -3393,15 +3050,11 @@ describe("replacing date parts (.set)", () => {
     expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow("'.set()' year takes an integer, but got a string.");
   });
   it("the $dateFromParts operator form is your own MQL, and it passes through", () => {
-    // DELIBERATELY invalid: mongod refuses it, because `year` needs an integer, and gets a string.
     expect(jsmql.expr('$dateFromParts({ year: "2030" })')).toEqual({ $dateFromParts: { year: "2030" } });
   });
 });
 
 describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
-  // Verified on a live mongod with a = 2026-08-12T15:47:03.123Z,
-  // b = 2026-11-30T01:02:03Z → sameDay false, sameYear true, beforeMonth true,
-  // afterMonth false, sameMonth in America/New_York false.
   it("isSame(other, unit) truncates both sides, then compares", () => {
     expect(jsmql.expr('$.a.isSame($.b, "day")')).toEqual({
       $eq: [
@@ -3454,9 +3107,6 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
 });
 
 describe("date parts JavaScript has no getter for", () => {
-  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
-  // week 32, isoWeek 33, isoWeekYear 2026, isoWeekday 3, dayOfYear 224,
-  // quarter 3 (and `$type` of it is "int", not "double").
   it("week / isoWeek / isoWeekYear / isoWeekday / dayOfYear map to their operators", () => {
     expect(jsmql.expr("$.t.week()")).toEqual({ $week: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } });
     expect(jsmql.expr("$.t.isoWeek()")).toEqual({
@@ -3473,8 +3123,6 @@ describe("date parts JavaScript has no getter for", () => {
     });
   });
   it("quarter derives from $month, kept an int — MongoDB has no $quarter", () => {
-    // $ceil of a $divide is a double on its own, which would make this the one
-    // date getter that returns a non-integer.
     expect(jsmql.expr("$.t.quarter()")).toEqual({
       $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } },
     });
@@ -3506,8 +3154,6 @@ describe("date parts JavaScript has no getter for", () => {
 });
 
 describe("date formatting (.format)", () => {
-  // Verified on a live mongod: t = 2026-08-12T15:47:03.123Z formats as
-  // "2026-08-12" under "%Y-%m-%d", and .startOf("month").format("%Y-%m") → "2026-08".
   it("format(spec) → $dateToString", () => {
     expect(jsmql.expr('$.createdAt.format("%Y-%m-%d")')).toEqual({
       $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" },
@@ -3549,8 +3195,6 @@ describe("date formatting (.format)", () => {
     expect(() => jsmql.expr('$.createdAt.format("%y-%m")')).toThrow(/invalid specifier '%y'\. Did you mean '%Y'\?/);
   });
   it("rejects a Moment/Luxon token string and translates it", () => {
-    // Valid MQL — it formats as its own literal text — so nothing but the token
-    // spelling reveals the mistake. Hence the compile-time rejection.
     expect(() => jsmql.expr('$.createdAt.format("YYYY-MM-DD HH:mm:ss")')).toThrow(
       /not Moment or Luxon tokens\..* Did you mean '%Y-%m-%d %H:%M:%S'\?/,
     );
@@ -3587,10 +3231,6 @@ describe("date formatting (.format)", () => {
 });
 
 describe("date truncation (.startOf)", () => {
-  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
-  // month → 2026-08-01T00:00Z, quarter → 2026-07-01T00:00Z,
-  // week → 2026-08-09 (Sunday, MQL's default), week/monday → 2026-08-10,
-  // minute binSize 15 → 15:45Z, day in America/New_York → 2026-08-12T04:00Z.
   it("startOf(unit) → $dateTrunc", () => {
     expect(jsmql.expr('$.createdAt.startOf("month")')).toEqual({
       $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
@@ -3655,11 +3295,6 @@ describe("date truncation (.startOf)", () => {
 });
 
 describe("inclusive bucket end (.endOf)", () => {
-  // MongoDB has no ceiling operator, so this is truncate → add one unit → −1 ms.
-  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z (a Wednesday):
-  // month → 2026-08-31T23:59:59.999Z, day in America/New_York →
-  // 2026-08-13T03:59:59.999Z (= 23:59:59.999 local), minute binSize 15 →
-  // 15:59:59.999Z, week that starts on Monday → 2026-08-16T23:59:59.999Z (Sunday).
   it("endOf(unit) → $dateTrunc + $dateAdd − 1 ms", () => {
     expect(jsmql.expr('$.createdAt.endOf("month")')).toEqual({
       $dateSubtract: {
@@ -3752,8 +3387,6 @@ describe("inclusive bucket end (.endOf)", () => {
 });
 
 describe("date difference (.diff)", () => {
-  // Verified on a live mongod: start = 2026-08-12T15:47:03.123Z,
-  // end = 2026-11-30T01:02:03Z → day 110, week (Monday) 16.
   it("diff(other, unit) → $dateDiff, receiver is the endDate", () => {
     expect(jsmql.expr('$.end.diff($.start, "day")')).toEqual({
       $dateDiff: {
@@ -3889,15 +3522,11 @@ describe("date-method receiver type-check", () => {
     expect(jsmql.expr("$.x.toDate().getMonth()")).toEqual({
       $subtract: [{ $month: { $toDate: { $ifNull: ["$x", new Date("1970-01-01T00:00:00.000Z")] } } }, 1],
     });
-    // a `"$ts"` receiver in JSMQL is text (HR6), and a string has no date method
     expect(() => jsmql.expr('"$ts".getHours()')).toThrow("'.getHours()' is not available on a 'string'");
   });
 });
 
 describe("date methods (UTC variants)", () => {
-  // Same operators as the local getters, anchored to UTC through `timezone: "UTC"`.
-  // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
-  // → { y:2023, mo:3, d:15, dow:4, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
     expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({
       $year: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
@@ -3957,9 +3586,6 @@ describe("Date()", () => {
     expect(() => jsmql.expr("Date($.ts)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
   });
   it("with constant string literal folds to a real Date (not $toDate)", () => {
-    // A compile-time-constant `Date(...)` denotes a constant Date, so it
-    // folds to a real BSON Date that works in BOTH aggregation-expression and
-    // query-document positions. `{ $toDate }` only works in the former.
     expect(jsmql.expr('Date("2024-01-01")')).toEqual(new Date("2024-01-01T00:00:00.000Z"));
   });
   it("Date(y, m) folds to a UTC Date — month 1 is February, as in JavaScript", () => {
@@ -3980,26 +3606,17 @@ describe("Date()", () => {
     });
   });
   it("a literal month 0 is January and -1 rolls back a year, as in JavaScript", () => {
-    // Months count from 0, so month 0 is January and month -1 is December of the year
-    // before. Date.UTC counts the same way.
     expect(jsmql.expr("Date(2024, 0, 15)")).toEqual(new Date("2024-01-15T00:00:00.000Z"));
     expect(jsmql.expr("Date(2024, -1, 15)")).toEqual(new Date("2023-12-15T00:00:00.000Z"));
     expect(jsmql.expr("Date.UTC(2024, 0, 15)")).toEqual(1705276800000);
   });
   it("rejects a constant date string that cannot be parsed (HR3)", () => {
-    // jsmql knows the value at compile time, and the server rejects the equivalent
-    // `{ $toDate: "not-a-date" }` at parse time. So this refuses the value here,
-    // and does not emit MQL that cannot run. The message names the value and the format to use.
     expect(() => jsmql.expr('Date("not-a-date")')).toThrow(
       'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
     expect(() => jsmql.expr('Date("not-a-date")')).toThrow(/ISO 8601/);
   });
   it("constant Date folds in query-document position too", () => {
-    // In a Filter / `$match` object-literal passthrough (a query document, not an
-    // aggregation expression) a `{ $toDate }` shape reads as an inert literal
-    // subdocument, and it matches nothing. A real Date is what the query language
-    // compares against.
     expect(jsmql('{ createdAt: { $gte: Date("2026-05-17T02:57:59.714Z") } }')).toEqual({
       createdAt: { $gte: new Date("2026-05-17T02:57:59.714Z") },
     });
@@ -4037,8 +3654,6 @@ describe("Date.UTC()", () => {
 });
 
 describe("type casts", () => {
-  // A type name as a conversion function is not part of JSMQL. Each refusal names the
-  // value's own method, with the `?.` that keeps the null of a missing value.
   it("Number() names .toDouble()", () => {
     expect(() => jsmql.expr("Number($.str)")).toThrow(/Write '<value>\?\.toDouble\(\)': '\$\.x\?\.toDouble\(\)'/);
     expect(jsmql.expr("$.str?.toDouble()")).toEqual({ $toDouble: "$str" });
@@ -4061,7 +3676,6 @@ describe("type casts", () => {
       { $set: { n: { $size: { $ifNull: ["$a", []] } } } },
       { $set: { b: { $cond: ["$n", true, false] } } },
     ]);
-    // a constant folds
     expect(jsmql.expr("!!0")).toBe(false);
     expect(jsmql.expr("!!5")).toBe(true);
     expect(jsmql.expr("!!null")).toBe(false);
@@ -4109,8 +3723,6 @@ describe("Math.*", () => {
 });
 
 describe("number methods in a callback, and the refused Math members", () => {
-  // A number method in a callback reads the element as its receiver. `Math.floor`
-  // and the other members with a receiver method are refused, as bare callables too.
   it("$.scores.map(x => x.floor())", () => {
     expect(jsmql.expr("$.scores.map(x => x.floor())")).toEqual({
       $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: { $ifNull: ["$$x", 0] } } },
@@ -4152,7 +3764,6 @@ describe("number methods in a callback, and the refused Math members", () => {
     expect(() => jsmql.expr("Math.random")).toThrow(
       "'Math.random' is a function, not a value. Call it ('Math.random(…)'), or hand it to a callback slot ('.map(Math.random)').",
     );
-    // a refused member answers with its own refusal, which names the one spelling
     expect(() => jsmql.expr("Math.floor")).toThrow("Write '<number>.floor()'");
   });
 });
@@ -4234,14 +3845,11 @@ describe("bitwise infix operators", () => {
     expect(jsmql.expr("$.a & $.b ^ $.c")).toEqual({ $bitXor: [{ $bitAnd: ["$a", "$b"] }, "$c"] });
   });
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
-    // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
-    // `$bitOr` gives a number or null, so the value is its own truth.
     expect(jsmql.expr("$.a | $.b && $.c")).toEqual({
       $let: { vars: { jsmqlV: { $bitOr: ["$a", "$b"] } }, in: { $cond: ["$$jsmqlV", "$c", "$$jsmqlV"] } },
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
-    // HR7: `===` gives a boolean, and `&` takes numbers, so the refusal shows the grouping
     expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' argument 1 takes an integer");
   });
   it("unary ~ has higher precedence than &", () => {
@@ -4272,7 +3880,6 @@ describe("the object methods", () => {
 });
 
 describe("the Object statics — refused; the object's own method is the one spelling", () => {
-  // Each static emitted the MQL of a dot form. One capability gets one spelling.
   it.each([
     ["Object.keys($.doc)", "'$.doc.keys()'"],
     ["Object.values($.doc)", "'$.doc.values()'"],
@@ -4302,11 +3909,6 @@ describe("$let with lambda", () => {
   });
 });
 
-// Block-body arrows `(x) => { const a = …; return <expr>; }` lower to a
-// nest of $let that the compiler folds from the right. Each decl has one binding, in source order.
-// So each decl's initialiser and the return see all prior decls as $$name. JS-faithful:
-// `=> {` always opens a block; an object return needs `=> ({ … })`.
-// See docs/specs/grammar.md § Body: expression or block.
 describe("block-body arrow lambdas (→ nested $let)", () => {
   it(".map() with a single-decl block", () => {
     expect(jsmql.expr("$.items.map(x => { const y = x * 2; return y; })")).toEqual({
@@ -4334,9 +3936,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   });
 
   it(".filter() block predicate wraps the block's `return`, inside the $let", () => {
-    // The wrap goes around the RETURN, not around the whole `$let`: a wrap outside
-    // would repeat the entire `$let` once per falsy-value clause and re-evaluate every
-    // binding that many times. Same boolean either way.
     expect(jsmql.expr("$.items.filter(x => { const ok = x.active; return ok; })")).toEqual({
       $filter: {
         input: { $ifNull: ["$items", []] },
@@ -4431,11 +4030,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     expect(() => jsmql.expr("$.items.map(x => { const a = 1; })")).toThrow(/must end with a `return <expr>`/);
   });
 
-  // MongoDB SPLICES a bare array in a positional single-array-argument slot:
-  // the server reads `{ $size: [1, 2] }` as two arguments, and `$size` takes one. The
-  // one-element `{ $size: [1] }` unwraps to the scalar, which is not an array. So
-  // every one of these emitted MQL the server refused. The server unwraps one extra level
-  // exactly once, back to the operand we meant. Verified against a live mongod.
   describe("jsmql wraps a literal-array receiver for single-array-argument operators", () => {
     const wrapped: [string, string, unknown][] = [
       [".size()", "[1, 2].size()", 2],
@@ -4443,7 +4037,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       [".head()", "[1, 2].head()", 1],
       [".first()", "[1, 2].first()", 1],
       [".last()", "[1, 2].last()", 2],
-      // A single-element literal is the sharper case: unwrapped it becomes a scalar.
       ["1-element .size()", "[1].size()", 1],
       ["string elements", '["a", "b"].toReversed()', ["b", "a"]],
     ];
@@ -4454,8 +4047,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     }
 
     it("leaves a non-literal receiver alone — the wrap is only for literals", () => {
-      // A field path / $$var / operator document is already unambiguous, so an added
-      // level would change what the operator reads.
       expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$items", []] } });
       expect(jsmql.expr("$.items.map(a => a).toReversed()")).toEqual({
         $reverseArray: { $map: { input: { $ifNull: ["$items", []] }, as: "a", in: "$$a" } },
@@ -4463,20 +4054,13 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     });
 
     it("object-form operators keep the receiver unwrapped (no splice there)", () => {
-      // `input:` is a named value slot, not an argument list — a wrap would break it.
       expect(jsmql.expr("[1, 2].map(a => a)")).toEqual([1, 2]);
-      // a constant predicate folds the whole call away, so the shape is read through one
-      // the fold declines: `$$ROOT` is not a value the pass can carry
       expect(jsmql.expr("[1, 2].filter(a => a === $.n)")).toEqual({
         $filter: { input: [1, 2], as: "a", cond: { $eq: ["$$a", "$n"] } },
       });
     });
   });
 
-  // JS stringifies nested arrays recursively (`[[1,2],[3]].join(",") === "1,2,3"`).
-  // MQL expressions cannot recurse. `$toString` of an inner array gives MongoDB's text
-  // ("[1,2]"), not JavaScript's. Reject where the shape is provable, and do not emit it
-  // or silently flatten one level (a different answer than the source asks for).
   describe("rejects a string of an array of arrays, and does not emit a wrong shape", () => {
     it(".join() rejects a literal of literals", () => {
       expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
@@ -4498,7 +4082,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it("a flat literal, an unknown receiver, and .flat() first all still compile", () => {
       expect(jsmql.expr('[1, 2].join(",")')).toBe("1,2");
-      // Unknown element type — literal-gating says do not guess.
       expect(jsmql.expr('$.items.join(",")')).toEqual({
         $ifNull: [
           {
@@ -4521,10 +4104,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     });
   });
 
-  // A `=> { $stage(...); ... }` block is a SUB-PIPELINE, legal only as the argument
-  // to a stream method that takes one. If the user writes it anywhere else, a demand for a `return`
-  // that the user never wanted would send them after a phantom syntax error instead of
-  // the real mistake (a misspelled method, or a non-stream receiver).
   describe("a stage-call block outside a sub-pipeline position names the real mistake", () => {
     it("a misspelled block method on a stream receiver suggests the intended one", () => {
       for (const [typo, meant] of [
@@ -4544,9 +4123,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       );
     });
 
-    // The suggestion names the method that the developer meant, but must not imply that this method
-    // would accept the block as written. Only `.aggregate` takes a pipeline,
-    // so the message states the rule either way (the message of the parser — src/compiler/parse/parser.ts).
     it("states the callback rule, and does not promise that the suggested method takes stages", () => {
       for (const src of [
         "$.r = $$$.orders.aggregat((o) => { $limit(2); });",
@@ -4590,8 +4166,6 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   });
 
   it("JS-faithful: a bare-brace object body is a block (object return needs parens)", () => {
-    // `x => { k: x }` is a labeled-statement block in JS, not an object — jsmql
-    // rejects it (no `return`); the object form is `x => ({ k: x })`.
     expect(() => jsmql.expr("$.items.map(x => { k: x })")).toThrow(
       "A block body must end with a `return <expr>` statement at position 19, got an identifier 'k'. Write `x => { const a = …; return <expr>; }`. Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.",
     );
@@ -4616,7 +4190,6 @@ describe("immutable array methods", () => {
     });
   });
   it(".toSorted() takes the whole element only as the whole body", () => {
-    // a `||` joins KEYS, and an element that IS the key admits no tiebreaker
     expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - b || a.k - b.k)")).toThrow(
       ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
     );
@@ -4717,8 +4290,6 @@ describe("array method additions", () => {
     });
   });
   it(".lastIndexOf(x) reverses, finds, normalises back to original index", () => {
-    // The compiler refuses the string family, so only the array reading emits: no receiver
-    // test to make, and the answer stands on its own.
     expect(jsmql.expr("$.items.lastIndexOf(42)")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$items", []] } },
@@ -4900,7 +4471,6 @@ describe("array method additions", () => {
     expect(jsmql.expr("$.xs.map(x => x + 1).toString()")).toEqual({
       $toString: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $add: ["$$x", 1] } } },
     });
-    // `$toString` takes one operand, so an array literal goes in a one-element list.
     expect(jsmql.expr("[1, 2].toString()")).toEqual({ $toString: [[1, 2]] });
   });
   it('.toString() after a string method under a dot adds no $ifNull: the method reads a missing string as ""', () => {
@@ -4908,7 +4478,6 @@ describe("array method additions", () => {
   });
   it('.toString() under a dot reads a missing receiver as ""', () => {
     expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: { $ifNull: ["$n", ""] } });
-    // A receiver of the array family also reads as "", not as the text of `[]`.
     expect(jsmql.pipeline('$.arr = $.x?.split(","); $.out = $.arr.toString();')).toEqual([
       { $set: { arr: { $split: ["$x", ","] } } },
       { $set: { out: { $toString: { $ifNull: ["$arr", ""] } } } },
@@ -4919,10 +4488,8 @@ describe("array method additions", () => {
     expect(jsmql.expr("$.n?.toString().trim()")).toEqual({ $trim: { input: { $toString: "$n" } } });
   });
   it(".toString() on a receiver that is there adds no $ifNull", () => {
-    // a constant folds: the interpreter runs the `$toString`
     expect(jsmql.expr("(5).toString()")).toEqual("5");
     expect(jsmql.expr("$.a.size().toString()")).toEqual({ $toString: { $size: { $ifNull: ["$a", []] } } });
-    // The result is there too, so the string method after it takes no null test.
     expect(jsmql.expr("$.n.toString().trim()")).toEqual({ $trim: { input: { $toString: { $ifNull: ["$n", ""] } } } });
   });
   it(".toString() on a regex literal is the text $toString gives for the BSON regex", () => {
@@ -4968,9 +4535,6 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
-  // A paramless callback still occupies an `as` name in the emitted MQL. jsmql
-  // gensyms this name, so the inner one does not shadow the outer element and
-  // `$$v` resolves to the outer array's element.
   it("a paramless callback's synthetic `as` does not shadow an enclosing one", () => {
     expect(jsmql.expr("$.a.map(v => $.b.map(() => v))")).toEqual({
       $map: {
@@ -5052,8 +4616,6 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
-  // MongoDB rejects a user-variable name that starts with `_`, so the idiomatic JS
-  // throwaway param has to go through safeVarName like every other binding site.
   it(".findIndex((_, i) => …) escapes the throwaway param to a server-valid name", () => {
     expect(jsmql.expr("$.xs.findIndex((_, i) => i > 2)")).toEqual({
       $reduce: {
@@ -5142,8 +4704,6 @@ describe("array callbacks support (element, index)", () => {
     });
   });
   it(".map with a 3rd 'array' param: arr.size() → $size; index unused → no $zip", () => {
-    // `i` is only present positionally to reach `arr`, so the compiler uses the simple `$map`
-    // (no $zip/$range). `arr` binds to the input through a thin $let.
     expect(jsmql.expr("$.xs.map((x, i, arr) => arr.size())")).toEqual({
       $map: {
         input: { $ifNull: ["$xs", []] },
@@ -5202,9 +4762,6 @@ describe("array callbacks support (element, index)", () => {
 });
 
 describe("mutator DX shims (expression position rejects mutators)", () => {
-  // On a field receiver, jsmql.expr reads a mutator call as a pipeline statement and names
-  // jsmql.pipeline(). On a computed array, the refusal names the immutable twin instead (see
-  // "the type error beats the mutator shim" below).
   it(".sort() on a field reads as a statement, so jsmql.expr names jsmql.pipeline()", () => {
     expect(() => jsmql.expr("$.xs.sort()")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'sort' stage call instead. Use jsmql.pipeline().",
@@ -5264,7 +4821,6 @@ describe("toSorted / sort key function", () => {
     });
   });
   it("a computed key under a minus is the key with the direction flipped — never the negated key sorted descending", () => {
-    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) gives [3, 2, 1].
     expect(jsmql.expr("$.nums.sortBy(x => -x)")).toEqual({
       $map: {
         input: {
@@ -5436,7 +4992,6 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         $filter: {
           input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
-          // the JavaScript truth rules: "", 0, false, null and missing are false
           cond: {
             $let: {
               vars: { v: "$$jsmqlKv.v" },
@@ -5492,14 +5047,9 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({ $sum: { $map: { input: "$a", as: "o", in: "$$o.x" } } });
   });
   it(".uniq() → $setUnion (dedupe; MongoDB does not define the order)", () => {
-    // `$setUnion` of one array IS dedupe. lodash preserves input order and this does
-    // not — but nobody writes an ordering when they write `.uniq()`, so MongoDB's
-    // behaviour wins (SR2). Same set, verified on a live mongod.
     expect(jsmql.expr("$.tags.uniq()")).toEqual({ $setUnion: { $ifNull: ["$tags", []] } });
   });
   it(".compact() → $filter by JS truthiness (same rule as `.filter(x => x)`)", () => {
-    // `_.compact(["a", null, 0, "", false])` → `["a"]`: "" is dropped, so the
-    // cond must be the jsBool wrap, not raw MQL truthiness (which keeps "").
     expect(jsmql.expr("$.a.compact()")).toEqual({
       $filter: {
         input: { $ifNull: ["$a", []] },
@@ -5526,13 +5076,9 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(() => jsmql.expr("$.a.chunk(0)")).toThrow("'.chunk()' argument 1 must be a number of 1 or more. It got 0.");
   });
   it(".intersection and .difference are MongoDB's set operators: each value once", () => {
-    // A `$filter` would keep the receiver's duplicates. The set operators keep each value
-    // once, as a JavaScript Set does, and only the order differs.
     expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
-    // MEASURED: over { a: [3, 1, 3, 2, 1], b: [2, 4, 4] } this is [3, 1]; lodash's
-    // `_.difference` keeps the duplicates and gives [3, 1, 3, 1].
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
       $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
@@ -5549,9 +5095,6 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
   });
   it(".partition(pred) → [matches, non]; .reject(pred) → non (matches-object shorthand)", () => {
-    // The predicate reads under JS truthiness, exactly as in `.filter`/`.find`/
-    // `.some`/`.every`. So the two buckets are complements and an `ok: ""`
-    // element goes into the second one (lodash), not the first (raw MQL).
     expect(jsmql.expr("$.a.partition(o => o.ok)")).toEqual([
       {
         $filter: {
@@ -5586,12 +5129,9 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         },
       },
     ]);
-    // A provably-boolean predicate elides the wrap — no `$not` of an `$and` of `$ne`s.
     expect(jsmql.expr("$.a.reject(o => o.n > 1)")).toEqual({
       $filter: { input: { $ifNull: ["$a", []] }, as: "o", cond: { $not: [{ $gt: ["$$o.n", 1] }] } },
     });
-    // A single-key matches shorthand lowers to a bare `$eq` (the arrow-equivalent),
-    // not an `$and`-wrapped one — same shape a hand-written `o => o.ok === true` gives.
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
       $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
     });
@@ -5651,14 +5191,10 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
   });
   it('keyBy/groupBy/countBy keys are null-safe ($ifNull → "null", so a missing/null key does not crash $arrayToObject)', () => {
-    // `$toString(missing)` is null and `$arrayToObject` rejects a null key. The
-    // `$ifNull` wrap coerces it to "null" (the same as String(null)). Verified on mongod.
     const key = { $ifNull: [{ $toString: "$$x.t" }, "null"] };
-    // keyBy: key built directly on each element.
     expect(jsmql.expr('$.a.keyBy("t")')).toEqual({
       $arrayToObject: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { k: key, v: "$$x" } } },
     });
-    // groupBy/countBy: the distinct-key set uses the same wrap.
     expect(jsmql.expr('$.a.groupBy("t")')).toEqual({
       $arrayToObject: {
         $map: {
@@ -5685,10 +5221,6 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
   });
   it("countBy/groupBy/keyBy with no iteratee default to identity (lodash `_.countBy([1,2,2])`)", () => {
-    // The omitted iteratee counts/groups/keys by the element itself. The shapes below
-    // ran on mongod: `[1,2,3,4,5,2,3].countBy()` → {1:1,2:2,3:2,4:1,5:1},
-    // `[1,2,2].groupBy()` → {1:[1],2:[2,2]}, `[1,2,3].keyBy()` → {1:1,2:2,3:3}.
-    // The identity iteratee keys straight off the element ($$x), not a field.
     expect(jsmql.expr("$.a.keyBy()")).toEqual({
       $arrayToObject: {
         $map: {
@@ -5698,7 +5230,6 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         },
       },
     });
-    // countBy/groupBy dedupe the identity keys, then size / bucket per key.
     expect(jsmql.expr("$.a.countBy()")).toEqual({
       $arrayToObject: {
         $map: {
@@ -5762,11 +5293,6 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
 });
 
 describe("every method declares the receiver family it needs", () => {
-  // A row's `on` is required, so no method can forget its receiver families.
-  // But `on: "any"` opts out of the receiver check altogether. This asserts the
-  // complement: the opted-out list holds ONLY methods that genuinely run on any
-  // receiver. A new method that reaches for `"any"` to dodge a family fails here
-  // and does not quietly emit MQL the server rejects.
   const ANY_RECEIVER_BY_DESIGN = {
     toString: "universal",
     toLocaleString: "universal in JS — Number, Date and Array all have it",
@@ -5807,8 +5333,6 @@ describe("every method declares the receiver family it needs", () => {
 });
 
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
-  // 100%-certain mismatches throw (they would otherwise emit MQL mongod rejects, for example
-  // $map over a boolean/number/string, $slice over an object). Verified on mongod.
   it("rejects a method chained on a provably boolean receiver (only .toString/.getTime survive)", () => {
     expect(() => jsmql.expr("$.items.every(x => x.ok).map(y => y)")).toThrow(
       "'.map()' is not available on a 'bool' — it is defined on 'array', 'stream'. A boolean has no methods. Use it as a condition ('cond ? a : b').",
@@ -5819,7 +5343,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr('$.name.startsWith("A").trim()')).toThrow(
       "'.trim()' is not available on a 'bool' — it is defined on 'string'. A boolean has no methods. Use it as a condition ('cond ? a : b').",
     );
-    // …but the two universal methods still compile on a boolean.
     expect(jsmql.expr("$.items.every(x => x.ok).toString()")).toEqual({
       $toString: {
         $allElementsTrue: {
@@ -5865,8 +5388,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
   });
   it("still EMITS for uncertain receivers (element / dual / field / operator) — no false rejection", () => {
-    // .find()/.at() on an ordinary array return an element of UNKNOWN type (could be
-    // an array) — must not throw.
     expect(jsmql.expr("$.matrix.find(r => r.size() > 0).map(x => x)")).toEqual({
       $map: {
         input: {
@@ -5893,7 +5414,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(jsmql.expr("$.items.at(0).toLower()")).toEqual({
       $toLower: { $ifNull: [{ $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] }, ""] },
     });
-    // Compatible same-family chains compile.
     expect(jsmql.expr("$.name.toUpper().trim()")).toEqual({
       $trim: { input: { $toUpper: { $ifNull: ["$name", ""] } } },
     });
@@ -5945,12 +5465,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         },
       },
     });
-    // A string method on a proven string compiles.
     expect(jsmql.expr('$.name.toUpper().includes("A")')).toEqual({
       $gte: [{ $indexOfCP: [{ $toUpper: { $ifNull: ["$name", ""] } }, "A"] }, 0],
     });
-    // clamp's result type follows its args (number OR date), so it is uncertain —
-    // `.clamp(...).getFullYear()` must compile.
     expect(jsmql.expr("$.d.clamp($.a, $.b).getFullYear()")).toEqual({
       $year: {
         $ifNull: [{ $min: [{ $max: [{ $ifNull: ["$d", 0] }, "$a"] }, "$b"] }, new Date("1970-01-01T00:00:00.000Z")],
@@ -5958,8 +5475,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
   });
   it("rejects a date-receiver + string/number/array/object method", () => {
-    // Every date-producing method: the five that return a date (same-as-receiver,
-    // so they carry no invariant `returns`) plus the `Date(…)` constructor.
     expect(() => jsmql.expr('$.t.startOf("month").map(x => x)')).toThrow(
       "'.map()' is not available on a 'date' — it is defined on 'array', 'stream'.",
     );
@@ -6015,7 +5530,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(jsmql.expr("$.x.toDate().getMonth()")).toEqual({
       $subtract: [{ $month: { $toDate: { $ifNull: ["$x", new Date("1970-01-01T00:00:00.000Z")] } } }, 1],
     });
-    // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({
       $toLong: {
         $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
@@ -6026,7 +5540,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
       },
     });
-    // .clamp is number-OR-date, so it is never gated in either direction.
     expect(jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).toEqual({
       $min: [
         {
@@ -6072,15 +5585,11 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.items.size().trim()")).toThrow(
       "'.trim()' is not available on a 'number' — it is defined on 'string'. Render the number as a string first: '.toString()'.",
     );
-    // Number methods on it still compile.
     expect(jsmql.expr("$.s.length().clamp(0, 10)")).toEqual({
       $min: [{ $max: [{ $strLenCP: { $ifNull: ["$s", ""] } }, 0] }, 10],
     });
   });
   it("treats .pick / .omit as object-returning — a non-object method is a compile error", () => {
-    // A row states `returns` PER FAMILY: the stream form is a `$project`, and the value
-    // form builds a document literal. So a value-position receiver IS an object. A
-    // string, number or date method on it would reach the server and stop the query.
     expect(() => jsmql.expr('$.o.pick(["a"]).trim()')).toThrow(
       "'.trim()' is not available on an 'object' — it is defined on 'string'.",
     );
@@ -6090,7 +5599,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.o.pickBy(v => v > 1).toISOString()")).toThrow(
       "'.toISOString()' is not available on an 'object' — it is defined on 'date'.",
     );
-    // an object method, a field read and a key count still compile
     const picked = {
       $let: {
         vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
@@ -6140,8 +5648,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr('"$t".plus(1, "day")')).toThrow("'.plus()' is not available on a 'string'");
   });
   it("rejects a wrong-family method on an operator call whose return type is invariant", () => {
-    // Every `returns` that a row states came from a live mongod with
-    // `{ $type: { <op>: <args> } }` — test/compiler-returns-agrees.test.ts re-measures them.
     expect(() => jsmql.expr("const v = $concat($.a, $.b); v.map(x => x)")).toThrow(
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
@@ -6156,8 +5662,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
   });
   it("leaves an operator whose return type depends on its arguments uncertain", () => {
-    // These rows state no `returns` on purpose: $add/$subtract are number OR date,
-    // and the element readers and pass-throughs can return anything.
     expect(jsmql.expr('const v = $add($.a, $.b); v.plus(1, "day")')).toEqual({
       $dateAdd: {
         startDate: { $ifNull: [{ $add: ["$a", "$b"] }, new Date("1970-01-01T00:00:00.000Z")] },
@@ -6213,8 +5717,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
   });
   it("rejects the array-only methods on a non-array receiver", () => {
-    // Each of these is Array.prototype (or lodash-array) and single-type, so its
-    // row must declare a receiver family or the gate cannot see it.
     expect(() => jsmql.expr("$.s.trim().findIndex(x => x)")).toThrow(
       "'.findIndex()' is not available on a 'string' — it is defined on 'array'.",
     );
@@ -6230,7 +5732,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr('$.t.startOf("month").findIndex(x => x)')).toThrow(
       "'.findIndex()' is not available on a 'date' — it is defined on 'array'.",
     );
-    // .difference / .intersection / .union also have a plain-array form.
     expect(() => jsmql.expr("$.a.size().difference($.b)")).toThrow(
       "'.difference()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
@@ -6240,7 +5741,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.s.trim().unzipWith((a, b) => a)")).toThrow(
       ".unzipWith(fn) isn't supported — its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => …)' instead, where 'group' is one unzipped column.",
     );
-    // …and every one of them still compiles on a real array.
     expect(jsmql.expr("$.a.findIndex(x => x > 1)")).toEqual({
       $reduce: {
         input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
@@ -6329,8 +5829,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
   });
   it("the type error beats the mutator shim when the receiver is a known non-array", () => {
-    // The mutator advice names `.toSorted()`, which is wrong for a string. So the
-    // compiler reports the family mismatch first.
     expect(() => jsmql.expr("$.s.trim().sort()")).toThrow(
       "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
@@ -6343,9 +5841,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.s.trim().forEach(x => x)")).toThrow(
       ".forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.",
     );
-    // On a real array the mutator advice is what the user needs, so it survives.
-    // It survives on a field, which `jsmql.expr` reads as the statement it is.
-    // It also survives on a computed array, where the value road names the immutable twin.
     expect(() => jsmql.expr("$.a.sort()")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'sort' stage call instead. Use jsmql.pipeline().",
     );
@@ -6355,10 +5850,6 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.a.forEach(x => x)")).toThrow(/\.forEach\(\) returns undefined in JavaScript/);
   });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
-    // Offset the chain so the receiver is not at column 0 — the error's .pos must
-    // point at the boolean-producing receiver, not be a 0 placeholder.
-    // Every chain link carries its own offset. So this lands on `.every`, the call that the
-    // message names, and not on the `$.items` chain root.
     const src = "$.n + $.items.every(x => x.ok).map(y => y)";
     const r = jsmql.validate(src);
     expect(r.valid).toBe(false);
@@ -6367,15 +5858,10 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
 });
 
 describe("lodash iteratee / predicate shorthands (uniform across higher-order methods)", () => {
-  // Every higher-order method — native `.map`/`.filter`/`.find`/… and the lodash
-  // `.sumBy`/`.uniqBy`/`.reject`/… — accepts the same shorthand vocabulary. Each shorthand
-  // desugars to exactly what the equivalent one-parameter arrow emits.
   it("property string on .map is a pluck; on a predicate it is a truthy test", () => {
     expect(jsmql.expr('$.a.map("name")')).toEqual({
       $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.name" },
     });
-    // Predicate context applies JS truthiness (the same cond `.filter(x => x.active)`
-    // emits — modulo the internal element-var name).
     expect(jsmql.expr('$.a.filter("active")')).toEqual({
       $filter: {
         input: { $ifNull: ["$a", []] },
@@ -6440,15 +5926,12 @@ describe("lodash positional / slice methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.a.takeRight()")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, -1] });
   });
   it(".drop([n=1]) / .dropRight([n=1]) → $slice (skip first / last n), receiver bound once", () => {
-    // drop: from position n; count max(1, size) so an empty array → $slice:[[],n,1] → []
-    // (mongod rejects a 3-arg $slice count of 0).
     expect(jsmql.expr("$.a.drop(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
         in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
       },
     });
-    // dropRight: keep first max(0, size-n) through 2-arg $slice (n≥size → count 0 → []).
     expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -6460,8 +5943,6 @@ describe("lodash positional / slice methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.a.head()")).toEqual({ $first: { $ifNull: ["$a", []] } });
     expect(jsmql.expr("$.a.first()")).toEqual({ $first: { $ifNull: ["$a", []] } });
     expect(jsmql.expr("$.a.last()")).toEqual({ $last: { $ifNull: ["$a", []] } });
-    // `.nth` reads an array, as `.at` does. The compiler refuses a proven string and
-    // names `.charAt`.
     expect(jsmql.expr("$.a.nth(2)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, 2] });
     expect(jsmql.expr("$.a.nth(-1)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, -1] });
     expect(jsmql.expr("$.a.nth()")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, 0] });
@@ -6471,15 +5952,12 @@ describe("lodash positional / slice methods (per-doc value vocabulary)", () => {
     );
   });
   it(".tail()/.initial() → $slice (all but first / all but last); count guards empty/n≥size → []", () => {
-    // tail: 3-arg $slice with count max(1, size) so an empty array → $slice:[[],1,1] → []
-    // (mongod rejects a 3-arg count of 0).
     expect(jsmql.expr("$.a.tail()")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
         in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
       },
     });
-    // initial = dropRight(1): keep first max(0, size-1) through 2-arg $slice (count 0 → []).
     expect(jsmql.expr("$.a.initial()")).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -6489,8 +5967,6 @@ describe("lodash positional / slice methods (per-doc value vocabulary)", () => {
   });
   it(".size() counts array elements; a missing receiver counts as empty", () => {
     expect(jsmql.expr("$.a.size()")).toEqual({ $size: { $ifNull: ["$a", []] } });
-    // `.size()` counts an array or the stream. A proven object counts its fields through
-    // `.keys().size()`; a proven string counts its characters through `.length()`.
     expect(() => jsmql.expr('$.o.pick(["a"]).size()')).toThrow(
       "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'.",
     );
@@ -6514,8 +5990,6 @@ describe("lodash set-ops & By-iteratee value methods", () => {
     });
   });
   it(".xor(other) → symmetric difference through the set operators", () => {
-    // lodash documents `.xor` as an operation that returns UNIQUE values, so the composition says what
-    // it means. The composition does not preserve order, and nobody asked for it (SR2).
     expect(jsmql.expr("$.a.xor($.b)")).toEqual({
       $setUnion: [
         { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] },
@@ -6573,7 +6047,6 @@ describe("lodash set-ops & By-iteratee value methods", () => {
     expect(jsmql.expr('$.a.unionBy($.b, "id")')).toEqual(
       dedupeById({ $concatArrays: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }),
     );
-    // the other list is `$ifNull`-guarded: its keys feed an `$in`, which aborts on a null operand
     expect(jsmql.expr('$.a.xorBy($.b, "id")')).toEqual({
       $let: {
         vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
@@ -6623,9 +6096,6 @@ describe("lodash set-ops & By-iteratee value methods", () => {
       },
     });
   });
-  // The iteratee's $let must not enclose the $reduce accumulator reads. A param named
-  // `value` would shadow `$$value`. So the "have I seen this key" test would read `.seen`
-  // off the element and every element would survive the dedupe.
   it("an iteratee param named 'value' does not shadow the $reduce accumulator", () => {
     expect(jsmql.expr("$.a.uniqBy(value => value.id)")).toEqual({
       $getField: {
@@ -6686,9 +6156,6 @@ describe("lodash set-ops & By-iteratee value methods", () => {
 
 describe("lodash transpose value methods — zip / unzip / zipWith", () => {
   it(".zip(...arrays) → $zip with useLongestLength (groups run to the longest)", () => {
-    // `$zip` IS this operation, and `useLongestLength` is lodash's padding rule: groups
-    // run to the longest input and short ones fill with null. Verified byte-identical to
-    // the hand-built form on a live mongod across ragged and empty inputs.
     expect(jsmql.expr("$.a.zip($.b)")).toEqual({
       $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b"], useLongestLength: true },
     });
@@ -6697,7 +6164,6 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
     });
   });
   it(".zipWith(...arrays, fn) applies an N-parameter arrow (one param per array) to each group", () => {
-    // Each arrow parameter binds to its position in the tuple `$zip` produced.
     expect(jsmql.expr("$.a.zipWith($.b, (x, y) => x + y)")).toEqual({
       $map: {
         input: { $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b"], useLongestLength: true } },
@@ -6754,8 +6220,6 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
       },
     });
   });
-  // The first falsy index is the boundary. `whileRun` holds the shape the four methods share:
-  // `allTrue` is the answer when no element fails, and `cut` slices at the boundary.
   const whileRun = (arr: unknown, allTrue: unknown, cut: unknown) => ({
     $let: {
       vars: { jsmqlArr: arr },
@@ -6775,7 +6239,6 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
     },
   });
   const takeCut = { $slice: ["$$jsmqlArr", "$$jsmqlFi"] };
-  // drop branch slices from the boundary to the end.
   const dropCut = { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] };
   it(".dropWhile keeps from the boundary; all-truthy → []", () => {
     expect(jsmql.expr("$.a.dropWhile(x => x < 3)")).toEqual(whileRun({ $ifNull: ["$a", []] }, [], dropCut));
@@ -6932,8 +6395,6 @@ describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
     });
   });
   it(".truncate() default (length 30, '...'); .truncate({ length }) overrides", () => {
-    // The compiler binds and coerces the receiver once. It emits the receiver once, not once per use,
-    // and an absent field reads as "", and does not fall through as null.
     expect(jsmql.expr("$.s.truncate()")).toEqual({
       $let: {
         vars: { jsmqlStr: { $ifNull: ["$s", ""] } },
@@ -6962,8 +6423,6 @@ describe("lodash string methods (per-doc value vocabulary, ASCII-only)", () => {
       "'truncate' has no parameter 'separator'. Valid keys: length, omission.",
     );
   });
-  // camelCase/kebabCase/snakeCase/startCase/escape emit large deterministic trees.
-  // A live mongod verified their behaviour (fooBarBaz → foo-bar-baz, and others).
   it("kebabCase / snakeCase lower-join words; startCase capitalizes; escape nests $replaceAll", () => {
     const words = {
       $map: {
@@ -7102,9 +6561,6 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
   it(".ceil()/.floor() → $ceil/$floor; with precision, scale by 10^p", () => {
     expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: { $ifNull: ["$n", 0] } });
     expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: { $ifNull: ["$n", 0] } });
-    // Only $round takes a precision on the server, so a precision scales by 10^p,
-    // rounds to a whole number and scales back. MEASURED on 1.234: ceil(2) → 1.24.
-    // A constant precision folds the scale; a precision read at run time takes `$pow`.
     expect(jsmql.expr("$.n.ceil(2)")).toEqual({
       $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 100] } }, 100],
     });
@@ -7157,9 +6613,6 @@ describe("statement-position mutators", () => {
     ]);
   });
   it(".pop() — drops last element through the count-tolerant 2-arg $slice (valid on empty/single)", () => {
-    // This uses the 2-arg (first-n) $slice, not the 3-arg `[arr, 0, count]` form. The
-    // reason: `max(0, size-1)` is 0 for an empty or single-element array, and only
-    // the 2-arg form allows a 0 count.
     expect(jsmql("$.events.pop();")).toEqual([
       {
         $set: {
@@ -7174,8 +6627,6 @@ describe("statement-position mutators", () => {
     ]);
   });
   it(".shift() — drops first element; count max(1, size) stays valid on empty/single", () => {
-    // The count is max(1, size), never 0. An empty receiver gives `$slice: [[], 1, 1]`
-    // → [] (a position past the end), never a rejected 3-arg count of 0.
     expect(jsmql("$.events.shift();")).toEqual([
       {
         $set: {
@@ -7268,11 +6719,7 @@ describe("statement-position mutators", () => {
       },
     ]);
   });
-  // jsmql generates the fill VALUE inside the synthetic `(el, idx)` map callback.
-  // A pipeline binding with the same name as a bare param, for example `let x = 5;
-  // $.arr.fill(x, 1)`, must still read as 5, not as each ELEMENT.
   it("a pipeline binding named like the synthetic fill param is not captured", () => {
-    // The fill value is the binding's 5, not "$$x".
     expect(jsmql("let x = 5; $.arr.fill(x, 1); $.done = true;")).toEqual([
       {
         $set: {
@@ -7320,8 +6767,6 @@ describe("statement-position mutators", () => {
     );
   });
   it("two writes to the same field split into two $set stages (read-after-write)", () => {
-    // The second .sort reads $events (which was just written), so the
-    // coalescer correctly splits — same logic as explicit `=` chains.
     expect(jsmql(`$.events.push($.newEvent); $.events.sort(e => e.distance);`)).toEqual([
       { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$newEvent"]] } } },
       { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
@@ -7397,7 +6842,6 @@ describe("set operations on arrays", () => {
     expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
   });
   it("difference — each value once, as a Set holds it", () => {
-    // MEASURED: { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a Set gives.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
       $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
@@ -7489,7 +6933,6 @@ describe("Number static predicates", () => {
     expect(() => jsmql.expr("Number.isFinite($.x)")).toThrow(
       /no syntax for an Infinity or NaN literal to compare against/,
     );
-    // The tracking id belongs in the source comment, not in what the developer reads.
     expect(() => jsmql.expr("Number.isFinite($.x)")).not.toThrow(/DEF-/);
   });
 });
@@ -7558,7 +7001,6 @@ describe("string padding methods", () => {
     );
   });
   it("a lambda param named after the binding itself gensyms the binding, not the param", () => {
-    // The user's name stays the `as`, and the compiler renames ours to `jsmqlPad2`.
     expect(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(5))")).toEqual({
       $map: {
         input: { $ifNull: ["$items", []] },
@@ -7583,14 +7025,8 @@ describe("string padding methods", () => {
   });
 });
 
-// A lowering binds its receiver in a `$let` and then splices a USER
-// expression into the body. It must not give that binding a name that the user might
-// give a lambda param. The spliced `$$name` would silently point again at
-// the receiver. That produces wrong VALUES, not errors.
 describe("internal $let bindings never capture a lambda param", () => {
   it("a lambda param of the same name makes the internal binding gensym", () => {
-    // `jsmqlArr` as a param name pushes the internal binding to `jsmqlArr2`,
-    // so the needle still reads the element.
     expect(jsmql.expr("$.items.map(jsmqlArr => jsmqlArr.list.lastIndexOf(jsmqlArr.needle))")).toEqual({
       $map: {
         input: { $ifNull: ["$items", []] },
@@ -7617,7 +7053,6 @@ describe("internal $let bindings never capture a lambda param", () => {
   });
 
   it("endsWith's needle survives a lambda param named after the binding", () => {
-    // The binding moves to `jsmqlStr2`, and the needle still reads the element ("$$jsmqlStr.ext").
     const extLen = { $strLenCP: { $ifNull: ["$$jsmqlStr.ext", ""] } };
     expect(jsmql.expr("$.items.map(jsmqlStr => jsmqlStr.name.endsWith(jsmqlStr.ext))")).toEqual({
       $map: {
@@ -7652,7 +7087,6 @@ describe("internal $let bindings never capture a lambda param", () => {
   });
 
   it("no needless rename when nothing collides", () => {
-    // Output stability: the overwhelmingly common case keeps the base name.
     expect(jsmql.expr("$.items.map(x => x.list.lastIndexOf(x.needle))")).toEqual({
       $map: {
         input: { $ifNull: ["$items", []] },
@@ -7680,8 +7114,6 @@ describe("internal $let bindings never capture a lambda param", () => {
 });
 
 describe("Array.from is not part of jsmql", () => {
-  // The name parses, so it gets an answer. '$range' says the same thing, and in
-  // fewer characters than a mapped form that binds a throwaway element in a '$let'.
   const REFUSED =
     "'Array.from(…)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.";
   it("refuses every spelling with the same message", () => {
@@ -7693,7 +7125,6 @@ describe("Array.from is not part of jsmql", () => {
       "Array.from({ length: 3 }, x => x)",
       "Array.from({ length: 5 },)",
       "Array.from({ length: 5 }, (_, i) => i,)",
-      // 'from' answered on ANY receiver, so this compiled too — a second spelling nobody wrote down.
       "Object.from({ length: 3 })",
     ]) {
       expect(() => jsmql.expr(src)).toThrow(REFUSED);
@@ -7709,8 +7140,6 @@ describe("Array.from is not part of jsmql", () => {
 });
 
 describe("BigInt literals", () => {
-  // A BigInt IS an int64 in MQL, so the compiler builds the value at compile time, and does not
-  // leave it as a string that the server parses per document.
   it("integer with n suffix", () => {
     expect(jsmql.expr("123n")).toEqual(Long.fromString("123"));
   });
@@ -7735,9 +7164,6 @@ describe("BigInt literals", () => {
 });
 
 describe("Object.groupBy — refused; the receiver form is the one spelling", () => {
-  // `Object.groupBy(items, fn)` and `items.groupBy(fn)` emitted the identical MQL, and
-  // one capability gets one spelling. The refused name still parses, so the message
-  // names the form that works, and does not leave an unknown identifier.
   for (const src of [
     "Object.groupBy($.items, x => x.category)",
     "Object.groupBy($.items, $.f)",
@@ -7810,7 +7236,6 @@ describe("IIFE → $let", () => {
   });
   it("rejects a call of a non-lambda", () => {
     expect(() => jsmql.expr("$.fns[0](1, 2)")).toThrow(/Direct call/);
-    // `$.name(…)` is a method on the document itself, so an unknown one is an unknown METHOD
     expect(() => jsmql.expr("$.func(1, 2)")).toThrow(/Unknown method '\.func\(\)'/);
   });
   it("rejects spread args", () => {
@@ -7860,8 +7285,6 @@ describe("error cases", () => {
   it("near-miss method names get a suggestion", () => {
     expect(() => jsmql.expr("$.name.toLowr()")).toThrow(/Did you mean '\.toLower\(\)'/);
     expect(() => jsmql.expr("$.items.fliter(x => x)")).toThrow(/Did you mean '\.filter\(\)'/);
-    // The suggestion list is the METHODS registry itself, so `substring` is in it
-    // and a near-miss resolves to it.
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
   it("a misspelled renamed method names the method that JSMQL writes", () => {
@@ -7869,11 +7292,9 @@ describe("error cases", () => {
     expect(() => jsmql.expr("$.name.toUpperCse()")).toThrow(/Did you mean '\.toUpper\(\)'/);
     expect(() => jsmql.expr("$.n.toNumbr()")).toThrow(/Did you mean '\.toDouble\(\)'/);
     expect(() => jsmql("$.name = $.name.toLowerCse();")).toThrow(/Did you mean '\.toLower\(\)'/);
-    // A field read on a proven string names the method that runs, not the refused name.
     expect(() => jsmql.expr("$.s.trim().toUpperCase")).toThrow("Write '.toUpper()' to call the method.");
   });
   it("a misspelled method never names a method that refuses in every position", () => {
-    // `.forEach()` refuses everywhere, so a typo of it gets no suggestion.
     expect(() => jsmql.expr("$.a.forEch(x => x)")).toThrow(/^Unknown method '\.forEch\(\)' at position 3\.\n/);
   });
   it("names a working form for a namespace value, a refused callback and a spread into a JS call", () => {
@@ -7922,7 +7343,6 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
       errors: [{ message: noNew(name), pos, code: "CODEGEN_ERROR" }],
     });
     expect(jsmql.validate("new Date()")).toEqual(at("Date", 0));
-    // The compiler refuses a constant date too: no pass folds it to its value before the check.
     expect(jsmql.validate('$.t > new Date("2026-01-01")')).toEqual(at("Date", 6));
     expect(jsmql.validate("$.t > new Date(2026, 0, 1)")).toEqual(at("Date", 6));
     expect(jsmql.validate("true ? 1 : new Date(0)")).toEqual(at("Date", 11));
@@ -7931,7 +7351,6 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
     expect(jsmql.validate('$.t > new ISODate("2026-01-01")')).toEqual(at("ISODate", 6));
     expect(jsmql.validate("$.a = new Date(); $.b = 1;")).toEqual(at("Date", 6));
     expect(jsmql.validate("$.a = new Date()")).toEqual(at("Date", 6));
-    // Each entry and each call form refuses it.
     expect(() => jsmql.expr('new Date("2026-01-01")')).toThrow(noNew("Date"));
     expect(() => jsmql.filter('$.t > new Date("2026-01-01")')).toThrow(noNew("Date"));
     expect(() => jsmql.pipeline("$.t = new Date();")).toThrow(noNew("Date"));
@@ -7941,19 +7360,15 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
     expect(() => jsmql.compile(({ d }: { d: string }, { $ }) => $.t > new Date(d))({ d: "2026-01-01" })).toThrow(
       noNew("Date"),
     );
-    // The spelling with no 'new' compiles.
     expect(jsmql('$.t > Date("2026-01-01")')).toEqual({ t: { $gt: new Date("2026-01-01T00:00:00.000Z") } });
     expect(jsmql.expr("Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
     expect(jsmql.expr("Date()")).toEqual("$$NOW");
-    // A value that the caller passes in is the caller's own JavaScript, not JSMQL.
     expect(jsmql`$.t > ${new Date("2026-01-01T00:00:00.000Z")}`).toEqual({
       t: { $gt: new Date("2026-01-01T00:00:00.000Z") },
     });
   });
 
   it("refuses 'Set' in both spellings, and names the array methods", () => {
-    // MongoDB has no set type, so an array method does each set operation. The error
-    // stands at the node that names `Set`; a call without `new` stands at its `(`.
     const set =
       "'new Set(…)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'.";
     const at = (pos: number) => ({ valid: false, errors: [{ message: set, pos, code: "CODEGEN_ERROR" }] });
@@ -7963,11 +7378,9 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
     expect(jsmql.validate("$.shared = new Set($.a).intersection(new Set($.b)).size() > 0;")).toEqual(at(11));
     expect(() => jsmql.expr("new Set([1, 2])")).toThrow(set);
     expect(() => jsmql.update("$.x = new Set([1, 2])")).toThrow(set);
-    // Where an accumulator goes, the message names MongoDB's own operator.
     expect(() => jsmql("$group({ _id: $.k, tags: new Set($.tag) });")).toThrow(
       "'new Set(…)' is not an accumulator. Inside '$group', '$addToSet(<value>)' gathers the unique values.",
     );
-    // The forms the messages name compile.
     expect(jsmql.expr("$.a.uniq().size()")).toEqual({ $size: { $setUnion: { $ifNull: ["$a", []] } } });
     expect(jsmql.update("$.x = [1, 2, 2].uniq()")).toEqual({ $set: { x: [1, 2] } });
     expect(jsmql("$group({ _id: $.k, tags: $addToSet($.tag) });")).toEqual([
@@ -7976,7 +7389,6 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
   });
 
   it("names the call without 'new' for a function", () => {
-    // A type name as a conversion function is not part of JSMQL, with 'new' or without it.
     expect(() => jsmql.expr("new Number(5)")).toThrow(/^'Number\(x\)' is not part of JSMQL/);
     expect(() => jsmql("const f = (x) => x; $.a = new f(1);")).toThrow("JSMQL has no 'new' keyword. Write 'f(…)'.");
     expect(() => jsmql.expr("new assert(1)")).toThrow("JSMQL has no 'new' keyword. Write 'assert(…)'.");
@@ -8001,7 +7413,6 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
       "'RegExp(…)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: …, regex: … })'.";
     expect(() => jsmql.expr('new RegExp("^ab")')).toThrow(regExp);
     expect(() => jsmql.expr('RegExp("^ab")')).toThrow(regExp);
-    // The two forms each refusal names compile.
     expect(jsmql.expr("$.pairs.fromEntries()")).toEqual({
       $arrayToObject: {
         $map: {
@@ -8016,11 +7427,9 @@ describe("constructors — JSMQL has no 'new' keyword (HR8)", () => {
   });
 
   it("suggests only a name that a program can call", () => {
-    // `Math` and `Array` list no position, so `Map(…)` is never told to write `Math(…)`.
     expect(() => jsmql.expr("Mapp(1)")).toThrow(
       "Unknown function 'Mapp(...)'. Declare it first with `const Mapp = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Mapp(...)`; for a method, `receiver.Mapp(...)`.",
     );
-    // A class that JSMQL refuses is never a suggestion.
     expect(() => jsmql.expr("Sett([1])")).toThrow(
       "Unknown function 'Sett(...)'. Declare it first with `const Sett = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Sett(...)`; for a method, `receiver.Sett(...)`.",
     );
@@ -8040,8 +7449,6 @@ describe("1-arg substr", () => {
     expect(jsmql.expr("$.name.substr(0, 3)")).toEqual({ $substrCP: ["$name", 0, 3] });
   });
   it("substr with expression start normalises sign at runtime", () => {
-    // A runtime start could be negative, which JS reads as "from the end" and
-    // $substrCP rejects outright — so the query resolves the sign at run time.
     expect(jsmql.expr("$.email.substr($.headerLength + 1)")).toEqual({
       $substrCP: [
         "$email",
@@ -8071,8 +7478,6 @@ describe("1-arg substr", () => {
 });
 
 describe("the string forms of a slice: .substring and .substr", () => {
-  // `.slice` reads an array. The compiler refuses a proven string and names
-  // `.substring(start, end)`. A negative start spells as `.substr(-n)`.
   it("a proven string refuses .slice and names .substring", () => {
     expect(() => jsmql.expr('"hello".slice(1, 3)')).toThrow(
       "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
@@ -8087,11 +7492,7 @@ describe("the string forms of a slice: .substring and .substr", () => {
     });
   });
   it("substring(start) reads from start to the end", () => {
-    // A literal receiver's length is known, so the whole derived length folds.
     expect(jsmql.expr('"hello".substring(2)')).toEqual("llo");
-    // On a runtime receiver the compiler derives the length and floors it: `strLen - start`
-    // goes negative when start runs past the end ("".substring(1)), which $substrCP
-    // rejects outright.
     const lower = { $toLower: { $ifNull: ["$s", ""] } };
     expect(jsmql.expr("$.s.toLower().substring(2)")).toEqual({
       $substrCP: [lower, 2, { $max: [0, { $subtract: [{ $strLenCP: lower }, 2] }] }],
@@ -8203,15 +7604,11 @@ describe("template literals", () => {
     expect(jsmql.expr("`hello`")).toEqual("hello");
   });
   it("single interpolation", () => {
-    // FieldRef has unknown runtime type, so the compiler wraps it in $toString to match JS coercion semantics.
     expect(jsmql.expr("`hello, ${$.name}!`")).toEqual({ $concat: ["hello, ", { $toString: "$name" }, "!"] });
   });
   it("one interpolation and no text is the part alone, as a string", () => {
-    // `$concat` of one string is that string, and null stays null. MEASURED: `$toString`
-    // answers null for a null or missing field, as the `$concat` of it does.
     expect(jsmql.expr("`${$.x}`")).toEqual({ $toString: "$x" });
     expect(jsmql.expr("`${$.user?.name}`")).toEqual({ $toString: { $ifNull: ["$user.name", ""] } });
-    // a part that is a string and is there takes no wrap
     expect(jsmql.expr("`${$.s.trim()}`")).toEqual({ $trim: { input: { $ifNull: ["$s", ""] } } });
     expect(jsmql.pipeline("$.s = $.t.trim(); $.r = `${$.s}`;")).toEqual([
       { $set: { s: { $trim: { input: { $ifNull: ["$t", ""] } } } } },
@@ -8247,7 +7644,6 @@ describe("template literals", () => {
     });
   });
   it("nested template literal", () => {
-    // Inner template literal is statically string-producing → no $toString wrap.
     expect(jsmql.expr("`outer ${`inner ${$.x}`}`")).toEqual({
       $concat: ["outer ", { $concat: ["inner ", { $toString: "$x" }] }],
     });
@@ -8264,13 +7660,11 @@ describe("template literals", () => {
     });
   });
   it("string-producing interpolations skip the $toString wrap", () => {
-    // .toLower() is statically string-producing — the wrap would be redundant.
     expect(jsmql.expr("`name=${$.name.toLower()}`")).toEqual({
       $concat: ["name=", { $toLower: { $ifNull: ["$name", ""] } }],
     });
   });
   it("an integer interpolation folds; a fraction keeps the $toString wrap", () => {
-    // `$toString` and JavaScript write an integer alike; a fraction's spelling can differ.
     expect(jsmql.expr("`n=${42}`")).toBe("n=42");
     expect(jsmql.expr("`n=${0.5}`")).toEqual({ $concat: ["n=", { $toString: 0.5 }] });
   });
@@ -8299,8 +7693,6 @@ describe("array .has()", () => {
       $gte: [{ $indexOfCP: [{ $ifNull: ["$email", ""] }, "$x"] }, 0],
     });
   });
-  // `.has()` and `.includes()` take a value, not a predicate; a lambda means the user
-  // wanted `.some()`. The error must point there.
   it("predicate (lambda) arg → actionable error that points at .some()", () => {
     expect(() => jsmql.expr("$.senderChain.has(sc => sc.tier === 2)")).toThrow(
       "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
@@ -8344,9 +7736,6 @@ describe("Date.now()", () => {
 
 describe(".fromEntries()", () => {
   it("from the .entries() result", () => {
-    // The key goes in through $toString, because JavaScript's own
-    // Object.fromEntries([[7, 1]]) answers { "7": 1 } and $arrayToObject refuses a
-    // non-string key outright. Same lowering as '.fromPairs()'.
     expect(jsmql.expr("$.doc.entries().fromEntries()")).toEqual({
       $arrayToObject: {
         $map: {
@@ -8365,7 +7754,6 @@ describe(".isArray()", () => {
   it("on a field", () => {
     expect(jsmql.expr("$.items.isArray()")).toEqual({ $isArray: "$items" });
     expect(jsmql("$.items.isArray()")).toEqual({ items: { $type: "array" } });
-    // an array literal goes one level deeper, so the server reads it as one argument
     expect(jsmql.expr("[$.a, 2].isArray()")).toEqual({ $isArray: [["$a", 2]] });
   });
 
@@ -8377,8 +7765,6 @@ describe(".isArray()", () => {
 });
 
 describe("optional chaining (?.)", () => {
-  // Bare access — MongoDB's dotted-path semantics already null-pass through missing
-  // fields, so `?.` on a bare read is sugar with no codegen difference.
   it("simple optional member access", () => {
     expect(jsmql.expr("$.a?.b")).toEqual({ $ifNull: ["$a.b", null] });
   });
@@ -8386,9 +7772,6 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.a?.b?.c")).toEqual({ $ifNull: ["$a.b.c", null] });
   });
 
-  // Array spread. `$concatArrays` returns null on null input, which poisons every
-  // downstream consumer. So `?.` wraps the spread operand with `$ifNull(v, [])`
-  // and a missing field produces an empty array.
   it("array spread of optional wraps with $ifNull, []", () => {
     expect(jsmql.expr("[...$.a?.b, 'x']")).toEqual({ $concatArrays: [{ $ifNull: ["$a.b", []] }, ["x"]] });
   });
@@ -8407,9 +7790,6 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("[...$.a, 'x']")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, ["x"]] });
   });
 
-  // A `?.` with a CALL after it stops the chain: the call does not run and the chain
-  // answers null, as JavaScript's `?.` does. The test sits at the top of the chain, so
-  // the receiver inside the second branch is proven and takes no `$ifNull` of its own.
   it(".map on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.map(p => p.id)")).toEqual({
       $cond: [
@@ -8418,7 +7798,6 @@ describe("optional chaining (?.)", () => {
         { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } },
       ],
     });
-    // and one link further the wrap is what keeps `$size` off a null
     expect(jsmql.expr("$.user?.posts.map(p => p.id).size()")).toEqual({
       $cond: [
         { $lte: ["$user", null] },
@@ -8428,7 +7807,6 @@ describe("optional chaining (?.)", () => {
     });
   });
   it("a `?.` with two members after it still tests the value that it guards", () => {
-    // The fold runs bottom-up: `$.user?.profile` is a path before `.posts` joins it.
     expect(jsmql.expr("$.user?.profile.posts.map(p => p.id)")).toEqual({
       $cond: [
         { $lte: ["$user", null] },
@@ -8448,30 +7826,22 @@ describe("optional chaining (?.)", () => {
     });
   });
   it(".slice on an optional receiver stops the chain", () => {
-    // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
       $cond: [{ $lte: ["$user", null] }, null, { $slice: [{ $ifNull: ["$user.posts", []] }, 5] }],
     });
   });
 
-  // The chain walk stops at `MethodCall` boundaries. Once `.toReversed()` ran (and
-  // its own wrap took effect), the result is guaranteed not-null. So `.has` does
-  // not add a redundant outer wrap.
   it(".has after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
     expect(jsmql.expr("$.user?.posts.toReversed().has('hello')")).toEqual({
       $cond: [{ $lte: ["$user", null] }, null, { $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }] }],
     });
   });
   it("`?.method()` (the call itself is optional) stops the chain", () => {
-    // `$.tags?.has(y)` — MethodCall.optional=true. The `$in` runs inside the second
-    // branch, which runs only when `tags` is there.
     expect(jsmql.expr("$.tags?.has('vip')")).toEqual({
       $cond: [{ $lte: ["$tags", null] }, null, { $in: ["vip", "$tags"] }],
     });
   });
 
-  // A string method is a call, so the same rule applies. `$trim` gives null for a null
-  // input on its own, so `$.name?.trim()` takes no null test: the bare call is the answer.
   it(".trim on an optional receiver needs no test", () => {
     expect(jsmql.expr("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
@@ -8490,29 +7860,23 @@ describe("optional chaining (?.)", () => {
   });
 
   it(".length() on an optional receiver stops the chain", () => {
-    // `.length()` reads a string; the `?.` wrap keeps `$strLenCP` off a null.
     expect(jsmql.expr("$.user?.name.length()")).toEqual({
       $cond: [{ $lte: ["$user", null] }, null, { $strLenCP: { $ifNull: ["$user.name", ""] } }],
     });
   });
 
-  // String concatenation through `+` lowers to `$concat`, which is null-poisoning.
   it('string + with optional operand wraps with ""', () => {
     expect(jsmql.expr("$.firstName + ' ' + $.user?.lastName")).toEqual({
       $concat: ["$firstName", " ", { $ifNull: ["$user.lastName", ""] }],
     });
   });
 
-  // Template literal interpolations also lower to $concat. Non-string-producing
-  // interpolations still get $toString (so a numeric `$user.age` becomes "42"),
-  // but the $ifNull wrap runs *before* $toString so a missing field produces "".
   it('template literal with optional interpolation wraps with ""', () => {
     expect(jsmql.expr("`hello ${$.user?.name}`")).toEqual({
       $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }],
     });
   });
 
-  // `.keys()` / `.entries()` under a dot after a `?.` path read run on {} (HR5).
   it(".keys() after a ?. path read runs on {}", () => {
     expect(jsmql.expr("$.user?.profile.keys()")).toEqual({
       $cond: [
@@ -8532,7 +7896,6 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // Bracket access — `obj?.[idx]` wraps with [] for the runtime $cond dispatch.
   it("optional bracket access on a bare field stops the chain", () => {
     expect(jsmql.expr("$.scoresByLevel?.[$.level]")).toEqual({
       $ifNull: [
@@ -8557,15 +7920,11 @@ describe("optional chaining (?.)", () => {
     });
   });
   it("optional bracket access on a known array stops the chain", () => {
-    // `.toReversed()` is known array-producing, so the bracket access uses
-    // the compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
     expect(jsmql.expr("$.items.toReversed()?.[0]")).toEqual({
       $ifNull: [{ $arrayElemAt: [{ $reverseArray: { $ifNull: ["$items", []] } }, 0] }, null],
     });
   });
 
-  // ── Deliberately NOT wrapped ─────────────────────────────────────────────
-  // The consumers below are already null-safe, so a wrap would be needless.
   it("object spread of optional is NOT wrapped ($mergeObjects ignores null)", () => {
     expect(jsmql.expr("({...$.user?.profile, name: 'x'})")).toEqual({
       $mergeObjects: [{ $ifNull: ["$user.profile", null] }, { name: "x" }],
@@ -8581,8 +7940,6 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.base + $.user?.bonus")).toEqual({ $add: ["$base", "$user.bonus"] });
   });
 
-  // `?.` buried inside a lambda body belongs to the lambda's chain, not the
-  // outer `.map()` chain — so the outer .map receiver does NOT get wrapped.
   it("?. inside a lambda body does NOT wrap the outer chain", () => {
     expect(jsmql.expr("$.items.map(x => x?.tags)")).toEqual({
       $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $ifNull: ["$$x.tags", null] } },
@@ -8597,10 +7954,6 @@ describe(".startsWith / .endsWith", () => {
     });
   });
   it("endsWith maps to substring equality at the tail", () => {
-    // The compiler binds the receiver once (and coerces it), and floors the start. A
-    // receiver shorter than the needle makes `strLen - needleLen` negative.
-    // $substrCP aborts the query on a negative start, and does not return
-    // false. A literal needle's length folds, so the compiler does not splice it in 3 times.
     expect(jsmql.expr('$.file.endsWith(".pdf")')).toEqual({
       $let: {
         vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
@@ -8614,7 +7967,6 @@ describe(".startsWith / .endsWith", () => {
     });
   });
   it("endsWith folds the needle length by code points, not UTF-16 units", () => {
-    // "a👍b" is 3 code points but 4 UTF-16 units — $strLenCP counts the former.
     expect(jsmql.expr('$.file.endsWith("a👍b")')).toEqual({
       $let: {
         vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
@@ -8628,7 +7980,6 @@ describe(".startsWith / .endsWith", () => {
     });
   });
   it("endsWith with a $-prefixed needle reads it as text (HR6), and folds its length", () => {
-    // MEASURED on mongod: "a.$ext" → true, "a.ext" → false, a missing file → null.
     expect(jsmql.expr('$.file.endsWith("$ext")')).toEqual({
       $let: {
         vars: { jsmqlStr: { $ifNull: ["$file", ""] } },
@@ -8648,8 +7999,6 @@ describe(".charAt", () => {
     expect(jsmql.expr("$.name.charAt(2)")).toEqual({ $substrCP: ["$name", 2, 1] });
   });
   it("charAt(-1) folds to an empty string, like JS (never index -1)", () => {
-    // JS `.charAt` returns "" for a negative index — a floor to 0 would wrongly
-    // return the first character, so this is the one index that is not clamped.
     expect(jsmql.expr("$.name.charAt(-1)")).toEqual("");
   });
   it("charAt with a runtime index guards the negative case", () => {
@@ -8699,9 +8048,6 @@ describe("array .concat", () => {
 });
 
 describe(".join", () => {
-  // The accumulator starts at `null`, so an array whose FIRST element is "" keeps its
-  // separator. Each element tests for null, so a null element is written as "".
-  // Both are JavaScript's answers. A run on the server confirmed both. See `joinedWith`.
   it("default separator (,)", () => {
     expect(jsmql.expr("$.tags.join()")).toEqual({
       $ifNull: [
@@ -8745,8 +8091,6 @@ describe(".join", () => {
 });
 
 describe("jsmql guards a $size / $in / callback input only where the array may be missing", () => {
-  // MEASURED on mongod: every array operator answers null for a missing field, and
-  // `{ $size: null }`, `{ $in: [x, null] }` and a null `$map` input abort the command.
   it("guards a field that may be missing, through any chain of array methods", () => {
     expect(jsmql.expr("$.a.map(x => x + 1).size()")).toEqual({
       $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } },
@@ -8766,14 +8110,12 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
         },
       },
     });
-    // an argument that may be missing makes the whole chain uncertain
     expect(jsmql.expr("[1, 2].concat($.b).size()")).toEqual({
       $size: { $concatArrays: [[1, 2], { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }] },
     });
     expect(jsmql.expr("const r = $range(0, $.n); r.size()")).toEqual({
       $size: { $ifNull: [{ $range: [0, "$n"] }, []] },
     });
-    // under a dot, `.keys()` runs on {} for a missing `o`, so its answer is there
     expect(jsmql.expr("$.o.keys().size()")).toEqual({
       $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
@@ -8794,11 +8136,9 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     });
     expect(jsmql.expr("const r = $range(0, 5); r.size()")).toEqual({ $size: { $range: [0, 5] } });
     expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
-    // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({
       $cond: [{ $lte: ["$a", null] }, null, { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } }],
     });
-    // a `let` of a present value is present; of a field's chain it is not
     expect(jsmql("const ks = $.keys(); $.n = ks.size();")).toEqual([
       { $set: { "__jsmql.var.ks": { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } } } },
       { $set: { n: { $size: "$__jsmql.var.ks" } } },
@@ -9011,20 +8351,16 @@ describe("comments", () => {
     expect(jsmql.expr('$eq($.url, "https://example.com")')).toEqual({ $eq: ["$url", "https://example.com"] });
   });
   it("keeps // inside a regex literal as pattern", () => {
-    // Two literal slashes inside a regex character class — must not be eaten as a comment
     expect(jsmql.expr("$.path.match(/[/\\\\]/)")).toEqual({
       $regexMatch: { input: { $ifNull: ["$path", ""] }, regex: "[/\\\\]" },
     });
   });
   it("regex disambiguation works after a comment (non-value-ending)", () => {
-    // After `(` (not a value-ending token) a `/` would normally start a regex.
-    // A leading comment must not change that.
     expect(jsmql.expr("$.path.match(/* skip */ /foo/i)")).toEqual({
       $regexMatch: { input: { $ifNull: ["$path", ""] }, regex: "foo", options: "i" },
     });
   });
   it("divide disambiguation works after a comment (value-ending)", () => {
-    // After a Number token, `/` is divide; a leading comment must not change that.
     expect(jsmql.expr("10 /* skip */ / 2")).toEqual(5);
   });
   it("unclosed /* throws LexError", () => {
@@ -9033,15 +8369,6 @@ describe("comments", () => {
 });
 
 describe("computed object keys", () => {
-  // Computed keys emit `$arrayToObject`'s `{ k, v }` object-pair form. The compiler wraps it one
-  // level deeper (`{ $arrayToObject: [pairs] }`), so MongoDB reads it as the single
-  // argument, not an argument list. The server REJECTS a bare `{ $arrayToObject: [{k,v}] }`:
-  // the server unwraps it to the object, which is not an array.
-  // Two pairs are two arguments, and `$arrayToObject` takes one. The wrapped shapes below
-  // passed a run on MongoDB 8.2 (HR3). The `$arrayToObject([...])` escape
-  // hatch keeps whatever pair shape the user typed (array-pairs here), with the wrap.
-  // (`$foo` is an unknown-op shape probe — it carries no arg-type validation, so
-  // these exercise the computed-key → $arrayToObject lowering, not op semantics.)
   it("single computed key", () => {
     expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({
       $foo: { $arrayToObject: [[{ k: { $toString: { $ifNull: ["$k", ""] } }, v: 1 }]] },
@@ -9056,16 +8383,12 @@ describe("computed object keys", () => {
         ],
       ],
     });
-    // Two pairs written bare are two operands. The call is your own MQL, so it passes
-    // through. DELIBERATELY invalid: mongod refuses it, because `$arrayToObject`
-    // takes exactly one operand.
     expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
       $arrayToObject: [
         ["a", 1],
         ["b", 2],
       ],
     });
-    // A field-ref / expression argument already resolves to one array — left as-is.
     expect(jsmql.expr("$arrayToObject($.pairs)")).toEqual({ $arrayToObject: "$pairs" });
   });
   it("mixed static and computed keys", () => {
@@ -9083,10 +8406,6 @@ describe("computed object keys", () => {
 });
 
 describe("spread in operator args", () => {
-  // The JS spread is idiomatic in JS-method position (.assign(), an array literal)
-  // and JSMQL supports it there. The `$op(...)` escape hatch does NOT support it:
-  // an MQL operator takes its operands directly (HR2). The split is by surface:
-  // a JS builtin you already know, or the raw direct-operator form.
   it("Object.assign with spread (JS-method form — supported)", () => {
     expect(jsmql.expr("({}).assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
@@ -9115,7 +8434,6 @@ describe("shorthand object properties", () => {
 });
 
 describe("flex-shape operators", () => {
-  // ── $round / $trunc ─────────────────────────────────────────────────────────
   it("$round single arg → bare value", () => {
     expect(jsmql.expr("$round($.price)")).toEqual({ $round: "$price" });
   });
@@ -9129,7 +8447,6 @@ describe("flex-shape operators", () => {
     expect(jsmql.expr("$trunc($.value, 1)")).toEqual({ $trunc: ["$value", 1] });
   });
 
-  // ── Accumulators ($min / $max / $avg / $sum / $stdDev*) ─────────────────────
   it("$min single arg → bare value (accumulator-style)", () => {
     expect(jsmql.expr("$min($.scores)")).toEqual({ $min: "$scores" });
   });
@@ -9161,7 +8478,6 @@ describe("flex-shape operators", () => {
     expect(jsmql.expr("$stdDevSamp($.a, $.b, $.c)")).toEqual({ $stdDevSamp: ["$a", "$b", "$c"] });
   });
 
-  // ── $mergeObjects ───────────────────────────────────────────────────────────
   it("$mergeObjects single arg → bare value", () => {
     expect(jsmql.expr("$mergeObjects($.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
@@ -9169,10 +8485,6 @@ describe("flex-shape operators", () => {
     expect(jsmql.expr("$mergeObjects($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
   });
 
-  // ── Spread ─────────────────────────────────────────────────────────
-  // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
-  // operands directly). For the array-from-runtime case, write `arr.min()`
-  // (the JS-method form) or pass the field as a single array arg.
   it("flex op rejects single spread, and points at .min()", () => {
     expect(() => jsmql.expr("$min(...$.scores)")).toThrow(
       /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*arr\.min\(\)/,
@@ -9184,14 +8496,10 @@ describe("flex-shape operators", () => {
     );
   });
 
-  // ── Edge cases ──────────────────────────────────────────────────────────────
   it("flex op with zero args is the empty document, as for any operator", () => {
-    // mongod reads `{ $min: {} }` as the minimum of one operand, `{}`.
     expect(jsmql.expr("$min()")).toEqual({ $min: {} });
   });
   it("flex op with object literal arg → object as value (not object-shape)", () => {
-    // Single arg that happens to be an object literal — parser flags this as object-style,
-    // but $mergeObjects has flex shape (not object), so the compiler passes the literal as a value.
     expect(jsmql.expr("$mergeObjects({ a: 1, b: $.x })")).toEqual({ $mergeObjects: { a: 1, b: "$x" } });
   });
   it("$round with arithmetic still works (regression: existing 2-arg form)", () => {
@@ -9210,9 +8518,7 @@ describe("function overload", () => {
   });
 
   it("reaches the document through `$` from the toolbox; rejects a bare-identifier param", () => {
-    // The document lives in the destructured toolbox — `({ $ }) => $.foo`.
     expect(jsmql.expr(({ $ }) => $.foo)).toEqual("$foo");
-    // A bare-identifier `(doc) =>` shape is not a valid parameter slot.
     expect(() => jsmql.expr(new Function("return (doc) => doc.foo")() as never)).toThrow(/object destructure pattern/);
   });
 
@@ -9255,7 +8561,7 @@ describe("function overload", () => {
   });
 
   it("appends a jsmql`` hint when the body references an outer-scope identifier", () => {
-    const minAge = 21; // referenced from the closure on purpose
+    const minAge = 21;
     expect(() => jsmql(({ $ }) => $.age > minAge)).toThrow("Unknown identifier 'minAge'. Did you mean '$.minAge'?");
   });
 
@@ -9283,17 +8589,12 @@ describe("function overload", () => {
   });
 
   it("destructured operator alongside `$` in the toolbox compiles to the same MQL as the string form", () => {
-    // The toolbox destructure is types-only — it gives users a destructure site
-    // that silences IDE warnings on `$dateDiff`. The runtime strips the param
-    // list, so this produces identical MQL to the string equivalent.
     const fromFn = jsmql.expr(({ $, $dateDiff }) => $dateDiff({ startDate: $.a, endDate: $.b, unit: "day" }));
     const fromStr = jsmql.expr('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day" })');
     expect(fromFn).toEqual({ $dateDiff: { startDate: "$a", endDate: "$b", unit: "day" } });
     expect(fromFn).toEqual(fromStr);
   });
 });
-
-// ─── Operators from mongodb/mql-specifications ────
 
 describe("bitwise operators", () => {
   it.each([
@@ -9324,13 +8625,6 @@ describe("misc / hash / timestamp / sigmoid / type / literal operators", () => {
 });
 
 describe("$-prefixed string values: source passes through, injected wraps (HR1)", () => {
-  // HR1: a `"$foo"` typed in jsmql SOURCE is the MQL field ref `$foo`. It passes
-  // through verbatim in every context. jsmql adds no `$literal` of its own (to
-  // get the literal four-char string, write `$literal("$foo")`). The only wrap is the
-  // runtime-injected exception of HR1: jsmql wraps a `"$foo"` that arrives through a template-tag
-  // `${…}` or a `jsmql.compile` param in expression position, so
-  // untrusted input cannot silently become a field reference.
-
   it("bare $-prefixed source string passes through at the top level", () => {
     expect(jsmql.expr('"$foo"')).toEqual("$foo");
   });
@@ -9353,8 +8647,6 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
   });
 
   it("$-string as an object KEY does not wrap", () => {
-    // The user's key is the JSON key directly — MongoDB does not auto-evaluate
-    // keys, only values. Leave it alone.
     expect(jsmql.expr('({ "$foo": 1 })')).toEqual({ $foo: 1 });
   });
 
@@ -9384,18 +8676,11 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
   });
 
   it("inlines a compile-form binding of a $-prefixed string safely in find form", () => {
-    // The query language does not treat values as field refs (only the
-    // aggregation language does), so the $literal wrap is unnecessary here.
-    // The same compile + $-prefixed binding inside an aggregation context
-    // (for example inside `$addFields`) still gets the wrap. The
-    // pipeline-integration tests below cover this.
     const q = jsmql.compile(({ name }: { name: string }, { $ }) => $.x === name);
     expect(q({ name: "$dangerous" })).toEqual({ x: "$dangerous" });
   });
 
   it("compile-form array binding: its $-strings land unwrapped in a query $in", () => {
-    // `in` translates to the query `$in`. The query language never reads a value
-    // as a field path, so the $-strings in the array binding need no $literal wrap.
     const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
     expect(q({ allowed: ["$a", "$b", "safe"] })).toEqual({ grade: { $in: ["$a", "$b", "safe"] } });
   });
@@ -9419,9 +8704,6 @@ describe("$accumulator and $function (custom aggregation)", () => {
     });
   });
   it("$accumulator object-style inside $group (requires $group context)", () => {
-    // accumulateArgs is REQUIRED ($accumulator rejects its absence — verified on
-    // mongod), so include it. The operator-arg validator enforces the full
-    // required-key set.
     const out = jsmql(
       '[$group({ _id: null, total: $accumulator({ init: "function() { return 0; }", accumulate: "function(s, v) { return s + v; }", accumulateArgs: [$.v], merge: "function(a, b) { return a + b; }", lang: "js" }) })]',
     ) as Array<{ $group: { total: unknown } }>;
@@ -9437,7 +8719,6 @@ describe("$accumulator and $function (custom aggregation)", () => {
   });
 
   it("$accumulator outside $group is your own MQL, and it passes through", () => {
-    // DELIBERATELY invalid: mongod refuses it, because `$accumulator` is an accumulator, not an expression.
     expect(
       jsmql.expr(
         '$accumulator({ init: "function() {}", accumulate: "function() {}", merge: "function() {}", lang: "js" })',
@@ -9492,9 +8773,6 @@ describe("encrypted-string operators ($encStr*)", () => {
 });
 
 describe("window operators ($setWindowFields-only)", () => {
-  // A window operator states `where: ["window"]` on its row, so every other
-  // position is a refusal that names the `$setWindowFields` rewrite. Each test
-  // wraps the operator in a `$setWindowFields` stage and extracts the inner emission.
   function inWindow(opSrc: string): unknown {
     const src = `[$setWindowFields({ partitionBy: $.cat, sortBy: { ts: 1 }, output: { x: ${opSrc} } })]`;
     const out = jsmql(src) as Array<{ $setWindowFields: { output: { x: unknown } } }>;
@@ -9542,7 +8820,6 @@ describe("window operators ($setWindowFields-only)", () => {
   });
 
   it("a window operator outside $setWindowFields is your own MQL, and it passes through", () => {
-    // DELIBERATELY invalid: mongod refuses it, because `$rank` is a window operator, not an expression.
     expect(jsmql.expr("$rank()")).toEqual({ $rank: {} });
   });
 });
@@ -9557,7 +8834,6 @@ describe("jsmql.compile()", () => {
       },
     });
     expect(() => sliced({ start: null })).toThrow("'.slice()' argument 1 takes an integer, but got null.");
-    // The refusal points at the parameter's name in the arrow's source.
     const fn = ({ start }, { $ }) => $.a.slice(start);
     let pos = -1;
     try {
@@ -9566,17 +8842,14 @@ describe("jsmql.compile()", () => {
       pos = (e as { pos: number }).pos;
     }
     expect(pos).toBe(String(fn).indexOf("start)"));
-    // The template form refuses it too, at the offset of the slot in the template's text.
     expect(() => jsmql.expr`$.a.slice(${null})`).toThrow("'.slice()' argument 1 takes an integer, but got null.");
     const result = jsmql.validate`$.a.slice(${null})`;
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: "$.a.slice(".length });
-    // A slot that takes null keeps an injected null.
     expect(jsmql.expr`$.a.has(${null})`).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
   });
 
   it("validates a parameterised arrow with a parameter in a slot that takes no null", () => {
-    // The call can pass a value of that kind, so `validate()` reads the parameter as a value of no known kind.
     expect(jsmql.validate(({ start }: { start: number }, { $ }) => $.a.slice(start))).toEqual({
       valid: true,
       errors: [],
@@ -9605,7 +8878,6 @@ describe("jsmql.compile()", () => {
         },
       },
     });
-    // A document that reads as MQL is a value, and the server judges its parts.
     expect(() => set({ parts: { year: "$y" } })).not.toThrow();
     expect(() => set({ parts: "$x" })).toThrow("'.set()' argument 1 takes a document, but got a string.");
   });
@@ -9616,7 +8888,6 @@ describe("jsmql.compile()", () => {
       $.y = $.x in ids;
     });
     expect(member({ ids: [1, 2] })).toEqual([{ $set: { y: { $in: ["$x", [1, 2]] } } }]);
-    // A list that reads as MQL is a value, so it takes `$literal`.
     expect(member({ ids: ["$a", 1] })).toEqual([{ $set: { y: { $in: ["$x", { $literal: ["$a", 1] }] } } }]);
     expect(() => member({ ids: "$a" })).toThrow("The right side of 'in' must be a list");
   });
@@ -9633,16 +8904,11 @@ describe("jsmql.compile()", () => {
     });
 
     it("array binding inlines into $in", () => {
-      // A constant list is the native query `$in`.
       const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
       expect(q({ allowed: ["A", "B"] })).toEqual({ grade: { $in: ["A", "B"] } });
     });
 
     it("plain-object binding inlines as a nested object literal value", () => {
-      // Whole-object bindings appear as MQL literal objects. Field access on
-      // them (for example `thresholds.min`) goes through MQL's `$getField`, not a
-      // compile-time fold. The user can always destructure further at the
-      // call site if they want to hoist fields as separate bindings.
       const q = jsmql.compile(({ defaults }: { defaults: { name: string } }) => defaults);
       expect(q({ defaults: { name: "default" } })).toEqual({ name: "default" });
     });
@@ -9712,8 +8978,6 @@ describe("jsmql.compile()", () => {
     });
 
     it("Date binding against a field becomes a query-language $match", () => {
-      // BSON `Date` instances are query-doc values — MongoDB indexes work on
-      // them. Without this, a Date parameter would fall through to $expr.
       const q = jsmql.compile(({ cutoff }: { cutoff: Date }, { $ }) => $.createdAt >= cutoff);
       const cutoff = new Date("2026-01-01");
       expect(q({ cutoff })).toEqual({ createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } });
@@ -9797,9 +9061,6 @@ describe("jsmql.compile()", () => {
     });
 
     it("aliased binding names both the params-object key and the body name", () => {
-      // `({ minAge: floor })` looks up `minAge` on the params object and binds
-      // it to `floor` in the body. A missing `minAge` key names both so the
-      // user can find either side of the rename.
       const q = jsmql.compile(({ minAge: floor }: { minAge: number }, { $ }) => $.age >= floor);
       let err: unknown;
       try {
@@ -9840,7 +9101,6 @@ describe("jsmql.compile()", () => {
 
   describe("error: malformed destructure patterns", () => {
     it("rejects a nested destructure", () => {
-      // Equivalent source: ({ a: { b } }, { $ }) => $.x > b
       const src = "({ a: { b } }, { $ }) => $.x > b";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         "Expected a name but got '{' at position 6",
@@ -9901,7 +9161,7 @@ describe("jsmql.compile()", () => {
 
     it("accepts a BigInt value at bind time", () => {
       const q = jsmql.compile(({ x }: { x: unknown }, { $ }) => $.y === x);
-      expect(q({ x: BigInt(1) })).toEqual({ y: Long.fromString("1") }); // a BigInt is a long
+      expect(q({ x: BigInt(1) })).toEqual({ y: Long.fromString("1") });
     });
   });
 
@@ -9952,12 +9212,6 @@ describe("jsmql.compile()", () => {
   });
 });
 
-// ── Filter dispatch (semicolon-driven) ────────────────────────────────────────
-// No semicolons → input lowers as a MongoDB Filter (the document
-// `db.coll.find(filter)` takes). Translatable predicates emit indexable
-// `{ field: ... }` pairs; the rest rides in an `$expr` residual (a legal
-// top-level Filter operator).
-
 describe("Filter dispatch (no semicolons)", () => {
   describe("pure query-document predicates", () => {
     it("a field compared with a literal by `>` translates to `{ field: { $gt: lit } }`", () => {
@@ -9979,7 +9233,6 @@ describe("Filter dispatch (no semicolons)", () => {
 
   describe("$expr fallback for untranslatable expressions", () => {
     it("a non-predicate expression rides entirely in `$expr`", () => {
-      // The call is your own MQL, so its truth is MongoDB's own: no JavaScript test wraps it.
       expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
     });
 
@@ -9991,8 +9244,6 @@ describe("Filter dispatch (no semicolons)", () => {
   });
 
   describe("top-level object-literal Filter is a raw query doc (HR1 — no $expr wrap)", () => {
-    // A bare `{ ... }` in Filter position IS the MongoDB query document and
-    // passes through verbatim, the same as a `$match` stage body.
     it("hand-written query document passes through", () => {
       expect(jsmql("{ age: { $gt: 18 } }")).toEqual({ age: { $gt: 18 } });
       expect(jsmql("{ a: 1 }")).toEqual({ a: 1 });
@@ -10001,17 +9252,11 @@ describe("Filter dispatch (no semicolons)", () => {
 
     it("an operator-call value produces a clean query operator (not a malformed $expr)", () => {
       expect(jsmql('{ age: $gt("adult") }')).toEqual({ age: { $gt: "adult" } });
-      // a field READ is the one operand with no query form, and it lifts whole
       expect(jsmql("{ age: $gt($.x) }")).toEqual({ $expr: { $gt: ["$age", "$x"] } });
     });
   });
 
   describe("bare stage call auto-wraps as a one-stage Pipeline", () => {
-    // A top-level stage call (`$match(...)`, `$project(...)`, …) without a `;` is
-    // Pipeline intent — the user wrote a stage at the top level. `jsmql()`
-    // auto-wraps it into a one-element pipeline so the output is directly
-    // usable with `db.coll.aggregate(...)`, with no `;` discipline required.
-
     it("`$match(...)` without `;` auto-wraps as a Pipeline", () => {
       expect(jsmql("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
@@ -10023,8 +9268,6 @@ describe("Filter dispatch (no semicolons)", () => {
     });
 
     it("the stage-object form `{ $match: ... }` auto-wraps the same way", () => {
-      // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
-      // detect as Pipeline intent.
       expect(jsmql("{ $match: $.age > 18 }")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
@@ -10033,9 +9276,6 @@ describe("Filter dispatch (no semicolons)", () => {
     });
 
     it("non-stage operator calls still go through Filter dispatch unaffected", () => {
-      // `$add` is an expression operator, not a stage — the auto-wrap does
-      // not fire, and the expression rides in `$expr`.
-      // The call is your own MQL, so its truth is MongoDB's own: no JavaScript test wraps it.
       expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
     });
   });
@@ -10064,11 +9304,6 @@ describe("Filter dispatch (no semicolons)", () => {
   });
 });
 
-// ── Pipeline dispatch (any `;`) ───────────────────────────────────────────────
-// Any presence of `;` flips the input to Pipeline mode. Each statement must be
-// a stage call (`$match(...)`, `$project(...)`, …) — a bare expression is an
-// error with an actionable `$match(...)` suggestion.
-
 describe("Pipeline dispatch (semicolons present)", () => {
   it("a single trailing `;` produces a one-element stage array", () => {
     expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18 } } }]);
@@ -10088,19 +9323,12 @@ describe("Pipeline dispatch (semicolons present)", () => {
   });
 
   it("the bare-predicate error carries the offending statement's position", () => {
-    // The CodegenError's `.pos` should point at the offending statement so
-    // tooling can underline it. The first stmt starts at offset 0; here we
-    // use a leading filler to get a non-zero offset.
     const r = jsmql.validate("   $.age > 18;");
     expect(r.valid).toBe(false);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
     expect(r.errors[0].pos).toBeGreaterThan(0);
   });
 });
-
-// ── Function-form dispatch parity ─────────────────────────────────────────────
-// Expression-body arrow → Filter; block-body arrow → Pipeline. The
-// classification is body-shape-driven, the same as the string form's `;` rule.
 
 describe("function-form dispatch parity", () => {
   it("expression-body arrow lowers as a Filter", () => {
@@ -10115,13 +9343,6 @@ describe("function-form dispatch parity", () => {
     expect(result).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } }]);
   });
 });
-
-// ── `jsmql.expr()` — partial / unfinished expression ──────────────────────────
-// `jsmql.expr()` lowers a bare expression to raw aggregation-expression form
-// (no Filter wrapper, no `$expr` envelope). Use it for the shape that lives
-// inside a Pipeline stage body or as the update document in `updateOne`.
-// `;`-separated / update op / array-literal-Pipeline inputs behave exactly
-// like `jsmql()` — only the bare-expression branch differs.
 
 describe("jsmql.expr()", () => {
   it("a bare predicate lowers to its aggregation-expression form (no Filter wrap)", () => {
@@ -10150,10 +9371,6 @@ describe("jsmql.expr()", () => {
   });
 
   it("rejects a stage name here — `jsmql.expr` yields an expression, not a stage", () => {
-    // `{ $match: { $eq: ["$a", 0] } }` is what an expression entry would have to emit.
-    // mongod refuses it in BOTH readings: there is no `$match` expression operator,
-    // and as a stage body a bare `$eq` is not a top-level query operator. The stage document
-    // comes from `jsmql.pipeline`, and the expression from `jsmql.expr` on the predicate.
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$match' stage call instead. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );
@@ -10167,16 +9384,7 @@ describe("jsmql.expr()", () => {
 });
 
 describe("context-reference prefixes ($$, $$$, $$$$)", () => {
-  // Three new prefix levels. Lex + parse succeed; codegen throws a reserved-syntax
-  // error (semantics deferred — see docs/specs/context-references.md). Both dot-ident
-  // (`$$.foo`) and bracket-expr (`$$[x]`) postfix forms are accepted because the
-  // prefix tokens do not bake the dot in; standard MemberAccess/IndexAccess composes.
-  // Tests use the string form because `$$` / `$$$` / `$$$$` are not yet declared
-  // as ambient globals — that's part of the future-API surface.
-
   describe("$$ — the root stream", () => {
-    // `$$` is the stream, not a value. In `jsmql.expr`, a read of it lowers to a
-    // Filter, and that entry refuses a Filter. See docs/specs/union-stage.md.
     it("dot-ident form reads as a Filter, so jsmql.expr refuses it", () => {
       expect(() => jsmql.expr("$$.foo")).toThrow(
         "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
@@ -10200,9 +9408,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
       expect(r.errors[0].pos).toBe(2);
     });
     it("wrong method on $$ surfaces the stream-method registry error, which notes .push", () => {
-      // An UNRECOGNISED name takes the generic path: it lists what is chainable and
-      // names both append routes. A method jsmql knows but cannot lower on a stream
-      // gets its own reason instead — see STREAM_UNSUPPORTED.
       expect(() => jsmql("$$.nosuchmethod({a:1})")).toThrow(
         "'.nosuchmethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
       );
@@ -10214,9 +9419,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
 
   describe("$$$ — current database", () => {
     it("dot-ident form: $$$.myColl is not a value outside a lookup or $out chain", () => {
-      // The bare reference message points at both supported shapes: the
-      // `$$$.<coll>.find/filter(...)` join syntax and
-      // the `$$$.<coll> = …` $out sugar.
       expect(() => jsmql.expr("$$$.myColl")).toThrow(
         "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
@@ -10227,8 +9429,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
       );
     });
     it("$$$.<coll>.find(...) with no destination names the three places it can go", () => {
-      // The read produces a value, and a bare statement gives it nowhere to go. `.pos`
-      // points at the `.find` link, the read the message names.
       const r = jsmql.validate("$$$.myColl.find(o => o.x === $.y)");
       expect(r.valid).toBe(false);
       expect(r.errors[0].message).toBe(
@@ -10239,11 +9439,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("$$$$ — current cluster", () => {
-    // A bare `$$$$.<db>.<coll>` (no .find/.filter, no `= …`) is only usable as a
-    // cross-database $out destination — cross-database reads are not supported. The
-    // bracket/mixed-access combos reach the same error through the same path (the $out cases in
-    // test/out.test.ts exercise bracket parsing itself), so one
-    // representative case suffices here.
     it("dot.dot: $$$$.myDb.myColl is only a cross-db $out destination", () => {
       expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(
         "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
@@ -10258,10 +9453,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
 
   describe("parser sanity-guards", () => {
     it("bare $$ without . or [ → a codegen error at position 0", () => {
-      // The parser accepts a bare `$$`, because `$$$.coll = $$` uses it. A bare `$$`
-      // statement does nothing, so codegen refuses it, and the message names what to
-      // chain on the stream. The typo `$$foo` (no separator) is a parse error. See the
-      // next test.
       const r = jsmql.validate("$$");
       expect(r.valid).toBe(false);
       expect(r.errors[0].message).toMatch(/'\$\$' is the stream/);
@@ -10304,8 +9495,6 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 });
 
-// A comma after the last item of any list is valid JS (`f(a, b,)`). The compiler must
-// accept it everywhere and produce output identical to the comma-free form.
 describe("trailing commas (JS syntax)", () => {
   it("Math.method args", () => {
     expect(jsmql.expr("[1, 2].max()")).toEqual(2);
@@ -10383,8 +9572,6 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("update-op chain — a trailing comma before a block-body's closing brace is refused", () => {
-    // Only reachable through a source string: a real arrow cannot carry it, because
-    // JavaScript refuses `a = 1, b = 2,` as a statement. So jsmql refuses it too.
     expect(() => jsmql.compile("({ $ }) => { $.a = 1, $.b = 2, }")).toThrow(
       "A ',' with no write after it, before '}' at position 29. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
     );
@@ -10398,23 +9585,12 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("compile-form params destructure and slot list", () => {
-    // String entry so the trailing commas survive the formatter: one inside the
-    // params destructure (`{ min, }`) and one after the `{ $ }` toolbox slot
-    // (`{ $ },`).
     expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
     expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
   });
 });
 
-// The `jsmql` prefix on a compiler-emitted `$let`/`$map`/`$filter` variable is only
-// a convention. Nothing stops a developer from using the same name for a param. The Env mint
-// `Scope.bind` (src/compiler/emit/names.ts, over `exprVar` in src/namespace.ts) makes the
-// "never collides with a user-named param" invariant hold. It gensyms:
-// OUR binding moves aside, and the developer's name stays exactly as written.
 describe("internal expression-variable names never capture a user param", () => {
-  // One case per lowering that binds an internal var AND splices outer-scope
-  // codegen into it — [source, the internal name the user's param collides with, the MQL].
-  // In each MQL the user's param stays the `$map` element's `as`, and OUR binding is `<name>2`.
   const CASES: Array<[string, string, unknown]> = [
     [
       "$.r.map(jsmqlArr => jsmqlArr.l.slice(jsmqlArr.i))",
@@ -10925,8 +10101,6 @@ describe("internal expression-variable names never capture a user param", () => 
 });
 
 describe("rejects fractional counts, and never passes them to $slice", () => {
-  // $slice needs a 32-bit integer in every count/position slot, so a fraction is a
-  // query-time abort. The gate is literal-only: an expression still compiles.
   const rejected: [string, string][] = [
     ["take", "$.a.take(1.5)"],
     ["drop", "$.a.drop(1.5)"],
@@ -10952,9 +10126,6 @@ describe("rejects fractional counts, and never passes them to $slice", () => {
 });
 
 describe("date accessors accept the { date, timezone } object form", () => {
-  // The server takes either a bare date or the object form for all 13 accessors,
-  // so an object literal is not certainly wrong and the literal gate must let it
-  // through. A live mongod accepts every shape below (verified).
   const ACCESSORS = [
     "$year",
     "$month",
@@ -10977,9 +10148,7 @@ describe("date accessors accept the { date, timezone } object form", () => {
   }
 
   it("passes a certainly-wrong literal through, as your own MQL", () => {
-    // DELIBERATELY invalid: mongod refuses it, because a string does not convert to a date.
     expect(jsmql.expr('$year("2020-01-01")')).toEqual({ $year: "2020-01-01" });
-    // mongod: an int does not convert to a date
     expect(jsmql.expr("$year(5)")).toEqual({ $year: 5 });
   });
 

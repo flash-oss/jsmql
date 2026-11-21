@@ -1,19 +1,3 @@
-/**
- * A live suite may report green for exactly one reason: the server is not running.
- *
- * Every suite that talks to mongod wraps its setup so that an unreachable instance skips and does not fail.
- * `npm test` must stay green for a contributor who has not run `npm run fixture:up`. The danger is what else
- * that wrapper swallows. A wrong password, a missing grant, a refused command: each one lands in the same
- * `catch`. The suite then runs its compile-only half. The run reports GREEN, but the half that catches what a
- * `toEqual` cannot does not run. One cause: `readWrite` alone cannot drop a database, and some suites drop
- * theirs first.
- *
- * So the suite code makes the connection in ONE place, `test/fixtures/live.ts`, which skips on "could not reach
- * a server at all" and throws on everything else. This file keeps every suite on that path: a hand-rolled
- * client, or a `catch` that nulls one, is what re-opens the hole.
- *
- * See test/CLAUDE.md § "Suites that connect to a server must report whether they connected".
- */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,14 +6,12 @@ import { dirname, join, resolve } from "node:path";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_DIR = join(ROOT, "test");
 
-/** This file reads the rule; `live.ts` IS the rule; `instance.ts`/`client.ts` build the server. */
 const NOT_SUITES = new Set(["live-suites.test.ts"]);
 
 const suites = readdirSync(TEST_DIR)
   .filter((f) => f.endsWith(".test.ts") && !NOT_SUITES.has(f))
   .map((f) => ({ name: f, text: readFileSync(join(TEST_DIR, f), "utf8") }));
 
-/** A suite that reaches the server — as opposed to one that imports `mongodb` for its BSON classes. */
 const live = suites.filter((s) => /liveClient|liveUp|liveClientNow|connectReadOnly|new MongoClient\(/.test(s.text));
 
 describe("every live suite connects through test/fixtures/live.ts", () => {
@@ -49,7 +31,6 @@ describe("every live suite connects through test/fixtures/live.ts", () => {
   });
 
   it("none of them turns a failure into a skip with a null client", () => {
-    // `catch { client = null }` and friends: the shape that hides a refusal as a skip.
     const nulling = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\b(?:client|coll|db|mainColl)\s*=\s*null/;
     const offenders = live
       .filter((s) => nulling.test(s.text))
@@ -74,9 +55,6 @@ describe("every live suite connects through test/fixtures/live.ts", () => {
   });
 });
 
-// A suite that connects through a fixture module inherits that module's idea of "no server". So each fixture
-// module a suite reaches obeys the same rules, plus one more. A `catch` may answer "not running" (false or
-// null) only after it asks `isUnreachable` from live.ts. `live.ts` holds the rule itself, so it is exempt.
 const FIXTURE_DIR = join(TEST_DIR, "fixtures");
 const fixtureText = (f: string) => readFileSync(join(FIXTURE_DIR, f), "utf8");
 const importsOf = (text: string, prefix: string) =>
@@ -87,7 +65,6 @@ const fixtureModules = [...reached]
   .filter((f) => f !== "live.ts" && readdirSync(FIXTURE_DIR).includes(f))
   .map((f) => ({ name: `fixtures/${f}`, text: fixtureText(f) }));
 
-/** The body of each `catch { … }`, with one level of nested braces. */
 const catchBodies = (text: string) =>
   [...text.matchAll(/catch\s*(?:\([^)]*\))?\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)].map((m) => m[1]);
 

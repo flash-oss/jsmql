@@ -1,21 +1,3 @@
-// test/parity.test.ts — the value/stream parity gate.
-//
-// A method name that both the value and the stream registries list carries TWO lowerings. The value form works
-// on an array inside a document (`$.rows.take(2)`). The stream form works on the documents of the pipeline (`$$
-// = $$.take(2)`). The two live in different files and share no code, so nothing structural keeps them meaning
-// the same thing. This suite runs both against the same documents on a real mongod and compares the results.
-//
-// What IS contracted: which elements survive, and what shape they come back in. A sort also contracts the
-// ORDER, because the order is what the developer wrote. What is NOT contracted: the order of any other method's
-// result. A JavaScript or lodash runtime may carry an ordering guarantee that the developer never wrote. In
-// that case jsmql takes MongoDB's behaviour and the smaller MQL (see SR2 in docs/LANG_RULES.md). `.uniqBy` is
-// the worked example: the value form preserves input order through `$reduce`, the stream form uses `$group` and
-// does not.
-//
-// Connects to a local mongod and SKIPS ITSELF (green) when none is reachable, matching
-// fold-consistency.test.ts. A coverage floor below prevents a self-skip that silently
-// empties the suite.
-
 import { afterAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -41,14 +23,8 @@ const DOCS = [
   { _id: 5, t: "b", n: 4 },
 ];
 
-/** Order-insensitive comparison: parity is contracted on membership, not sequence. */
 const bag = (v: unknown): string => JSON.stringify(Array.isArray(v) ? [...v].map((x) => JSON.stringify(x)).sort() : v);
 
-/**
- * Each case runs the SAME call in both positions over the SAME documents. A sort
- * case states the `_id` order JavaScript gives, so a lowering that drops the sort
- * on BOTH sides still fails.
- */
 type Case = { method: string; call: string; note?: string; order?: readonly number[] };
 const CASES: Case[] = [
   { method: "take", call: "take(2)" },
@@ -86,9 +62,6 @@ describe("value and stream lowerings agree on membership", () => {
 });
 
 describe("parity coverage", () => {
-  // A dual-declared method with no case here is a lowering nobody compares. The floor
-  // fails when the shared set grows and no case joins it, so new methods cannot
-  // empty the suite.
   it("every case names a genuinely dual-declared method", () => {
     const shared = new Set(streamMethodNames().filter((n) => valueMethodNames().includes(n)));
     for (const c of CASES) expect(shared.has(c.method)).toBe(true);
@@ -100,7 +73,6 @@ describe("parity coverage", () => {
   });
 
   it("ran each case against the server, or none when no server is up", () => {
-    // A green run with no server proves nothing, so a partial run must fail.
     expect(ran, `ran ${ran} of ${CASES.length}`).toBe(db === null ? 0 : CASES.length);
   });
 });

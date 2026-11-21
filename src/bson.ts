@@ -1,21 +1,3 @@
-// The one place jsmql names the `bson` module.
-//
-// jsmql emits a live BSON value wherever the source spells one. This is the only
-// value the MongoDB driver accepts in a query document. The Extended JSON envelope
-// form is a client-side serialisation shape. The driver does not parse this shape
-// for queries: sent as it is, the shape reaches the server, and the server rejects
-// it as an unknown operator (verified against mongod).
-//
-// The value comes from the caller's own `bson` module, a peer dependency. Exactly
-// one copy exists in the tree, and the value jsmql returns works with every other
-// module's copy. See docs/specs/bson-types.md.
-//
-// CONSTRUCTION uses these classes. RECOGNITION does not trust them alone: a value
-// can arrive from a second copy of `bson` (a monorepo that pins the other major
-// version), or from a server response. MongoDB's own shell documentation warns that
-// a server response gets a different base class than a user-supplied value does.
-// So `isBsonType` tests the prototype and the `_bsontype` tag, and either match
-// answers yes.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "bson";
 
 import { bsonTagOf, isBytes, isPlainObject } from "./registry/vocabulary.ts";
@@ -32,54 +14,24 @@ import {
   UUID,
 } from "bson";
 
-// The tag reader needs no `bson` import, so it lives in the registry's vocabulary,
-// where a ROW can read it too. This file re-exports it, so the compiler has one name.
 export { bsonTagOf, BSON_KIND, isBytes, isDate, isMap, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
 
-/**
- * A regex that the compiler builds from the source, as the server must read it.
- * `options` holds MongoDB's options (`mongoRegexOptions` in src/registry/mql.ts). The
- * driver writes a JavaScript RegExp through `bson`'s `serializeRegExp`, and that writes
- * only `i`, `m`, and the `global` flag as `s`: a dotAll `s` never arrives. MEASURED:
- * `{ s: /a.b/s }` does not match "a\nb", and `{ s: /a.b/g }` does. So a regex whose
- * options hold `s` is a `BSONRegExp`, which carries its options as written, and every
- * other regex stays the RegExp the developer wrote.
- */
 export function regexValue(pattern: string, options: string): RegExp | BSONRegExp {
   return options.includes("s") ? new BSONRegExp(pattern, options) : new RegExp(pattern, options);
 }
 
-/**
- * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`. `tag` is
- * the `_bsontype` value any copy sets. Either match answers yes — see the header.
- */
 export function isBsonType(v: unknown, cls: abstract new (...args: never[]) => object, tag: string): boolean {
   return v instanceof cls || bsonTagOf(v) === tag;
 }
 
-/**
- * Is `v` a UUID? This is the one type the tag cannot answer alone: a UUID reports
- * `_bsontype: "Binary"`, so a value from another copy is known only by its subtype.
- */
 export function isUUID(v: unknown): boolean {
   return v instanceof UUID || (bsonTagOf(v) === "Binary" && (v as Binary).sub_type === 4);
 }
 
-/** Is `v` an ObjectId? Match this copy's class, or any copy's tag. */
 export function isObjectId(v: unknown): boolean {
   return isBsonType(v, ObjectIdClass, "ObjectId");
 }
 
-/**
- * The 24-hex spelling of an ObjectId-shaped value, or null when the value wears the
- * tag but carries no id behind it.
- *
- * Read the value DEFENSIVELY. Every caller goes through here. A plain object may
- * wear the tag — the compiler passes an injected `{ _bsontype: "ObjectId", id: "xyz" }`
- * through as the value it is — and a call to the class's method on it then throws.
- * This function tries three readings, widest first: the method every copy provides,
- * the 12 raw bytes, then the printed form.
- */
 export function objectIdHex(value: unknown): string | null {
   const v = value as { toHexString?: () => string; id?: unknown; toString?: () => string };
   if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
@@ -93,22 +45,11 @@ export function objectIdHex(value: unknown): string | null {
   return null;
 }
 
-// ── building a constant ──────────────────────────────────────────────────────
-
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 
-/**
- * The exact integer `v` names, or null when it names none.
- *
- * `bson` does NOT refuse what it cannot hold — MEASURED, `new Int32(5000000000)` is
- * 705032704 and `Long.fromString("1.5")` is 1. A wrapped integer in an analytics
- * report is undetectable, so jsmql reads the value itself and lets the row refuse.
- * A JavaScript number past 2^53 has already lost the integer it was written as, so
- * it names none — the same line the fold holds for `(2 ** 60) + 1`.
- */
 function exactInteger(v: unknown): bigint | null {
   if (typeof v === "bigint") return v;
   if (typeof v === "number") return Number.isSafeInteger(v) ? BigInt(v) : null;
@@ -116,7 +57,6 @@ function exactInteger(v: unknown): bigint | null {
   return null;
 }
 
-/** The finite number `v` names, or null. A numeric string counts — mongosh's `Double("1.5")` does too. */
 function finiteNumber(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v === "string" && v.trim() !== "") {
@@ -126,7 +66,6 @@ function finiteNumber(v: unknown): number | null {
   return null;
 }
 
-/** Run a `bson` constructor that throws on bad input, and answer null instead. */
 function attempt<T>(build: () => T): T | null {
   try {
     return build();
@@ -135,14 +74,6 @@ function attempt<T>(build: () => T): T | null {
   }
 }
 
-/**
- * The live BSON value `name(value)` builds, or null when it builds none — a
- * malformed constant, or one the type cannot hold.
- *
- * Null is not an error: the caller is the FOLD, and a fold that cannot answer
- * leaves the call in place so the name's row refuses it at its source position,
- * with the row's own message. See docs/specs/bson-types.md.
- */
 export function bsonConstant(name: string, value: unknown): object | null {
   switch (canonicalBsonName(name)) {
     case "ObjectId":
@@ -150,14 +81,11 @@ export function bsonConstant(name: string, value: unknown): object | null {
         ? new ObjectIdClass(value.toLowerCase())
         : null;
     case "Decimal128": {
-      // A number's shortest round-trip spelling IS the decimal the source wrote:
-      // `Decimal128(0.1)` means decimal 0.1, not the double's 0.1000000000000000055.
       const text = typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : null;
       return text === null ? null : attempt(() => Decimal128Class.fromString(text));
     }
     case "Long": {
       const n = exactInteger(value);
-      // `fromString`, not `fromBigInt`: it is present in every supported major.
       return n === null || n < INT64_MIN || n > INT64_MAX ? null : attempt(() => LongClass.fromString(n.toString()));
     }
     case "Int32": {
@@ -175,11 +103,6 @@ export function bsonConstant(name: string, value: unknown): object | null {
   }
 }
 
-/**
- * The `bson` class name a spelling means. mongosh names four of these types
- * differently, and an analyst arrives with that spelling in hand — both compile, and
- * `jsmql.stringify` writes the `new X(…)` form for either. See docs/LANGUAGE.md.
- */
 export function canonicalBsonName(spelling: string): string {
   switch (spelling) {
     case "NumberDecimal":
@@ -195,22 +118,10 @@ export function canonicalBsonName(spelling: string): string {
   }
 }
 
-/**
- * The `Long` a JavaScript BigInt names, or null when it does not fit in 64 bits.
- *
- * A BigInt literal IS an int64 in MQL. Because this code builds it here, and does not emit
- * `{ $toLong: "<digits>" }`, the server parses no string per document — and the
- * value lands on the query road, where a comparison matches an ELEMENT of an array
- * field, not the whole array.
- */
 export function bigIntToLong(v: bigint): object | null {
   return bsonConstant("Long", v);
 }
 
-/**
- * `value` with every BigInt inside it replaced by a `Long`, or the first one that does
- * not fit. A settled constant can hold BigInts at any depth — `[1n, 2n]`, `{ a: 3n }`.
- */
 export function longsWithin(value: unknown): { ok: true; value: unknown } | { ok: false; tooBig: bigint } {
   if (typeof value === "bigint") {
     const long = bigIntToLong(value);
@@ -237,7 +148,6 @@ export function longsWithin(value: unknown): { ok: true; value: unknown } | { ok
   return { ok: true, value };
 }
 
-/** The live BSON value `name()` mints with no argument, or null when the name mints none. */
 export function bsonNullary(name: string): object | null {
   if (name === "MinKey") return new MinKeyClass();
   if (name === "MaxKey") return new MaxKeyClass();

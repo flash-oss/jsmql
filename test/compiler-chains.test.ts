@@ -1,26 +1,3 @@
-// Every read chain against the rules that HR5 states, on a live mongod.
-//
-// A read chain is a path and then reads: `.b`, `?.b`, `[$.kb]`, `?.[$.kb]`, with at most
-// one method at the end, under a dot or a `?.`. This suite writes each chain from a small
-// grammar. It runs each chain over documents that hold each kind of value at each level.
-// It compares each answer with an oracle that states the rules in plain JavaScript:
-//
-//   - A field read `.b` reads as a field path: the field of an object, or the field of
-//     each element of an array. Anything else gives missing.
-//   - An index read `[k]` reads the field `k` of an object, the element of an array for a
-//     number key, and missing for anything else. A missing key reads no field.
-//   - A method under a dot on a null or missing value runs on its safe value: `.uniq()`
-//     answers `[]`, `.trim()` answers `""`, `.abs()` answers `0`, and `.getTime()`
-//     answers `0`, the time of the epoch.
-//   - A `?.` with a method after it stops the chain where the value before the LAST `?.`
-//     is null or missing. The chain then answers null.
-//   - A `?.` read with no method after it answers null where the value is missing.
-//
-// The oracle never calls the compiler, so each answer that it gives can fail. A chain
-// whose method meets a value of the wrong kind belongs to the server, as the language
-// says. The oracle skips that document. See docs/LANG_RULES.md HR5 and
-// docs/LANGUAGE.md § Optional Chaining.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Collection, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -28,8 +5,6 @@ import { liveClient } from "./fixtures/live.ts";
 
 const up = await liveClient();
 await up?.close();
-
-// ── the grammar ──────────────────────────────────────────────────────────────
 
 type Read = { readonly name: "b" | "c" | "d"; readonly optional: boolean; readonly computed: boolean };
 type Method = { readonly name: "trim" | "uniq" | "abs" | "getTime"; readonly optional: boolean };
@@ -71,10 +46,6 @@ for (const b of readsFor("b", true)) {
   }
 }
 
-// ── the documents ────────────────────────────────────────────────────────────
-
-// Each level holds each kind of value: missing, null, a string, a number, a date, an array,
-// and an object that holds the next level. An array of objects checks the field path through an array.
 const D = [undefined, null, " w ", -4, new Date("2024-04-04T00:00:00Z"), [3, 3]];
 const C = [
   undefined,
@@ -99,18 +70,14 @@ const A = [undefined, null, "s", 5, [1, 1], ...B.map((b) => (b === undefined ? {
 const KEYS = { kb: "b", kc: "c", kd: "d" };
 const DOCS: Record<string, unknown>[] = [
   ...A.map((a, i) => ({ _id: i, ...KEYS, ...(a === undefined ? {} : { a }) })),
-  // a number key reads an element of an array, and a missing key reads no field
   { _id: 100, a: [" p ", " q "], kb: 1, kc: "c", kd: "d" },
   { _id: 101, a: { b: { c: " x " } } },
 ];
-
-// ── the oracle ───────────────────────────────────────────────────────────────
 
 const MISSING = Symbol("missing");
 const SKIP = Symbol("skip");
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
-/** A field read as a field path reads it: the field of an object, of each element of an array. */
 function fieldOf(v: unknown, name: string): unknown {
   if (isObject(v)) return name in v ? v[name] : MISSING;
   if (Array.isArray(v))
@@ -121,7 +88,6 @@ function fieldOf(v: unknown, name: string): unknown {
   return MISSING;
 }
 
-/** An index read: the element of an array for a number key, the field of an object. */
 function indexOf(v: unknown, key: unknown): unknown {
   if (Array.isArray(v)) return typeof key === "number" && key >= 0 && key < v.length ? v[key] : MISSING;
   if (!isObject(v) || key === MISSING || key === null) return MISSING;
@@ -137,7 +103,6 @@ function readAll(doc: Record<string, unknown>, reads: readonly Read[]): unknown 
 
 const absent = (v: unknown): boolean => v === MISSING || v === null;
 
-/** The method under a dot: a null or missing receiver runs on its safe value. */
 function apply(method: Method, v: unknown): unknown {
   if (method.name === "trim") return absent(v) ? "" : typeof v === "string" ? v.trim() : SKIP;
   if (method.name === "abs") return absent(v) ? 0 : typeof v === "number" ? Math.abs(v) : SKIP;
@@ -153,20 +118,16 @@ function oracle(chain: Chain, doc: Record<string, unknown>): unknown {
     const v = readAll(doc, chain.reads);
     return last >= 0 && v === MISSING ? null : v;
   }
-  // The `?.` stops the chain on the value before it.
   if (last >= 0 && absent(readAll(doc, chain.reads.slice(0, last)))) return null;
   return apply(chain.method, readAll(doc, chain.reads));
 }
 
-/** An answer in a form that compares: a set union has no order. */
 const canonical = (chain: Chain, v: unknown): string =>
   v === MISSING
     ? "missing"
     : JSON.stringify(
         chain.method?.name === "uniq" && Array.isArray(v) ? [...v].map((e) => JSON.stringify(e)).sort() : v,
       );
-
-// ── the suite ────────────────────────────────────────────────────────────────
 
 describe("compiler — every read chain compiles", () => {
   it("covers each shape of the grammar", () => {
@@ -220,7 +181,6 @@ describe.skipIf(up === null)("compiler — every read chain answers as HR5 state
           ])
           .toArray();
       } catch (e) {
-        // A refusal is an answer too: the rule gives a value for each of these documents.
         wrong.push(`${chain.src}: the server refused it: ${(e as Error).message}`);
         continue;
       } finally {

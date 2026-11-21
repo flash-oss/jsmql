@@ -1,16 +1,3 @@
-// test/fold-consistency.test.ts — the HR3 gate for constant folding.
-//
-// A folded method (the constant engine, src/compiler/passes/evaluate.ts) has TWO readings of the same
-// semantics. One is the compile-time JS fold. The other is the server-side MQL lowering that a runtime receiver
-// would take. If they disagree, folding would emit a value the server never would. This suite proves that they
-// agree. For each foldable method × a battery of inputs, it compares the compile-time fold to the MQL lowering.
-// The lowering runs on a real mongod (through `$documents`, so no collection write). The interpreter must
-// refuse any method/shape that cannot be proven equal (→ runtime fallback), and never ship it.
-//
-// It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
-// SKIPS ITSELF (green) when it is not reachable, so `npm test` stays green without
-// it. Run `npm run fixture:up` to exercise it.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -23,9 +10,6 @@ if (!client) {
   announceSkip("fold-consistency");
 }
 
-// Each case: a receiver LITERAL (as jsmql source), the same value as a seed doc
-// field, and a method-call suffix. The fold embeds the literal; the runtime
-// lowering runs `$.s<call>` on `{ s: <val> }`. Both must produce the same value.
 type Case = { lit: string; val: unknown; call: string };
 
 const STRING_SAMPLES = ["", "fooBar", "FOO bar", "  hi  ", "already_snake", "café", "MixedURL2x", "a-b-c"];
@@ -54,7 +38,6 @@ for (const v of STRING_SAMPLES) {
     ".padEnd(10)",
     '.pad(10, "*")',
     ' + "!" + "?"',
-    // lodash string family
     ".capitalize()",
     ".upperFirst()",
     ".lowerFirst()",
@@ -87,15 +70,12 @@ for (const v of NUMBER_SAMPLES) {
     ".floor()",
     ".floor(1)",
   ]) {
-    // parenthesise so a negative literal binds before `.method()` (JS precedence)
     numberCases.push({ lit: `(${v})`, val: v, call });
   }
 }
 
 const ARRAY_SAMPLES: unknown[][] = [[], [1, 2, 3, 4, 5], [3, 1, 2], ["a", "b", "c"], [1, 2, 2, 3]];
 const arrayCases: Case[] = [];
-// HR7: a row that takes numbers refuses an array of strings, and a comparison takes operands
-// of one kind. So the string sample runs these calls in a form that matches its elements.
 const NUMBERS_ONLY = new Set([".sum()", ".mean()", ".min()", ".max()"]);
 const FOR_STRINGS: Record<string, string> = {
   ".filter(x => x !== 2)": '.filter(x => x !== "b")',
@@ -109,8 +89,6 @@ for (const v of ARRAY_SAMPLES) {
   for (const written of [
     ".map(x => x)",
     ".filter(x => x !== 2)",
-    // array `.slice` — full matrix: 1-arg pos/neg/0/out-of-range, 2-arg
-    // both-non-negative / end<=start (→ []) / negative-end / both-negative.
     ".slice(1)",
     ".slice(1, 3)",
     ".slice(-2)",
@@ -136,7 +114,6 @@ for (const v of ARRAY_SAMPLES) {
     ".every(x => x > 0)",
     ".flatMap(x => [x, x])",
     ".reduce((a, b) => a + b, 0)",
-    // lodash array family (non-iteratee)
     ".sum()",
     ".mean()",
     ".min()",
@@ -159,7 +136,6 @@ for (const v of ARRAY_SAMPLES) {
     ".nth(-1)",
     ".size()",
     ".without(2)",
-    // lodash array family (iteratee/predicate) — arrow forms on scalar arrays
     ".sumBy(x => x)",
     ".meanBy(x => x)",
     ".minBy(x => x)",
@@ -178,7 +154,6 @@ for (const v of ARRAY_SAMPLES) {
     ".groupBy()",
     ".countBy()",
     ".keyBy()",
-    // lodash set-ops + zip family (scalar arrays)
     ".xor([2, 3, 4])",
     ".differenceBy([2, 4], x => x)",
     ".intersectionBy([2, 4], x => x)",
@@ -192,7 +167,6 @@ for (const v of ARRAY_SAMPLES) {
     arrayCases.push({ lit, val: v, call: strings ? (FOR_STRINGS[written] ?? written) : written });
   }
 }
-// pairs arrays for unzip / fromPairs
 arrayCases.push({
   lit: "[[1, 10], [2, 20], [3, 30]]",
   val: [
@@ -211,15 +185,12 @@ arrayCases.push({
   call: ".fromPairs()",
 });
 
-// object receivers for the lodash object family
-// A date receiver: the fold's calendar arithmetic against `$dateAdd`, `$dateTrunc`,
-// `$dateDiff`, `$dateToString` and `$dateFromParts` run on the server.
 const DATE_SAMPLES = [
-  "2024-01-31T10:20:30.123Z", // a leap year's January 31st
+  "2024-01-31T10:20:30.123Z",
   "2024-02-29T23:59:59.999Z",
-  "2026-09-16T13:45:30.123Z", // a Wednesday
-  "2026-09-13T00:00:00.000Z", // a Sunday at midnight
-  "2020-12-31T05:00:00.000Z", // ISO week 53
+  "2026-09-16T13:45:30.123Z",
+  "2026-09-13T00:00:00.000Z",
+  "2020-12-31T05:00:00.000Z",
   "1999-12-31T23:59:59.999Z",
 ];
 const DATE_UNITS = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
@@ -281,7 +252,6 @@ for (const v of OBJ_SAMPLES) {
     objCases.push({ lit, val: v, call });
   }
 }
-// arrays of objects for iteratee shorthands + by-field sorting
 const OBJ_ARRAY = [
   { id: 3, dept: "a", age: 30 },
   { id: 1, dept: "b", age: 20 },
@@ -303,26 +273,20 @@ for (const call of [
 ]) {
   arrayCases.push({ lit: JSON.stringify(OBJ_ARRAY), val: OBJ_ARRAY, call });
 }
-// arrays-of-arrays for flatten
 for (const v of [
   [[1, 2], [3], [4, 5]],
   [[1], [2, 3]],
 ]) {
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".flatten()" });
-  // `$concatArrays` takes arrays only, so `.flat()` reads the same receivers
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".flat()" });
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".flat(1)" });
 }
-// arrays with falsy for compact
 for (const v of [
   [0, 1, false, 2, null, 3],
   ["", "a", 0],
 ]) {
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".compact()" });
 }
-// A predicate whose value is falsy-but-MQL-truthy ("" / 0) on every predicate-run method. This is the case
-// where raw MQL truthiness and JS truthiness disagree. So the test must check the fold and the server lowering
-// against each other.
 const FALSY_PRED_ARRAY = [{ ok: "y" }, { ok: "" }, { ok: 0 }, { ok: false }, { ok: 1 }];
 for (const call of [
   '.filter("ok")',
@@ -338,28 +302,20 @@ for (const call of [
   arrayCases.push({ lit: JSON.stringify(FALSY_PRED_ARRAY), val: FALSY_PRED_ARRAY, call });
 }
 
-// Distinguishes "folded to a value" from "was not folded" (stayed a runtime binding). A non-fold is a safe
-// outcome, because the server runs its own lowering. So the test skips it. It asserts only on folds, where a
-// divergence would be a real bug.
 const NOT_FOLDED = Symbol("not-folded");
 
-/** The compile-time folded value of `<lit><call>`, or NOT_FOLDED if it stayed runtime. */
 function foldedValue(lit: string, call: string): unknown {
   let stages: Record<string, unknown>[];
   try {
     stages = jsmql.pipeline(`const __k = ${lit}${call}; $project({ v: __k })`) as Record<string, unknown>[];
   } catch (e) {
-    // An input that the emitter refuses (HR7) has no value to compare.
     if (e instanceof CodegenError) return NOT_FOLDED;
     throw e;
   }
-  // A fold produces exactly one `$project` stage; a runtime binding produces a
-  // leading `$set` on `__jsmql.var.__k` (and a trailing `$unset`).
   const only = stages.length === 1 ? (stages[0].$project as { v: unknown } | undefined) : undefined;
   return only && "v" in only ? only.v : NOT_FOLDED;
 }
 
-/** The fold of a document with index-like keys: an `$arrayToObject` call over the pairs. */
 const isOrderedFold = (v: unknown): boolean =>
   typeof v === "object" && v !== null && Object.keys(v).length === 1 && "$arrayToObject" in v;
 
@@ -372,31 +328,18 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     await client?.close();
   });
 
-  // The contract is a VALUE contract: wherever the MQL lowering yields a value, the
-  // fold must yield the same value.
-  //
-  // A case that the server REFUSES has no value to disagree with. But it is also a document that jsmql emitted
-  // and the server would not run, which HR3 forbids. So the test cannot simply skip it. Eight `.concat("!",
-  // "?")` cases hid behind that skip for exactly as long as it was silent. Each refusal is therefore named here
-  // with the reason it is allowed to stand. A shape that is not on this list turns the suite red.
   const SERVER_REFUSES: Readonly<Record<string, string>> = {};
   const SERVER_ERROR = Symbol("server-error");
-  /**
-   * The MQL of `$.s<call>`, and the value that the server gives for it.
-   * The receiver comes from the document, so nothing folds.
-   */
   async function serverValue(call: string, val: unknown): Promise<{ mql: unknown; value: unknown }> {
     try {
       const mql = jsmql.expr(`$.s${call}`);
       const [row] = await db.aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: mql } }]).toArray();
-      return { mql, value: "v" in (row as object) ? (row as { v: unknown }).v : SERVER_ERROR }; // missing → skip
+      return { mql, value: "v" in (row as object) ? (row as { v: unknown }).v : SERVER_ERROR };
     } catch {
       return { mql: null, value: SERVER_ERROR };
     }
   }
 
-  // A case that early-returns asserts NOTHING and still reads as green. A count of the ones that actually
-  // compared stops the suite from an empty result as cases are added. See the floor below.
   let compared = 0;
   const refused: string[] = [];
   const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases, ...dateCases];
@@ -404,17 +347,14 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   for (const { lit, val, call } of ALL_CASES) {
     it(`${lit}${call}`, async () => {
       const folded = foldedValue(lit, call);
-      if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare
+      if (folded === NOT_FOLDED) return;
       const { mql, value: server } = await serverValue(call, val);
       if (server === SERVER_ERROR) {
-        // named above, or the suite says so — an unlisted refusal is MQL that cannot run
         refused.push(lit + call);
         return;
       }
       compared += 1;
       if (isOrderedFold(folded)) {
-        // The fold wrote a document whose keys read as array indexes as `$arrayToObject` over the pairs. A driver
-        // reads a document into an object and loses the key order, so both sides give their pairs through `$objectToArray`.
         const pairs = async (m: unknown): Promise<unknown> => {
           const [row] = await db
             .aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: { $objectToArray: m } } }])
@@ -425,8 +365,6 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
         return;
       }
       if (answersSet(mql)) {
-        // Each order of a set answer is valid. The fold must give the same values,
-        // and each value as many times as the server gives it.
         expect(inAnyOrder(folded)).toEqual(inAnyOrder(server));
         return;
       }
@@ -439,19 +377,10 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
       expect(compared).toBe(0);
       return;
     }
-    // Some early-returns are legitimate — a method whose fold is deliberately withheld, or an input its
-    // lowering rejects. A large share of them is not, and would mean the gate stopped its work, and nothing
-    // went red. Every remaining non-fold is withheld ON PURPOSE, and each one names its reason. The reasons
-    // are: a read that can find nothing (.at / .head / .last / .nth / .find); a zipWith or a zipObject over
-    // lists of unequal length; a fold whose answer is -0 (which has no literal spelling); a `.flat()` or a
-    // `.min()` over a receiver whose elements are not one comparable type. Measured 2026-09-09: 756 of 785
-    // compare.
     expect(compared).toBeGreaterThanOrEqual(Math.floor(ALL_CASES.length * 0.95));
   });
 
   it("every case the server REFUSES is one this suite already knows about", () => {
-    // A refusal is a document jsmql emitted that mongod will not run. A quiet skip of it
-    // is how the multi-argument `.concat()` defect survived eight cases.
     if (!db) {
       expect(refused).toEqual([]);
       return;

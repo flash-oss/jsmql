@@ -1,16 +1,3 @@
-// test/fixtures/instance.ts — lifecycle manager for the dedicated, auth-enabled
-// fixture mongod the integration suite runs against. Run through the npm scripts:
-//
-//   npm run fixture:up      start the instance (if down), bootstrap users, seed
-//   npm run fixture:seed     (re)seed only — assumes the instance is up
-//   npm run fixture:status   report listening / auth / seeded-version state
-//   npm run fixture:down     shut the instance down
-//   npm run fixture:reset     down + wipe dbpath + fresh up (rebuild from scratch)
-//
-// It is the ONLY writer of the fixture data. Tests connect through the read-only
-// user (test/fixtures/client.ts) and the server rejects any write, so a test run
-// can never mutate the dataset. See test/fixtures/CLAUDE.md for the full design.
-
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { MongoClient } from "mongodb";
@@ -39,7 +26,6 @@ import { DATASET, DATASET_HASH, EXPECTED_COUNTS, validateDataset } from "./datas
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Can we reach the server at all (auth not required for `hello`)?
 async function pingNoAuth(): Promise<boolean> {
   const c = new MongoClient(BOOTSTRAP_URI);
   try {
@@ -53,7 +39,6 @@ async function pingNoAuth(): Promise<boolean> {
   }
 }
 
-// Does the admin user already exist and authenticate?
 async function adminAuthWorks(): Promise<boolean> {
   const c = new MongoClient(ADMIN_URI);
   try {
@@ -67,9 +52,6 @@ async function adminAuthWorks(): Promise<boolean> {
   }
 }
 
-// Launch mongod detached and unref'd so it outlives this process. Modern MongoDB
-// rejects `--fork` on macOS, so we daemonize it ourselves. mongod still writes its
-// own --logpath / --pidfilepath. ensureUp() polls until it accepts connections.
 function startMongod(): void {
   mkdirSync(FIXTURE_DBPATH, { recursive: true });
   const child = spawn(
@@ -87,7 +69,7 @@ function startMongod(): void {
       "--pidfilepath",
       FIXTURE_PIDPATH,
       "--wiredTigerCacheSizeGB",
-      "0.25", // tiny footprint for a fixture instance
+      "0.25",
     ],
     { detached: true, stdio: "ignore" },
   );
@@ -114,24 +96,7 @@ async function ensureReadonlyUser(admin: MongoClient): Promise<void> {
   }
 }
 
-/**
- * The read-write identity every suite that seeds its own documents connects as.
- * Its roles are `readWrite` on the scratch databases and nothing else, so the
- * integration dataset stays unwritable through it.
- *
- * The script UPDATES an existing user, and does not leave it alone. The roles follow
- * SCRATCH_DBS, so when you add a database to that list and run `fixture:up` again, it
- * grants it.
- */
 async function ensureScratchUser(admin: MongoClient): Promise<void> {
-  // What a suite actually does to its own database, and nothing more:
-  //  - readWrite  insert the documents it asserts against, and read them back.
-  //  - dbAdmin    DROP the database first. `readWrite` alone cannot. Without it
-  //               the drop throws, each suite's own try/catch reads that as "no
-  //               server", and the suite degrades to compile-only and still
-  //               reports GREEN — the silent pass this instance exists to prevent.
-  //  - indexStats the `$indexStats` stage, which `compiler-sugars` runs. No built-in
-  //               role carries it per-database, so it is named as a privilege.
   const roles = SCRATCH_DBS.flatMap((db) => [
     { role: "readWrite", db },
     { role: "dbAdmin", db },
@@ -153,9 +118,6 @@ async function ensureScratchUser(admin: MongoClient): Promise<void> {
   }
 }
 
-// Bootstrap the admin (root) + read-only users. On a fresh instance the
-// localhost exception lets us create the first user without credentials.
-// Once users exist we just connect as admin and top up the read-only user.
 async function bootstrapUsers(): Promise<void> {
   if (await adminAuthWorks()) {
     const admin = new MongoClient(ADMIN_URI);
@@ -168,7 +130,6 @@ async function bootstrapUsers(): Promise<void> {
     }
     return;
   }
-  // Fresh instance: create the admin user through the localhost exception.
   const boot = new MongoClient(BOOTSTRAP_URI);
   await boot.connect();
   try {
@@ -188,8 +149,6 @@ async function bootstrapUsers(): Promise<void> {
   }
 }
 
-// Last few log lines, to make a startup failure actionable (port in use, stale
-// dbpath lock, corrupt dbpath) instead of a bare timeout.
 function logTail(lines: number): string {
   try {
     const all = readFileSync(FIXTURE_LOGPATH, "utf8").trimEnd().split("\n");
@@ -199,7 +158,6 @@ function logTail(lines: number): string {
   }
 }
 
-// Start the instance if it does not already listen, then bootstrap users.
 async function ensureUp(): Promise<void> {
   if (!(await pingNoAuth())) {
     startMongod();
@@ -220,8 +178,6 @@ async function readMeta(admin: MongoClient): Promise<{ hash?: string } | null> {
     .findOne({ _id: "version" as never })) as { hash?: string } | null;
 }
 
-// Idempotent: only (re)injects when the dataset content hash or counts differ
-// from what is already stored. Returns true if it actually wrote.
 async function seed(): Promise<boolean> {
   validateDataset();
   const admin = new MongoClient(ADMIN_URI);
@@ -266,13 +222,11 @@ async function shutdown(): Promise<void> {
   const admin = new MongoClient(ADMIN_URI);
   try {
     await admin.connect();
-    // The shutdown command drops the connection — that rejection is success.
     await admin
       .db("admin")
       .command({ shutdown: 1 })
       .catch(() => {});
   } catch {
-    // ignore — we issued the shutdown
   } finally {
     await admin.close().catch(() => {});
   }

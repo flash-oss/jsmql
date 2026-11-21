@@ -1,11 +1,3 @@
-// Phase 4 of src/compiler/ — the position pass.
-//
-// A position is not a property of a node's SHAPE. `$sum($.x, $.y)` is a valid
-// two-operand expression and an invalid accumulator. The only thing that
-// separates the two readings is where the call stands. So the test is a census:
-// walk a program, record where every node was reached, and assert the answers
-// against what mongod does with each slot.
-
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
 import type { Where } from "../src/compiler/passes/position.ts";
@@ -17,14 +9,12 @@ import { NAMES } from "../src/registry/names.ts";
 
 type Any = { type: string } & Record<string, unknown>;
 
-/** How a node reads in a census line, distinctly enough to assert on. */
 function label(n: Any): string {
   if (n.type === "OperatorCall" || n.type === "MethodCall") return `${n.name}(…)`;
   if (n.type === "KeyValueEntry") return `${(n.key as { name?: string })?.name ?? "[computed]"}:`;
   return n.type;
 }
 
-/** Every node of `src`, as `"<position> <node>"`, in visit order. */
 function census(src: string, root: Where = STATEMENT): string[] {
   const seen: string[] = [];
   mapTreeIn(parse(src) as unknown as object, root, edge, (n, where) => {
@@ -35,7 +25,6 @@ function census(src: string, root: Where = STATEMENT): string[] {
   return seen;
 }
 
-/** Where `src` puts the node that reads as `node`. Throws if it is not reached once. */
 function positionOfNode(src: string, node: string, root: Where = STATEMENT): string {
   const hits = census(src, root).filter((line) => line.endsWith(" " + node));
   expect(hits, `${node} in ${src}`).toHaveLength(1);
@@ -43,27 +32,13 @@ function positionOfNode(src: string, node: string, root: Where = STATEMENT): str
 }
 
 describe("compiler/passes/position — a stage body is laid out by its own row", () => {
-  /**
-   * Each case is a slot mongod treats differently from an ordinary expression
-   * slot, with the measurement that proves it. Without the row's stated layout
-   * every one of these reads as `value`, and the first three then become
-   * documents mongod refuses outright.
-   */
   const SLOTS: [string, string, Position][] = [
-    // {$group:{_id:null,s:{$sum:["$x","$y"]}}} → refused: the $sum accumulator takes one operand
     ["$group({_id: null, s: $sum($.x)});", "$sum(…)", "group"],
-    // {$geoNear:{…,query:{$eq:["$k","a"]}}} → refused: $eq is not a top-level query operator
     ['$geoNear({near: 1, distanceField: "d", query: $.k === "a"});', "BinaryExpr", "filter"],
-    // {$graphLookup:{…,restrictSearchWithMatch:{$eq:["$k","a"]}}} → the same refusal
     ['$graphLookup({from: "t", restrictSearchWithMatch: $.k === "a"});', "BinaryExpr", "filter"],
-    // {$setWindowFields:{sortBy:{x:1},output:{r:{$sum:["$x","$y"]}}}} → 0, where
-    // the unary form answers 4. Accepted and wrong, which nothing reports.
     ["$setWindowFields({sortBy: {x: 1}, output: {r: $sum($.x)}});", "$sum(…)", "window"],
-    // {$bucket:{…,output:{s:{$sum:["$x","$y"]}}}} → refused, the same as $group
     ["$bucket({groupBy: $.x, boundaries: [0, 2], output: {s: $sum($.x)}});", "$sum(…)", "group"],
     ["$bucketAuto({groupBy: $.x, buckets: 2, output: {s: $sum($.x)}});", "$sum(…)", "group"],
-    // A query document, which is not an expression: {$match:{$gt:["$x",1]}}
-    //   → refused: $gt is not a top-level query operator
     ["$match($.a > 1);", "BinaryExpr", "filter"],
   ];
 
@@ -74,51 +49,34 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
   }
 
   it("keeps the rest of a mixed body at value", () => {
-    // `_id` is the one key of a $group body that is NOT an accumulator, and
-    // mongod agrees both ways: {$group:{_id:{$sum:["$x","$y"]}}} is accepted.
     const lines = census("$group({_id: $.k, s: $sum($.x)});");
     expect(lines).toContain("stageBody[$group:] _id:");
     expect(lines).toContain("group $sum(…)");
-    // `sortBy` is a key spec, not an expression slot: mongod refuses every
-    // expression there except `$meta`.
     expect(positionOfNode("$setWindowFields({sortBy: {x: 1}, output: {r: $rank()}});", "x:")).toBe("value");
   });
 
   it("descends two named levels to reach $rankFusion's user-named pipelines", () => {
     const src = "$rankFusion({input: {pipelines: {a: [$match($.x > 1)]}}});";
     expect(positionOfNode(src, "$match(…)")).toBe("statement");
-    // A sibling of `pipelines` is an ordinary value, one level up from a pipeline.
     expect(positionOfNode(src, "pipelines:")).toBe("stageBody[$rankFusion:input]");
   });
 
   it("treats every key of a $facet body as a pipeline, and only $facet's", () => {
     expect(positionOfNode("$facet({one: [$match($.a > 1)]});", "$match(…)")).toBe("statement");
-    // The same array one step further in is an array VALUE, not a pipeline.
     expect(positionOfNode("$project({one: [$.a, $.b]});", "ArrayLiteral")).toBe("value");
   });
 
   it("lays out a stage body by the NAME the node carries, in every spelling", () => {
-    // Three spellings of one stage — a call, a chained link, a raw document —
-    // name the same row and read the same layout. Were the chained spelling to
-    // bypass it, `$$.$group({…, s: $sum($.x, $.y)})` would check as a two-operand
-    // expression (legal) and emit the document mongod refuses.
     expect(positionOfNode("$$ = $$.$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe("group");
     expect(positionOfNode("$$ = $$.$match($.a > 1);", "BinaryExpr")).toBe("filter");
-    // The raw document holds two object literals: the stage document itself, at
-    // statement, and its body, at filter.
     expect(census("{ $match: { a: 1 } };")).toContain("filter ObjectLiteral");
   });
 
   it("reads the array form of a callee that takes stages as statements", () => {
-    // `$$.aggregate([$match(…)])` — the row says the callback is a block of
-    // stages, and an array of them is the same list.
     expect(positionOfNode("$$.aggregate([$match($.x > 1)]);", "$match(…)")).toBe("statement");
   });
 
   it("lays out a chained stage link based on where the context chain stands", () => {
-    // The chain's top link is a value to its parent, but `$group` on a stream is a
-    // stage. Its body must reach the group slot. Otherwise the pass checks `$sum($.x, $.y)` inside it
-    // as a two-operand expression and emits it as one.
     expect(positionOfNode("$.o = $$$.orders.filter(x => x.a).$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe(
       "group",
     );
@@ -127,40 +85,26 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
   });
 
   it("consults a layout only where a stage may stand", () => {
-    // `$count` is a stage AND an accumulator. Inside `$group` its arguments are an
-    // operator's, and the stage layout must not claim them.
     expect(positionOfNode("$group({_id: null, n: $count()});", "$count(…)")).toBe("group");
   });
 
   it("positions a non-object body with the default position, not the layout", () => {
-    // `$merge`'s layout names `whenMatched`, so its body is `deeper` — but a string
-    // has nothing to descend into, and takes the body's own position.
     expect(positionOfNode('$merge("out");', "StringLiteral")).toBe("value");
   });
 
   it("resolves a computed key through the wildcard alone", () => {
-    // The compiler cannot know that `{ [k]: … }` is the key a row names, so a literal entry
-    // can never claim it. But `$group`'s `"*": "group"` covers any key at all.
     expect(positionOfNode("let k = 1; $group({_id: null, [k]: $sum($.x)});", "$sum(…)")).toBe("group");
-    // $lookup names `pipeline` literally, so a computed key falls back to the
-    // body's own default, and is not read as a sub-pipeline.
     expect(positionOfNode('let k = 1; $lookup({from: "t", [k]: [$.a]});', "ArrayLiteral")).toBe("value");
   });
 });
 
 describe("compiler/passes/position — what is named, and what is a stream", () => {
   it("puts the callee of a call at target, never at value", () => {
-    // A fold of `f` in `f(1)` gives `3(1)`; the fold and this pass share the
-    // one predicate (naming.ts) that says a callee names something and holds no value.
     expect(positionOfNode("f($.a);", "Ident")).toBe("target");
   });
 
   it("reads a chain by its BASE, through an index as well as a member", () => {
-    // `$$$["archive"]` and `$$$.archive` are one collection; a reader that walked
-    // through `.` but not `[…]` gave the two different documents.
     expect(positionOfNode('$$$["archive"].find(o => o.id === 1);', "IndexAccess")).toBe("stream");
-    // The chain's top link stands where its parent put it — an argument of `push`
-    // is a value — but the links below it are streams and `$$$` is a scope.
     const lines = census("$$.push($$$.other.filter(x => x.a));");
     expect(lines).toContain("stream MemberAccess");
     expect(lines).toContain("value DatabaseRef");
@@ -178,11 +122,6 @@ describe("compiler/passes/position — what is named, and what is a stream", () 
 });
 
 describe("compiler/passes/position — the root position is the caller's fact", () => {
-  /**
-   * No program can tell the four entry points apart, so the seed is passed in.
-   * `$.a > 1` is one predicate as a filter and one boolean as an expression, and
-   * both are legal MQL — a wrong seed is a wrong document, not an error.
-   */
   it("reads one predicate as a filter, a value, or an update document", () => {
     expect(positionOfNode("$.a > 1", "BinaryExpr", FILTER)).toBe("filter");
     expect(positionOfNode("$.a > 1", "BinaryExpr", VALUE)).toBe("value");
@@ -190,18 +129,12 @@ describe("compiler/passes/position — the root position is the caller's fact", 
   });
 
   it("hands a `;`-separated program to statement position whatever the seed", () => {
-    // The `;` makes it a Pipeline, and a Pipeline's elements are statements —
-    // the seed cannot override that, because the tree already says so.
     expect(positionOfNode("$match($.a > 1);", "$match(…)", FILTER)).toBe("statement");
   });
 });
 
 describe("compiler/rows — the body-layout resolver", () => {
   it("says `deeper` until the path is a leaf, and the position at every depth", () => {
-    // Both facts at once: the position a leaf here would hold, and whether an
-    // object here must continue to descend. `$merge("out")` needs the first with the
-    // second true. A string body under a layout that names `whenMatched` has no
-    // keys to descend into. It must still get a position.
     expect(bodySlotAt("$setWindowFields", [])).toEqual({
       at: "value",
       otherwise: "value",
@@ -226,14 +159,10 @@ describe("compiler/rows — the body-layout resolver", () => {
       deeper: false,
       evaluated: false,
     });
-    // $match names no key, so its body is a leaf at once and everything in the
-    // query document below it is query too.
     expect(bodySlotAt("$match", [])).toEqual({ at: "filter", otherwise: "filter", deeper: false, evaluated: false });
   });
 
   it("answers a two-shape slot with a position per shape", () => {
-    // '$merge.whenMatched' takes an update pipeline or one of four words, and the
-    // two read differently — a bracketed list is stages, a word is a value.
     expect(bodySlotAt("$merge", ["whenMatched"])).toEqual({
       at: "statement",
       otherwise: "value",
@@ -260,17 +189,13 @@ describe("compiler/rows — the body-layout resolver", () => {
   });
 
   it("says whether the server evaluates the value under a path, and descends to reach an evaluated path", () => {
-    // `$set` evaluates each key's value, but the body itself is no one value.
     expect(bodySlotAt("$set", [])).toMatchObject({ at: "value", deeper: true, evaluated: false });
     expect(bodySlotAt("$set", ["x"])).toMatchObject({ at: "value", deeper: false, evaluated: true });
-    // `$lookup` evaluates its `let`, and reads `from` as written.
     expect(bodySlotAt("$lookup", ["let", "v"])).toMatchObject({ evaluated: true });
     expect(bodySlotAt("$lookup", ["from"])).toMatchObject({ evaluated: false });
-    // An evaluated path three levels down keeps the walk descending until it arrives.
     expect(bodySlotAt("$fill", ["output"])).toMatchObject({ deeper: true, evaluated: false });
     expect(bodySlotAt("$fill", ["output", "z", "value"])).toMatchObject({ deeper: false, evaluated: true });
     expect(bodySlotAt("$fill", ["output", "z", "method"])).toMatchObject({ evaluated: false });
-    // A body that IS one expression.
     expect(bodySlotAt("$replaceWith", [])).toMatchObject({ evaluated: true });
     expect(bodySlotAt("$unwind", [])).toMatchObject({ evaluated: false });
   });
@@ -285,16 +210,9 @@ describe("compiler/rows — the body-layout resolver", () => {
 describe("registry — exactly the stages state a body layout", () => {
   type SlotPosition = Position | { list: Position; otherwise: Position };
   type Row = { kind?: string; where?: readonly Position[]; bodyPositions?: Readonly<Record<string, SlotPosition>> };
-  /** Every position a slot can resolve to: one, or the pair a two-shape slot states. */
   const positionsIn = (at: SlotPosition): readonly Position[] =>
     typeof at === "string" ? [at] : [at.list, at.otherwise];
 
-  /**
-   * A stage's ARGUMENT is a body. A row that is not a stage has no body to lay
-   * out, so the two facts must agree in both directions. A stage with no
-   * layout sends its whole body to `value`. Every slot bug that this
-   * field fixes came from there.
-   */
   it("gives a layout to every stage row and to no other row", () => {
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
@@ -317,13 +235,11 @@ describe("registry — exactly the stages state a body layout", () => {
   });
 
   it("reaches all seven positions across the registry and the walk", () => {
-    // Three of the seven are reachable only once a body path resolves, so the
-    // count is the finding, not a statistic.
-    const reached = new Set<string>(["filter", "value", "updateDoc"]); // by seed
+    const reached = new Set<string>(["filter", "value", "updateDoc"]);
     for (const row of Object.values(NAMES) as Row[]) {
       for (const at of Object.values(row.bodyPositions ?? {})) for (const one of positionsIn(at)) reached.add(one);
     }
-    reached.add("stream"); // `$$ = $$.…`, an edge on the assignment, not a body path
+    reached.add("stream");
     expect([...reached].sort()).toEqual(["filter", "group", "statement", "stream", "updateDoc", "value", "window"]);
   });
 });

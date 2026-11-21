@@ -1,28 +1,3 @@
-// The regular-expression operators: `$regexMatch`, `$regexFind` and `$regexFindAll`.
-//
-// The server runs PCRE2, and the interpreter runs JavaScript's engine. The two agree on a
-// small syntax only. So the rule reads the pattern into a tree, and refuses every pattern
-// that has a construct outside that syntax. The tree then prints as JavaScript, so no
-// character of the source reaches the JavaScript engine as syntax that the rule did not read.
-//
-// The syntax: a literal ASCII character, a backslash with an ASCII punctuation character,
-// a class of ASCII ranges (negated or not), `\d`, `\w` and `\s` as the ASCII sets, the
-// quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}`, a group `(…)` or `(?:…)`, the
-// alternation `|`, the anchors `^` and `$`, and the lookahead `(?=…)` and `(?!…)`.
-//
-// The differences that the rule removes, each one measured on the server:
-//   - `$` in PCRE2 also matches before a final newline, so it prints as `(?=\n?$)`.
-//   - `\s` in PCRE2 is the six ASCII spaces, and `\d` and `\w` are ASCII. In JavaScript `\s` is wider.
-//   - PCRE2 keeps a capture of an earlier pass through a repeated group, and JavaScript clears
-//     it. A capture inside a group that repeats, or inside a lookahead, is a refusal.
-//   - `$regexFindAll` never reports an empty match at the end of the string, unless the search
-//     that began before the end found it there. See `findAll`.
-//   - Case folding: with the `i` option, the characters U+017F and U+212A fold to an ASCII
-//     letter. The rule refuses a string that holds either one.
-// A pattern with a deep or a long form is a refusal. So is a string that is too long for the
-// form of its pattern. A backtracking engine has no bound on its time.
-// See src/compiler/interpret/CLAUDE.md.
-
 import type { Answer, Rule } from "./values.ts";
 import { NO, ok } from "./values.ts";
 import { keyed } from "./operand.ts";
@@ -38,7 +13,6 @@ type Node =
   | { t: "end" }
   | { t: "quant"; min: number; max: number; body: Node };
 
-/** The parser stops with this when the pattern leaves the syntax. */
 class Outside extends Error {}
 const outside = (): never => {
   throw new Outside();
@@ -48,14 +22,12 @@ const MAX_PATTERN = 200;
 const MAX_DEPTH = 12;
 const MAX_COUNT = 100;
 const MAX_SUBJECT = 20_000;
-/** The cost of the whole run, as the length of the string to the power of the degree plus one. */
 const MAX_COST = 5e7;
 
 const isDigit = (c: string): boolean => c >= "0" && c <= "9";
 const isAlnum = (c: string): boolean => isDigit(c) || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 const isPrintable = (c: string): boolean => c >= " " && c <= "~";
 
-/** The characters that stand for themselves in a pattern. Every other printable one is syntax or is refused. */
 const SPECIAL = new Set("\\^$.|?*+()[]{}");
 const isLiteral = (c: string): boolean => isPrintable(c) && !SPECIAL.has(c);
 
@@ -70,7 +42,6 @@ const SPACE: readonly (readonly [number, number])[] = [
   [9, 13],
   [32, 32],
 ];
-/** The class that each of `\d`, `\w` and `\s` stands for. */
 const SHORTHAND: Readonly<Record<string, readonly (readonly [number, number])[]>> = { d: DIGITS, w: WORD, s: SPACE };
 
 class Reader {
@@ -93,7 +64,6 @@ class Reader {
   }
 }
 
-/** What a quantified group may hold, and the length of the shortest string that it matches. */
 function inspect(node: Node): { capture: boolean; quant: boolean; alt: boolean; min: number } {
   switch (node.t) {
     case "char":
@@ -142,7 +112,6 @@ function parseClass(r: Reader): Node {
       if (ranges.length === 0) outside();
       return { t: "class", negated, ranges };
     }
-    // A shorthand class stands alone: a range cannot start or end on it.
     if (c === "\\") {
       const e = r.next();
       if (e in SHORTHAND) {
@@ -155,7 +124,6 @@ function parseClass(r: Reader): Node {
       continue;
     }
     if (c === "-") {
-      // A hyphen is a literal only at the start or the end of the class.
       if (!atStart() && r.peek() !== "]") outside();
       ranges.push([45, 45]);
       continue;
@@ -165,7 +133,6 @@ function parseClass(r: Reader): Node {
   }
 }
 
-/** One class member that starts at `low`: a single character, or a range if a hyphen and an end follow. */
 function rangeFrom(r: Reader, low: number): [number, number][] {
   if (r.peek() !== "-" || r.src[r.pos + 1] === "]" || r.src[r.pos + 1] === undefined) return [[low, low]];
   r.pos++;
@@ -199,7 +166,6 @@ function parseQuantifier(r: Reader): { min: number; max: number } | null {
     r.pos += m[0].length - 1;
   } else return null;
   r.pos++;
-  // A lazy or possessive suffix, and a second quantifier, mean other things in PCRE2.
   if ("?+*{".includes(r.peek()) && r.peek() !== "") outside();
   return q;
 }
@@ -252,8 +218,6 @@ function parseSeq(r: Reader, depth: number, inLook: boolean): Node {
     }
     if (!quantifiable) outside();
     if (atom.t === "group" && q.max > 1) {
-      // A group that repeats may not hold what makes PCRE2 and JavaScript differ. It may hold no capture, no
-      // second quantifier and no alternation (a runaway backtrack). Its body may not match the empty string.
       const i = inspect(atom);
       if (i.capture || i.quant || i.alt || i.min === 0) outside();
     }
@@ -262,7 +226,6 @@ function parseSeq(r: Reader, depth: number, inLook: boolean): Node {
   return parts.length === 1 ? parts[0] : { t: "seq", parts };
 }
 
-/** How many unbounded repeats in a row the pattern can nest or chain, which sets the cost of a run. */
 function degree(node: Node): number {
   switch (node.t) {
     case "quant":
@@ -279,9 +242,6 @@ function degree(node: Node): number {
   }
 }
 
-// ── print as JavaScript ───────────────────────────────────────────────────────
-
-/** A character as a JavaScript pattern reads it: a letter, a digit or a space as itself, and every other one as a hex escape. */
 const lit = (cp: number): string => {
   const c = String.fromCharCode(cp);
   return isAlnum(c) || c === " " ? c : `\\x${cp.toString(16).padStart(2, "0")}`;
@@ -305,7 +265,6 @@ function print(node: Node): string {
       return `(?${node.negative ? "!" : "="}${print(node.body)})`;
     case "start":
       return "^";
-    // PCRE2 also matches `$` before a newline that ends the string.
     case "end":
       return "(?=\\n?$)";
     case "quant": {
@@ -324,14 +283,12 @@ function print(node: Node): string {
 
 type Compiled = { re: RegExp; groups: number; longest: number };
 
-/** The pattern as a JavaScript engine, or null when the pattern is outside the syntax that both engines share. */
 function compile(pattern: string, caseless: boolean): Compiled | null {
   if (pattern.length > MAX_PATTERN) return null;
   const reader = new Reader(pattern);
   let tree: Node;
   try {
     tree = parseAlt(reader, 0, false);
-    // A `)` with no `(` ends the sequence early.
     if (reader.pos !== pattern.length) return null;
   } catch (e) {
     if (e instanceof Outside) return null;
@@ -341,11 +298,8 @@ function compile(pattern: string, caseless: boolean): Compiled | null {
   return { re: new RegExp(print(tree), caseless ? "giu" : "gu"), groups: reader.groups, longest };
 }
 
-// ── the operators ─────────────────────────────────────────────────────────────
-
 type Match = { match: string; idx: number; captures: (string | null)[] };
 
-/** The number of code points before a UTF-16 offset: the server counts in code points. */
 const codePointsBefore = (s: string, at: number): number => {
   let n = 0;
   for (let i = 0; i < at; i += s.codePointAt(i)! > 0xffff ? 2 : 1) n++;
@@ -358,21 +312,12 @@ const read = (s: string, m: RegExpExecArray): Match => ({
   captures: m.slice(1).map((c) => c ?? null),
 });
 
-/**
- * Does the offset fall between the two halves of a surrogate pair? A JavaScript engine can report
- * an empty match there, for a pattern such as `(?![^a])`, and the server never does.
- */
 const insidePair = (s: string, at: number): boolean => {
   const unit = s.charCodeAt(at);
   const before = s.charCodeAt(at - 1);
   return at > 0 && unit >= 0xdc00 && unit <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
 };
 
-/**
- * Every match. A search starts at the end of the last non-empty match, or one code point past an
- * empty match. The search that begins at the end of the string does not run. So the answer lacks an empty match
- * there, unless the search before it found that match. This is the measured server rule.
- */
 function findAll(re: RegExp, s: string): Match[] | undefined {
   const found: Match[] = [];
   let start = 0;
@@ -387,14 +332,8 @@ function findAll(re: RegExp, s: string): Match[] | undefined {
   return found;
 }
 
-/** The text that the case folding of the server and of JavaScript treat in different ways. */
 const FOLDS_TO_ASCII = /[ſK]/;
 
-/**
- * The three operators share their operand: `input`, `regex` and `options`. A null `input` gives
- * the empty answer of the operator. The rule reads the pattern first, so a pattern outside the syntax always refuses.
- * An answer of `undefined` is a refusal.
- */
 function regexRule(answer: (re: RegExp, subject: string | null) => unknown): Rule {
   return keyed(["input", "regex"], ["options"], (parts, walk): Answer => {
     const input = walk.at(parts.input);

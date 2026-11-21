@@ -1,12 +1,3 @@
-// Phase 5 of src/compiler/ — the variable names the compiler writes.
-//
-// Five invariants, each one a class of bug a name minter can have:
-//   I1  a mint is never a name the program uses, wherever in the program it is bound
-//   I2  a read of an unbound name is the developer's error, at its position
-//   I3  every name written is one the server accepts — the grammar is measured, not remembered
-//   I4  two JavaScript names never become one variable
-//   I5  the plain case is untouched, so `$$x` reads as the developer wrote `x`
-
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
@@ -16,10 +7,8 @@ import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const up = await liveUp();
 
-/** The server accepts a variable name that starts with a lowercase ASCII letter, then `[A-Za-z0-9_]`. This rule is measured on mongod. See names.ts. */
 const SERVER_GRAMMAR = /^[a-z][A-Za-z0-9_]*$/;
 
-/** A deterministic sample of JavaScript identifiers. This sample includes legal identifiers and ones the server refuses. */
 function identifiers(count: number): string[] {
   const alphabet = ["a", "b", "z", "A", "Z", "_", "$", "0", "9", "é", "ß", "漢", "😀", "v", "i", "d"];
   const out: string[] = [];
@@ -29,7 +18,7 @@ function identifiers(count: number): string[] {
     const len = 1 + (next() % 6);
     let s = "";
     for (let j = 0; j < len; j++) s += alphabet[next() % alphabet.length];
-    if (/^[0-9]/.test(s)) s = "_" + s; // a JavaScript identifier cannot start with a digit
+    if (/^[0-9]/.test(s)) s = "_" + s;
     out.push(s);
   }
   return out;
@@ -91,9 +80,6 @@ describe("compiler/emit/names — I4: two JavaScript names never become one vari
 
 describe("compiler/emit/names — I1: a mint is never a name the program uses", () => {
   it("avoids a name bound anywhere in the program, not only in the current scope", () => {
-    // `jsmqlArr` is a parameter of a lambda DEEPER than the mint site. If we consult
-    // only the in-scope names, the mint would be `jsmqlArr` and the inner body would
-    // read the wrong binding.
     const root = Scope.root(["x", "jsmqlArr", "jsmqlArr2"]);
     expect(root.bind("arr").as).toBe("jsmqlArr3");
   });
@@ -107,7 +93,7 @@ describe("compiler/emit/names — I1: a mint is never a name the program uses", 
   it("never renames the developer's own parameter", () => {
     const root = Scope.root(["x"]);
     const b = root.bind("x");
-    expect(b.as).toBe("jsmqlX"); // the mint is prefixed; `x` stays `x`
+    expect(b.as).toBe("jsmqlX");
     expect(root.param("x", "unknown", 0).as).toBe("x");
   });
 });

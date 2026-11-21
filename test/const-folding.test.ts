@@ -2,13 +2,6 @@ import { describe, it, expect } from "vitest";
 import { jsmql, ObjectId } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
 
-// Compile-time constant folding of `const`/`let` (see docs/specs/let-bindings.md § Constant folding, and
-// docs/specs/desugar-pass.md for the pass that does it). The compiler evaluates a foldable RHS at compile time
-// and inlines it at every reference. The declaration emits no stage. When only one expression survives, the
-// program collapses to a Filter. Non-constant RHS keeps the runtime `$set` binding (covered in
-// let-bindings.test.ts). This suite is commit-1 scope: literals, arithmetic, value construction, ObjectId, new
-// Date, index/length, const-chains, and the fold/collapse/edge-case mechanics.
-
 describe("const folding — collapse to Filter", () => {
   it("ObjectId const folds and collapses to a Filter", () => {
     expect(jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId")).toEqual({
@@ -61,7 +54,6 @@ describe("const folding — collapse to Filter", () => {
     expect(jsmql('const d = Date("2026-01-31"); $match({ day: d.plus(1, "month").format("%Y-%m-%d") })')).toEqual([
       { $match: { day: "2026-02-28" } },
     ]);
-    // a timezone is the server's table, so that form stays a runtime one
     expect(jsmql('const d = Date("2026-09-01"); $match({ x: d.plus(1, "month", "Europe/Kyiv") })')).toEqual([
       {
         $match: {
@@ -114,9 +106,6 @@ describe("const folding — collapse to Filter", () => {
   });
 
   it(".size() and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
-    // The fold evaluates the const's RHS; a `.size()`/index there collapses to a
-    // literal. (In a query expression like `$.count === items.size()`, `items`
-    // inlines but `.size()` stays `$size` — the server computes it.)
     expect(jsmql("const n = [10, 20, 30].size(); $.count === n")).toEqual({ count: 3 });
     expect(jsmql("const first = [10, 20, 30][0]; $.first === first")).toEqual({ first: 10 });
   });
@@ -183,8 +172,6 @@ describe("const folding — fallback to runtime binding", () => {
     ]);
   });
 
-  // A BigInt folds to a live Long, so the comparison stays a query that the index serves. It also matches an
-  // ELEMENT of an array field, which the `$expr` form did not.
   it("a BigInt RHS folds to a Long on the query road", () => {
     expect(jsmql("const big = 123n; $match($.n === big)")).toEqual([{ $match: { n: Long.fromString("123") } }]);
   });
@@ -192,11 +179,9 @@ describe("const folding — fallback to runtime binding", () => {
 
 describe("const folding — declaration lists", () => {
   it("folds a declarator from the one before it in the same list, and emits no stage", () => {
-    // The shape that motivates this: a window bounded by a constant date.
     expect(jsmql('const start = Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)')).toEqual({
       t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") },
     });
-    // Folded declarations emit no stage, so the program still collapses to a Filter.
     expect(jsmql("const ms = 1000, day = ms * 60 * 60 * 24; $.elapsedMs > day")).toEqual({
       elapsedMs: { $gt: 86400000 },
     });
@@ -277,8 +262,6 @@ describe("const folding — native method calls", () => {
 
   it("array .slice with a runtime index does NOT fold — falls through to the $slice lowering", () => {
     const out = jsmql("const arr = [1, 2, 3]; $.out = arr.slice($.start)");
-    // `arr` inlines (it is constant), but the runtime `$.start` index keeps the
-    // `.slice` itself un-folded → the general $slice lowering, not a literal.
     expect(out).toEqual([
       {
         $set: {
@@ -328,12 +311,9 @@ describe("const folding — lodash string methods", () => {
   });
 
   it(".words() folds to an array", () => {
-    // the fold settles the array. A comparison of a field WITH an array is the expression road, because the
-    // query language would read the array as an element match
     expect(jsmql('const w = "fooBar-baz 9".words(); $.tags === w')).toEqual({
       $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },
     });
-    // the index is part of the const RHS, so it folds too
     expect(jsmql('const first = "fooBar-baz 9".words()[0]; $.f === first')).toEqual({ f: "foo" });
   });
 });
@@ -360,7 +340,6 @@ describe("const folding — inside lambda expr-blocks", () => {
   });
 
   it("a const that re-declares the lambda param is refused, as JavaScript refuses it", () => {
-    // The fold would inline `99` and hide the clash, so the parser refuses it first.
     expect(() => jsmql.expr("$.items.map(x => { const x = 99; return x })")).toThrow(
       "`const x` re-declares the parameter `x` at position 19, which JavaScript refuses. Pick a different name.",
     );

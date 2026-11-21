@@ -1,38 +1,11 @@
-// test/fixtures/live.ts — how a suite reaches the project's mongod.
-//
-// A live suite may SKIP for exactly ONE reason: the instance is not running, so
-// `npm test` stays green for a contributor who has not run `npm run fixture:up`.
-//
-// It may not skip for any other reason. A suite that swallows a wrong password, a
-// missing grant or a refused command continues to run its compile-only half and STILL
-// REPORTS GREEN. The half that catches what a `toEqual` cannot has silently stopped
-// running. That is not hypothetical: four suites sat in exactly that state. Each one
-// reported green, because `readWrite` alone cannot drop a database.
-//
-// So these helpers enforce one rule. "Could not reach a server at all" → skip.
-// Everything else → throw, and the suite goes red.
-//
-// The port is never named here. It comes from config.ts, and `:27018` is the only
-// one this project connects to — see test/no-default-port.test.ts.
-
 import { MongoClient } from "mongodb";
 import { SCRATCH_URI } from "./config.ts";
 
-/**
- * Did the driver fail to find a server at all?
- *
- * MEASURED against the project's instance: a dead port answers
- * `MongoServerSelectionError`, because the port refuses the connection. A wrong
- * password answers `MongoServerError` with code 18. A missing grant answers
- * `MongoServerError`, because the user has no grant for the command. Only the
- * first is a reason to skip.
- */
 export function isUnreachable(e: unknown): boolean {
   const name = (e as { name?: string } | null)?.name ?? "";
   return name === "MongoServerSelectionError" || name === "MongoNetworkError";
 }
 
-/** The message a suite fails with when the server is there but would not serve it. */
 function refused(e: unknown): Error {
   return new Error(
     `The project's mongod answered, but refused this suite: ${(e as Error).message}\n` +
@@ -43,19 +16,6 @@ function refused(e: unknown): Error {
   );
 }
 
-/**
- * A connected client for a live suite, or null when the instance is not running.
- *
- * Use it in `beforeAll`. Then do the suite's OWN setup outside any try/catch. This way
- * a failed drop or insert fails the suite, and does not disappear into a skip:
- *
- *     client = await liveClient();
- *     if (client) {
- *       const db = client.db("jsmql_my_suite");
- *       await db.dropDatabase();
- *       await db.collection("t").insertMany(DOCS);
- *     }
- */
 export async function liveClient(timeoutMs = 1500): Promise<MongoClient | null> {
   const client = new MongoClient(SCRATCH_URI, { serverSelectionTimeoutMS: timeoutMs });
   try {
@@ -69,25 +29,12 @@ export async function liveClient(timeoutMs = 1500): Promise<MongoClient | null> 
   }
 }
 
-/**
- * Is the instance running? For a suite that gates a whole `describe` on it
- * (`describe.skipIf(!up)`), evaluated once at module load.
- *
- * A refusal throws here too, at import time, which fails the file. The point is
- * that it must never quietly turn into `up === false`.
- */
 export async function liveUp(timeoutMs = 700): Promise<boolean> {
   const client = await liveClient(timeoutMs);
   await client?.close().catch(() => {});
   return client !== null;
 }
 
-/**
- * A connected client where the suite already settled "is it running?", inside a
- * `describe.skipIf(!up)` block or an `it.skipIf(!up)`. It never returns null, so the
- * suite needs no null check. If the instance disappears between the two, that is a
- * failure that a person must see, not a silent skip.
- */
 export async function liveClientNow(): Promise<MongoClient> {
   const client = await liveClient();
   if (client === null) {
@@ -96,7 +43,6 @@ export async function liveClientNow(): Promise<MongoClient> {
   return client;
 }
 
-/** The one line a suite prints when it skips, so a reader sees which half ran. */
 export function announceSkip(suite: string): void {
   console.warn(
     `\n[${suite}] the project's mongod is not running — the server half of this suite is SKIPPED.` +

@@ -1,20 +1,3 @@
-// The proof behind every `returns` in the registry: ask mongod.
-//
-// The `returns` field holds measured data. Only a new measurement finds it when
-// it goes stale. A `toEqual` cannot, and neither can the vendored spec. For example,
-// the spec's `type:` field for `$trunc` says `resolvesToString`, but three sources
-// disagree. This divergence is the reason the process is written down in
-// `MongoSpec.returns`.
-//
-// The suite builds each call from two existing things in the repo: the vendored spec's
-// `arguments[].type` (what each operand must resolve to) and the registry's own
-// `shape` (how the operands are written). A new operator gains coverage the day its
-// row lands. Only the calls a generator cannot express are listed here. The suite
-// measures an operator PRODUCTION, for example `*`, through its own lowering: the compiler
-// writes its lexeme between operands of each kind.
-//
-// This suite skips itself when no mongod listens, so `npm test` stays green.
-
 import { beforeAll, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -38,8 +21,6 @@ if (!up) {
   );
 }
 
-// ── the seed document: one field per BSON type the specs can ask for ─────────
-
 const DOC: Record<string, unknown> = {
   str: "abc",
   str2date: "2020-06-15T10:20:30Z",
@@ -61,7 +42,6 @@ const DOC: Record<string, unknown> = {
   nul: null,
 };
 
-/** A vendored operand type → the field that satisfies it. */
 const FOR_TYPE: Readonly<Record<string, string>> = {
   resolvesToString: "$str",
   string: "$str",
@@ -90,11 +70,9 @@ const FOR_TYPE: Readonly<Record<string, string>> = {
   resolvesToNull: "$nul",
   resolvesToAny: "$int",
   any: "$int",
-  // an enum type takes one of its own words, as a literal
   timeUnit: "day",
 };
 
-/** A mongod `$type` string → the coarse kind the registry states. */
 const OF_BSON: Readonly<Record<string, string>> = {
   int: "number",
   double: "number",
@@ -111,16 +89,9 @@ const OF_BSON: Readonly<Record<string, string>> = {
   timestamp: "timestamp",
 };
 
-// ── the calls a generator cannot express ─────────────────────────────────────
-
 type Slot = "value" | "group" | "window";
 type Call = Partial<Record<Slot, unknown>>;
 
-/**
- * Operators whose operands are constrained beyond their declared TYPE — a
- * required enum, an input that must be a JSON string, a domain of [-1,1], a
- * window that needs bounds. The measurement of each entry used the call that the entry holds.
- */
 const BY_HAND: Readonly<Record<string, Call>> = {
   $hash: { value: { $hash: { input: "$str", algorithm: "sha256" } } },
   $hexHash: { value: { $hexHash: { input: "$str", algorithm: "sha256" } } },
@@ -189,12 +160,6 @@ const BY_HAND: Readonly<Record<string, Call>> = {
   $integral: { window: { $integral: { input: "$int", unit: "second" }, window: { range: [-20, 0], unit: "second" } } },
 };
 
-/**
- * Operators the SERVER cannot be asked about, with the reason. Not a filter: the
- * last test sends each one the call in PROBE and fails when the server answers.
- * So an entry that goes stale shows up at once. An operator that the first test
- * cannot measure and that this table does not name fails that test.
- */
 const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $encStrContains:
     "Queryable Encryption: 'ExpressionEncTextSearch expects a constant literal' without encrypted fields",
@@ -205,7 +170,6 @@ const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $case: "not an operator on its own — a branch key inside $switch",
 };
 
-/** The call the last test sends for each CANNOT_MEASURE name. The server failed each one when measured. */
 const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
   $encStrContains: { slot: "value", call: { $encStrContains: { input: "$str", substring: "a" } } },
   $encStrEndsWith: { slot: "value", call: { $encStrEndsWith: { input: "$str", suffix: "c" } } },
@@ -215,10 +179,6 @@ const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
   $case: { slot: "value", call: { $case: { case: true, then: "$int" } } },
 };
 
-/**
- * The two differently-typed calls that PROVE a `"unknown"` row is right to say
- * so. A row that claims to vary must show that it varies, or the claim is a shrug.
- */
 const VARIES_BY_OPERAND: Readonly<Record<string, { slot: Slot; a: unknown; b: unknown }>> = {
   $add: { slot: "value", a: { $add: ["$int", 1] }, b: { $add: ["$date", 1000] } },
   $subtract: { slot: "value", a: { $subtract: ["$int", 1] }, b: { $subtract: ["$date", 1000] } },
@@ -295,8 +255,6 @@ const VARIES_BY_OPERAND: Readonly<Record<string, { slot: Slot; a: unknown; b: un
   $shift: { slot: "window", a: { $shift: { output: "$int", by: 1 } }, b: { $shift: { output: "$str", by: 1 } } },
 };
 
-// ── the generated call ───────────────────────────────────────────────────────
-
 type SpecArg = { name: string; type?: unknown; optional?: boolean };
 type Spec = { name: string; arguments?: SpecArg[] };
 
@@ -307,8 +265,6 @@ function loadSpecs(): Map<string, Spec> {
     for (const file of readdirSync(resolve(root, folder))) {
       if (!file.endsWith(".yaml")) continue;
       let txt = readFileSync(resolve(root, folder, file), "utf8");
-      // The tests: block carries custom BSON tags that the schema of js-yaml rejects.
-      // The suite reads only the metadata above it.
       const i = txt.indexOf("\ntests:");
       if (i >= 0) txt = txt.slice(0, i);
       const doc = yaml.load(txt) as Spec | undefined;
@@ -327,7 +283,6 @@ type Row = {
   neverNull?: true | "always";
 };
 
-/** The kind a row's `returns` states for the server to confirm: the term's top kind. */
 const stated = (row: Row): string => (row.returns === undefined ? "unknown" : topKindOf(row.returns));
 
 function operandFor(arg: SpecArg): string {
@@ -336,14 +291,11 @@ function operandFor(arg: SpecArg): string {
   return FOR_TYPE[first ?? ""] ?? "$int";
 }
 
-/** A well-typed call, from the vendored argument types and the registry shape. */
 function buildCall(name: string, row: Row, spec: Spec | undefined): unknown {
   const required = (spec?.arguments ?? []).filter((a) => a.optional !== true);
   const shape = row.shape;
   if (shape === "none") return { [name]: {} };
   if (shape === "object") {
-    // The body's keys and their types come from the vendored spec: every required key,
-    // or every key when the spec requires none.
     const body: Record<string, unknown> = {};
     for (const a of required.length > 0 ? required : (spec?.arguments ?? [])) body[a.name] = operandFor(a);
     return { [name]: body };
@@ -363,8 +315,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     const client = await liveClientNow();
     coll = client.db("jsmql_returns_agrees").collection("t");
     await coll.deleteMany({});
-    // Two documents with DISTINCT sort keys: a window function refuses a
-    // repeated sortBy value, and a sample of one makes $stdDevSamp null.
     await coll.insertMany([
       { ...DOC, _ord: 1 },
       { ...DOC, _ord: 2, int: new Int32(9), str: "bcd", date: new Date("2020-06-15T10:20:40.400Z") },
@@ -374,7 +324,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     };
   });
 
-  /** The kinds mongod reports for `expr` in `slot`, or why it could not be asked. */
   async function kindsOf(
     expr: unknown,
     slot: Slot,
@@ -399,7 +348,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     }
   }
 
-  /** A refusal that is about the SERVER, not about the call. */
   const environmental = (why: string): boolean =>
     why.includes("feature compatibility version") || why.includes("Unrecognized expression");
 
@@ -412,7 +360,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo") continue;
       if (!PRODUCES.some((p) => row.where?.includes(p) === true)) continue;
-      if (stated(row) === "unknown") continue; // proved to vary, below
+      if (stated(row) === "unknown") continue;
       if (CANNOT_MEASURE[name] !== undefined) continue;
 
       const hand = BY_HAND[name];
@@ -443,12 +391,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     }
 
     expect(wrong).toEqual([]);
-    // A suite that quietly stops its measurements is worse than none. Anything it could
-    // not ask about must be a NAMED environment limitation, never a surprise.
     expect(unmeasured).toEqual([]);
-    // 149 of the 159 invariant rows are measurable on a mongod at FCV 8.0; the
-    // rest need a newer one. The bound is the tightest one that holds, so a real degradation
-    // cannot pass as a version difference.
     expect(checked).toBeGreaterThanOrEqual(145);
     if (gated.length > 0) {
       console.warn(
@@ -458,10 +401,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("states `unknown` exactly where the kind follows the operands", async () => {
-    // This check starts from the PAIRS, not from the rows. The question "does every `unknown` row
-    // vary" leaves the other direction open. A row that quietly claims to be
-    // invariant is the more dangerous of the two, because it makes the type check reject
-    // valid code. So each pair decides what its row must say.
     const wrong: string[] = [];
     const refused: string[] = [];
     let measured = 0;
@@ -470,8 +409,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       expect(row, `${name} has a varying-operand pair but no row`).toBeDefined();
       const a = await kindsOf(pair.a, pair.slot);
       const b = await kindsOf(pair.b, pair.slot);
-      // An operand the server refuses is itself proof the type is constrained,
-      // and says nothing about whether the accepted one varies.
       if (!a.ok || !b.ok) {
         refused.push(`${name}: ${(a as { why?: string }).why ?? ""} ${(b as { why?: string }).why ?? ""}`);
         continue;
@@ -486,14 +423,11 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       }
     }
     expect(wrong).toEqual([]);
-    // A pair that the server refuses proves nothing, so every pair must reach it.
     expect(refused).toEqual([]);
     expect(measured).toBe(Object.keys(VARIES_BY_OPERAND).length);
   });
 
   it("proves or names every `unknown` row", async () => {
-    // `"unknown"` is a measured fact, so each row that claims it owes either a pair
-    // above that shows it varies, or a named reason the server cannot be asked.
     const unproven: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" || row.returns === undefined || stated(row) !== "unknown") continue;
@@ -504,10 +438,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("gives, for each operator production, the kinds that its row states and no other", async () => {
-    // Each call is the lexeme between two operands, and the compiler lowers it. An operand is
-    // a field, whose kind the compiler cannot prove, or a literal that is not a string. So `+`
-    // takes the `$add` road that its row states. A pair that the compiler or the server
-    // refuses proves nothing. A stated kind that no pair gives is a claim with no measurement.
     const OPERANDS = [
       ...["$.int", "$.dbl", "$.lng", "$.dec", "$.date", "$.str", "$.obj", "$.arr", "$.bool", "$.oid", "$.ts"],
       ...["$.nul", "$.nope", "null", "[1, 2]"],
@@ -523,7 +453,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     for (const [key, p] of Object.entries(PRODUCTIONS) as [string, Production][]) {
       if (p.becomes !== "BinaryExpr" && p.becomes !== "UnaryExpr") continue;
       const kinds = statedKinds(p.returns);
-      // `??`, `&&` and `||` give one of their operands.
       if (kinds === null) continue;
       const lexeme = p.tokens[0];
       const sources =
@@ -553,14 +482,10 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       measured++;
     }
     expect(wrong).toEqual([]);
-    // The loop measures each operator production that states a kind. The guard fails at one more.
     expect(measured).toBeGreaterThanOrEqual(22);
   });
 
   it("counts an array literal as mongod does, whatever its elements hold", async () => {
-    // `.size()` of an array literal is written as its element count, with no `$size`
-    // at run time. That is safe only if the server counts the same way, a missing
-    // field and a null included. So the test holds each count against the server's own.
     const LITERALS = ["[$.nope, $.int]", "[null, $.nope.deeper]", "[[1, 2], $.str]", "[{ a: $.nope }]", "[]"];
     const disagree: string[] = [];
     for (const literal of LITERALS) {
@@ -575,8 +500,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("answers a value for each operator that states `neverNull`, over missing operands too for `always`", async () => {
-    // The presence proof leaves out an `$ifNull` on the strength of this fact, so a wrong
-    // claim is a wrong answer. `always` reads every field operand as a missing field.
     const missing = (v: unknown): unknown =>
       typeof v === "string"
         ? v.startsWith("$") && !v.startsWith("$$")
@@ -611,8 +534,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   });
 
   it("cannot measure exactly the operators it says it cannot", async () => {
-    // The names in CANNOT_MEASURE are claims about the SERVER. If one starts
-    // working, the entry is stale and the row should be measured like the rest.
     expect(Object.keys(PROBE).sort()).toEqual(Object.keys(CANNOT_MEASURE).sort());
     const nowWorking: string[] = [];
     let tried = 0;

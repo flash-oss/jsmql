@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import jsmqlMongoose from "../src/mongoose.ts";
 
-// Mock-based tests: real mongoose is not installed as a devDependency. Instead each test builds the minimal
-// shape the plugin reads: `mongoose.Model` with the static methods the plugin patches. Each mock records each
-// call, so a test can check the arguments the *original* method got after the plugin's transform.
-
 type Recorded = { method: string; args: unknown[]; thisArg: unknown };
 
 function buildMockMongoose(): { mongoose: { Model: any }; Model: any; recorded: Recorded[] } {
@@ -254,18 +250,12 @@ describe("@koresar/jsmql/mongoose — subclass propagation", () => {
     class User extends Model {}
     User.find("$.age > 18");
     expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
-    // Prototype-chain lookup reaches the patched function, so it runs with the subclass as `this`. This matches
-    // real mongoose behaviour.
     expect(recorded[0].thisArg).toBe(User);
   });
 });
 
 describe("@koresar/jsmql/mongoose — idempotence", () => {
   it("a second registration is a no-op (no double-lowering)", () => {
-    // A second wrap is hard to see in the output: the outer wrapper lowers the
-    // string, and the inner one passes the lowered object through. So the test
-    // reads the statics themselves. The second call must keep every patched
-    // static as it is, and must not add a second wrapper around it.
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
     const patched = { find: Model.find, updateOne: Model.updateOne, aggregate: Model.aggregate };

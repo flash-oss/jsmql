@@ -1,24 +1,3 @@
-// Phase 5 — EMIT. This module reads a sort argument, as written, into the
-// `{ field: 1 | -1 }` document that a `$sort` stage and a `$sortArray` operand both take.
-//
-// A reader, not a lowering: a sort key must be a compile-time field name,
-// because MongoDB sorts by names and never by expressions. So every function
-// here reads a SOURCE node and answers a plain document, or refuses with the
-// spelling that would work. A refusal of a wrong kind also reads the proof of the
-// argument (`KindOf`). Five spellings, one meaning each:
-//
-//   "age"                      one key, ascending
-//   ["age", "name"]            more than one key, all ascending
-//   { age: -1, name: "asc" }   keys with directions — 1 / -1 / "asc" / "desc"
-//   x => x.age   x => -x.age   a key function; the minus sign gives the direction
-//   (a, b) => a.age - b.age    a comparator; `b.k - a.k` sorts descending, and
-//                              `||` joins keys in order of precedence
-//   (a, b) => a - b            no field at all: the ELEMENTS are the key, which
-//                              `$sortArray` takes as a bare 1 / -1 and a `$sort`
-//                              stage cannot take at all
-//
-// See docs/specs/stream-methods.md.
-
 import type { Expr, Kind, Type } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
 import { SORT_KEY_LIMIT } from "../../registry/mql.ts";
@@ -28,21 +7,13 @@ import { cannotBe } from "./type.ts";
 
 export type SortSpec = Record<string, 1 | -1>;
 
-/**
- * What a sort argument asks for: keys by NAME; a key COMPUTED from the document
- * — `d => d.cat.toLower()`. MongoDB cannot sort by such a key directly, so the
- * caller writes it to a scratch field and sorts by that field. The third ask is the
- * WHOLE element, which carries a direction and no name.
- */
 export type SortAsk =
   | { readonly kind: "keys"; readonly spec: SortSpec }
   | { readonly kind: "computed"; readonly key: Extract<Expr, { type: "Lambda" }>; readonly dir: 1 | -1 }
   | { readonly kind: "whole"; readonly dir: 1 | -1; readonly params: readonly [string, string]; readonly pos: number };
 
-/** A sort ask that a `$sort` STAGE can carry: never the whole element, which has no field name. */
 export type StageSortAsk = Exclude<SortAsk, { kind: "whole" }>;
 
-/** 1 or -1 from `1`, `-1`, `"asc"` or `"desc"`; null for anything else. */
 export function sortDirection(e: Expr): 1 | -1 | null {
   if (e.type === "NumberLiteral") return e.value === 1 ? 1 : e.value === -1 ? -1 : null;
   if (e.type === "UnaryExpr" && e.op === "-" && e.argument.type === "NumberLiteral" && e.argument.value === 1)
@@ -51,7 +22,6 @@ export function sortDirection(e: Expr): 1 | -1 | null {
   return null;
 }
 
-/** The dotted path that a member chain on `param` spells — `x.user.name` → "user.name" — or null. */
 function paramPath(e: Expr, param: string): string | null {
   if (e.type === "MemberAccess") {
     if (e.object.type === "Ident" && e.object.name === param) return e.name;
@@ -61,13 +31,8 @@ function paramPath(e: Expr, param: string): string | null {
   return null;
 }
 
-/** The proof of a value's kinds. The reader asks it only of an argument that no spelling reads. */
 export type KindOf = (e: Expr) => Type;
 
-/**
- * A value of the wrong kind (HR7) in a sort slot: its proof has none of the kinds that the
- * slot takes. It returns null when the value can have one of them.
- */
 function wrongSlotKind(
   e: Expr,
   method: string,
@@ -82,13 +47,8 @@ function wrongSlotKind(
   return new CodegenError(wrongKind(`'.${method}()'`, slot, takes, `got ${nounOfKinds(t)}`, hint), e.pos);
 }
 
-/** The hint of a direction slot: the directions that a sort takes. */
 const DIRECTIONS = ' Write 1, -1, "asc" or "desc".';
 
-/**
- * A direction of the wrong kind, for example `{ age: null }`. A number or a string keeps the
- * message that names each direction.
- */
 const wrongDirection = (e: Expr, method: string, slot: string, kind: KindOf): CodegenError | null =>
   wrongSlotKind(e, method, slot, "a direction", ["number", "string"], DIRECTIONS, kind);
 
@@ -114,14 +74,9 @@ const fieldName = (e: Expr, method: string, slot: string, kind: KindOf): string 
   return e.value;
 };
 
-/** The spellings of a sort argument, as a refusal names them. lodash's `.sortBy()` takes no directions. */
 const spellings = (objects: boolean): string =>
   `a field name ("age"), a list of them (["age", "name"]), or ${objects ? "directions ({ age: -1 })" : "a key function (x => x.age)"}`;
 
-/**
- * A sort argument of the wrong kind (HR7): a value that can never be a name, a list or a
- * document, for example `null` or a number. It returns null when the value can be one of them.
- */
 const wrongSortKind = (arg: Expr, method: string, objects: boolean, kind: KindOf): CodegenError | null =>
   wrongSlotKind(
     arg,
@@ -133,7 +88,6 @@ const wrongSortKind = (arg: Expr, method: string, objects: boolean, kind: KindOf
     kind,
   );
 
-/** `"k"`, `["k", "j"]` or `{ k: dir }` as a spec. `objects` says whether the third form is welcome. */
 export function keySortSpec(arg: Expr, method: string, kind: KindOf, objects = true): SortSpec {
   if (arg.type === "StringLiteral") return { [fieldName(arg, method, "argument 1", kind)]: 1 };
   if (arg.type === "ArrayLiteral") {
@@ -180,7 +134,6 @@ export function keySortSpec(arg: Expr, method: string, kind: KindOf, objects = t
   );
 }
 
-/** `x => x.k` / `x => -x.k` as a spec. Any other body is a computed key. */
 function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {
   if (arg.body === undefined) {
     throw new CodegenError(
@@ -195,18 +148,10 @@ function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string)
     body = body.argument;
   }
   const path = paramPath(body, arg.params[0]);
-  // The minus sign is the DIRECTION and nothing else. The key that the caller lowers is the
-  // body under it, or else `x => -x.k` would negate the key AND sort it descending.
   if (path === null) return { kind: "computed", key: { ...arg, body }, dir };
   return { kind: "keys", spec: { [path]: dir } };
 }
 
-/**
- * `a - b` / `b - a` on the BARE parameters — the whole element is the key, which
- * `$sortArray` takes as a direction on its own. Only a bare body qualifies. Under a
- * `||` the term falls through to the same-field check, because an element that IS
- * the key admits no tiebreaker.
- */
 const wholeElementDir = (body: Expr, a: string, b: string): 1 | -1 | null => {
   if (body.type !== "BinaryExpr" || body.op !== "-") return null;
   const { left, right } = body;
@@ -216,11 +161,6 @@ const wholeElementDir = (body: Expr, a: string, b: string): 1 | -1 | null => {
   return null;
 };
 
-/**
- * `(a, b) => a.k - b.k` as a spec: the parameter that stands FIRST in the
- * subtraction gives the ascending one. `||` joins more than one key, most significant first.
- * `(a, b) => a - b` names no field, so the elements themselves become the key.
- */
 function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {
   const [a, b] = arg.params;
   if (arg.body === undefined) {
@@ -240,8 +180,6 @@ function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string):
     } else terms.push(e);
   };
   split(arg.body);
-  // One term IS the WHOLE body, so the elements-as-key form is open to it, and the
-  // refusal names it. Under a `||` it is not open, because an element that IS the key has no tiebreaker.
   const single = terms.length === 1;
   const orWhole = single ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
   for (const t of terms) {
@@ -267,7 +205,6 @@ function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string):
   return { kind: "keys", spec };
 }
 
-/** Any of the four spellings, chosen by the shape of the argument. */
 export function sortSpecOf(arg: Expr, method: string, kind: KindOf, objects = true): SortAsk {
   if (arg.type === "Lambda") {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
@@ -280,14 +217,7 @@ export function sortSpecOf(arg: Expr, method: string, kind: KindOf, objects = tr
   return { kind: "keys", spec: keySortSpec(arg, method, kind, objects) };
 }
 
-/**
- * lodash's `orderBy(keys, orders)`: `keys` is a name or a list of names, and
- * `orders` is a direction or a list of them, parallel to the keys. Fewer orders
- * than keys leaves the rest ascending. The one-argument object form is the
- * `{ field: dir }` spec.
- */
 export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string, kind: KindOf): SortAsk {
-  // A key function with an optional direction: `.orderBy(d => d.cat.toLower(), -1)`.
   if (keys.type === "Lambda") {
     const ask = sortSpecOf(keys, method, kind);
     if (orders === undefined) return ask;
@@ -340,17 +270,6 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
   return { kind: "keys", spec };
 }
 
-/**
- * A sort ask narrowed to what a `$sort` STAGE can carry, on a stream whose element
- * lives at `element` (`""` when the element IS the document). MongoDB sorts a stream
- * by field NAME. MEASURED, the server refuses `{ $sort: 1 }`, because the spec is not a
- * document. It refuses `{ $sort: { $literal: 1 } }`, because `$literal` is not a valid
- * field name. So an element that IS the document has nowhere to go as a key.
- * An unwound element has a name. `.flatMap("tags").sort((a, b) => a - b)` sorts
- * by `tags`, and its fields sit under that name. `.flatMap("items").sortBy("qty")` sorts
- * by `items.qty`. A `$sort` stage takes at most `SORT_KEY_LIMIT` keys. `pos` is the
- * sort argument, where the compiler refuses a longer spec.
- */
 export function streamSortAsk(ask: SortAsk, method: string, element: string, pos: number): StageSortAsk {
   if (ask.kind === "keys") {
     const count = Object.keys(ask.spec).length;

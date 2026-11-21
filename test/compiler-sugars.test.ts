@@ -1,16 +1,3 @@
-// Phase 5 of src/compiler/ — the destination-visible sugars and the source stages:
-//
-//   $ = { k: $$.filter(…), … }        a $facet, one branch per chain on the stream
-//   $$.push(…) / .concat(…)           a $unionWith per source, in order
-//   $$$.<coll> = $$.…  / $$$$.<db>.<coll> = $$.…   the stream written out ($out)
-//   $$.indexStats() / $$$$.currentOp(…)             the source stages, scoped by sigil
-//   function f(x) { return … }                      a name for a body, inlined at each call
-//
-// The server suite runs every read-only pipeline this file asserts on a live mongod.
-// It compares the documents that come back. The `$out` pipelines are run and the
-// target collection is read. This suite self-skips (reports green) when no mongod
-// is reachable, with the all-or-nothing guard.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
 import { expr, pipeline } from "../src/compiler/index.ts";
@@ -42,11 +29,9 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
         { big: [2, 3], all: [1, 2, 3], n: [{ n: 3 }] },
       ]),
     ).toEqual([{ $facet: { big: [{ $match: { a: { $gt: 1 } } }], all: [{ $limit: 10 }], n: [{ $count: "n" }] } }]);
-    // the root document is the branch's document, at every depth (HR4)
     expect(compiled("$ = { t1: $$.filter(o => $.tag === 't1') };", [{ t1: [1, 3] }])).toEqual([
       { $facet: { t1: [{ $match: { tag: "t1" } }] } },
     ]);
-    // a bare `$$` is the stream unchanged; a block is its stages
     expect(
       compiled("$ = { all: $$, agg: $$.aggregate(o => { $match(o.a > 1); o.y = o.a * 2; }) };", [
         {
@@ -60,13 +45,10 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
     ).toEqual([
       { $facet: { all: [], agg: [{ $match: { a: { $gt: 1 } } }, { $set: { y: { $multiply: ["$a", 2] } } }] } },
     ]);
-    // a `let` before it is dropped — the stage replaces the document
     expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/cannot be read after `\$facet`/);
   });
 
   it("each branch drops the scratch fields that its documents carry", () => {
-    // A branch runs over the documents that the `$facet` receives, so a `let` field is on
-    // them. The branch reads it, and the cleanup of the branch drops it.
     expect(
       compiled("let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };", [{ even: [2], all: [1, 2, 3] }]),
     ).toEqual([
@@ -78,7 +60,6 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
         },
       },
     ]);
-    // The branches of the `$facet` stage call are the same.
     expect(compiled("let x = $.a * 2; $facet({ even: [$match(x === 4)] });", [{ even: [2] }])).toEqual([
       { $set: { "__jsmql.var.x": { $multiply: ["$a", 2] } } },
       { $facet: { even: [{ $match: { $expr: { $eq: ["$__jsmql.var.x", 4] } } }, { $unset: "__jsmql" }] } },
@@ -89,12 +70,10 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
     expect(() => pipeline("$ = { a: $$.filter(o => o.a > 1), lit: 1 };")).toThrow(/every entry must be one: 'lit'/);
     expect(() => pipeline('$ = { "a.b": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
     expect(() => pipeline('$ = { "$big": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
-    // measured: the server refuses a `$facet` or an `$out` inside a `$facet`
     expect(() => pipeline("$ = { outer: $$.aggregate(o => { $ = { inner: $$.take(1) }; }) };")).toThrow(
       /'\$facet' cannot stand inside '\$facet'/,
     );
     expect(() => pipeline('$ = { w: $$.$out("x") };')).toThrow(/'\$out' cannot stand inside '\$facet'/);
-    // a chain on the stream assigned to a FIELD is not a value
     expect(() => pipeline("$.k = $$.filter(o => o.a > 1);")).toThrow(/not a value/);
   });
 });
@@ -124,7 +103,6 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
       { $unionWith: "archive" },
       { $unionWith: { pipeline: [{ $documents: [{ c: 3 }] }] } },
     ]);
-    // `.concat` is the same, mid-chain
     expect(compiled("$$.filter(o => o.a > 2).concat(...$$$.archive).take(2);", [3, 10])).toEqual([
       { $match: { a: { $gt: 2 } } },
       { $unionWith: "archive" },
@@ -140,15 +118,12 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
       /gives ONE document\. JavaScript would not spread this/,
     );
     expect(() => pipeline("$$.push(...$.items);")).toThrow(/An array the DATA decides cannot be appended/);
-    // a WRITTEN list of documents is appendable: `$documents` takes a spelled-out list
     expect(pipeline("$$.push(...[{ a: 1 }, { a: 2 }]);")).toEqual([
       { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } },
     ]);
     expect(() => pipeline("$$.push(5);")).toThrow(/'\$\$\.push\(\)' argument 1 takes a document, but got a number\./);
-    // `$documents` runs with no input document, and a `$unionWith` body has no `let` — measured
     expect(() => pipeline("$$.push({ a: $.a });")).toThrow(/has no 'let'/);
     expect(() => pipeline("$$.push(...$$$.archive.filter(o => o.tag === $.tag));")).toThrow(/has no 'let'/);
-    // `$$` is the root stream; a body over another collection names its own through the parameter
     expect(() => pipeline("$.o = $$$.archive.aggregate(o => { $$.push({ a: 1 }); });")).toThrow(
       /'\$\$' is the root stream/,
     );
@@ -170,7 +145,6 @@ describe("compiler/emit — `$$$.<coll> = <stream>` is $out", () => {
     expect(pipeline("$$$$.jsmql_compiler_sugars_other.c = $$;")).toEqual([
       { $out: { db: "jsmql_compiler_sugars_other", coll: "c" } },
     ]);
-    // the cleanup precedes the write
     expect(
       compiled(
         "let x = $.a; $.b = x; $$$.out_b = $$;",
@@ -220,7 +194,6 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
           first: { $first: "$tag" },
         },
       },
-      // the compiler folds the seed in as JavaScript would: `.max()` from 0 is the max with 0
       {
         $replaceWith: {
           total: "$total",
@@ -232,7 +205,6 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
         },
       },
     ]);
-    // the object reducer names every fold in its body and its init
     expect(
       compiled(
         "$$ = [$$.reduce((acc, d) => ({ ...acc, total: acc.total + d.a, n: acc.n + 1 }), { total: 0, n: 0 })];",
@@ -242,7 +214,6 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
       { $group: { _id: null, total: { $sum: "$a" }, n: { $sum: 1 } } },
       { $replaceWith: { total: "$total", n: "$n" } },
     ]);
-    // the fold's document is the stream's document after it
     expect(
       compiled(
         "$$.filter(d => d.a > 1); $$ = [{ total: $$.reduce((acc, d) => acc + d.a, 0) }]; $.double = $.total * 2;",
@@ -296,15 +267,11 @@ describe("compiler/emit — a declared function is a name for a body", () => {
   });
 });
 
-// ── the server ───────────────────────────────────────────────────────────────
-
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
 beforeAll(async () => {
   client = await liveClient();
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   db = c.db("jsmql_compiler_sugars");
@@ -317,11 +284,6 @@ afterAll(async () => {
   await client?.close();
 });
 
-/**
- * A result reduced to what the pipeline changed. A fixture document keeps its `_id`
- * and every field that differs from the fixture (a field the pipeline added or
- * wrote). It is its id alone when none differs. A facet branch is a list of them.
- */
 const FIXTURE = new Map<unknown, Record<string, unknown>>([...MAIN, ...ARCHIVE].map((d) => [d._id, d]));
 const shrink = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(shrink);
@@ -422,7 +384,6 @@ describe("compiler/emit — a JavaScript aggregate inside $group / $setWindowFie
 });
 
 describe("compiler/emit — a mutator statement writes its receiver", () => {
-  // each expectation is JavaScript's own answer over the fixture
   const after = (mutate: (xs: number[]) => void) =>
     MAIN.map((d) => {
       const ys = [...d.xs];
@@ -1241,10 +1202,6 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
   });
 
   it("a mutator with nothing to write is a VALUE, and the row names the immutable form", () => {
-    // A call in the middle makes a fresh array, so there is no field to write back
-    // to. Such a chain is an expression. The value road answers it by name.
-    // It is not a Pipeline. A message that sends the reader to `jsmql.pipeline()` sends them
-    // to an entry that refuses it just as hard.
     expect(() => expr("$.xs.filter(x => x > 1).map(x => x * 2).uniq().sort()")).toThrow(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
     );
@@ -1257,11 +1214,9 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
     expect(() => expr("[3, 1, 2].sort()")).toThrow(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
     );
-    // The receiver answers before the row does: a string has neither method.
     expect(() => expr("$.tag.trim().sort()")).toThrow(
       "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
-    // …and a receiver that IS a place still writes it, however deep the path.
     expect(pipeline("$.o.xs.sort()")).toEqual([
       { $set: { "o.xs": { $sortArray: { input: { $ifNull: ["$o.xs", []] }, sortBy: 1 } } } },
     ]);

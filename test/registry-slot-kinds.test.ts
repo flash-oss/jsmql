@@ -1,15 +1,3 @@
-// One fact about the registry as a whole that no row can hold.
-//
-// EVERY SLOT STATES ITS KIND (HR7). A rule that admits a slot with no stated kind
-// leaves the compiler nothing to refuse with, and "not yet typed" cannot be told from
-// "takes every kind". So each slot that a rule admits has an entry in `slotType`, or
-// `rest` covers it. A slot that takes every kind states `"any"`.
-//
-// The audit walks every row of the JavaScript names (the kinds `name`, `global` and
-// `root`: a `$op` row is the developer's own MQL, and HR7 does not judge it) and every
-// row of the productions. It reads each cell that holds an `args` rule, beneath
-// `perFamily` and `byArgs` too, and it reports every slot with no kind in one list.
-
 import { describe, expect, it } from "vitest";
 import { NAMES } from "../src/registry/names.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
@@ -21,7 +9,6 @@ type Found = { where: string; args: Arity };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-/** Every rule beneath one cell: the cell itself, each family's rule, each argument shape's rule. */
 function rulesIn(cell: unknown, where: string, out: Found[]): void {
   if (!isObj(cell)) return;
   if (isObj(cell.args) && typeof (cell.args as { sig?: unknown }).sig === "string") {
@@ -34,7 +21,6 @@ function rulesIn(cell: unknown, where: string, out: Found[]): void {
   }
 }
 
-/** The slots a rule admits: the indices its count allows, and `"rest"` where the count has no upper bound. */
 function admitted(args: Arity): (number | "rest")[] {
   if (args.none === true) return [];
   const upTo = (n: number): number[] => Array.from({ length: n }, (_, i) => i);

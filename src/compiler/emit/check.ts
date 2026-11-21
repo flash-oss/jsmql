@@ -1,15 +1,3 @@
-// Phase 5 — EMIT. These are the literal-gated checks on the arguments of JSMQL code: a
-// JavaScript method, a global and a production. A `$op(…)` or `$stage(…)` call is the
-// developer's own MQL, so it meets none of them (HR3), apart from `checkBodyKeys`.
-//
-// Each check here inspects only what is fully static — a literal string in an
-// enum slot, or the keys of an object literal. Each check answers nothing when
-// a slot holds a field path, a computed key, a spread or an expression. So the
-// check refuses only a 100% certain violation, and a probable violation still
-// emits. The server decides what it can decide. JSMQL refuses only what the
-// server always refuses. Each rule that a check reads here is a `BodyRule` field or an
-// `Arity` field that the row states.
-
 import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
@@ -20,7 +8,6 @@ import { isFieldPathString } from "../../registry/ast.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
 
-/** The literal a slot holds, or null for anything the gate must not judge. */
 function literal(e: Expr): Lit | null {
   switch (e.type) {
     case "NumberLiteral":
@@ -28,7 +15,6 @@ function literal(e: Expr): Lit | null {
     case "UnaryExpr":
       return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
     case "StringLiteral":
-      // A `"$x"` in raw MQL IS the field reference `$x` — a runtime value, not a literal.
       return isFieldPathString(e) ? null : { kind: "string", value: e };
     case "BooleanLiteral":
       return { kind: "bool", value: e };
@@ -83,7 +69,6 @@ function matches(lit: Lit, expected: ArgType): boolean {
       return lit.kind === expected;
     case "fieldName":
     case "fieldPath":
-      // checkType handles this case before the literal gate runs — see `checkType`.
       return false;
     case "regex":
       return lit.kind === "regex" || lit.kind === "string";
@@ -103,7 +88,6 @@ function matches(lit: Lit, expected: ArgType): boolean {
   }
 }
 
-/** The kind a slot takes, as a noun with its article. */
 const TAKES: Record<ArgType, string> = {
   number: "a number",
   int: "an integer",
@@ -127,46 +111,25 @@ const TAKES: Record<ArgType, string> = {
   element: "an element of the array",
 };
 
-/** The kind or kinds a slot takes, as one noun phrase: "a number", "a string or a number", "a string, a number or a date". */
 export const takesOf = (t: ArgType | readonly ArgType[]): string => {
   if (!Array.isArray(t)) return TAKES[t as ArgType];
   const nouns = (t as readonly ArgType[]).map((x) => TAKES[x]);
   return nouns.length < 2 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
 };
 
-/** The hint for a fraction where the server takes a whole number. */
 const ROUND = " Write an integer, or round the value with '<number>.ceil()' or '<number>.floor()'.";
 
-/**
- * What the slot check may ask of an option key or a list element: is the value proven
- * null, and the value's own reading. The reading runs before the refusal, so a read of
- * a field that no stage wrote gives its own refusal, which names the field.
- */
 export type SlotProof = { readonly isNull: (e: Expr) => boolean; readonly read: (e: Expr) => unknown };
 
-/** A value that the proof shows is null, in a key or an element that takes no null (HR7). */
 function refuseProvenNull(name: string, slot: string, e: Expr, takes: string, proof: SlotProof | undefined): void {
   if (proof === undefined || e.type === "NullLiteral" || !proof.isNull(e)) return;
   proof.read(e);
   throw new CodegenError(wrongKind(`'${spell(name)}'`, slot, takes, "got null"), e.pos);
 }
 
-/**
- * The one wording of a refusal for a value of the wrong kind. Every such refusal calls it, so each one
- * reads the same. Examples are the literal checks and the kind check of `select`
- * (see `kindRefusal` in errors.ts). `slot` names a key, an argument, an element or
- * the key of `[…]`, or is "". `found` is the clause after
- * "but", for example `got a string` or `the array holds a number and a string`. `shown` is
- * the call as the source spells it: `'.max()'`, `'+'`, `'$match'`.
- */
 export const wrongKind = (shown: string, slot: string, takes: string, found: string, hint = ""): string =>
   `${shown}${slot ? ` ${slot}` : ""} takes ${takes}, but ${found}.${hint}`;
 
-/**
- * The hint after a refusal of a wrong kind: the spelling to write in place of the value.
- * `got` holds the refused kinds. When a date fills a slot that takes a number, the hint
- * names the date methods.
- */
 export const hint = (expected: ArgType | readonly ArgType[], got: readonly string[] = []): string => {
   if (Array.isArray(expected)) {
     return (expected as readonly ArgType[]).includes("number") ? hint("number", got) : "";
@@ -179,12 +142,7 @@ export const hint = (expected: ArgType | readonly ArgType[], got: readonly strin
   return "";
 };
 
-/** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
-  // A field NAME is the one slot where a string that starts with `$` is the ERROR,
-  // not a runtime value. The check reads it from the source, not through the
-  // literal gate. The server refuses `{ $count: "$n" }`, and it also refuses a
-  // dotted or empty name.
   if (expected === "fieldPath") {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
@@ -217,7 +175,6 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   }
   const lit = literal(e);
   if (lit === null || matches(lit, expected)) return;
-  // A number in an integer slot is a fraction: the kind fits, and the value does not.
   const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
     wrongKind(
@@ -231,14 +188,6 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   );
 }
 
-/**
- * A literal string outside a closed set, with a suggestion.
- *
- * A string that starts with `$` is normally a runtime field reference, and a
- * validator has no business with it — unless the slot is CONSTANT-only. There
- * the server reads the string as itself: measured, the server refuses `{ $bucketAuto:
- * { granularity: "$g" } }` as a value outside the set, and does not read a field.
- */
 function checkEnum(
   name: string,
   key: string,
@@ -254,12 +203,6 @@ function checkEnum(
   throw new CodegenError(`'${name}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
 }
 
-/**
- * A body of named keys — an object-form operator's, a stage's — is MQL syntax. A
- * JavaScript spread or computed key there lowers to `$mergeObjects` or
- * `$arrayToObject`, which the operator or the stage does not take as its body. That
- * MQL is the compiler's own, so HR3 refuses it, inside the escape hatch too.
- */
 export function checkBodyKeys(body: Expr): void {
   if (body.type !== "ObjectLiteral") return;
   for (const e of body.entries) {
@@ -268,13 +211,6 @@ export function checkBodyKeys(body: Expr): void {
   }
 }
 
-/**
- * The options document of a JavaScript method (`args.body`), for example the parts of
- * `.set({ year, month })`: the keys it must have, the keys it may not have (with a
- * suggestion), and each key's enum and type. `args` are the call's arguments; `keys`
- * the row's positional order. A `$op(…)` or `$stage(…)` body is the developer's own
- * MQL, and no rule judges it (HR3).
- */
 export function checkBody(
   name: string,
   rule: BodyRule,
@@ -283,14 +219,11 @@ export function checkBody(
   pos: number,
   proof?: SlotProof,
 ): void {
-  // A body the call supplied whole (`.set(${parts})`) is a value, and its keys are the server's to judge.
   if (args.length === 1 && args[0].type === "Injected") return;
   let present: readonly string[];
   let valueOf: (k: string) => Expr | undefined;
   const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
   if (body !== null) {
-    // The keys of the body are its wire format. Neither a spread nor a computed key
-    // can produce one. The server refuses the document either way.
     checkBodyKeys(body);
     const byKey = new Map<string, Expr>();
     for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
@@ -330,15 +263,12 @@ export function checkBody(
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
   for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
     const v = valueOf(k);
-    // A `$`-led string in a CONSTANT key is read by the server as itself, so the
-    // closed set applies to it there.
     if (v !== undefined) checkEnum(name, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
   }
   for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
-  // `null` is no option value. A key with a stated kind names that kind.
   for (const k of present) {
     const v = valueOf(k);
     if (v === undefined) continue;
@@ -347,11 +277,8 @@ export function checkBody(
     if (v.type === "NullLiteral") throw new CodegenError(wrongKind(`'${spell(name)}'`, k, takes, "got null"), v.pos);
     refuseProvenNull(name, k, v, takes, proof);
   }
-  // A key the server reads at compile time must hold a constant. The server refuses a
-  // field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
-    // A run-time value is a constant too: the call supplies it before the compile.
     if (v !== undefined && v.type !== "Injected" && !constantOf(v).ok) {
       throw new CodegenError(
         `'${name}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
@@ -361,38 +288,17 @@ export function checkBody(
   }
 }
 
-/**
- * How the source spells a name. A method gets its dot and parentheses. A stage, an
- * operator and an operator token (`|`) stay as written.
- */
 const spell = (name: string): string => (/^[A-Za-z_]\w*$/.test(name) ? `.${name}()` : name);
 
-/** The slot types whose literal rule reads the source text, so that no kind can state it. */
 const SOURCE_CHECKED: ReadonlySet<ArgType> = new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
 
-/**
- * The literal checks an `Arity` states, over positional operands: whole numbers, field
- * names and paths, enums, ranges and the rest. The KIND of each slot is not here. HR7
- * reads it from the proof of the operand, in `select`.
- */
 export function checkSlots(
   name: string,
   args: Arity,
   operands: readonly Expr[],
-  /**
-   * Does the row state an OBJECT form for this body? When it does, an object
-   * literal is exempt from `slotType`. The date accessors take a date OR the
-   * `{ date, timezone }` document. The rule that the row states for the first must not
-   * refuse the second. The row's own `body` rule judges the second instead. When
-   * the row states no object form, an object literal is simply the wrong type:
-   * the server refuses `$documents({ a: 1 })`.
-   */
   hasObjectForm = true,
-  /** The receiver of a method call, for a rule that states slot `-1`. */
   receiver?: Expr,
-  /** Does the lowering only ask for a value? See `Site.settling`. */
   settling = false,
-  /** The proof of an option key or a list element. A site with no scope passes none. */
   proof?: SlotProof,
 ): void {
   for (const i of args.integer ?? []) {
@@ -454,15 +360,9 @@ export function checkSlots(
       );
     }
   }
-  // The KIND of a slot is HR7's, and `select` judges it from the proof of each operand.
-  // Only the checks that read the SOURCE of a literal stay here. They are a whole number,
-  // and a field name or a field path, whose rules a kind cannot state.
-  // A slot that `slotType` names reads that type; every other operand reads `rest`.
   operands.forEach((e, i) => {
     const t = args.slotType?.[i] ?? args.rest;
     if (t === undefined || (hasObjectForm && e.type === "ObjectLiteral")) return;
-    // A type with a message of its own answers for itself, so the reason names the
-    // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
     const own = (Array.isArray(t) ? (t as readonly ArgType[]) : [t as ArgType]).find((one) => SOURCE_CHECKED.has(one));
     if (own === undefined) return;
     if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, `argument ${i + 1}`, e, own);
@@ -481,7 +381,6 @@ export function checkSlots(
     const e = operands[Number(i)];
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && (n < lo || n > hi)) {
-      // A range with no top is a floor. The refusal says so.
       const bound = hi === Number.MAX_SAFE_INTEGER || hi === Infinity ? `of ${lo} or more` : `from ${lo} to ${hi}`;
       throw new CodegenError(
         `'${spell(name)}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n}.`,
@@ -500,11 +399,6 @@ export function checkSlots(
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    // An object literal is exempt, as it is for `slotType`. For a body that may be
-    // a name OR a document, the row's `body` rule describes its keys. Some
-    // of those keys hold expressions. `$unionWith("c")` must be constant;
-    // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
-    // A run-time value is a constant too: the call supplies it before the compile.
     if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
       throw new CodegenError(
         `'${spell(name)}' argument ${i + 1} must be a compile-time constant, but got an expression. Write a literal, or pass the value as a parameter.`,
@@ -518,10 +412,7 @@ export function checkSlots(
   }
 }
 
-// ── date formats ─────────────────────────────────────────────────────────────
-
 const DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
-/** Moment/Luxon tokens a developer may reach for, and the MongoDB specifier each is — or null for one MongoDB cannot format. */
 const MOMENT_FORMAT_TOKENS: readonly (readonly [string, string | null])[] = [
   ["YYYY", "%Y"],
   ["MMMM", null],
@@ -563,7 +454,6 @@ function momentFormatHint(fmt: string): string {
   );
 }
 
-/** A MongoDB date format: every `%` carries a known specifier, and Moment tokens are named for what they are. */
 export function checkDateFormat(name: string, fmt: string, pos: number): void {
   for (let i = 0; i < fmt.length; i++) {
     if (fmt[i] !== "%") continue;

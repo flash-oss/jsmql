@@ -1,9 +1,3 @@
-// Phase 2 of src/compiler/ — the Pratt parser driven by productions.ts.
-//
-// Two properties matter. It must parse every source the test suite compiles, and
-// it must REFUSE the forms that are a SyntaxError in JavaScript itself — every
-// jsmql program is valid JavaScript syntax.
-
 import { readdirSync, readFileSync } from "node:fs";
 import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -29,26 +23,18 @@ function harvestInputs(): string[] {
   return [...found];
 }
 
-/**
- * Extract the one statement of a program. A trailing `;` keeps the `Pipeline` wrapper.
- * That `;` is the token that says "pipeline". A test about the statement itself must
- * unwrap it first.
- */
 const only = (src: string): { type: string } & Record<string, unknown> => {
   const n = parse(src) as { type: string; stmts?: unknown[] } & Record<string, unknown>;
   return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
 };
 
 describe("compiler/parse — every source the compiler accepts is JavaScript syntax", () => {
-  /** Does JavaScript parse the source, as a script or as one parenthesised expression? */
   const isJs = (src: string): boolean => {
     for (const text of [src, `(${src}\n)`]) {
       try {
         new Script(text);
         return true;
-      } catch {
-        // try the other reading
-      }
+      } catch {}
     }
     return false;
   };
@@ -63,7 +49,6 @@ describe("compiler/parse — every source the compiler accepts is JavaScript syn
 
   it("parses every string source the suites compile as JavaScript", () => {
     const accepted = harvestInputs().filter(compiles);
-    // The harvest reads every suite in test/. A regex that stops matching reads nothing.
     expect(accepted.length).toBeGreaterThan(1000);
     const failures = accepted.filter((src) => !isJs(src));
     expect(failures).toEqual([]);
@@ -82,7 +67,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
   const TWICE = (name: string, pos: number): string =>
     `The parameter name '${name}' appears twice in one parameter list, at position ${pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => …'.`;
 
-  // [source, message, .pos]. JavaScript refuses each source too; the test asks `node:vm` for that answer.
   const refused: [string, string, number][] = [
     ["$.a = 1,", TRAILING(7, "end of input"), 7],
     ["$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, ", TRAILING(54, "end of input"), 54],
@@ -97,7 +81,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
     ["function g(x) { let x = 1; return x } $.v = g(1);", PARAM("let x", "x", 16), 16],
     ["({ a }, { $ }) => { const a = 1; $.x = a; }", PARAM("const a", "a", 20), 20],
     ["$$.aggregate((o) => { let o = 1; $.y = o; });", PARAM("let o", "o", 22), 22],
-    // The fold inlines a constant, so only the parser can see this pair.
     ["$.v = [1, 2].map((x) => { const y = 1; const y = 2; return y });", AGAIN("const y", 39), 39],
     ["let a = 1; let a = 2; $.x = a;", AGAIN("let a", 11), 11],
     ["let x = $.a, x = $.b; $.c = x;", AGAIN("let x", 13), 13],
@@ -109,9 +92,7 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
       try {
         new Script(text);
         return false;
-      } catch {
-        // try the other reading
-      }
+      } catch {}
     }
     return true;
   };
@@ -130,7 +111,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
     });
   }
 
-  // The legal neighbour of each refusal. JavaScript parses it, and so does jsmql.
   const kept: [string, unknown][] = [
     ["$.a = 1, $.b = 2", [{ $set: { a: 1, b: 2 } }]],
     ["[$.a = 1, $.b = 2,]", [{ $set: { a: 1, b: 2 } }]],
@@ -143,7 +123,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
       ],
     ],
     [
-      // A nested function opens a scope of its own, so its `const x` shadows the outer parameter.
       "$.v = $.items.map((x) => $.other.map((y) => { const x = 2; return x + y }));",
       [
         {
@@ -165,7 +144,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
         },
       ],
     ],
-    // A plain `function` list may name a parameter twice; the last one wins, as in JavaScript.
     ["$.v = [5, 6].map(function (x, x) { return x });", [{ $set: { v: [0, 1] } }]],
   ];
   for (const [src, mql] of kept) {
@@ -177,7 +155,6 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
 });
 
 describe("compiler/parse — the forms JavaScript itself refuses", () => {
-  // Each of these is a SyntaxError under `node --check`, so jsmql refuses it too.
   const refused: [string, RegExp][] = [
     ["$.a ?? $.b || $.c", /without parentheses/],
     ["$.a || $.b ?? $.c", /without parentheses/],
@@ -194,7 +171,6 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
     });
   }
 
-  /** A parse tree as a compact S-expression, so a test states the exact grouping. */
   const sx = (n: unknown): string => {
     const t = n as Record<string, unknown> & { type: string };
     switch (t.type) {
@@ -227,16 +203,12 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
       ["(~$.a) ** $.b", "(** (~ $.a) $.b)"],
     ];
     for (const [src, tree] of grouped) expect(sx(parseExpression(src)), src).toBe(tree);
-    // the `?.` forms without the `?.` are a write to a path
     expect(sx(parse("$.a.b = 1"))).toBe("(= $.a.b 1)");
     expect(sx(parse("$.a.b += 1"))).toBe("(+= $.a.b 1)");
   });
 });
 
 describe("compiler/parse — a write inside a value: JavaScript's grouping, one refusal", () => {
-  // JavaScript binds a postfix `++` tighter than every prefix and binary operator,
-  // so `1 + $.x++` is `1 + ($.x++)`. Each source is valid JavaScript; the write sits
-  // inside a value, and a write stands only as a statement.
   const IN_VALUE = (wrote: string, statement: string, place: string, side: string, pos: number): string =>
     `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place}' there.`;
   const refused: [string, string, number][] = [
@@ -251,7 +223,6 @@ describe("compiler/parse — a write inside a value: JavaScript's grouping, one 
     ["$.y = ++$.x;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 6), 6],
     ["$.y = 1 + --$.a.b;", IN_VALUE("--$.a.b", "$.a.b -= 1", "$.a.b", "before", 10), 10],
     ["++$.x + 1;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 0), 0],
-    // The assignment operators are the same rule: JavaScript gives the value after the write.
     ["1 + ($.a = 5);", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 9), 9],
     ["$.y = ($.a += 1);", IN_VALUE("$.a += 1", "$.a += 1", "$.a", "before", 11), 11],
     ["$.y = $.a *= 2;", IN_VALUE("$.a *= 2", "$.a *= 2", "$.a", "before", 10), 10],
@@ -276,8 +247,6 @@ describe("compiler/parse — a write inside a value: JavaScript's grouping, one 
     });
   }
 
-  // A write in an ARRAY reads as a pipeline element to the parser. The position
-  // pass puts the array in a value, and the desugar pass gives the same refusal.
   const DELETE_IN_VALUE = (place: string, pos: number): string =>
     `'delete ${place}' is a write inside a value at position ${pos}. A write stands only as a statement. Write 'delete ${place};' as its own statement before the statement that uses the value.`;
   const inArrays: [string, string, number][] = [
@@ -289,7 +258,6 @@ describe("compiler/parse — a write inside a value: JavaScript's grouping, one 
     ["$.y = { k: [$.a = 1] };", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 16), 16],
     ["$match([$.a = 1]);", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 12), 12],
     ["$.y = [1, delete $.a];", DELETE_IN_VALUE("$.a", 10), 10],
-    // JavaScript reads `delete` as a value too.
     ["$.y = f(delete $.a);", DELETE_IN_VALUE("$.a", 8), 8],
     ["$.y = 1 + (delete $.a.b);", DELETE_IN_VALUE("$.a.b", 11), 11],
   ];
@@ -315,11 +283,9 @@ describe("compiler/parse — a write inside a value: JavaScript's grouping, one 
   });
 
   it("gives the JavaScript answer for the statement the refusal names", () => {
-    // `$.y = $.x++` in JavaScript: y gets the old x, then x grows by one.
     const doc = { x: 1, y: 0 };
     doc.y = doc.x++;
     expect(doc).toEqual({ x: 2, y: 1 });
-    // The two statements the refusal names emit the same order: read first, then write.
     expect(jsmql("$.y = $.x; $.x += 1;")).toEqual([{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]);
   });
 
@@ -357,7 +323,6 @@ describe("compiler/parse — precedence and associativity come from the rows", (
 
   it("binds tighter levels first", () => {
     const t = parseExpression("$.a + $.b * $.c");
-    // + is looser, so it is the root and * is its right operand.
     expect(t.type).toBe("BinaryExpr");
     expect((t as { op: string }).op).toBe("+");
     expect((t as { right: { op: string } }).right.op).toBe("*");
@@ -498,7 +463,6 @@ describe("compiler/parse — the entry form", () => {
 });
 
 describe("compiler/parse — a run of writes is ONE element, and keeps every op", () => {
-  /** The elements of a bracketed pipeline, each written as what it holds. */
   const elements = (src: string): string[] => {
     const t = parse(src) as { elements: { type: string; ops?: { target?: { path?: string } }[] }[] };
     return t.elements.map((e) =>
@@ -529,7 +493,6 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
   });
 
   it("accepts the trailing comma a formatter leaves before a closing bracket", () => {
-    // `[a, b,]` is a list, so JavaScript allows its trailing comma. A statement is not a list.
     expect((parse("[$.a = 1, $.b = 2,]") as { elements: { ops: unknown[] }[] }).elements[0].ops).toHaveLength(2);
   });
 
@@ -542,8 +505,6 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
 
 describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE", () => {
   it("wraps a lone statement the source ended with `;`", () => {
-    // `$.a.assign($.b)` is a value, and `$.a.assign($.b);` is a statement. A collapse of
-    // the single statement would throw that `;` away, and the two would parse to the same tree.
     expect(parse("$.a.assign($.b)").type).toBe("MethodCall");
     expect(parse("$.a.assign($.b);").type).toBe("Pipeline");
   });
@@ -555,7 +516,6 @@ describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE",
   });
 
   it("reads a `function` declaration inside a bracketed pipeline as a declaration", () => {
-    // As a function VALUE it made the literal look like an array of values.
     const t = parse("[function double(x) { return x * 2 }, $set({ a: double($.price) })]") as {
       elements: { type: string }[];
     };
@@ -564,17 +524,6 @@ describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE",
 });
 
 describe("compiler/parse — the operators a row consumes are the operators the AST holds", () => {
-  /**
-   * The parser builds a BinaryExpr / UnaryExpr / AssignExpr from the token's own
-   * TEXT — no table maps a token type back to a spelling. So the one thing that
-   * must hold is that every operator lexeme such a row consumes is a member of
-   * the AST's operator set. A type-level version of this check was vacuous.
-   * A const generic does not thread `becomes`, so a conditional on it
-   * sees `NodeName` and matches nothing. Runtime data cannot collapse that way.
-   */
-  // An operator-role token anywhere in the row, or a keyword only as the row's
-  // TRIGGER (`in`, `typeof`). `foreignJoin` also consumes `const` and `let` on
-  // the way to its `=`. Neither is the operator it builds.
   const operatorRole = (lexeme: string): boolean =>
     (TOKENS as Record<string, { role?: string } | undefined>)[lexeme]?.role === "operator";
   const consumedBy = (node: string): string[] =>
@@ -592,7 +541,6 @@ describe("compiler/parse — the operators a row consumes are the operators the 
   });
 
   it("names no operator the rows never consume", () => {
-    // The other direction: a spelling in the AST with no row is unreachable.
     const rows = new Set([...consumedBy("BinaryExpr"), ...consumedBy("UnaryExpr"), ...consumedBy("AssignExpr")]);
     for (const op of [...BINARY_OPS, ...UNARY_OPS, ...ASSIGN_OPS]) expect(rows.has(op), op).toBe(true);
   });
@@ -600,21 +548,16 @@ describe("compiler/parse — the operators a row consumes are the operators the 
 
 describe("compiler/parse — a reserved word is a legal name", () => {
   it("accepts every keyword as an object key and after `$.`, driven off keywords.ts", () => {
-    // ECMAScript allows any IdentifierName after `.` and before `:`; a MongoDB
-    // field may be named anything. A new keyword is covered the day its row lands.
     for (const word of Object.keys(KEYWORDS)) {
       const entry = (parseExpression(`({ ${word}: 1 })`) as { entries: { key: { name?: string } }[] }).entries[0];
       expect(entry.key.name, word).toBe(word);
       expect((parseExpression(`$.${word}`) as { path: string }).path, word).toBe(word);
     }
-    // The raw `$let` document, in both the document and the call spelling.
     expect(() => parseExpression('{ $let: { vars: { x: 1 }, in: "$$x" } }')).not.toThrow();
     expect(() => parseExpression('$let({ vars: { x: 1 }, in: "$$x" })')).not.toThrow();
   });
 
   it("refuses a keyword as a SHORTHAND property, which JavaScript refuses too", () => {
-    // `({ in })` is a SyntaxError (node --check); only `undefined` is an
-    // identifier reference and so a legal shorthand.
     for (const word of Object.keys(KEYWORDS)) {
       if (word === "undefined") continue;
       expect(() => parseExpression(`({ ${word} })`), word).toThrow(/cannot be a shorthand property/);
@@ -631,8 +574,6 @@ describe("compiler/parse — a reserved word is a legal name", () => {
 
 describe("compiler/parse — the `**` restriction is one-sided, as JavaScript states it", () => {
   it("refuses a unary on the LEFT and accepts one on the RIGHT", () => {
-    // node --check: `-2 ** 2` and `typeof a ** 2` are SyntaxErrors; `2 ** -1`
-    // and `2 ** typeof a` parse. A symmetric rule refused the valid half.
     expect(() => parseExpression("-2 ** 2")).toThrow(/without parentheses/);
     expect(() => parseExpression("typeof $.a ** 2")).toThrow(/without parentheses/);
     expect(() => parseExpression("2 ** -1")).not.toThrow();
@@ -653,7 +594,6 @@ describe("compiler/parse — a `{ … }` callback body is stages only where its 
     expect(() => parse("$.v = $.items.filter(x => { x.a; });")).toThrow(
       /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
     );
-    // A declared function is not a stages callee either.
     expect(() => parse("const f = x => { $.a = 1 }; $.b = 1;")).toThrow(
       /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
     );
@@ -668,12 +608,9 @@ describe("compiler/parse — a `{ … }` callback body is stages only where its 
 });
 
 describe("compiler/parse — one statement loop", () => {
-  /** The tree with positions erased, so two spellings at different columns compare equal. `group` is a position too. */
   const shape = (p: Program): string => JSON.stringify(p, (k, v) => (k === "pos" || k === "group" ? 0 : v));
 
   it("gives an entry block exactly the meaning of the same text at the top level", () => {
-    // One statement loop reads both, so a trailing `;` says "this is a pipeline"
-    // inside an entry block exactly as it does at the top level.
     for (const src of [
       "$.a > 1",
       "$.a > 1;",
@@ -688,11 +625,6 @@ describe("compiler/parse — one statement loop", () => {
   });
 
   it("reads a declaration list as the declarations it stands for, all marked as ONE declaration", () => {
-    // `const a = …, b = …;` is N declarations in JavaScript, and the parser builds
-    // the same N nodes it builds for N statements. The ONE thing a list adds is
-    // `group`, the keyword's offset. Every declarator of that declaration
-    // shares it, and the emit phase reads it to give them one stage. Erase it
-    // and the trees are equal.
     for (const [list, separate] of [
       ["let x = 1, y = 2; $.a = x + y;", "let x = 1; let y = 2; $.a = x + y;"],
       ["const a = $.p, b = a + 1, c = b * 2; $.d = c;", "const a = $.p; const b = a + 1; const c = b * 2; $.d = c;"],
@@ -700,7 +632,6 @@ describe("compiler/parse — one statement loop", () => {
     ]) {
       expect(shape(parse(list)), list).toBe(shape(parse(separate)));
     }
-    // One declaration, one group; a `;` starts a new one.
     const groups = (src: string): number[] =>
       (parse(src) as { stmts: { group?: number }[] }).stmts.filter((st) => "group" in st).map((st) => st.group!);
     const oneList = groups("let x = 1, y = 2, z = 3; $.a = x;");
@@ -724,7 +655,6 @@ describe("compiler/parse — one statement loop", () => {
 });
 
 describe("compiler/parse — a destructured parameter is one parameter, its names the parts of it", () => {
-  /** The tree without its positions: a substituted part sits where its NAME was written, the spelled-out form where it is read. */
   const noPos = (n: unknown): unknown => {
     if (Array.isArray(n)) return n.map(noPos);
     if (n === null || typeof n !== "object") return n;
@@ -785,7 +715,6 @@ describe("compiler/parse — a destructured parameter is one parameter, its name
     expect(() => parseExpression("a.map(({ [k]: v }) => v)")).toThrow(message);
     expect(() => parseExpression("a.map(({ a = 1 }) => a)")).toThrow(message);
     expect(() => parseExpression("a.map(([1, a]) => a)")).toThrow(message);
-    // the refusal names what it saw, and points at it
     expect(() => parseExpression("a.map(([a, ...rest]) => a)")).toThrow("('...') is not one of them, at position 11");
   });
 
@@ -798,8 +727,6 @@ describe("compiler/parse — a destructured parameter is one parameter, its name
 
 describe("compiler/parse — a write target is a place, and an optional chain is one expression", () => {
   it("refuses an optional chain anywhere in the target, not only at its end", () => {
-    // `a?.b.c = 1` is as much a SyntaxError as `a?.b = 1` (node --check); the
-    // rule that built the chain must stay with it through every later link.
     for (const src of ["$.a?.b.c = 1;", "$.a?.b[0] = 1;", "$.a?.b.c++;", "$.a?.b.c += 1;", "$.a = $.b?.c.d = 1;"]) {
       expect(() => parse(src), src).toThrow(/cannot assign to/);
     }
@@ -825,7 +752,6 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("refuses an arithmetic write on '$' or '$$', which is not a field", () => {
-    // Without this refusal, `$ += 1` would become the `$ = $ + 1` that looks valid.
     const WHOLE = (op: string, target: string, what: string, field: string, pos: number): string =>
       `Cannot use '${op}' on '${target}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`;
     const DOC = "'$' is the whole document";
@@ -837,11 +763,9 @@ describe("compiler/parse — a write target is a place, and an optional chain is
       ["++$;", WHOLE("++", "$", DOC, "$.<field>++", 0)],
       ["$$ += 1;", WHOLE("+=", "$$", STREAM, "$.<field> += …", 3)],
       ["$$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 2)],
-      // The value form gets the same answer, not a statement that the parser refuses too.
       ["$.y = $$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 8)],
     ];
     for (const [src, message] of refused) expect(() => parse(src), src).toThrow(message);
-    // `=` replaces the document or the stream, and a collection takes `+=` as a `$merge`.
     expect(jsmql("$ = { a: 1 };")).toEqual([{ $replaceWith: { a: 1 } }]);
     expect(jsmql("$$$.archive += $$;")).toEqual([{ $merge: "archive" }]);
     expect(jsmql("$.n += 1;")).toEqual([{ $set: { n: { $add: ["$n", 1] } } }]);
@@ -852,7 +776,6 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("refuses a space between `$` and its name", () => {
-    // `$ abs(1)` is two identifiers to JavaScript.
     expect(() => parseExpression("$ abs(1)")).toThrow(/directly after '\$'/);
     expect(() => parse("$$.$ group({_id: null});")).toThrow(/directly after '\$'/);
   });
@@ -862,7 +785,6 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("names an operator by its spelling in a refusal of a mix, never by its key", () => {
-    // The negation row's spelling is `-x`; its key, `negation`, must never reach the user.
     expect(() => parseExpression("-2 ** 2")).toThrow(/'-x'/);
     expect(() => parseExpression("-2 ** 2")).not.toThrow(/negation/);
     expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/'\|\|'/);
@@ -875,7 +797,6 @@ describe("compiler/parse — `$.name(…)` is a method on the document", () => {
     expect(call.type).toBe("MethodCall");
     expect(call.name).toBe("pick");
     expect(call.object).toEqual({ type: "FieldRef", path: "", pos: 0 });
-    // the method's own `.` — where every other method call points
     expect(call.pos).toBe(1);
     expect(only("$.pick")).toEqual({ type: "FieldRef", path: "pick", pos: 0 });
     const chained = only("$.pick.x") as { object: unknown };

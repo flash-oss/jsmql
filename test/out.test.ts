@@ -1,7 +1,3 @@
-// Tests for the `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` lowering.
-// See docs/specs/out-stage.md for the design and docs/LANGUAGE.md for the
-// user-facing reference.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -131,9 +127,6 @@ describe("$out — LHS shape errors", () => {
 
 describe("$out — RHS shape errors", () => {
   it("a chain method no row states names the workaround", () => {
-    // A chain link is a method whose row carries a `stream` cell, or a stage
-    // ('$$.$match(…)'). Only a name that is neither reaches the hint that names a
-    // stage link.
     expect(() => jsmql("$$$.coll = $$.unknownMethod();")).toThrow(
       "'.unknownMethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
     );
@@ -142,16 +135,11 @@ describe("$out — RHS shape errors", () => {
   it("suggests a near-miss chain method name", () => {
     expect(() => jsmql("$$$.coll = $$.mpa(d => d.x);")).toThrow(/Did you mean '\.map\(\)'\?/);
     expect(() => jsmql("$$$.coll = $$.fliter({ a: 1 });")).toThrow(/Did you mean '\.filter\(\)'\?/);
-    // Nothing close enough — no suggestion, just the workaround.
     expect(() => jsmql("$$$.coll = $$.wibble();")).toThrow(
       "'.wibble()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
     );
   });
 
-  // A method the stream deliberately lacks says so on its own row: the `stream` cell is a
-  // refusal (src/registry/names.ts). A method the stream DOES
-  // carry states a rule there instead, so no refusal can suggest a workaround for something
-  // that already works. These are the two that genuinely have no chain form.
   it("names the stage equivalent for a JS method a stream chain deliberately lacks", () => {
     expect(() => jsmql("$$$.coll = $$.reduce((a, d) => a + d.n, 0);")).toThrow(
       "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'. To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'.",
@@ -176,8 +164,6 @@ describe("$out — RHS shape errors", () => {
 });
 
 describe("$out — multi-method RHS chains", () => {
-  // Stream-methods registry methods compose freely before the $out: filter,
-  // map, slice, toSorted, toReversed, flatMap, concat.
   it(".filter + .slice — $match + $limit + $out", () => {
     expect(jsmql("$$$.archive = $$.filter(d => d.active === false).slice(0, 100);")).toEqual([
       { $match: { active: false } },
@@ -204,11 +190,7 @@ describe("$out — multi-method RHS chains", () => {
   });
 });
 
-// `.reject` is `.filter` negated, and the pair stays in lockstep in every container. A `$out` chain that wired
-// up only `.filter` would fail on the obvious next thing a user writes ("archive everything that ISN'T
-// expired"). The error would be an unknown-method error.
 describe("$out — .reject is .filter negated", () => {
-  // Every predicate spelling, same negated $match — matching what a `$$ =` chain emits.
   const NEGATED = { $match: { $nor: [{ archived: true }] } };
   for (const [spelling, predicate] of [
     ["arrow", "d => d.archived === true"],
@@ -306,8 +288,6 @@ describe("$out — validate() carries meaningful positions", () => {
   });
 });
 
-// A `$out` RHS chain runs at the OUTER pipeline level, so a stage link there is
-// an ordinary top-level stage placed before the write.
 describe("$out RHS accepts chained stage calls", () => {
   it("lowers a stage link before the write", () => {
     expect(jsmql("$$$.archive = $$.$sort({ a: 1 });")).toEqual([{ $sort: { a: 1 } }, { $out: "archive" }]);
@@ -327,7 +307,6 @@ describe("$out RHS accepts chained stage calls", () => {
     ]);
   });
 
-  // Same stages, whichever way they are written.
   it("is identical to writing the stages as statements before the write", () => {
     const chain = jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });');
     expect(chain).toEqual([{ $match: { s: "x" } }, { $sort: { a: -1 } }, { $out: "archive" }]);
@@ -342,7 +321,6 @@ describe("$out RHS accepts chained stage calls", () => {
   });
 
   describe("placement", () => {
-    // The `$out` always follows, so a second write stage can never be last.
     it("rejects a write stage in the chain", () => {
       expect(() => jsmql('$$$.archive = $$.$out("other");')).toThrow(
         "'$$$.archive = …' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
@@ -354,19 +332,11 @@ describe("$out RHS accepts chained stage calls", () => {
       );
     });
     it("passes an unknown stage name through, as your own MQL", () => {
-      // DELIBERATELY invalid: mongod refuses `$prject`, because it is not a pipeline stage.
       expect(jsmql("$$$.archive = $$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }, { $out: "archive" }]);
     });
   });
 });
 
-// ── `$merge` — the collection keeps what it already holds ────────────────────
-//
-// `=` REPLACES a collection (a `$out`) and `+=` ADDS to it (a `$merge`), which the
-// server proves: run both over a collection that already holds `{ _id: 99 }` and only
-// `$out` drops it. `.concat()` and `.push(...)` are the same write spelled as the
-// JavaScript verbs, so an ARRAY of documents can be written as well as the stream.
-// See docs/specs/out-stage.md.
 describe("$merge — add to a collection", () => {
   it("'+=' writes the stream with $merge, where '=' writes it with $out", () => {
     expect(jsmql("$$$.metrics += $$;")).toEqual([{ $merge: "metrics" }]);
@@ -397,15 +367,12 @@ describe("$merge — add to a collection", () => {
     expect(jsmql("$$$.metrics.push(...$$);")).toEqual([{ $merge: "metrics" }]);
   });
 
-  // An array is not the stream, so its elements become the documents first — the
-  // same stages `$$ = <array>;` emits, then the write.
   it("an ARRAY of documents is written element by element", () => {
     const stages = [{ $unwind: "$items" }, { $replaceWith: "$items" }, { $merge: "metrics" }];
     expect(jsmql("$$$.metrics.concat($.items);")).toEqual(stages);
     expect(jsmql("$$$.metrics.push(...$.items);")).toEqual(stages);
   });
 
-  // JavaScript's spread rule, kept: `.push(x)` appends x itself, so x IS the document.
   it("'.push()' without a spread writes ONE document", () => {
     expect(jsmql("$$$.metrics.push($.doc);")).toEqual([{ $replaceWith: "$doc" }, { $merge: "metrics" }]);
     expect(jsmql("$$$.metrics.push({ _id: 9, k: 1 });")).toEqual([
@@ -443,7 +410,6 @@ describe("$merge — add to a collection", () => {
     expect(() => jsmql("$$$.metrics.push(5);")).toThrow(
       "'$$$.<coll>.push()' argument 1 takes a document, but got a number. The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
     );
-    // the case the spread exists for: a LIST pushed without one would be a single document
     expect(() => jsmql("$$$.metrics.push([{ a: 1 }]);")).toThrow(
       "'$$$.<coll>.push()' argument 1 takes a document, but got an array. The value becomes one document. Spread a list of them ('$$$.<coll>.push(...<array>);'),",
     );

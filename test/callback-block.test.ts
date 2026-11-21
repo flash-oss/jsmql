@@ -1,14 +1,6 @@
-// Tests for the callback-block rule. A `{ … }` body on a JavaScript or lodash method is JavaScript:
-// `const`/`let` bindings plus one `return <expr>`. Pipeline stages belong to `.aggregate(pipeline)` alone.
-//
-// See docs/specs/grammar.md § Statement block and docs/specs/lookup-stage.md § Block bodies.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// Every position a stream-rooted callback reaches, so the rule cannot hold in one
-// container and leak in another. The refusal names both fixes on every receiver:
-// the `.aggregate` block, and the chained-stage link `$$.$<stage>(…)`.
 const NAMES_BOTH_FIXES = /is a pipeline stage.*'\.aggregate\(\(o\) => \{ \$\w+\(\.\.\.\); … \}\)'.*'\$\$\.\$\w+\(…\)'/s;
 
 describe("a pipeline stage in a JavaScript callback is rejected", () => {
@@ -70,17 +62,13 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   });
 
   it("says which of the three it is: a stage with a return, a stage without one, a declaration", () => {
-    // A block that also RETURNS cannot become a stage block if the reader moves it. The reader has to drop one
-    // of the two, and the message names both positions.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });`)).toThrow(
       /is a pipeline stage\. The 'return' at position \d+ makes this block a value callback/,
     );
     expect(jsmql(`$.r = $$$.o.aggregate(x => { $sort({ a: 1 }); });`)).toEqual([
       { $lookup: { from: "o", pipeline: [{ $sort: { a: 1 } }], as: "r" } },
     ]);
-    // No return: the block can BE a stage block, and the message says where.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`)).toThrow(/is a pipeline stage/);
-    // A declaration belongs at the top level, and it compiles when moved out.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { const g = z => z; return g(x.a) > 1; });`)).toThrow(
       /declares a reusable function\. A pipeline declares a reusable function at its top level/,
     );
@@ -109,12 +97,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   });
 });
 
-// A stage-free block IS the JavaScript value form, so it continues to work and means
-// exactly what the expression spelling means.
 describe("a stage-free callback block is the JavaScript value form", () => {
   it("`{ return <pred> }` is the predicate — same MQL as the expression body", () => {
     const block = jsmql(`$.r = $$$.orders.filter(o => { return o.userId === $._id; });`);
-    // The indexed basic form, not a dropped predicate.
     expect(block).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "r" } }]);
     expect(block).toEqual(jsmql(`$.r = $$$.orders.filter(o => o.userId === $._id);`));
   });
@@ -131,10 +116,6 @@ describe("a stage-free callback block is the JavaScript value form", () => {
   });
 
   it("`{ return <expr> }` on the predicate/transform chain methods is the expression", () => {
-    // The three take the same shape: `d => { return d.items; }` compiles exactly as
-    // the identical JavaScript `d => d.items` does. A method that rejected the block
-    // form would make one spelling an error and its twin legal.
-    // A window over the documents so far: `__jsmql.tmp.0` is 1 once one of them fails the predicate.
     const run = (keep: 0 | 1) => [
       { $sort: { t: 1 } },
       {
@@ -176,8 +157,6 @@ describe("a stage-free callback block is the JavaScript value form", () => {
   });
 
   it("`const`/`let` bindings become the `$let` the predicate's `$expr` rides in", () => {
-    // A `$let` has no query form, so the whole predicate goes to `$expr`. But the bindings work, and a
-    // `$.<field>` read still hoists into the `$lookup.let`.
     expect(jsmql(`$.r = $$$.orders.filter(o => { const t = o.total; return t > 5; });`)).toEqual([
       {
         $lookup: {
@@ -190,8 +169,6 @@ describe("a stage-free callback block is the JavaScript value form", () => {
   });
 });
 
-// The rule is about STREAM callbacks. An in-document array method never had the
-// sub-pipeline grammar, so its `=> { … }` keeps its plain expression-block meaning.
 describe("in-document array callbacks are untouched", () => {
   it("an expression block still lowers to `$let`", () => {
     expect(jsmql(`$.r = $.items.map(d => { const a = d * 2; return a; });`)).toEqual([
@@ -216,11 +193,6 @@ describe("in-document array callbacks are untouched", () => {
   });
 });
 
-// The `$$ =` source switch reaches a lookup through the same `lookupOf` as every other join road
-// (src/compiler/emit/join.ts). Whether the chain correlates is what its body captured, never a separate reading
-// of the predicate. So a `{ return <pred> }` block classifies exactly as the bare expression does. A spelling
-// that lost the predicate would leave an empty sub-pipeline matching every foreign document, which is valid MQL
-// and therefore silent.
 describe("the `$$ =` source switch folds a callback block before it classifies", () => {
   const PAIRS: [string, string, string][] = [
     [
@@ -245,8 +217,6 @@ describe("the `$$ =` source switch folds a callback block before it classifies",
     });
   }
 
-  // The predicate must survive, not just the routing: an empty `pipeline` here would
-  // pass an equality check against another broken form but match every document.
   it("keeps the predicate in the emitted sub-pipeline", () => {
     expect(jsmql("$$ = $$$.orders.filter(o => { return o.uid === $._id; });")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "__jsmql.tmp.0" } },
@@ -256,9 +226,6 @@ describe("the `$$ =` source switch folds a callback block before it classifies",
   });
 });
 
-// A `const`/`let` block predicate is a `$let` expression. A `$let` has no query form, so the whole predicate
-// rides in `$expr`. But every predicate position accepts it, and the bindings behave exactly as they do in any
-// other block-bodied arrow.
 describe("`const`/`let` bindings work in every predicate position", () => {
   const LET = { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } };
   const cases: [string, string, unknown][] = [
@@ -299,7 +266,6 @@ describe("`const`/`let` bindings work in every predicate position", () => {
   }
 
   it("`.reject` negates the `return` and keeps the bindings", () => {
-    // The bindings compute values; only the returned expression decides the match.
     expect(jsmql(`$$ = $$.reject(d => { const t = d.total; return t > 5; });`)).toEqual([
       { $match: { $nor: [{ $expr: { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } } }] } },
     ]);
@@ -344,9 +310,6 @@ describe("`const`/`let` bindings work in every predicate position", () => {
   });
 
   it("a `$facet` branch reads a `$.<field>` in the block from the same document", () => {
-    // A `$facet` branch runs over the SAME documents, so `$.total` needs no `let`: it
-    // is the field of the document the branch reads. See docs/specs/let-bindings.md
-    // § Blocks and sub-pipelines.
     expect(jsmql(`$ = { big: $$.filter(d => { const t = $.total; return t > 5; }) };`)).toEqual([
       { $facet: { big: [{ $match: { $expr: { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } } } }] } },
     ]);

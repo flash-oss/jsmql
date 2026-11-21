@@ -1,18 +1,3 @@
-// THE proof that constant folding is safe. For every expression the fold can
-// compute, the value it computes equals the value MongoDB computes for the SAME
-// expression left alone. The first constant operand is read from a document, and
-// the tree lowers with no fold, so the server does the arithmetic itself.
-//
-// Nothing else can establish this. A `toEqual` on emitted MQL proves what jsmql
-// writes down, never that the server agrees — and "agrees" is the entire claim a
-// fold makes. Every rule of the fold that LOOKS like an arbitrary restriction
-// has its cause in a failure of this suite:
-//   (0.25).atanh()           JavaScript 0.25541281188299536   server …3
-//   123456789 * 987654321    JavaScript …260                  server …269
-//   (0.5).round()            JavaScript 1                     server 0
-//
-// It skips itself when no mongod listens, so `npm test` stays green.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MongoClient } from "mongodb";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
@@ -35,9 +20,7 @@ if (!up) {
   );
 }
 
-/** Every expression that must fold to exactly what the server computes. */
 const EXPRESSIONS: readonly string[] = [
-  // arithmetic, comparison, logic
   "1 + 2",
   "5 - 2",
   "3 * 4",
@@ -62,7 +45,6 @@ const EXPRESSIONS: readonly string[] = [
   "true ? 1 : 2",
   "false ? 1 : 2",
   "123456 * 654321",
-  // structures and reads
   "[1, 2, 3]",
   "[1, ...[2, 3]]",
   "({ a: 1, b: 2 })",
@@ -71,7 +53,6 @@ const EXPRESSIONS: readonly string[] = [
   '"abc"[1]',
   "({ a: 5 }).a",
   '"abcd".length()',
-  // Math — only the exactly-specified ones fold, and those must agree
   "(16).sqrt()",
   "(-5).abs()",
   "(1.5).floor()",
@@ -83,7 +64,6 @@ const EXPRESSIONS: readonly string[] = [
   "Math.PI",
   "Math.E",
   "(0.5).round()",
-  // type tests
   "(4).isInteger()",
   "(4.5).isInteger()",
   "({ a: 1, b: 2 }).keys()",
@@ -92,7 +72,6 @@ const EXPRESSIONS: readonly string[] = [
   '({ a: 1, b: "x" }).entries()',
   '[["a", 1], ["b", 2]].fromEntries()',
   "({ a: 1 }).assign({ b: 2 })",
-  // string methods
   '"aBc".toUpper()',
   '"AbC".toLower()',
   '"  hi  ".trim()',
@@ -116,7 +95,6 @@ const EXPRESSIONS: readonly string[] = [
   '"a,b,c".split(",")',
   '"hello".charAt(4)',
   '"hello" + "!"',
-  // the lodash string family
   '"a&b<c>\'d".escape()',
   '"Foo Bar-baz".camelCase()',
   '"Foo Bar_baz".kebabCase()',
@@ -130,7 +108,6 @@ const EXPRESSIONS: readonly string[] = [
   '"user_name-2 HTTPServer".camelCase()',
   '"abcdefghij".truncate({ length: 5 })',
   '"abcdefghij".truncate({ length: 5, omission: "…" })',
-  // array methods
   "0 || 5",
   "1 && 2",
   "[1, 2] === [1, 2]",
@@ -154,14 +131,12 @@ const EXPRESSIONS: readonly string[] = [
   "[1, 2, 3].reject(x => x > 1)",
   "[1, 2, 3].partition(x => x > 1)",
   "[1, 2, 3].size()",
-  // number methods
   "(2.5).round()",
   "(3.5).round()",
   "(2.9).floor()",
   "(2.1).ceil()",
   "(5).clamp(1, 3)",
   "(2).inRange(1, 3)",
-  // the array aggregate, set, slice and reshape families
   "[1, 2, 3].sum()",
   "[].sum()",
   "[1, 2, 3, 4].mean()",
@@ -179,7 +154,6 @@ const EXPRESSIONS: readonly string[] = [
   "[1, 2, 3, 2].without(2)",
   "[1, 2, 3, 2].without(2, 3)",
   "[1, 2].xor([2, 3])",
-  // a value that one side holds twice: the server gives it once
   "[3, 1, 3].xor([1])",
   "[5].xor([2, 2])",
   "[0, 1, '', null, 2, false].compact()",
@@ -214,13 +188,10 @@ const EXPRESSIONS: readonly string[] = [
   "[{ n: 1 }, { n: 2 }].differenceBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }, { n: 2 }].intersectionBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }].unionBy([{ n: 1 }, { n: 2 }], o => o.n)",
-  // a key that one side holds twice: the server keeps the first element with that key
   "[{ n: 3, t: 'a' }, { n: 1 }, { n: 3, t: 'b' }].xorBy([{ n: 1 }], o => o.n)",
   "[{ n: 1 }].xorBy([{ n: 2, t: 'x' }, { n: 2, t: 'y' }], o => o.n)",
-  // constructors
   'ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",
-  // dates: UTC, and MongoDB's own numbering
   'Date("2020-03-05T20:30:40.123Z").getFullYear()',
   'Date("2020-03-05T20:30:40.123Z").getMonth()',
   'Date("2020-03-05T20:30:40.123Z").getDate()',
@@ -240,14 +211,12 @@ const EXPRESSIONS: readonly string[] = [
   'Date("2020-03-05T20:30:40.123Z").isoWeekday()',
   "Date(0).getFullYear()",
   "Date(2020, 1, 1).getMonth()",
-  // the week arithmetic, across the year boundaries where it is hardest
   'Date("2021-01-01").week()',
   'Date("2021-01-01").isoWeek()',
   'Date("2021-01-03").week()',
   'Date("2019-12-30").isoWeek()',
   'Date("2019-12-30").isoWeekYear()',
   'Date("2020-12-31").dayOfYear()',
-  // object methods
   "({ a: 1, b: 2 }).keys().size()",
   "({ a: 1, b: 2 }).pick(['a'])",
   "({ a: 1, b: 2 }).omit(['a'])",
@@ -258,14 +227,12 @@ const EXPRESSIONS: readonly string[] = [
   "({ a: '', b: 1, c: 0, d: null, e: 'x' }).pickBy(v => v)",
   "({ a: '', b: 1, c: 0, d: null, e: 'x' }).omitBy(v => v)",
   "({ a: 1, b: 2 }).mapKeys((v, k) => k + '!')",
-  // the strings `$toString` writes as JavaScript does
   "`${42}`",
   "`${-7}`",
   "`${9999999999999998}`",
   "`id-${42}`",
   "`${1}-${2}`",
   "0x507f1f77bcf86cd799439011.toString()",
-  // a constant date's arithmetic, measured against the server's calendar rules
   'Date("2024-01-31T10:20:30.123Z").plus(1, "month")',
   'Date("2024-02-29T10:20:30.123Z").plus(1, "year")',
   'Date("2024-11-30T10:20:30.123Z").plus(1, "quarter")',
@@ -339,36 +306,22 @@ const EXPRESSIONS: readonly string[] = [
   'Date("2026-09-16T13:45:30.123Z").set({ year: 9999, month: 13 })',
 ];
 
-/** A tree node, read without its variant type: the rewrite below walks any shape. */
 type Node = { type: string; pos: number } & Record<string, unknown>;
 const isNode = (v: unknown): v is Node =>
   typeof v === "object" && v !== null && typeof (v as { type?: unknown }).type === "string";
 
-/** The value lowering the compiler runs after its fold. */
 function lowerTree(tree: Node): unknown {
   const program = desugar(tree as Parameters<typeof desugar>[0], VALUE);
   return lowerValue(program as Parameters<typeof lowerValue>[0], Env.root(program, "value"));
 }
 
-/** Does the MQL read a field of the seeded document? */
 const readsSeed = (mql: unknown): boolean => JSON.stringify(mql).includes('"$f0');
 
-/**
- * The expression with its first constant operand moved into a document.
- *
- * The compiler folds a constant expression before it lowers it, so `jsmql.expr("1 + 2")`
- * sends `3` and the server computes nothing. Here the first constant operand of the top
- * node (a receiver, a left operand, a first argument, a first entry) becomes a field of
- * a seeded document. The tree then lowers with no fold. The server then computes the SAME
- * operation on the SAME value. The other operands stay written, because an argument read
- * from a field can take a different lowering (a computed index, an options document).
- */
 function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
   const root = parseExpression(src) as unknown as Node;
   const slots: [Record<string | number, unknown>, string | number][] = [];
   const add = (holder: Record<string | number, unknown>, key: string | number): void => {
     const v = holder[key] as Node;
-    // an entry of an object or an array literal holds its operand one level down
     if (v.type === "KeyValueEntry") slots.push([v, "value"]);
     else if (v.type === "SpreadElement") slots.push([v, "argument"]);
     else slots.push([holder, key]);
@@ -388,23 +341,13 @@ function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
     try {
       return { mql: lowerTree(root), doc: { f0: settled.value } };
     } catch {
-      holder[key] = child; // this slot takes a constant only
+      holder[key] = child;
     }
   }
   return { mql: lowerTree(root), doc: {} };
 }
 
-/**
- * The expressions whose top node has no operand to seed, or an operand that takes a
- * constant only. The server receives their constant, so they prove nothing here; the
- * list keeps that set explicit.
- */
-const NO_OPERAND: readonly string[] = [
-  "Math.PI",
-  "Math.E",
-  // a constructor takes a constant only: a value of the document is refused, and '.toObjectId()' converts it
-  'ObjectId("507f1f77bcf86cd799439011")',
-];
+const NO_OPERAND: readonly string[] = ["Math.PI", "Math.E", 'ObjectId("507f1f77bcf86cd799439011")'];
 
 describe.skipIf(!up)("compiler/passes/fold — the value it computes is the value the server computes", () => {
   let client: MongoClient;
@@ -450,7 +393,6 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
         disagree.push(`${src}  fold=${JSON.stringify(folded.value)}  server refused: ${(e as Error).message}`);
         continue;
       }
-      // A Date compares by the instant it names; the driver hands back its own.
       const mine = folded.value instanceof Date ? folded.value.toISOString() : folded.value;
       const theirs = server instanceof Date ? server.toISOString() : server;
       const [left, right] = answersSet(mql) ? [inAnyOrder(mine), inAnyOrder(theirs)] : [mine, theirs];

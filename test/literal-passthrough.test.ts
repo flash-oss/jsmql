@@ -9,40 +9,16 @@ import {
   positionsOf,
 } from "../src/compiler/rows.ts";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The rule under test (HR1 — see docs/LANG_RULES.md):
-//
-//   A `$`-prefixed string literal typed in SOURCE passes through verbatim in
-//   EVERY context. The contexts are pipeline, stage body, and `jsmql.expr`, at any
-//   depth and inside nested operator calls too. It IS the MQL field ref `$x`, so
-//   jsmql adds no `$literal` of its own. This makes pasted raw MQL round-trip.
-//
-//   The only `$literal` auto-wrap is HR1's runtime-injected exception. The compiler
-//   wraps a `"$x"` that arrives through `jsmql.compile` params or a template-tag `${…}`
-//   in expression position. This way untrusted input cannot silently become a field ref.
-//   codegen.test.ts covers that case, not this file (this file uses source-typed sentinels).
-//   The explicit `$literal("$y")` escape hatch forces a literal anywhere.
-//
-// This file is the comprehensive guard. It loops EVERY operator and EVERY stage, so no `$op` can silently
-// regress to emit (or drop) a `$literal`.
-// ─────────────────────────────────────────────────────────────────────────────
+const SENTINEL = "$f";
 
-const SENTINEL = "$f"; // a `$`-prefixed string that MUST survive verbatim in a pipeline
-
-/** The operand count that a synthetic array-shape call must supply to satisfy any
- *  declared arity rule. That count is exact, the low end of an allowed range, or a min.
- *  The default is 2. This keeps the pass-through probe arity-valid so it reaches codegen. */
 function arrayArgCount(name: string): number {
   const a = argCountOf(name);
   if (a === undefined) return 2;
   if (a.none === true) return 0;
-  // A variadic list operator states `atLeast: 1`. One operand is legal only as a single array literal, and this
-  // probe writes the positional form, so it needs two.
   if (a.atLeast !== undefined) return Math.max(a.atLeast, 2);
   return a.exact ?? a.allowed?.[0] ?? 2;
 }
 
-/** Build a minimal `$op(...)` call source from the operator's registry shape. */
 function callSource(name: string): string {
   const q = JSON.stringify(SENTINEL);
   switch (operandShapeOf(name)) {
@@ -51,14 +27,10 @@ function callSource(name: string): string {
     case "array":
       return `${name}(${Array(arrayArgCount(name)).fill(q).join(", ")})`;
     case "object":
-      // Fill every positional slot (each maps to a named key) with the `$`-string
-      // sentinel under test. A `$op(…)` call is your own MQL, so no slot is checked.
       return `${name}(${positionalKeysOf(name)
         .map(() => q)
         .join(", ")})`;
     case "flex":
-      // flex defaults to the single-value form (1 arg), but an arity rule dictates the count. The comparison
-      // ops ($eq/$gt/…) need exactly 2 in the aggregation position this probe builds.
       return `${name}(${Array(argCountOf(name) ? arrayArgCount(name) : 1)
         .fill(q)
         .join(", ")})`;
@@ -67,12 +39,6 @@ function callSource(name: string): string {
   }
 }
 
-// Place the call in a stage whose context the operator is legal in. NOTE: these are deliberately minimal
-// synthetic calls (a single `$f` sentinel per slot, arity-padded through `arrayArgCount`). They exercise
-// `$literal` pass-through, NOT operator type validity. So an individual call here is not necessarily *runnable*
-// MQL, because the sentinel is the wrong BSON type for most slots. The probe does supply a `sortBy` for the
-// window branch so the common ranking operators stay runnable. The contract of the loop is strictly "no
-// spurious `$literal`", asserted on the emitted shape (see test/CLAUDE.md).
 function stageSourceFor(name: string, call: string): string {
   const positions = positionsOf(name) ?? [];
   if (!positions.includes("value")) {
@@ -82,19 +48,16 @@ function stageSourceFor(name: string, call: string): string {
   return `$addFields({ v: ${call} });`;
 }
 
-/** Can an `$op(...)` call legally sit in bare `jsmql.expr` position with a `$`-string arg? */
 function exprCanTakeStringArg(name: string): boolean {
-  // Only an operator the row states in `value` position evaluates outside a stage;
-  // a `none`-shape operator takes no `$`-string arg to pass through.
   return (positionsOf(name) ?? []).includes("value") && operandShapeOf(name) !== "none";
 }
 
 describe("literal pass-through — every $unwind spelling and its siblings", () => {
   it("the three short $unwind forms produce one document, and the object call form keeps its object", () => {
-    expect(jsmql(`$unwind("$items");`)).toEqual([{ $unwind: "$items" }]); // string call form
-    expect(jsmql(`$unwind($.items);`)).toEqual([{ $unwind: "$items" }]); // field-ref form
-    expect(jsmql(`[{ $unwind: "$items" }]`)).toEqual([{ $unwind: "$items" }]); // raw object form
-    expect(jsmql(`$unwind({ path: "$items" });`)).toEqual([{ $unwind: { path: "$items" } }]); // object call form
+    expect(jsmql(`$unwind("$items");`)).toEqual([{ $unwind: "$items" }]);
+    expect(jsmql(`$unwind($.items);`)).toEqual([{ $unwind: "$items" }]);
+    expect(jsmql(`[{ $unwind: "$items" }]`)).toEqual([{ $unwind: "$items" }]);
+    expect(jsmql(`$unwind({ path: "$items" });`)).toEqual([{ $unwind: { path: "$items" } }]);
   });
 
   it("$sortByCount / $replaceWith / $project / $group pass a $-string through", () => {
@@ -114,10 +77,7 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
   });
 
   it("a non-$ literal string passes through as a $replaceWith new-root, and `$ =` refuses it", () => {
-    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod refuses it, because
-    // the new root is a string and not an object.
     expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
-    // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
     expect(() => jsmql(`$ = "hello";`)).toThrow(
       "'$ = …' takes a document, but got a string. Put the value under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
@@ -126,15 +86,10 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
 
 describe("literal pass-through — every operator in the registry", () => {
   for (const name of everyOperatorName()) {
-    if (name === "$literal") continue; // legitimately emits a $literal envelope
-    // A query-position-only operator has no expression form on the server, so it cannot
-    // appear in the expression contexts this loop builds. Its own pass-through case lives
-    // with the $match query-form tests instead.
+    if (name === "$literal") continue;
     const positions = positionsOf(name) ?? [];
     if (!positions.some((p) => p === "value" || p === "group" || p === "window")) continue;
-    // the accumulator `$count` takes no operand, and `$expMovingAvg` needs N or alpha: the synthetic call is not a call the server takes
     if (name === "$count" || name === "$expMovingAvg") continue;
-    // a call with no operand (`$rand()`, `$rank()`) has no $-string to pass through
     if (operandShapeOf(name) === "none") continue;
 
     const call = callSource(name);
@@ -162,9 +117,6 @@ describe("literal pass-through — every operator in the registry", () => {
   });
 });
 
-// One representative pipeline source per stage that can carry a `$`-string. Every
-// entry asserts that each `$`-string of the source survives verbatim, with no
-// spurious `$literal`.
 const STAGE_CASES: Record<string, string> = {
   $addFields: `$addFields({ v: "$x" });`,
   $bucket: `$bucket({ groupBy: "$price", boundaries: [0, 100, 200], default: "other" });`,
@@ -185,17 +137,12 @@ const STAGE_CASES: Record<string, string> = {
   $set: `$set({ v: "$x" });`,
   $setWindowFields: `$setWindowFields({ partitionBy: "$g", sortBy: { t: 1 }, output: { n: $sum("$q") } });`,
   $sortByCount: `$sortByCount("$tags");`,
-  $unionWith: `$unionWith({ coll: "c", pipeline: [$match({ x: "$y" })] });`, // a `$unionWith` body has no `let`, so it reads its own documents
+  $unionWith: `$unionWith({ coll: "c", pipeline: [$match({ x: "$y" })] });`,
   $unwind: `$unwind("$items");`,
 };
 
-/** The `$`-string literals a source spells, each of which must reach the output verbatim. */
 const dollarStrings = (src: string): string[] => [...src.matchAll(/"(\$[^"]*)"/g)].map((m) => m[1]);
 
-// Stages with no `$`-string body to pass through, or that require server/source
-// infrastructure jsmql surfaces only through dedicated sugar (`$$`/`$$$$`). Each is
-// excluded from the pass-through loop with its reason, but still counted by the
-// coverage meta-assertion below so no stage is silently uncovered.
 const STAGE_SKIP: Record<string, string> = {
   $count: "the body is a field name, which cannot start with '$'",
   $densify: "every slot is a field name or a constant",
@@ -239,25 +186,11 @@ describe("literal pass-through — every stage in the registry", () => {
     const stages = new Set(everyStageName());
     const uncovered = [...stages].filter((s) => !accounted.has(s));
     expect(uncovered).toEqual([]);
-    // No stale skip entries that no longer name a real stage.
     const staleSkips = Object.keys(STAGE_SKIP).filter((s) => !stages.has(s));
     expect(staleSkips).toEqual([]);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Server-rejection guards. Each shape came from a replay of generated MQL against a
-// real mongod (see test/CLAUDE.md → "Never assert MQL the MongoDB server would
-// reject"). Each is a shape MongoDB rejects; these lock in the runnable form so a
-// lowering cannot drift back into it.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Walk an MQL value and collect every name that MongoDB treats as a user
- * variable: a `$let`/`$lookup` `let`/`vars` key, and a `$map`/`$filter`/`$reduce`
- * `as` value. MongoDB requires each to begin with a lowercase ASCII letter; a
- * leading `_`/`$`/uppercase/digit makes the server reject the pipeline.
- */
 function collectVarNames(node: unknown, into: string[] = []): string[] {
   if (Array.isArray(node)) {
     for (const x of node) collectVarNames(x, into);
@@ -273,12 +206,11 @@ function collectVarNames(node: unknown, into: string[] = []): string[] {
   return into;
 }
 
-const VALID_VAR = /^[a-z][A-Za-z0-9_]*$/; // MongoDB's user-variable grammar, first character and body
-const VALID_REGEX_OPTS = /^[imsx]*$/; // MongoDB $regex* options (no JS g/u/y/d/v)
+const VALID_VAR = /^[a-z][A-Za-z0-9_]*$/;
+const VALID_REGEX_OPTS = /^[imsx]*$/;
 
 type Input = { label: string; mql: () => unknown };
 
-/** Inputs that bind a user variable, which the server rejects if its name is built wrong. */
 const VAR_INPUTS: Input[] = [
   {
     label: "$lookup auto-let on $._id (a `.find` with no join pair)",
@@ -300,7 +232,6 @@ const VAR_INPUTS: Input[] = [
   { label: ".fill() statement mutator (no bounds)", mql: () => jsmql(`$.xs.fill(0);`) },
 ];
 
-/** Inputs with no user variable, whose MQL the server rejects for a `$limit: 0` or a regex flag. */
 const OTHER_INPUTS: Input[] = [
   { label: "$$ = [] drop-all", mql: () => jsmql(`$$ = [];`) },
   { label: "$$ = source-switch", mql: () => jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`) },
@@ -321,8 +252,6 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
   }
 
   it("the $-prefixed local field name flows through as a sanitized let var", () => {
-    // `$._id` → let var `jsmql_f0__id` (not the server-rejected `_id`), referenced as `$$jsmql_f0__id`.
-    // An equality under `||` is no pair, so the read stays a `let` var.
     expect(jsmql(`$.u = $$$.users.find(u => (u.refId === $._id || u.altId === $._id) && u.active);`)).toEqual([
       {
         $lookup: {
@@ -357,7 +286,6 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
       { $match: { $expr: false } },
       { $unionWith: { coll: "transactions", pipeline: [{ $match: { client: 156 } }] } },
     ]);
-    // No pipeline should ever contain `$limit: 0`.
     for (const { mql } of REGRESSION_INPUTS) {
       expect(JSON.stringify(mql())).not.toContain('"$limit":0');
     }
@@ -373,7 +301,6 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
     expect(jsmql.expr(`/pattern/gi.test($.str)`)).toEqual({
       $regexMatch: { input: "$str", regex: "pattern", options: "i" },
     });
-    // Walk every regex options string in the corpus and assert validity.
     const collectOpts = (node: unknown, into: string[] = []): string[] => {
       if (Array.isArray(node)) node.forEach((x) => collectOpts(x, into));
       else if (node !== null && typeof node === "object") {

@@ -1,21 +1,8 @@
-// A transform over the tree, used by every pass that rewrites it.
-//
-// This walk is REFLECTIVE on purpose. The tree has 35 node types. A hand-written
-// switch over them would compile without error, but would silently skip
-// whichever one a later commit adds. This is the same failure that let
-// `NodeName` drift from the shapes it described. A walk over a node's own
-// properties cannot skip a node, because it never names one.
-//
-// The walk runs bottom-up: it rewrites children before their parent. So a rule
-// sees a subtree that is already reduced, and never has to recurse itself.
-
-/** Anything the tree holds: a node, a list, or a leaf. */
 type Slot = unknown;
 
 const isNode = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
-/** A plain object that is part of the tree, but is not a node — an ObjectKey. */
 const isCarrier = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) && !isNode(v);
 
@@ -34,7 +21,6 @@ function mapSlot(slot: Slot, fn: (n: object) => object): { value: Slot; changed:
     return { value: r.value, changed: r.changed };
   }
   if (isCarrier(slot)) {
-    // A carrier holds nodes, but is not one, for example `{ kind: "computed", expr }`.
     let changed = false;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(slot)) {
@@ -60,25 +46,10 @@ function transform(node: Record<string, unknown>, fn: (n: object) => object): { 
   return { value: replaced, changed: changed || replaced !== withNewChildren };
 }
 
-/**
- * Rewrite every node, children first. `fn` returns its argument unchanged to
- * leave a node alone, or returns a new node to replace it.
- *
- * This function returns the SAME object when nothing changed. A caller can
- * then compare by identity to know whether it needs another round.
- */
 export function mapTree<T extends object>(root: T, fn: (n: object) => object): T {
   return transform(root as Record<string, unknown>, fn).value as T;
 }
 
-// ── the same walk, with an inherited value that goes down ──────────────────────────
-//
-// A rule that must know WHERE a node sits cannot look the node up in a
-// recorded set. This walk rebuilds a parent as soon as one of its children
-// changes. So when the rule runs, the object it holds is not the object
-// that anyone recorded. The position must arrive with the node, computed on the way down.
-
-/** What edge the walk is about to take: from `node`, along its property `key`. */
 export type Edge<C> = (node: object, key: string, here: C) => C;
 
 function mapSlotIn<C>(
@@ -90,7 +61,6 @@ function mapSlotIn<C>(
   if (Array.isArray(slot)) {
     let changed = false;
     const out = slot.map((el) => {
-      // A list shares its parent's context, so `stmts[0]` and `stmts[1]` sit alike.
       const r = mapSlotIn(el, ctx, edge, fn);
       if (r.changed) changed = true;
       return r.value;
@@ -120,8 +90,6 @@ function transformIn<C>(
   let changed = false;
   const rebuilt: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(node)) {
-    // This code consults the edge with the ORIGINAL node, before any child
-    // moves. A context that depended on a rewritten child would differ between rounds.
     const r = mapSlotIn(value, edge(node, key, ctx), edge, fn);
     if (r.changed) changed = true;
     rebuilt[key] = r.value;
@@ -131,13 +99,6 @@ function transformIn<C>(
   return { value: replaced, changed: changed || replaced !== withNewChildren };
 }
 
-/**
- * `mapTree`, plus a value that flows DOWN the tree.
- *
- * `edge` says what the context becomes along one parent-to-property step. `fn`
- * receives each node together with the context that reached it. This gives the
- * same identity guarantee as `mapTree`: the root comes back unchanged when no rule fired.
- */
 export function mapTreeIn<C, T extends object>(root: T, seed: C, edge: Edge<C>, fn: (n: object, c: C) => object): T {
   return transformIn(root as Record<string, unknown>, seed, edge, fn).value as T;
 }

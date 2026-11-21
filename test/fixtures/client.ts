@@ -1,13 +1,3 @@
-// test/fixtures/client.ts — read-only access to the fixture instance, for the
-// integration suite. Connects as the server-enforced read-only user, so nothing
-// reached through here can mutate the dataset.
-//
-// The suite may skip for ONE reason only: no server answers on the fixture port.
-// `isUnreachable` in live.ts is that rule. A wrong password, a missing user, a
-// missing grant or a stale dataset makes the suite FAIL, with the command that
-// repairs it. See test/CLAUDE.md § "Suites that connect to a server must report
-// whether they connected".
-
 import { MongoClient } from "mongodb";
 import type { Db } from "mongodb";
 import { COLLECTIONS, FIXTURE_DB, META_COLLECTION, READONLY_URI } from "./config.ts";
@@ -20,11 +10,6 @@ export async function connectReadOnly(): Promise<{ client: MongoClient; db: Db }
   return { client, db: client.db(FIXTURE_DB) };
 }
 
-/**
- * Is the fixture instance running? False ONLY when no server answers. When a server answers, this checks the
- * read-only login and the seeded dataset. It throws when either is wrong, at import time, so the file fails and
- * never turns into a green skip.
- */
 export async function fixtureReady(): Promise<boolean> {
   const client = new MongoClient(READONLY_URI, { serverSelectionTimeoutMS: 1500 });
   try {
@@ -46,9 +31,6 @@ export async function fixtureReady(): Promise<boolean> {
   return true;
 }
 
-// Fail loudly if the on-disk dataset does not match what the tests expect (for example, a person seeded a
-// different version out of band). The read-only user cannot write, so this check is the only guard against a
-// drifted dataset.
 export async function assertIntegrity(db: Db): Promise<void> {
   const meta = await db.collection(META_COLLECTION).findOne({ _id: "version" as never });
   const hash = (meta as { hash?: string } | null)?.hash;

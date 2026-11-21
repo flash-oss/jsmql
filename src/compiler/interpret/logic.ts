@@ -1,20 +1,7 @@
-// The logic operators, the scope operators and `$literal`.
-//
-// MongoDB truthiness: null, 0 and false are false. Everything else is true,
-// and also the empty string and the empty array. A condition that holds a
-// value the interpreter does not read (a Long, a Decimal128) is a refusal.
-//
-// The interpreter never evaluates a branch that the answer does not need. So `$cond: [true, 1, { $divide: [1, 0] }]`
-// is 1, as in JavaScript. The server folds every constant branch before it runs
-// the expression, so it fails on the division in the branch that is not taken. This is
-// the one place where the interpreter answers and the server does not.
-// See the DIVERGE table in test/compiler-interpret-agrees.test.ts.
-
 import type { Answer, Rule, Walk } from "./values.ts";
 import { Failed, NO, isPlain, isValue, ok, spellable, truthOf } from "./values.ts";
 import { argsOf, isVariableName, keyed, positional } from "./operand.ts";
 
-/** The truth of one expression, as an answer that holds a boolean, or the reason that it has none. */
 function truth(walk: Walk, node: unknown): Answer {
   const a = walk.raw(node);
   if (!a.ok) return a;
@@ -22,7 +9,6 @@ function truth(walk: Walk, node: unknown): Answer {
   return t === null ? NO : ok(t);
 }
 
-/** `$and` stops at the first false operand, and `$or` at the first true one. */
 const connective =
   (stopOn: boolean): Rule =>
   (operand, walk) => {
@@ -37,7 +23,6 @@ const connective =
 
 const IF_THEN_ELSE = ["if", "then", "else"] as const;
 
-/** `$cond` has a list form `[if, then, else]` and a keyed form. */
 const cond: Rule = (operand, walk) => {
   let nodes: readonly unknown[];
   if (Array.isArray(operand)) {
@@ -55,7 +40,6 @@ const cond: Rule = (operand, walk) => {
   return walk.raw(test.value ? nodes[1] : nodes[2]);
 };
 
-/** `$switch` tries each branch in order. With no branch and no default, the server raises an error. */
 const switchRule = keyed(["branches"], ["default"], (parts, walk) => {
   const branches = parts.branches;
   if (!Array.isArray(branches) || branches.length === 0) return NO;
@@ -74,7 +58,6 @@ const switchRule = keyed(["branches"], ["default"], (parts, walk) => {
   return "default" in parts ? walk.raw(parts.default) : NO;
 });
 
-/** `$ifNull` answers the first operand that is not null. The last operand is the answer when all others are null. */
 const ifNull: Rule = (operand, walk) => {
   const nodes = argsOf(operand);
   if (nodes.length < 2) return NO;
@@ -85,10 +68,6 @@ const ifNull: Rule = (operand, walk) => {
   return walk.raw(nodes[nodes.length - 1]);
 };
 
-/**
- * `$let` evaluates every variable in the OUTER scope, then evaluates `in` with all of them bound.
- * A variable with no value fails only the expression that reads it.
- */
 const letRule = keyed(["vars", "in"], [], (parts, walk) => {
   const vars = parts.vars;
   if (!isPlain(vars)) return NO;
@@ -117,6 +96,5 @@ export const LOGIC: Record<string, Rule> = {
   $switch: switchRule,
   $ifNull: ifNull,
   $let: letRule,
-  // The value is not an expression: it passes through as written.
   $literal: (operand) => (isValue(operand) ? spellable(operand) : NO),
 };

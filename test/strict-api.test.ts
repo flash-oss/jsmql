@@ -1,6 +1,3 @@
-// The strict-shape entries: each accepts one shape and refuses the others by name. So a source that would
-// silently lower to the wrong document for the driver method at hand is a compile-time error instead. See
-// docs/specs/strict-shape-entries.md.
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -45,7 +42,6 @@ describe("jsmql.filter() — strict Filter shape", () => {
     expect(() => jsmql.filter("{ $match: $.x > 0 }")).toThrow(/top-level '\$match' stage call/);
   });
   it("reads a stage on a value as a value, so each entry names the stage's value twin", () => {
-    // `$.items.$sort(…)` is no top-level stage call: a stage runs on a stream.
     const onValue = /^'\.\$sort\(\)' is a pipeline stage, and a stage runs on a stream, not on a value\./;
     for (const entry of [jsmql, jsmql.filter, jsmql.expr, jsmql.pipeline]) {
       expect(() => entry("$.items.$sort({ a: 1 })")).toThrow(onValue);
@@ -83,12 +79,9 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
     ]);
   });
   it("reads every bracketed literal as a pipeline, in each entry but the expression entry", () => {
-    // `[]` is the empty pipeline that you wrote (HR1); mongod runs `aggregate([])`.
     expect(jsmql.pipeline("[]")).toEqual([]);
     expect(jsmql("[]")).toEqual([]);
-    // The lowering refuses an element that is not a stage, and does not take it as an array value.
     expect(() => jsmql("[1, 2, 3]")).toThrow(/A pipeline statement writes something/);
-    // The expression entry reads a list as an array value, and refuses a stage list.
     expect(jsmql.expr("[1, 2]")).toEqual([1, 2]);
     expect(jsmql.expr("[]")).toEqual([]);
     expect(() => jsmql.expr("[$match($.a > 1)]")).toThrow(/a bracketed list, which is a Pipeline/);
@@ -135,14 +128,11 @@ describe("jsmql.update() — the update document", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);
   });
   it("passes a fragment or a stage that you call through, and refuses what the compiler merges", () => {
-    // DELIBERATELY invalid: each call is your own MQL. mongod refuses each one, because it is not an update operator.
     expect(jsmql.update("$sort({ x: 1 })")).toEqual({ $sort: { x: 1 } });
     expect(jsmql.update("$match({ x: 1 })")).toEqual({ $match: { x: 1 } });
-    // The compiler merges the statements into one document, so it refuses a field written twice.
     expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(
       "'x' is written twice in one update ('$set' and '$sort'). The server refuses this as a conflict. Write each field once.",
     );
-    // `$.x > 0` is JSMQL code, and a document-form update takes constants only.
     expect(() => jsmql.update("$match($.x > 0)")).toThrow(/^'>' is computed on the server/);
   });
   it("accepts the template-tag and arrow forms", () => {
@@ -200,7 +190,6 @@ describe("strict-shape `.compile` builders", () => {
 });
 
 describe("a compile builder keeps no state between calls", () => {
-  // Each answer must equal the answer of a new builder for the same parameters, after any earlier call.
   const SOURCES: [(src: string) => (p: Record<string, unknown>) => unknown, string][] = [
     [jsmql.compile, "({ v }, { $ }) => $.a === v && $.b.has(1)"],
     [jsmql.compile, "({ v }, { $ }) => $.a in v"],
@@ -240,7 +229,6 @@ describe("a compile builder keeps no state between calls", () => {
       const builder = compile(src);
       const first = builder({ v: [1, 2] }) as Record<string, unknown>;
       const before = JSON.stringify(builder({ v: [1, 2] }));
-      // mongoose casts a filter in place; this does the same to every object and array in the answer
       const change = (x: unknown): void => {
         if (Array.isArray(x)) {
           x.forEach(change);

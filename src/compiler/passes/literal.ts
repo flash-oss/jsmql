@@ -1,51 +1,16 @@
-// The bridge between a JavaScript VALUE and the AST literal that spells it.
-//
-// Constant folding computes values. A value must go back into the tree before
-// any later phase can see it. This code puts it back as a LITERAL, not as a
-// built carrier node. So every later phase works on a tree that the
-// surface could have produced. A folded constant can then reach a rule
-// that matches on literals:
-//
-//   const k = "name"; $.items.map(k)   folds to   $.items.map("name")
-//                                    desugars to  $.items.map(x => x.name)
-//
-// Not every value has a literal SPELLING. A Date does not. It goes back into
-// the tree as the value itself: an `Injected` node, the same carrier a `${…}`
-// slot uses. So a constant date is inlined exactly as a constant number is.
-// A `$match` on it stays a query that the index can serve. A value with no node
-// at all (`undefined`, a non-finite number) gets the answer null. The
-// declaration KEEPS ITS BINDING. See `fold.ts` for why an inline of the source
-// expression instead would carry its free names to every use site.
-
 import type { Expr } from "../../registry/ast.ts";
-// This is the one place that names the `bson` module. See its header for why
-// recognition tests the prototype AND the tag.
 import { bsonTagOf, isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
 import { isDate, isPlainObject as isPlainByPrototype, isRegExp } from "../../bson.ts";
 import { OrderedDocument } from "../interpret/values.ts";
 
-/**
- * Can this value be written as a literal at all?
- *
- * This is ONE boundary for the whole pass. When three places check it —
- * arithmetic, a number method, `.sum()` — the three answers drift apart. Then
- * `[1e308, 1e308].sum()` reaches the driver as `Infinity`, but `1e308 * 10`
- * is refused. One question removes the question of which policy applies where.
- */
 export function isSpellable(value: unknown): boolean {
   return asLiteral(value, 0) !== null;
 }
 
-/** A value the tree can carry, or the fact that this node is not a constant. */
 export type Reading = { ok: true; value: unknown } | { ok: false };
 
 const NOT_CONSTANT: Reading = { ok: false };
 
-/**
- * The value a LITERAL node holds, or `{ ok: false }` for anything else.
- *
- * This reads leaves only. A read of `1 + 2` is the evaluator's job. This reads the `1`.
- */
 export function readLiteral(node: Expr): Reading {
   switch (node.type) {
     case "NumberLiteral":
@@ -69,32 +34,16 @@ export function readLiteral(node: Expr): Reading {
   }
 }
 
-/** Is this value a plain object — one whose entries an ObjectLiteral can spell? */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return isPlainByPrototype(v) && bsonTagOf(v) === undefined;
 }
 
-/**
- * The node that carries `value`: the literal that spells it, an `Injected` node
- * that holds it when the language has no spelling (a Date), or null when no
- * node can carry it (`undefined`, a non-finite number).
- *
- * `pos` is the source offset the literal reports. A folded value has no source
- * of its own, so it borrows the position of the reference it replaces. This is
- * the place a later error should point at.
- */
 export function asLiteral(value: unknown, pos: number, text = false): Expr | null {
   if (value === null) return { type: "NullLiteral", pos };
-  // `undefined` is NOT a value a fold may produce. JavaScript answers it for a
-  // read that finds nothing, for example `[1,2,3].at(9)`. BSON has no such
-  // thing, so it reaches the driver as a hole: an array element becomes null,
-  // and an object key vanishes entirely. A read that finds nothing stays a runtime read.
   if (value === undefined) return null;
 
   switch (typeof value) {
     case "number":
-      // `NaN` and the infinities have no literal. JavaScript spells them as
-      // global names, and MQL has no way to write them at all.
       return Number.isFinite(value) ? { type: "NumberLiteral", value, pos } : null;
     case "string":
       return text && value.startsWith("$")
@@ -123,8 +72,6 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
     }
     return { type: "ArrayLiteral", elements, pos };
   }
-  // A document with index-like keys has no object literal: a JavaScript object would move the key. It is
-  // `$arrayToObject` over the pairs, an escape-hatch call. The fold never evaluates it again.
   if (value instanceof OrderedDocument) {
     const pairs: Expr[] = [];
     for (const [key, held] of value.pairs) {
@@ -149,33 +96,16 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
     return { type: "ObjectLiteral", entries, pos };
   }
 
-  // A Date has no spelling, so it goes in as the value it is. The query road compares it as written.
-  // The value road passes it through, the same as a `${date}` slot.
   if (isDate(value)) return { type: "Injected", value, pos };
-  // A Binary, a Decimal128 or a Long has no spelling here. `nodeOf` carries it as a value.
   return null;
 }
 
-/**
- * The node that carries a computed `value`, with no exception: the literal that spells
- * it, or an `Injected` node that holds it. The fold writes back every value it computes
- * through this function. So a Date, an ObjectId, a Decimal128 or a Long goes back into
- * the tree as itself.
- */
 export function nodeOf(value: unknown, pos: number, text = false): Expr {
   return asLiteral(value, pos, text) ?? { type: "Injected", value, pos };
 }
 
-/**
- * An element of an injected structure: its literal where it has one, otherwise
- * the value itself as an `Injected` node. A Date inside `{ startDate, endDate }`
- * keeps the object's keys readable (`$dateDiff(${parts})` is the body it
- * spells). The Date stays the value it is. `undefined` has no spelling
- * and stops the structure. A nested structure that `asLiteral` itself refused also stops it.
- */
 function leafOf(value: unknown, pos: number, text: boolean): Expr | null {
   if (value === undefined) return null;
-  // A RegExp inside a structure is data the structure carries, never a regex literal to evaluate.
   if (isRegExp(value)) return { type: "Injected", value, pos };
   const spelled = asLiteral(value, pos, text);
   if (spelled !== null) return spelled;

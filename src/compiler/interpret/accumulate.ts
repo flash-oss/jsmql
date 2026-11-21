@@ -1,22 +1,9 @@
-// The accumulators in their expression form: `{ $sum: [a, b] }` and `{ $sum: <list> }`.
-//
-// One operand that is a list reads as the list of values. Any other operand list is the
-// values themselves. `$sum` and `$avg` ignore a value that is not a number. `$max` and
-// `$min` ignore a null. The interpreter refuses a list with a value that it does not read,
-// because that value could be of another BSON type.
-//
-// The server adds a list of fractions in a way that the documentation does not
-// specify. Two operands give one addition, and one addition is exact. A list of
-// integers adds exactly. So `$sum` and `$avg` refuse a longer list with a fraction.
-
 import type { Rule } from "./values.ts";
 import { NO, compareValues, inert, isWellFormed, kindOf, losesPrecision, ok, spellable } from "./values.ts";
 import { positional } from "./operand.ts";
 
-/** The values of the operand: the one list, or the operands. */
 const valuesOf = (xs: readonly unknown[]): readonly unknown[] => (xs.length === 1 && Array.isArray(xs[0]) ? xs[0] : xs);
 
-/** The sum of the numbers, or undefined where the sum is not exact. */
 function sumOf(list: readonly unknown[]): number | undefined {
   if (!list.every(inert)) return undefined;
   const numbers = list.filter((v): v is number => typeof v === "number");
@@ -55,7 +42,6 @@ const avg = positional(
 
 const COMPARABLE = new Set(["number", "string", "boolean", "date", "objectId"]);
 
-/** The greatest or the least value of one kind. Null is ignored, and an empty list gives null. */
 const extreme = (greatest: boolean): Rule =>
   positional(
     0,

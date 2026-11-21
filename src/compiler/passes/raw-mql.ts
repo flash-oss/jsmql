@@ -1,41 +1,17 @@
-// HR6 — raw MQL can hold JSMQL, and JSMQL cannot take raw MQL as an operand.
-//
-// Raw MQL is an `$op(…)` call, or an object with a `$` key. On the query road, a
-// plain object that is an operand of `&&`, `||` or `!` is a query document, which
-// is raw MQL too. This pass reads the tree AS PARSED. It runs before a template value or a
-// `jsmql.compile` parameter goes in, because a passed value is not source. It also runs before a
-// fold or a desugar rule moves a node to another place.
-//
-// See docs/specs/raw-mql-boundary.md and docs/LANG_RULES.md (HR6).
-
 import type { Program } from "../../registry/ast.ts";
 import { CodegenError } from "../../errors.ts";
 import { blockBodyOf, bodySlotAt, isGlobalName } from "../rows.ts";
 
-/** The road the program takes: a Filter is a query document at its root. */
 export type Road = "filter" | "other";
 
-/**
- * Where a node stands.
- *
- *   program  the program root, a statement, a stage of `.aggregate([…])`
- *   raw      an argument of an `$op(…)` call or of a stage link, a value under a `$` key
- *   jsmql    a whole value that JSMQL owns: the right side of `=`, a `let` value, a callback body
- *   operand  a value that a JSMQL construct computes with
- *
- * An object or an array literal holds values and computes nothing, so its entries
- * stand where it stands.
- */
 type Context = "program" | "raw" | "jsmql" | "operand";
 
-/** The JSMQL construct around an operand, as the message names it: "an operand of '&&'". */
 type Role = string;
 
 type Any = { type: string; pos: number } & Record<string, unknown>;
 
 const isNode = (v: unknown): v is Any => typeof v === "object" && v !== null && typeof (v as Any).type === "string";
 
-/** The first `$` key of an object literal as written, or null. */
 function dollarKey(node: Any): string | null {
   for (const e of node.entries as readonly Any[]) {
     if (e.type !== "KeyValueEntry") continue;
@@ -45,7 +21,6 @@ function dollarKey(node: Any): string | null {
   return null;
 }
 
-/** The first key of an object literal as written, for the message. */
 function firstKey(node: Any): string | null {
   for (const e of node.entries as readonly Any[]) {
     if (e.type !== "KeyValueEntry") continue;
@@ -55,7 +30,6 @@ function firstKey(node: Any): string | null {
   return null;
 }
 
-/** A raw MQL node, as the message spells it, or null when the node is not raw MQL. */
 function rawSpelling(node: Any): string | null {
   if (node.type === "OperatorCall") return `${node.name as string}(…)`;
   if (node.type === "ObjectLiteral") {
@@ -69,7 +43,6 @@ function refuse(spelled: string, role: Role, pos: number, what = "raw MQL"): Cod
   return new CodegenError(`'${spelled}' is ${what}, and raw MQL cannot be ${role}.`, pos);
 }
 
-/** A call's name as the message spells it: `Date.UTC`, `Date`. */
 function calleeSpelling(callee: unknown): string {
   if (!isNode(callee)) return "…";
   if (callee.type === "Ident") return callee.name as string;
@@ -77,22 +50,10 @@ function calleeSpelling(callee: unknown): string {
   return "…";
 }
 
-/**
- * Throw when a raw MQL value stands as an operand, and mark each `"$…"` string that
- * JSMQL reads as text. The walk descends into every node, so the rule holds at
- * every depth, inside raw MQL too. The marks go on the parsed tree itself: a
- * `.compile` builder reuses that tree, and each run gives the same marks.
- */
 export function rawMqlBoundary(program: Program, road: Road): void {
   walk(program as unknown as Any, "program", "", road === "filter", road);
 }
 
-/**
- * `ctx` is where the node stands. `role` names the construct when `ctx` is
- * "operand". `query` is true on the predicate spine of the query road. The spine
- * is the program root of a Filter, or the argument of a stage whose whole body is a
- * filter (`$match`). It runs down through `&&`, `||` and `!` only.
- */
 function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Road): void {
   if (Array.isArray(node)) {
     for (const n of node) walk(n, ctx, role, query, road);
@@ -131,7 +92,6 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
       operand(node.target, "an operand of 'delete'");
       return;
     case "OperatorCall": {
-      // A stage whose whole body is a filter (`$match`) starts a new predicate spine.
       const spine = bodySlotAt(node.name as string, [])?.at === "filter";
       for (const a of node.args as readonly unknown[]) walk(a, "raw", "", spine, road);
       return;
@@ -197,12 +157,9 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
     case "MethodCall": {
       const name = node.name as string;
       const recv = node.object as Any;
-      // A static call names its global: `Date.UTC()`, not `.UTC()`.
       const global = recv.type === "Ident" && isGlobalName(recv.name as string) ? (recv.name as string) : "";
       const spelled = `${global}.${(node.wrote as string | undefined) ?? name}`;
       if (name.startsWith("$")) {
-        // A stage link is a link of the stream chain, not a value: its receiver is
-        // the stream, and its argument is the stage's own MQL.
         walk(node.object, "jsmql", "", false, road);
         const spine = bodySlotAt(name, [])?.at === "filter";
         for (const a of node.args as readonly unknown[]) walk(a, "raw", "", spine, road);
@@ -211,7 +168,6 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
       operand(node.object, `the receiver of '${spelled}()'`);
       const stages = blockBodyOf(name) === "stages";
       for (const a of node.args as readonly unknown[]) {
-        // `.aggregate([{ $match: … }])`: each element is a stage, as each statement of the block form is.
         if (stages && isNode(a) && a.type === "ArrayLiteral") {
           for (const e of a.elements as readonly unknown[]) statement(e);
         } else operand(a, `an operand of '${spelled}()'`);
@@ -235,17 +191,13 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
       whole(node.ret);
       return;
     case "StringLiteral":
-      // In raw MQL and at the program root, a `"$…"` string is a field path (HR1).
-      // In JSMQL, it is text.
       if ((ctx === "jsmql" || ctx === "operand") && (node.value as string).startsWith("$")) node.text = true;
       return;
     default:
-      // A literal, a reference or a name: nothing below it is a value.
       return;
   }
 }
 
-/** On the query road, a plain object that is an operand of `&&`, `||` or `!` is a query document. */
 function queryDocument(node: unknown, op: string): void {
   if (!isNode(node) || node.type !== "ObjectLiteral" || dollarKey(node) !== null) return;
   const key = firstKey(node);

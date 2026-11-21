@@ -1,21 +1,9 @@
-/**
- * `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it.
- *
- * Two assertions run over almost every case. The first is the TEXT, which is what a reader sees. The second is
- * the ROUND TRIP. The test evaluates the text with the driver's BSON classes in scope. This is the way a
- * developer uses it: with a paste into a place where those classes live. Then it serialises the rebuilt value
- * to BSON and compares it byte for byte with the original. Equal bytes are what "the text rebuilds the
- * document" means; a printer that wrote a plausible but different value fails there.
- *
- * See docs/specs/mql-stringify.md.
- */
 import { describe, it, expect } from "vitest";
 import * as mongodb from "mongodb";
 import { jsmql } from "../src/index.ts";
 
 const { stringify } = jsmql;
 
-/** The classes a driver script has in scope, and which mongosh exposes as globals. */
 const BSON_GLOBALS: Record<string, unknown> = {
   ObjectId: mongodb.ObjectId,
   Decimal128: mongodb.Decimal128,
@@ -33,14 +21,11 @@ const BSON_GLOBALS: Record<string, unknown> = {
   BSONRegExp: mongodb.BSONRegExp,
 };
 
-/** The text read the way a developer reads it: pasted where the BSON classes live. */
 const asPasted = (text: string): unknown =>
   new Function(...Object.keys(BSON_GLOBALS), `return (${text})`)(...Object.values(BSON_GLOBALS));
 
-/** The document's own bytes, which is what the server actually receives. */
 const bytes = (doc: Record<string, unknown>): string => Buffer.from(mongodb.BSON.serialize(doc)).toString("base64");
 
-/** Print `value` under the key `v`, assert the text, then assert the bytes survive a paste. */
 function rebuilds(value: unknown, expected: string): void {
   const text = stringify({ v: value }, { width: Infinity });
   expect(text).toBe(`{ v: ${expected} }`);
@@ -53,8 +38,6 @@ describe("stringify: the BSON classes", () => {
   });
 
   it("writes an ObjectId from a foreign bson copy the same way", () => {
-    // A second copy of `bson` in the tree shares no prototype with ours, so the
-    // printer knows the value only by its tag. It must still spell the constructor.
     const foreign = { _bsontype: "ObjectId", toHexString: () => "507f1f77bcf86cd799439011" };
     expect(stringify({ v: foreign })).toBe('{ v: new ObjectId("507f1f77bcf86cd799439011") }');
   });
@@ -80,7 +63,6 @@ describe("stringify: the BSON classes", () => {
   });
 
   it("reads a Binary's length from the value, not from its over-allocated buffer", () => {
-    // A Binary filled a byte at a time holds 260 bytes for the 1 written.
     const b = new mongodb.Binary(Buffer.alloc(0), 0);
     b.put(7);
     rebuilds(b, 'Binary.createFromBase64("Bw==", 0)');
@@ -94,9 +76,7 @@ describe("stringify: the BSON classes", () => {
   });
 
   it("writes a subtype-4 Binary of any other length as base64 — only 16 bytes are a UUID", () => {
-    // The server stores such a value, and `toUUID()` throws for it.
     rebuilds(new mongodb.Binary(Buffer.from([1, 2, 3]), 4), 'Binary.createFromBase64("AQID", 4)');
-    // 17 and 18 bytes also take 24 base64 characters.
     rebuilds(new mongodb.Binary(Buffer.alloc(17, 1), 4), 'Binary.createFromBase64("AQEBAQEBAQEBAQEBAQEBAQE=", 4)');
     rebuilds(new mongodb.Binary(Buffer.alloc(18, 1), 4), 'Binary.createFromBase64("AQEBAQEBAQEBAQEBAQEBAQEB", 4)');
   });
@@ -124,7 +104,6 @@ describe("stringify: the BSON classes", () => {
     );
   });
 
-  // The driver sends `$db` whenever `db` is not null, and each extra field after it.
   it("keeps an empty database name and the extra fields of a DBRef", () => {
     const oid = new mongodb.ObjectId("507f1f77bcf86cd799439011");
     rebuilds(new mongodb.DBRef("users", oid, ""), 'new DBRef("users", new ObjectId("507f1f77bcf86cd799439011"), "")');
@@ -189,8 +168,6 @@ describe("stringify: the values JavaScript already spells", () => {
   });
 });
 
-// The text is code that someone pastes and runs. So the printer reads a value through
-// the engine's own readers, never through a method or a tag the value itself sets.
 describe("stringify: the text holds the value, never code from the value", () => {
   const pasteRuns = (text: string): boolean => {
     delete (globalThis as { pwned?: unknown }).pwned;
@@ -219,7 +196,6 @@ describe("stringify: the text holds the value, never code from the value", () =>
     const text = stringify({ v: forged });
     expect(text).toBe('{ v: { source: "(globalThis.pwned = 1)" } }');
     expect(pasteRuns(text)).toBe(false);
-    // The driver reads the tag and sends the object as a regex, so the compiler refuses it.
     expect(() => jsmql.filter`$.x === ${forged}`).toThrow(/Symbol.toStringTag/);
   });
 
@@ -237,7 +213,6 @@ describe("stringify: the text holds the value, never code from the value", () =>
 });
 
 describe("stringify: a tag without the data behind it", () => {
-  // The compiler passes a plain object through as the value it is, tag and all.
   it("writes an ObjectId-tagged plain object as the object, and does not throw", () => {
     expect(stringify({ v: { _bsontype: "ObjectId", id: "xyz" } })).toBe('{ v: { _bsontype: "ObjectId", id: "xyz" } }');
   });
@@ -260,8 +235,6 @@ describe("stringify: keys", () => {
   });
 
   it("writes __proto__ as a computed key, the only spelling that survives a paste", () => {
-    // The computed key here is the test's own workaround: a source `{ __proto__: 1 }`
-    // sets the prototype and creates no own property, which is the whole hazard.
     const text = stringify({ ["__proto__"]: 1 } as Record<string, unknown>);
     expect(text).toBe('{ ["__proto__"]: 1 }');
     const back = asPasted(text) as Record<string, unknown>;
@@ -306,8 +279,6 @@ describe("stringify: layout", () => {
   });
 
   it("takes the width from the option", () => {
-    // 20 columns for the one-line form, 14 for the inner one at its indent. A width of 16 breaks the outer
-    // document and keeps the inner one whole.
     expect(stringify({ age: { $gt: 18 } }, { width: 16 })).toBe("{\n  age: { $gt: 18 }\n}");
   });
 

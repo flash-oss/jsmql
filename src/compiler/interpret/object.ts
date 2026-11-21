@@ -1,20 +1,10 @@
-// The document operators.
-//
-// A document keeps the order of its keys, and a key that reads as an array index
-// would move in a JavaScript object. `spellable` refuses such a document, so no
-// rule here checks that. `$arrayToObject` is the one rule that answers it, as an
-// `OrderedDocument`, which no other rule reads. A field that the answer needs and the document lacks is
-// MISSING. No literal spells missing, so the interpreter refuses such a read.
-
 import type { Answer, Rule } from "./values.ts";
 import { NO, OrderedDocument, isIndexKey, isPlain, ok, spellable } from "./values.ts";
 import { keyed, positional } from "./operand.ts";
 import { setKey } from "../../registry/mql.ts";
 
-/** A key that the server accepts as a name: it has no null byte, and it does not start with a dollar. */
 const isFieldName = (k: unknown): k is string => typeof k === "string" && !k.includes("\u0000") && !k.startsWith("$");
 
-// A document whose key order is unspecified gives a list whose order is unspecified.
 const objectToArray = positional(
   1,
   1,
@@ -27,7 +17,6 @@ const objectToArray = positional(
   true,
 );
 
-/** The pairs of `$arrayToObject`: all `[key, value]` lists, or all `{ k, v }` documents. */
 function pairsOf(list: unknown[]): [string, unknown][] | null {
   const pairs: [string, unknown][] = [];
   const form = list.length === 0 ? "list" : Array.isArray(list[0]) ? "list" : "document";
@@ -45,8 +34,6 @@ function pairsOf(list: unknown[]): [string, unknown][] | null {
   return pairs.every(([k]) => isFieldName(k)) ? pairs : null;
 }
 
-// The pairs of a list in unspecified order give a document in that order. A key that repeats keeps the
-// value of its last pair. So the list may be in unspecified order only when no key repeats.
 const arrayToObject = positional(
   1,
   1,
@@ -57,7 +44,6 @@ const arrayToObject = positional(
     if (pairs === null) return NO;
     const unordered = walk.isSet(list);
     if (unordered && new Set(pairs.map(([k]) => k)).size !== pairs.length) return NO;
-    // A key that repeats keeps its first place and the value of its last pair.
     const kept = new Map(pairs);
     if (!unordered && kept.size > 1 && [...kept.keys()].some(isIndexKey)) return ok(new OrderedDocument([...kept]));
     const out: Record<string, unknown> = {};
@@ -67,11 +53,6 @@ const arrayToObject = positional(
   true,
 );
 
-/**
- * `$mergeObjects` takes documents, or one list of documents. A null document adds nothing. A document
- * of unspecified key order gives keys in that order. A list of unspecified order is a refusal when two
- * of its documents share a key, because the last one wins.
- */
 const mergeObjects = positional(
   0,
   Infinity,
@@ -90,7 +71,6 @@ const mergeObjects = positional(
   true,
 );
 
-/** The field name, and the document that a keyed operand names. A null document gives null. */
 function target(
   parts: Record<string, unknown>,
   walk: Parameters<Rule>[1],

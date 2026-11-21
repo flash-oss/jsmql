@@ -1,17 +1,9 @@
-// Phase 5 of src/compiler/ — the filter target, end to end.
-//
-// A JSMQL predicate and the query document the compiler emits. `||` lowers PER
-// BRANCH, so a leaf's query form never depends on its sibling.
-
 import { describe, expect, it } from "vitest";
 import { filter } from "../src/compiler/index.ts";
 
 const TRUTHY = (v: unknown) => ({ $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
 
 describe("compiler/emit/filter — comparisons", () => {
-  // Every comparison reads the field's OWN value: MongoDB would satisfy `{ a: 1 }`
-  // with `a: [1, 2]`, and JavaScript's `===` never does. A path of more than one
-  // segment excludes an array at each prefix too, because MongoDB traverses it.
   it("lowers a field against a constant to the query language", () => {
     expect(filter("$.a === 1")).toEqual({ a: 1 });
     expect(filter("$.a !== 1")).toEqual({ a: { $ne: 1 } });
@@ -31,17 +23,13 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a === null")).toEqual({ a: { $type: "null" } });
     expect(filter("$.a !== null")).toEqual({ a: { $not: { $type: "null" } } });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
-    // Absence has its own spelling, `x === undefined`, so `typeof` refuses "undefined".
     expect(() => filter('typeof $.a === "undefined"')).toThrow(/write 'x === undefined'/);
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
     expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool" } });
-    // The compiler refuses a name MongoDB does not know and gives the nearest one.
-    // It never lowers the name to a test that quietly matches nothing.
     expect(() => filter('typeof $.a === "boolean"')).toThrow(/never true\. Did you mean 'bool'\?/);
     expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
     expect(filter('typeof $.a !== "objectId"')).toEqual({ a: { $not: { $type: "objectId" } } });
-    // The `array` spelling asks whether the value is an array, so it excludes none.
     expect(filter('typeof $.a === "array"')).toEqual({ a: { $type: "array" } });
     expect(filter('typeof $.a !== "array"')).toEqual({ a: { $not: { $type: "array" } } });
     expect(filter("$.a % 2 === 0")).toEqual({ a: { $mod: [2, 0] } });
@@ -53,23 +41,18 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
     expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: { $ifNull: ["$a", 0] } }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
-    // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
-    // a key test has its own spelling, and `.has` is the element test on an array value
     expect(filter("$.o.k !== undefined")).toEqual({ "o.k": { $exists: true } });
     expect(filter('$.tags.has("red")')).toEqual({ tags: "red" });
   });
 
   it("tests the element itself inside $elemMatch, as one operator document", () => {
-    // MEASURED: a body over the element alone is an operator document with no field name
     expect(filter('$.tags.some(t => t === "red")')).toEqual({ tags: { $elemMatch: { $eq: "red" } } });
     expect(filter("$.nums.some(n => n > 2)")).toEqual({ nums: { $elemMatch: { $gt: 2 } } });
     expect(filter("$.nums.some(n => n > 1 && n < 5)")).toEqual({ nums: { $elemMatch: { $gt: 1, $lt: 5 } } });
     expect(filter('$.tags.some(t => t.startsWith("re"))')).toEqual({ tags: { $elemMatch: { $regex: /^re/ } } });
     expect(filter('$.tags.some(t => typeof t === "string")')).toEqual({ tags: { $elemMatch: { $type: "string" } } });
     expect(filter("$.rows.some(r => r.k !== undefined)")).toEqual({ rows: { $elemMatch: { k: { $exists: true } } } });
-    // MEASURED: `$and` and `$or` over operator-only clauses are refused inside `$elemMatch`,
-    // and so is the same operator twice — those bodies take the expression road
     expect(filter("$.nums.some(n => n > 1 && n > 2)")).toEqual({
       $expr: {
         $anyElementTrue: {
@@ -92,8 +75,6 @@ describe("compiler/emit/filter — comparisons", () => {
         },
       },
     });
-    // `.size()` counts the elements of an array. The query language has no operator for a
-    // count, so the comparison stays under `$expr`; a missing array reads as empty.
     expect(filter("$.arr.size() > 2")).toEqual({ $expr: { $gt: [{ $size: { $ifNull: ["$arr", []] } }, 2] } });
   });
 });
@@ -101,10 +82,7 @@ describe("compiler/emit/filter — comparisons", () => {
 describe("compiler/emit/filter — && and ||", () => {
   it("merges conjuncts, keys that collide into one $and, residuals into one $expr", () => {
     expect(filter("$.a > 1 && $.b <= 2")).toEqual({ a: { $gt: 1 }, b: { $lte: 2 } });
-    // Two operator documents on one field that agree wherever they overlap are ONE
-    // document: the server reads every operator in it as a conjunction.
     expect(filter("$.a >= 1 && $.a <= 9")).toEqual({ a: { $gte: 1, $lte: 9 } });
-    // The same operator named twice stays in the `$and`.
     expect(filter("$.a === 1 && $.a === 2 && $.b === 3")).toEqual({ $and: [{ a: 1 }, { a: 2 }], b: 3 });
     expect(filter('$.status === "active" && $.a > $.b && $.c < $.d')).toEqual({
       status: "active",
@@ -113,12 +91,9 @@ describe("compiler/emit/filter — && and ||", () => {
     expect(filter("$.x === 1 && ($.y === 2 || $.z === 3)")).toEqual({ x: 1, $or: [{ y: 2 }, { z: 3 }] });
   });
 
-  // `!p` is the complement of p's own clause. `$expr` orders across BSON types, so
-  // `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]`, where JavaScript says true.
   it("complements a native clause under !, and keeps the truth road otherwise", () => {
     expect(filter("!($.a > 1)")).toEqual({ $nor: [{ a: { $gt: 1 } }] });
     expect(filter("!($.a === 1 && $.b === 2)")).toEqual({ $nor: [{ a: 1, b: 2 }] });
-    // no native form inside: the truth road's own `$not` is already JavaScript's answer
     expect(filter("!$.a")).toEqual({ $expr: { $not: TRUTHY("$a") } });
     expect(filter("!($.a > $.b)")).toEqual({ $expr: { $not: { $gt: ["$a", "$b"] } } });
   });
@@ -131,15 +106,11 @@ describe("compiler/emit/filter — && and ||", () => {
     expect(filter("$.a === 1 || $.b === 2 || $.c === 3")).toEqual({ $or: [{ a: 1 }, { b: 2 }, { c: 3 }] });
   });
 
-  // Two clauses on one field fold to the one MongoDB reads off the index.
   it("folds a chain of .has on one field into $all", () => {
     expect(filter('$.tags.has("a") && $.tags.has("b")')).toEqual({ tags: { $all: ["a", "b"] } });
     expect(filter('$.tags.has("a") && $.other.has("b")')).toEqual({ tags: "a", other: "b" });
-    // A null needle beside another needle stays in the list: the other needle excludes a missing field.
     expect(filter('$.tags.has(null) && $.tags.has("a")')).toEqual({ tags: { $all: [null, "a"] } });
-    // A list of null needles alone matches a missing field, so each leaf keeps its own clause.
     expect(filter("$.tags.has(null) && $.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
-    // A substring test is a regex, and two regexes on one path stay two clauses.
     expect(filter('$.s.includes("a") && $.s.includes("b")')).toEqual({
       $and: [{ s: { $regex: /a/ } }, { s: { $regex: /b/ } }],
     });
@@ -148,7 +119,6 @@ describe("compiler/emit/filter — && and ||", () => {
 
 describe("compiler/emit/filter — the truth of a `$op(…)` call is split by spelling", () => {
   it("keeps MongoDB's truthiness for a call that no JavaScript spelling reads", () => {
-    // MEASURED: `{ $expr: "$s" }` reads false, null, missing and 0 as false, and "" and [] as true.
     expect(filter("$foo($.a)")).toEqual({ $expr: { $foo: "$a" } });
     expect(filter("$ifNull($.a, 0)")).toEqual({ $expr: { $ifNull: ["$a", 0] } });
     expect(filter("$and($foo($.a), $.b > 1)")).toEqual({ $and: [{ $expr: { $foo: "$a" } }, { b: { $gt: 1 } }] });
@@ -164,18 +134,12 @@ describe("compiler/emit/filter — the truth of a `$op(…)` call is split by sp
 
 describe("compiler/emit/filter — a raw query document", () => {
   it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
-    // Raw MQL passes through, keys as written (HR1). A name that this build
-    // does not list in filter position passes too, because a newer query operator must round-trip.
     expect(filter("{ a: 1 }")).toEqual({ a: 1 });
     expect(filter("{ a: { $gt: 1 } }")).toEqual({ a: { $gt: 1 } });
     expect(filter("{ a: { $size: 2 } }")).toEqual({ a: { $size: 2 } });
     expect(filter("{ a: -1 }")).toEqual({ a: -1 });
     expect(filter("{ a: $gt(1) }")).toEqual({ a: { $gt: 1 } });
-    // `$expr`'s row states that its operand is an aggregation EXPRESSION, so the
-    // query-value rules do not apply inside it.
     expect(filter("{ $expr: $multiply($.a, 2) }")).toEqual({ $expr: { $multiply: ["$a", 2] } });
-    // A computed expression in a value slot is neither a value nor a query operator:
-    // it becomes `{ a: { $gt: ["$b", 1] } }`, which the server accepts and matches nothing.
     expect(() => filter("{ a: $.b > 1 }")).toThrow(/computed expression/);
   });
 });
@@ -235,13 +199,11 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
     });
     expect(filter('$comment("c")')).toEqual({ $comment: "c" });
     expect(filter('$jsonSchema({ required: ["a"] })')).toEqual({ $jsonSchema: { required: ["a"] } });
-    // `$where` is your own MQL in both spellings (HR1, HR2), and a find() filter takes it.
     expect(filter('$where("this.n > 3")')).toEqual({ $where: "this.n > 3" });
     expect(filter('{ $where: "this.n > 3" }')).toEqual({ $where: "this.n > 3" });
   });
 
   it("takes HR2's plain form where the arguments do not fit the call form", () => {
-    // DELIBERATELY invalid: mongod refuses each one, because `$exists`, `$all` and `$box` are not top-level query operators.
     expect(filter("$exists(1)")).toEqual({ $exists: 1 });
     expect(filter("$all($.tags, $.other)")).toEqual({ $all: ["$tags", "$other"] });
     expect(filter("$box([[0, 0], [1, 1]])")).toEqual({
@@ -259,29 +221,16 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
 
 describe("compiler/emit/filter — methods and operators", () => {
   it("lowers the boolean methods to their indexable forms", () => {
-    // A query document is read through an INDEX. `.has` is membership in an array:
-    // MongoDB's own "equals, or is an array containing", and `$in` for a constant list.
-    // `.includes` is the substring test of a string, and the query spelling for it is an
-    // escaped `$regex`.
     expect(filter('$.tags.has("x")')).toEqual({ tags: "x" });
-    // Under HR5 a dot reads a missing array as [], which holds no null. `{ tags: null }` matches a missing field.
     expect(filter("$.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
     expect(filter('["a", "b"].has($.s)')).toEqual({ s: { $in: ["a", "b"] } });
     expect(filter('$.s.includes("x")')).toEqual({ s: { $regex: /x/ } });
     expect(filter('$.s.includes("a.b")')).toEqual({ s: { $regex: /a\.b/ } });
     expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/ } });
-    // `\z` is the end of the SUBJECT. PCRE's `$` also matches before a final newline,
-    // so it accepted "z.\n" where JavaScript's endsWith does not.
     expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/ } });
     expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i } });
-    // The operator form, not the shorter `{ s: /^a/i }`. MEASURED: the two select the
-    // same documents at every query site. The operator form is the one that
-    // survives where they differ. jsmql emits into both of those sites: a sibling on the
-    // same field, and `$elemMatch`, which needs an object.
     expect(filter('$.s.match(/^a/i) && $.s !== "zzz"')).toEqual({ s: { $regex: /^a/i, $ne: "zzz" } });
     expect(filter("$.items.some(i => i.s.match(/^a/))")).toEqual({ items: { $elemMatch: { s: { $regex: /^a/ } } } });
-    // `.some` IS the element test, so `$elemMatch` is its own reading; the element's
-    // own fields take the rule again.
     expect(filter("$.items.some(i => i.q > 2)")).toEqual({ items: { $elemMatch: { q: { $gt: 2 } } } });
     expect(filter("$.items.some(i => i.q > 2 && i.name === 'x')")).toEqual({
       items: { $elemMatch: { q: { $gt: 2 }, name: "x" } },
@@ -296,7 +245,6 @@ describe("compiler/emit/filter — methods and operators", () => {
       items: { $elemMatch: { $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] } },
     });
     expect(filter("$.items.some(i => !(i.q === 1))")).toEqual({ items: { $elemMatch: { $nor: [{ q: 1 }] } } });
-    // The server refuses an `$or` over tests of the element itself, so this body takes the expression road.
     expect(filter('$.tags.some(t => t === "a" || t === "b")')).toEqual({
       $expr: {
         $anyElementTrue: {
@@ -311,21 +259,14 @@ describe("compiler/emit/filter — methods and operators", () => {
   });
 
   it('matches a missing or null string where the test is true for the safe value "" (HR5)', () => {
-    // A dot reads a missing string as "". A query clause never matches a missing field.
-    // So a test that is true for "" takes the null test beside it, in one `$in`.
     expect(filter('$.s.includes("")')).toEqual({ s: { $in: [/(?:)/, null] } });
     expect(filter('$.s.startsWith("")')).toEqual({ s: { $in: [/^/, null] } });
     expect(filter('$.s.endsWith("")')).toEqual({ s: { $in: [/\z/, null] } });
     expect(filter("$.s.match(/^$/)")).toEqual({ s: { $in: [/^$/, null] } });
-    // The server matches a PCRE anchor on "". JavaScript reads the anchor as a letter.
     expect(filter("$.s.match(/\\A\\z/)")).toEqual({ s: { $in: [/\A\z/, null] } });
-    // a test that fails on "" keeps its plain clause
     expect(filter("$.s.match(/a/)")).toEqual({ s: { $regex: /a/ } });
-    // an `$elemMatch` body over a value can contain the `$in` too
     expect(filter('$.tags.some(t => t.includes(""))')).toEqual({ tags: { $elemMatch: { $in: [/(?:)/, null] } } });
-    // After a `?.` the call gives null. No test is true for null.
     expect(filter("$.s?.match(/^$/)")).toEqual({ s: { $regex: /^$/ } });
-    // A `?.` earlier in the path gives null only where `a` is missing. The expression road decides.
     expect(filter('$.a?.b.includes("")')).toEqual({
       $expr: { $cond: [{ $lte: ["$a", null] }, null, { $gte: [{ $indexOfCP: [{ $ifNull: ["$a.b", ""] }, ""] }, 0] }] },
     });
@@ -333,26 +274,19 @@ describe("compiler/emit/filter — methods and operators", () => {
 
   it("lowers .inRange() on a field against constant bounds to an indexable range on that field", () => {
     expect(filter("$.age.inRange(18, 65)")).toEqual({ age: { $gte: 18, $lt: 65 } });
-    // the bounds order at COMPILE time, so the swapped spelling is the same clause
     expect(filter("$.age.inRange(65, 18)")).toEqual({ age: { $gte: 18, $lt: 65 } });
-    // HR5: a dot reads a missing number as 0. 0 is in [0, 10), so the clause also matches a missing `n`.
     expect(filter("$.n.inRange(10)")).toEqual({ $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] });
     expect(filter("$.n.inRange(-1, 1)")).toEqual({ $or: [{ n: { $gte: -1, $lt: 1 } }, { n: null }] });
-    // After a `?.` the call gives null. A range without 0 is never true for a missing `n`.
     expect(filter("$.n?.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
     expect(filter("$.n.inRange(-10, 0)")).toEqual({ n: { $gte: -10, $lt: 0 } });
     expect(filter("$.a.b.inRange(1, 2)")).toEqual({ "a.b": { $gte: 1, $lt: 2 } });
-    // a date field takes the same clause
     expect(filter('$.t.inRange(Date("2024-01-01"), Date("2025-01-01"))')).toEqual({
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
-    // a bound read at run time cannot order here, and keeps the $min/$max expression
     const n = { $ifNull: ["$n", 0] };
     expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
       $expr: { $and: [{ $gte: [n, { $min: ["$lo", "$hi"] }] }, { $lt: [n, { $max: ["$lo", "$hi"] }] }] },
     });
-    // a number against a date does not compare, so the pair keeps the expression form too.
-    // A date bound reads a missing receiver as the epoch.
     const d = new Date("2024-01-01T00:00:00.000Z");
     const t = { $ifNull: ["$t", new Date(0)] };
     expect(filter('$.t.inRange(Date("2024-01-01"))')).toEqual({
@@ -361,11 +295,7 @@ describe("compiler/emit/filter — methods and operators", () => {
   });
 
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
-    // The query cell answers null, and the fallback asks the VALUE lowering, which
-    // arrives under `$expr`.
-    // The compiler refuses a receiver PROVEN to be no string before either: `.abs()` returns a number.
     expect(() => filter('$.n.abs().startsWith("A")')).toThrow(/not available on a 'number'/);
-    /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
     const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
       [op]: { $map: { input: { $ifNull: [input, []] }, as, in: body } },
     });
@@ -375,18 +305,15 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.items.some(i => i.q > $.min)")).toEqual({
       $expr: overItems("$items", "$anyElementTrue", "i", { $gt: ["$$i.q", "$min"] }),
     });
-    // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
     expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toEqual({
       $expr: overItems("$items", "$anyElementTrue", "i", { $and: [{ $gt: ["$$i.q", 2] }, { $eq: ["$flag", true] }] }),
     });
-    // and an OUTER element's fields are not the inner element's
     expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toEqual({
       $expr: overItems("$a", "$anyElementTrue", "i", overItems("$$i.b", "$anyElementTrue", "j", { $eq: ["$$i.c", 1] })),
     });
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
       a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
     });
-    // a field against a field has no query form: the value cell's shape under `$expr`
     expect(filter("$.s.startsWith($.prefix)")).toEqual({
       $expr: { $eq: [{ $indexOfCP: [{ $ifNull: ["$s", ""] }, "$prefix"] }, 0] },
     });
@@ -394,17 +321,11 @@ describe("compiler/emit/filter — methods and operators", () => {
 
   it("lowers a query-only operator to its query form, and passes the rest of your MQL through", () => {
     expect(filter("$and($.a === 1, $sampleRate(0.5))")).toEqual({ $and: [{ a: 1 }, { $sampleRate: 0.5 }] });
-    // DELIBERATELY invalid shapes. Each comment says why mongod refuses one.
-    // mongod: `$sampleRate` needs a number
     expect(filter("$sampleRate($.r)")).toEqual({ $sampleRate: "$r" });
     expect(filter('$sampleRate("0.5")')).toEqual({ $sampleRate: "0.5" });
-    // mongod: `$sampleRate` needs a number from 0 to 1
     expect(filter("$sampleRate(2)")).toEqual({ $sampleRate: 2 });
-    // mongod: `$sampleRate` works only at the top level of a query
     expect(filter("$.items.some(i => $sampleRate(0.5))")).toEqual({ items: { $elemMatch: { $sampleRate: 0.5 } } });
-    // `%` is JSMQL code, so the compiler owns its lowering and refuses a zero divisor.
     expect(() => filter("$.a % 0 === 1")).toThrow(/divide by zero/);
-    // `$divide` is your own MQL. DELIBERATELY invalid: mongod refuses a division by zero.
     expect(filter("$gt($divide($.a, 0), 1)")).toEqual({ $expr: { $gt: [{ $divide: ["$a", 0] }, 1] } });
     expect(filter("$gt($log10($.a), 1)")).toEqual({ $expr: { $gt: [{ $log10: "$a" }, 1] } });
   });
@@ -415,10 +336,8 @@ describe("compiler/emit/filter — methods and operators", () => {
       $expr: { $gt: ["$score", "$threshold"] },
     });
     expect(filter("{ a: { $gt: 1 }, tags: { $all: ['x'] } }")).toEqual({ a: { $gt: 1 }, tags: { $all: ["x"] } });
-    // a one-operand $op inside a raw document is the query operator, at any depth
     expect(filter("{ a: $not($gt(1)) }")).toEqual({ a: { $not: { $gt: 1 } } });
     expect(filter("{ a: $size(2) }")).toEqual({ a: { $size: 2 } });
-    // DELIBERATELY invalid: mongod refuses it, because `$setUnion` is not a top-level query operator.
     expect(filter("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
   });
 
@@ -433,9 +352,6 @@ describe("compiler/emit/filter — methods and operators", () => {
 });
 
 describe("compiler/emit/filter — a read inside a raw query value has no query form", () => {
-  // The query language compares a field with a CONSTANT, so `$.b` in a query slot is
-  // the two-character string "$b". Then the filter matches nothing. The test asks the question
-  // at every depth: an array, a document, a nesting of both.
   it("lifts the whole comparison when a read sits anywhere inside the value", () => {
     expect(filter("{ a: $.b }")).toEqual({ $expr: { $eq: ["$a", "$b"] } });
     expect(filter("{ a: [1, $.b] }")).toEqual({ $expr: { $eq: ["$a", [1, "$b"]] } });
@@ -479,8 +395,6 @@ describe("compiler/emit/filter — a read inside a raw query value has no query 
       ["{ a: { $exists: true } }", { a: { $exists: true } }],
       ["{ a: { $type: 'string' } }", { a: { $type: "string" } }],
       ["{ a: { $mod: [4, 0] } }", { a: { $mod: [4, 0] } }],
-      // the developer's own MQL (HR1), kept as written; the server refuses it,
-      // because `$not` takes only a regex or a document
       ["{ a: { $not: 1 } }", { a: { $not: 1 } }],
       ["{ a: { $all: [1, 2] } }", { a: { $all: [1, 2] } }],
       ["{ a: { $elemMatch: { x: 2 } } }", { a: { $elemMatch: { x: 2 } } }],

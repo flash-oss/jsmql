@@ -1,30 +1,9 @@
-// A lambda parameter that cannot capture.
-//
-// A rewrite that BUILDS a lambda must name its parameter. The name it picks
-// lands in the same flat scope as everything around it:
-//   $.items.filter({ a: n })   →   $.items.filter(n => n.a === n)
-//                                                  ^^^^^^^^^^^^^ `n` now means
-// the element. The binding the developer meant becomes unreachable. The MQL is
-// valid, and the answer is wrong. This is the worst shape a bug can take.
-//
-// A shadow only matters for names the BODY mentions. A built body mentions
-// exactly what the rewrite splices into it. So this code answers the whole
-// question from the arguments in hand. It needs no scope, no gensym counter and no state.
-
 import { introducedNames } from "./naming.ts";
 
-/** A node, a list of them, or a leaf. */
 type Slot = unknown;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-/**
- * Every bare name the tree mentions: each `Ident`, and a lambda's own parameters.
- *
- * A lambda's parameters count even though the lambda binds them inside itself.
- * A new parameter that shadows one would change which binding the inner
- * lambda's body sees.
- */
 export function namesIn(node: unknown, out: Set<string> = new Set()): Set<string> {
   if (Array.isArray(node)) {
     for (const el of node) namesIn(el, out);
@@ -32,19 +11,11 @@ export function namesIn(node: unknown, out: Set<string> = new Set()): Set<string
   }
   if (!isObj(node)) return out;
   if (node.type === "Ident" && typeof node.name === "string") out.add(node.name);
-  // A lambda's parameters, and a declaration's name. See `introducedNames`.
   for (const name of introducedNames(node)) out.add(name);
   for (const v of Object.values(node) as Slot[]) namesIn(v, out);
   return out;
 }
 
-/**
- * `base`, or `base` with the lowest suffix that nothing in `mentions` uses.
- *
- * The suffix starts at 2, so the common answer is the bare name. A shorthand
- * whose arguments name nothing, such as `$.items.map("name")`, reads as `x => x.name`.
- * Its MQL reads as `$$x`, not as a mangled compiler name.
- */
 export function freshParam(base: string, ...mentions: readonly unknown[]): string {
   const taken = new Set<string>();
   for (const m of mentions) namesIn(m, taken);

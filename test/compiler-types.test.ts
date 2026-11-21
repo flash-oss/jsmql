@@ -1,11 +1,3 @@
-// The type tracker: what the compiler proves about a written field, a `let`, a
-// possible-kinds value — and what the server does with the document it emits.
-//
-// Each case states the MQL. The live half runs that MQL on the project's own
-// mongod. So the test measures the claim "this shape is valid and answers X" and never
-// assumes it (HR3). The suite skips its live half when no mongod listens.
-// See docs/specs/types.md.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Double, MongoClient, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -35,7 +27,6 @@ describe("types — a written field carries what its value proved", () => {
       { $set: { s: { $trim: { input: { $ifNull: ["$a", ""] } } } } },
       { $set: { t: { $toUpper: "$s" } } },
     ]);
-    // A literal is there: no guard at all.
     expect(jsmql('$.s = "abc"; $.t = $.s.toUpper();')).toEqual([
       { $set: { s: "abc" } },
       { $set: { t: { $toUpper: "$s" } } },
@@ -58,8 +49,6 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a stage that replaces the document forgets every written type", () => {
-    // `v` is a present string, so `.length()` needs no `$ifNull`. After the replacement
-    // `v` is unknown, so the `$ifNull` is back.
     const src = '$.v = $.flag ? "abc" : "de"; $ = { v: $.other }; $.n = $.v.length();';
     expect(jsmql(src)[2]).toEqual({ $set: { n: { $strLenCP: { $ifNull: ["$v", ""] } } } });
     expect(jsmql('$.v = $.flag ? "abc" : "de"; $.n = $.v.length();')[1]).toEqual({ $set: { n: { $strLenCP: "$v" } } });
@@ -68,8 +57,6 @@ describe("types — a written field carries what its value proved", () => {
 
 describe("types — a value of more than one possible kind", () => {
   it("a method of one family takes that family's operator when the value may be of that kind", () => {
-    // `.length()` is a string length. The value may be a string, so the string form runs, and the
-    // server judges an array at run time. The compiler refuses a value that can NEVER be a string.
     expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.len = $.v.length();')[1]).toEqual({
       $set: { len: { $strLenCP: "$v" } },
     });
@@ -77,7 +64,6 @@ describe("types — a value of more than one possible kind", () => {
       "'.length()' is not available on a 'number' or an 'array' — it is defined on 'string'.",
     );
     expect(() => jsmql("$.v = [1, 2]; $.len = $.v.length();")).toThrow("For the number of elements, write '.size()'.");
-    // `.indexOf()` is an array method: the array form runs, and the server judges a string.
     expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
       $set: { i: { $indexOfArray: ["$v", "b"] } },
     });
@@ -91,20 +77,15 @@ describe("types — the write rules", () => {
   });
 
   it("a dotted write keeps the parent's other properties and makes the parent present", () => {
-    // `address` was never written whole, so it may be an array. Each property is then
-    // the string written, or the list of strings that the array form carries (measured below).
     const doc = written(written(DOCUMENT, "address.country", of("string")), "address.full", of("string"));
     expect(kindsOf(at(doc, "address.country"))?.sort()).toEqual(["array", "string"]);
     expect(kindsOf(at(doc, "address.full"))?.sort()).toEqual(["array", "string"]);
     expect(at(doc, "address").absent).toBe(false);
-    // A parent written whole as an object first is an object, and its properties are exact.
     const known = written(written(DOCUMENT, "address", of("object")), "address.full", of("string"));
     expect(kindsOf(at(known, "address.full"))).toEqual(["string"]);
   });
 
   it("a dotted write into an unknown parent may land on an object or into every element of an array", () => {
-    // MEASURED below: `{ $set: { "a.b": 1 } }` makes a scalar `a` into `{ b: 1 }` and
-    // writes `b` into each element of an array `a`. So `a.b` is a number or a list of them.
     const doc = written(DOCUMENT, "a.b", of("number"));
     expect(kindsOf(at(doc, "a"))?.sort()).toEqual(["array", "object"]);
     expect(kindsOf(at(doc, "a.b"))?.sort()).toEqual(["array", "number"]);
@@ -169,14 +150,12 @@ describe.skipIf(up === null)("types — the server agrees", () => {
         { $sort: { _id: 1 } },
       ])
       .toArray();
-    // `$.s.trim()` on a missing `s` reads `""` (HR5), so the length is 0
     expect(out.map((d) => d.len)).toEqual([2, 0]);
   });
 });
 
 describe("types — the truthiness check keeps only the tests the value can fail", () => {
   it("a string keeps the empty-string test, and the null test while it may be missing", () => {
-    // `.trim()` under a dot reads a missing string as "" (HR5), so `s` is a string that is there
     expect(jsmql("$.s = $.a.trim(); $.t = $.s ? 1 : 2;")[1]).toEqual({
       $set: { t: { $cond: [{ $ne: ["$s", ""] }, 1, 2] } },
     });
@@ -193,7 +172,6 @@ describe("types — the truthiness check keeps only the tests the value can fail
     expect(jsmql("$.s = $.a.trim(); $match($.s);")[1]).toEqual({ $match: { s: { $ne: "" } } });
     expect(jsmql("$.n = $.a.length(); $match($.n);")[1]).toEqual({ $match: { n: { $ne: 0 } } });
     expect(jsmql("$.o = { a: 1 }; $match($.o);")[1]).toEqual({ $match: {} });
-    // a value that may be an array stays on the `$expr` road: the query language reads an array element by element
     expect(jsmql("$.v = $.flag ? 0 : [0]; $match($.v);")[1]).toEqual({ $match: { $expr: { $ne: ["$v", 0] } } });
   });
 });
@@ -221,9 +199,7 @@ describe.skipIf(up === null)("types — the server agrees with the truthiness ch
   };
 
   it("answers as JavaScript would on a string, a number, a boolean and a present array", async () => {
-    // JS: "x" → 1, "" → 2, missing → 2
     expect(await run("$.s = $.a.trim(); $.t = $.s ? 1 : 2;", "t")).toEqual([1, 2, 2]);
-    // JS: 2 → 1, 0 → 2, missing (null) → 2
     expect(await run("$.x = $.n ? 1 : 2;", "x")).toEqual([1, 2, 2]);
     expect(await run("$.arr = [1]; $.w = $.arr ? 1 : 2;", "w")).toEqual([1, 1, 1]);
   });
@@ -273,39 +249,31 @@ describe("types — the document after a stage, read off the stage itself", () =
       { $project: { a: 1, _id: 0 } },
       { $set: { n: { $strLenCP: "$a" } } },
     ]);
-    // The document holds `a` alone, so a read of `b` gives no value.
     expect(() => jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.m = $.b ? 1 : 2;')).toThrow(
       "'$.b' reads a field that the document does not have. It holds 'a'.",
     );
-    // An exclusion leaves the document open, and `a` certainly missing.
     expect(jsmql('$.a = "x"; $project({ a: 0 }); $.n = $.a ? 1 : 2;')[2]).toEqual({ $set: { n: 2 } });
   });
 
   it("a stage whose output no layout states yet leaves the document unknown", () => {
-    // `a` was a present string; after the stage it may be missing, so the null guard is back.
     expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length();')[2]).toEqual({
       $set: { n: { $strLenCP: { $ifNull: ["$a", ""] } } },
     });
   });
 
   it("each link of a stream chain reads the document that the link before it made", () => {
-    // The `$set` link wrote `a` from a field the proof cannot show, so the `.map` link guards the read.
     expect(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));')).toEqual([
       { $set: { a: "x" } },
       { $set: { a: "$label" } },
       { $replaceWith: { n: { $strLenCP: { $ifNull: ["$a", ""] } } } },
     ]);
-    // A link that replaced the document took the `let` field with it, as a stage statement does.
     expect(() => jsmql("let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t);")).toThrow(
       "`t` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it.",
     );
-    // `.uniq()` gives the documents back as they were, so the `let` field is still there.
     expect(() => jsmql("let t = $.a; $$.uniq().filter(d => d.x === t);")).not.toThrow();
   });
 
   it("the statement after a chain reads the Env that the chain's last link left", () => {
-    // `.uniq()` gives the documents back as they were. The `let` field is still on them, so a
-    // later link and a later statement read it, and the cleanup drops it at the end.
     const kept = [
       { $set: { "__jsmql.var.t": "$a" } },
       { $group: { _id: "$$ROOT" } },
@@ -317,31 +285,26 @@ describe("types — the document after a stage, read off the stage itself", () =
     expect(jsmql("let t = $.a; $$.uniq(); $match($.x === t);")).toEqual(kept);
     expect(jsmql("let t = $.a; $$ = $$.uniq(); $match($.x === t);")).toEqual(kept);
     expect(jsmql("let t = $.a; $$ = $$.uniq().filter(d => d.x === t);")).toEqual(kept);
-    // Each row that states `restoresDocuments` keeps the binding.
     for (const link of ['uniqBy("x")', "sortedUniq()", 'sortedUniqBy("x")']) {
       expect((jsmql(`let t = $.a; $$.${link}; $match($.x === t);`) as object[]).slice(-2)).toEqual(kept.slice(-2));
     }
-    // The element after `.flatMap` stays for the next statement: `x` is the unwound id.
     expect(jsmql('$$.flatMap("ids").uniq(); $$.map(x => ({ v: x * 2 }));')).toEqual([
       { $unwind: "$ids" },
       { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
       { $replaceWith: "$__jsmqlTmp" },
       { $replaceWith: { v: { $multiply: ["$ids", 2] } } },
     ]);
-    // The cleanup stands ahead of the stage that writes the stream to a collection.
     expect(jsmql("let t = $.a; $$$.out = $$.uniq();")).toEqual([...kept.slice(0, 3), kept[4], { $out: "out" }]);
     expect(jsmql("let t = $.a; $$$.c.concat($$.uniq());")).toEqual([...kept.slice(0, 3), kept[4], { $merge: "c" }]);
   });
 
   it("a scratch field that a stage writes after a replace is still cleaned up", () => {
-    // `.shuffle()` writes its sort key after `.map` replaced the document.
     expect(jsmql("$$.map(d => ({ a: d.a })).shuffle();")).toEqual([
       { $replaceWith: { a: "$a" } },
       { $addFields: { "__jsmql.tmp.0": { $rand: {} } } },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $unset: "__jsmql" },
     ]);
-    // The stream count lands after `$ = …` in the same run.
     expect(jsmql("$ = { a: $.a }, $.n = $$.size();")).toEqual([
       { $replaceWith: { a: "$a" } },
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
@@ -351,11 +314,9 @@ describe("types — the document after a stage, read off the stage itself", () =
   });
 
   it("a write run takes each stage in the order that the stages stand", () => {
-    // A write after `$ = …` cannot read the `let` that the stage took, as the next statement cannot.
     expect(() => jsmql("let t = $.a; $ = { a: $.a }, $.x = t;")).toThrow(
       "`t` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it.",
     );
-    // A write after the stage carries the `let` again, and the next statement reads it.
     expect(jsmql("let t = $.a; $ = { a: $.a }, t = 1; $.y = t;")).toEqual([
       { $set: { "__jsmql.var.t": "$a" } },
       { $replaceWith: { a: "$a" } },
@@ -402,7 +363,6 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
     const out = await coll
       .aggregate([
         ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length();') as object[]),
-        // The read `$.b` that the compiler refuses after the projection, written as raw MQL.
         { $set: { m: "$b" } },
         { $limit: 1 },
       ])
@@ -411,7 +371,6 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
   });
 
   it("the chain link after a `$set` answers as JavaScript would", async () => {
-    // No fixture document has `label`, so `a` is missing after the `$set`, and `.length()` reads `""` and answers 0.
     const out = await coll
       .aggregate(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));') as object[])
       .toArray();
@@ -421,7 +380,6 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
   it("a `let` read after `.uniq()` answers as JavaScript would, and no scratch field reaches the answer", async () => {
     const answer = async (source: string, by: string): Promise<unknown[]> =>
       await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
-    // The two `{ k: "a" }` documents are one after `.uniq()`.
     expect(await answer("$$.map(d => ({ k: d.k })); let t = $.k; $$.uniq().filter(d => d.k === t);", "k")).toEqual([
       { k: "a" },
       { k: "b" },
@@ -474,7 +432,6 @@ describe.skipIf(up === null)(
     it("the link after `.intersection()` reads the unwound value", async () => {
       const answer = async (source: string, by: string): Promise<unknown[]> =>
         await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
-      // lodash: `_.intersection([3, 1, 2, 2, 1], [1, 2])` is `[1, 2]`.
       expect(await answer('$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 10 }));', "v")).toEqual([
         { v: 10 },
         { v: 20 },
@@ -502,8 +459,6 @@ describe.skipIf(up === null)(
     });
 
     it("`.uniq()` on whole documents gives back the first of two equal documents", async () => {
-      // An int and a double of one value compare equal. So `.uniq()` keeps one document:
-      // the first document. `$type` shows which document came back.
       const pair = client.db("jsmql_compiler_types").collection("first_kept");
       await pair.deleteMany({});
       await pair.insertMany([
@@ -573,8 +528,6 @@ describe("types — a `$match` narrows the document for the statements after it"
     expect(jsmql('$$.filter({ status: "a" }); $.s = $.status.toUpper();')[1]).toEqual({
       $set: { s: { $toUpper: "$status" } },
     });
-    // `n` is a number, or an array that holds one (the query language reads an array element by element).
-    // A number owes only the zero test. An array owes none. Neither can be missing.
     expect(jsmql("$match($.n > 5); $.x = $.n ? 1 : 2;")[1]).toEqual({
       $set: { x: { $cond: [{ $ne: ["$n", 0] }, 1, 2] } },
     });
@@ -624,7 +577,6 @@ describe.skipIf(up === null)("types — the server agrees with the narrowing", (
       [1, "R"],
       [2, "OTHER"],
     ]);
-    // `n > 5` selects 7, 9 and the array that holds 8 — never the string
     const b = await run("$match($.n > 5); $.x = $.n ? 1 : 2;");
     expect(b.map((d) => [d._id, d.x])).toEqual([
       [1, 1],
@@ -637,8 +589,6 @@ describe.skipIf(up === null)("types — the server agrees with the narrowing", (
 });
 
 describe("types — a refusal reads the whole kind set", () => {
-  // "Possible" is not "proven": a value that MAY be a document passes, and the server judges.
-  // The compiler refuses a value that can NEVER be one, and the message names every kind it can be.
   it("a root write, a stream source, a spread, a union and a merge refuse a value that cannot fit", () => {
     expect(jsmql("$.x = $.f ? { a: 1 } : 5; $ = $.x;")[1]).toEqual({ $replaceWith: "$x" });
     expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("but got a string or a number.");
@@ -647,7 +597,6 @@ describe("types — a refusal reads the whole kind set", () => {
       "'...' argument 1 takes an array, but got a string or a number.",
     );
     expect(() => jsmql("$.x = 5; $.y = { ...$.x };")).toThrow("'...' argument 1 takes a document, but got a number.");
-    // a string keeps its own message, which names the character-wise spelling
     expect(() => jsmql('$.x = "abc"; $.y = [...$.x];')).toThrow("spreads a string into its characters");
     expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("takes a document, but got a number.");
     expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("but got a number or a boolean.");
@@ -655,8 +604,6 @@ describe("types — a refusal reads the whole kind set", () => {
   });
 
   it("an operator proves the kind that its MQL gives, so each of these positions reads it", () => {
-    // `*`, `/`, `%`, `**`, `-x` and the bitwise operators give a number. `-` and `+` give a
-    // number or a date. See the `returns` of each production in src/registry/productions.ts.
     expect(() => jsmql("$ = $.a * 2;")).toThrow("'$ = …' takes a document, but got a number.");
     expect(() => jsmql("$ = $.end - $.start;")).toThrow("but got a number or a date.");
     expect(() => jsmql("$$ = $.a * 2;")).toThrow("a number is one value");
@@ -667,7 +614,6 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow(
       "takes an arrow that returns a document, but the arrow returns a number.",
     );
-    // One branch may be a document, so the value may be one, and it passes.
     expect(jsmql("$ = $.f ? $.sub : $.a * 2;")).toEqual([
       {
         $replaceWith: {
@@ -698,7 +644,6 @@ describe.skipIf(up === null)("types — the server refuses each operator's value
     await client?.close();
   });
 
-  // The test reads each body twice: over the stream parameter `d`, and over `$` for its value.
   const BODIES = [
     "d.a * 2",
     "d.a / 2",
@@ -734,7 +679,6 @@ describe.skipIf(up === null)("types — the server refuses each operator's value
     const made = await coll
       .aggregate(jsmql("$$.map(d => ({ id: d._id, twice: d.a * 2 })).sortBy(d => d.id);") as object[])
       .toArray();
-    // `$multiply` gives null over a missing field, and the document keeps the null.
     expect(made).toEqual([
       { id: 1, twice: 6 },
       { id: 2, twice: null },
@@ -743,9 +687,7 @@ describe.skipIf(up === null)("types — the server refuses each operator's value
 });
 
 describe("types — a read that the proof shows gives no value is refused", () => {
-  // Each row: the entry, the source, the whole message, and the text the caret lands on.
   const REFUSED: [entry: "expr" | "pipeline", src: string, message: string, at: string][] = [
-    // a field of an array, a string or another scalar
     [
       "expr",
       "$.tags.uniq().size",
@@ -794,7 +736,6 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'$.n.value' reads a field, and a number has no fields. Call a method instead, for example '.round()'.",
       "$.n.value",
     ],
-    // a field that a closed object does not hold
     ["expr", '$.o.pick(["a"]).b', "'.b' reads a field that this object does not have. It holds 'a'.", ".b"],
     [
       "expr",
@@ -832,7 +773,6 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'.price' reads a field that 'p' does not have. It holds '_id', 'name'.",
       ".price",
     ],
-    // a query path through an array whose elements cannot hold the field
     [
       "pipeline",
       '$.tags = $.csv.split(","); $match($.tags.length > 0);',
@@ -845,7 +785,6 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'$.items.z' reads a field that the elements of '$.items' do not have. They hold 'q'.",
       "$.items.z",
     ],
-    // the compiler names a shorthand's parameter by what it stands for
     [
       "pipeline",
       '$$.map(o => ({ id: o.id })).filter({ type: "a" });',
@@ -858,7 +797,6 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'z' reads a field that the element does not have. It holds 'q'.",
       '"z"',
     ],
-    // a value that is always null or missing
     [
       "pipeline",
       "$.a = null; $.b = $.a.c;",
@@ -880,20 +818,16 @@ describe("types — a read that the proof shows gives no value is refused", () =
   });
 
   it("a read that the proof cannot rule out compiles", () => {
-    // Nothing is known about `a`, so `.length` reads its field `length` (HR5).
     expect(jsmql.expr("$.a.length")).toBe("$a.length");
     expect(jsmql.expr("$.a.b.c")).toBe("$a.b.c");
     expect(jsmql("$group({ _id: $.k, n: $sum(1) }); $.y = $.n + 1;")[1]).toEqual({ $set: { y: { $add: ["$n", 1] } } });
-    // A value of more than one kind, or an open object, can hold the field.
     expect(jsmql('$.v = $.flag ? "s" : { a: 1 }; $.y = $.v.a;')[1]).toEqual({ $set: { y: "$v.a" } });
     expect(jsmql("$.o = { a: 1, ...$.rest }; $.y = $.o.b;")[1]).toEqual({ $set: { y: "$o.b" } });
-    // A query keeps MongoDB's path through an array (SR2), where an element can hold the field.
     expect(jsmql('$.orders = $$$.orders.filter(o => o.uid === $._id); $match($.orders.status === "open");')[1]).toEqual(
       { $match: { "orders.status": "open" } },
     );
     expect(jsmql("$.items = [{ q: 1 }]; $match($.items.q === 1);")[1]).toEqual({ $match: { "items.q": 1 } });
     expect(jsmql("$.a = []; $.a.push({ x: 1 }); $match($.a.x === 1);")[2]).toEqual({ $match: { "a.x": 1 } });
-    // Each link reads what the link before it made.
     expect(jsmql("$group({ _id: $.k, n: $sum(1) }); $$.map(d => ({ total: d.n })).filter(d => d.total > 1);")).toEqual([
       { $group: { _id: "$k", n: { $sum: 1 } } },
       { $replaceWith: { total: "$n" } },
@@ -925,7 +859,6 @@ describe.skipIf(up === null)("types — the server gives no value for a read tha
             ofObject: { $getField: { field: "b", input: "$o" } },
             numberPath: "$n.value",
             stringPath: "$s.length",
-            // A field path through an array lists each element's field: numbers have none.
             arrayPath: "$arr.size",
           },
         },
@@ -946,7 +879,6 @@ describe.skipIf(up === null)("types — the server gives no value for a read tha
 });
 
 describe("types — a computed key that may be missing reads as the empty name", () => {
-  // `$getField` refuses a null name, so the guard stands wherever the proof cannot show the key.
   it("a string key guards what the proof cannot show, and takes no guard where it can", () => {
     expect(jsmql.expr("$.o[$.s.trim()]")).toEqual({
       $getField: { field: { $trim: { input: { $ifNull: ["$s", ""] } } }, input: { $ifNull: ["$o", {}] } },
@@ -1033,12 +965,10 @@ describe("types — a join carries the shape its body made", () => {
   });
 
   it("`.take(n)` keeps the element and not the positions; an index into an array of unknown length may miss", () => {
-    // The fold settles a constant receiver to a one-item literal: position 0 is a present string.
     expect(jsmql('$.a = ["x", "yy"].take(1); $.n = $.a[0].length();')).toEqual([
       { $set: { a: ["x"] } },
       { $set: { n: { $strLenCP: { $arrayElemAt: ["$a", 0] } } } },
     ]);
-    // A receiver the fold cannot settle: the element is a string, and index 0 may miss.
     expect(jsmql('$.a = [$.s.trim(), "yy"].take(1); $.n = $.a[0].length();')).toEqual([
       { $set: { a: { $slice: [[{ $trim: { input: { $ifNull: ["$s", ""] } } }, "yy"], 1] } } },
       { $set: { n: { $strLenCP: { $ifNull: [{ $arrayElemAt: ["$a", 0] }, ""] } } } },
@@ -1091,7 +1021,6 @@ describe("types — a join carries the shape its body made", () => {
   });
 
   it("a callback parameter carries the element's own presence, not the array's", () => {
-    // `$map` over a null `a` never runs the body, and each part of a `.split()` is a string that is there.
     expect(
       jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(x => x.toObjectId());'),
     ).toEqual([

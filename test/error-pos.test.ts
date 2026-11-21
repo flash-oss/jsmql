@@ -1,13 +1,6 @@
-// `.validate()` carries a meaningful `.pos` on every error class — tooling
-// underlines the offending region from it, so a placeholder 0 defeats the
-// contract. Each case names the source and the text the caret must land on.
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-/**
- * The first error of an invalid source. Its `.pos` must be the offset of `at` in
- * the source (`""` means the end of the source), and never the placeholder 0.
- */
 function firstError(src: string, at: string): { message: string; pos: number; code: string } {
   const result = jsmql.validate(src);
   expect(result.valid, `${src} should be invalid`).toBe(false);
@@ -79,7 +72,6 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
   });
 
   it("a template-tag slot error carries the slot instead of a position", () => {
-    // The one documented exception to a real `.pos`: a template spans two arrays.
     const result = jsmql.validate`$.a == ${1} && $.b == ${undefined}`;
     expect(result.valid).toBe(false);
     expect(result.errors[0].pos).toBe(0);
@@ -101,7 +93,6 @@ describe("a thrown error and .validate() agree on .pos", () => {
   });
 
   it("frames an error once, in the source of the entry that threw it", () => {
-    // The parameter's `toBSON()` runs inside the outer entry, and calls an inner one.
     const v = { toBSON: () => jsmql.expr("$.a.foo()") };
     let message = "";
     try {

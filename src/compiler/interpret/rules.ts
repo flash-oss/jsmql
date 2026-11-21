@@ -1,12 +1,3 @@
-// The two tables of the interpreter: the operators it runs, and the operators it refuses.
-//
-// RULES holds one rule for each operator that the interpreter runs. Each family file
-// exports its part of the table, and this file joins the parts. REFUSED holds every
-// other operator that the interpreter knows about, with the one reason that it does not
-// run it. An operator in neither table is unknown, and the walk refuses it too. The
-// audit in test/compiler-interpret-rows.test.ts holds every row of the registry against
-// these two tables.
-
 import { internalError } from "../../errors.ts";
 import type { Rule } from "./values.ts";
 import { ACCUMULATE } from "./accumulate.ts";
@@ -44,7 +35,6 @@ function join(families: readonly Record<string, Rule>[]): Readonly<Record<string
   return table;
 }
 
-/** Every operator that the interpreter runs. */
 export const RULES: Readonly<Record<string, Rule>> = join(FAMILIES);
 
 const READS_ENVIRONMENT = "It reads the environment of the server, so its value is not a constant.";
@@ -55,7 +45,6 @@ const CONVERSION =
 const SPELLS_BSON = "Its answer depends on the BSON encoding of the value, which the interpreter does not model.";
 const STATISTIC = "The order of summation and the method of approximation are not specified.";
 
-/** The operators that the interpreter does not run, and the reason for each one. */
 export const REFUSED: Readonly<Record<string, string>> = {
   $rand: "It returns a different value each time it runs.",
   $function: "It runs JavaScript on the server.",

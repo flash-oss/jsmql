@@ -1,12 +1,3 @@
-// The string operators.
-//
-// A string here is well formed: the walk refuses a string with a lone surrogate,
-// because no UTF-8 encoding exists for one. The server counts and cuts a string
-// in code points (`CP`) or in bytes (`Bytes`), and JavaScript counts UTF-16 units. So
-// every rule here works on code points or on UTF-8 bytes, never on `.length`.
-// A string operator can accept a null or a number on the server and answer a coerced value.
-// The rule refuses that operand, and HR7 refuses it before the interpreter runs.
-
 import type { Rule } from "./values.ts";
 import {
   NO,
@@ -31,7 +22,6 @@ const decoder = new TextDecoder();
 
 const utf8 = (s: string): Uint8Array => encoder.encode(s);
 
-/** The first offset at or after `from` where `needle` lies in `bytes`, or -1. */
 function findBytes(bytes: Uint8Array, needle: Uint8Array, from: number): number {
   for (let i = from; i + needle.length <= bytes.length; i++) {
     if (needle.every((b, j) => bytes[i + j] === b)) return i;
@@ -39,46 +29,29 @@ function findBytes(bytes: Uint8Array, needle: Uint8Array, from: number): number 
   return -1;
 }
 
-// ── new strings ─────────────────────────────────────────────────────────────────
-
 const concat = positional(0, Infinity, (xs) => {
   if (!xs.every((x) => x === null || isString(x))) return NO;
   return xs.includes(null) ? ok(null) : spellable((xs as string[]).join(""));
 });
 
-/** `$toUpper` and `$toLower` change the ASCII letters. A null gives the empty string. */
 const letterCase = (change: (s: string) => string): Rule =>
   positional(1, 1, ([s]) => (s === null ? ok("") : isString(s) ? ok(change(s)) : NO));
 
-/**
- * `$toString` writes an ObjectId as its 24 hex digits, an integer type as its digits, and a
- * Decimal128 as the text that its type prints. A number that has no exact spelling here is a `NumberText`.
- */
 const toString = positional(1, 1, ([v]) => {
   if (v === null || isString(v)) return ok(v);
   if (typeof v === "boolean") return ok(String(v));
   if (typeof v === "number") return ok(numberSpelling(v) ?? new NumberText());
   if (kindOf(v) === "objectId") return objectIdHex(v) === null ? NO : ok(objectIdHex(v));
   const tag = bsonTagOf(v);
-  // An unsigned Long above the signed range prints as a wrapped number on the server.
   if (tag === "Long" && (v as { unsigned?: boolean }).unsigned === true) return NO;
   return tag !== undefined && TEXT_OF.has(tag) ? ok(String(v)) : NO;
 });
 
-/** The tagged values whose own text is the text that the server writes. */
 const TEXT_OF = new Set(["Decimal128", "Long", "Int32"]);
 
-// ── trim ─────────────────────────────────────────────────────────────────
-
-/** The code points that `$trim` removes by default, as measured on the server. */
 const DEFAULT_TRIM = (cp: number): boolean =>
   cp === 0 || (cp >= 9 && cp <= 13) || cp === 32 || cp === 0xa0 || cp === 0x1680 || (cp >= 0x2000 && cp <= 0x200a);
 
-/**
- * The documentation lists more spaces than the server trims. These are the ones
- * where the two disagree. A string with one of them is a refusal, so the answer
- * does not depend on the version of the server.
- */
 const DISPUTED = /[\u0085\u2028\u2029\u202f\u205f\u3000]/;
 
 const trimming = (left: boolean, right: boolean): Rule =>
@@ -110,8 +83,6 @@ const trimming = (left: boolean, right: boolean): Rule =>
     );
   });
 
-// ── length and cut ────────────────────────────────────────────────────
-
 const strLenCP = positional(1, 1, ([s]) => (isString(s) ? ok(points(s).length) : NO));
 const strLenBytes = positional(1, 1, ([s]) => (isString(s) ? ok(utf8(s).length) : NO));
 
@@ -124,10 +95,8 @@ const substrCP = positional(3, 3, ([s, start, length]) => {
   );
 });
 
-/** A continuation byte is the 10xxxxxx part of a multi-byte character. A cut may not start or end on one. */
 const isContinuation = (byte: number | undefined): boolean => byte !== undefined && (byte & 0xc0) === 0x80;
 
-/** `$substrBytes` cuts at byte offsets. A negative length means the rest of the string. */
 const substrBytes = positional(3, 3, ([s, start, length]) => {
   if (!isString(s) || !isInt32(start) || !isInt32(length) || start < 0) return NO;
   const bytes = utf8(s);
@@ -137,12 +106,6 @@ const substrBytes = positional(3, 3, ([s, start, length]) => {
   return ok(decoder.decode(bytes.subarray(start, stop)));
 });
 
-// ── search ────────────────────────────────────────────────────────────────
-
-/**
- * `$indexOfCP` counts code points. Its end bound differs on the server, so the rule refuses an end bound.
- * MEASURED: a start at or past the end gives -1, also for the empty string, unless the start is 0.
- */
 const indexOfCP = positional(2, 3, ([s, needle, from = 0]) => {
   if (!isString(needle) || !isInt32(from) || from < 0) return NO;
   if (s === null) return ok(null);
@@ -156,7 +119,6 @@ const indexOfCP = positional(2, 3, ([s, needle, from = 0]) => {
   return ok(-1);
 });
 
-/** `$indexOfBytes` counts bytes. A match must lie wholly inside the range. */
 const indexOfBytes = positional(2, 4, ([s, needle, from = 0, to]) => {
   if (!isString(needle) || needle === "" || !isInt32(from) || from < 0) return NO;
   if (to !== undefined && !(isInt32(to) && to >= 0)) return NO;
@@ -174,7 +136,6 @@ const split = positional(2, 2, ([s, separator]) => {
   return spellable(s.split(separator));
 });
 
-/** `$replaceOne` and `$replaceAll` take a keyed operand. An empty `find` has a server answer that the rule does not model, so the rule refuses it. */
 const replacing = (all: boolean): Rule =>
   keyed(["input", "find", "replacement"], [], (parts, walk) => {
     const input = walk.at(parts.input);
@@ -190,7 +151,6 @@ const replacing = (all: boolean): Rule =>
     return spellable(at === -1 ? text : text.slice(0, at) + by + text.slice(at + what.length));
   });
 
-/** `$strcasecmp` upper-cases the ASCII letters, then compares by code point. */
 const strcasecmp = positional(2, 2, ([a, b]) => {
   if (!isString(a) || !isString(b)) return NO;
   const order = compareCodePoints(asciiUpper(a), asciiUpper(b));

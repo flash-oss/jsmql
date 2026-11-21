@@ -1,9 +1,3 @@
-// Phase 5 of src/compiler/ — the value target, end to end.
-//
-// Each case is a JSMQL input and the MQL the compiler emits for it. The expectation
-// is the shape the registry states — the `$switch` dispatch a receiver of unprovable
-// family takes, and the `jsmql`-prefixed mint every expression variable carries.
-
 import { describe, expect, it } from "vitest";
 import { expr, filter, pipeline } from "../src/compiler/index.ts";
 import { Long } from "../src/bson.ts";
@@ -21,7 +15,6 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("123n")).toEqual(Long.fromString("123"));
     expect(String(expr("0x507f1f77bcf86cd799439011"))).toBe("507f1f77bcf86cd799439011");
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
-    // a row that states `returns: "string"` needs no $toString; an unknown one does
     expect(expr("`a${$.s.trim()}`")).toEqual({ $concat: ["a", { $trim: { input: { $ifNull: ["$s", ""] } } }] });
     expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: { $ifNull: ["$n", 0] } } }] });
   });
@@ -38,8 +31,6 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("$.a.b")).toBe("$a.b");
     expect(expr("$")).toBe("$$ROOT");
     expect(expr('$["a.b"]')).toBe("$a.b");
-    // a `?.` read is JavaScript's `undefined` when the path is not there. A document written
-    // with it holds the key — so it is null, never missing
     expect(expr("$.a?.b.c")).toEqual({ $ifNull: ["$a.b.c", null] });
   });
 
@@ -87,9 +78,7 @@ describe("compiler/emit/lower — operators", () => {
     for (const op of ["*", "/", "%", "**"]) {
       expect(() => expr(`${day} ${op} 2`)).toThrow(`'${op}' argument 1 takes a number, but got a date.${methods}`);
     }
-    // A bare field has an unknown kind, so the server decides (HR7).
     expect(expr("$.d - 1")).toEqual({ $subtract: ["$d", 1] });
-    // A comparison of dates is not arithmetic.
     expect(expr(`${day} > $.e`)).toEqual({
       $gt: [{ $dateTrunc: { date: { $ifNull: ["$d", new Date(0)] }, unit: "day" } }, "$e"],
     });
@@ -129,12 +118,8 @@ describe("compiler/emit/lower — operators", () => {
 
 describe("compiler/emit/lower — access", () => {
   it("reads an index by what the receiver is proven to be", () => {
-    // a constant settles in the fold; the runtime shapes are for what the fold cannot see
     expect(expr("[1, 2][0]")).toBe(1);
     expect(expr("[$.a, 2][0]")).toEqual({ $arrayElemAt: [["$a", 2], 0] });
-    // The dispatch is a `$switch`, never a nested `$cond`. The server optimises `$cond`
-    // branches before it reads the test. A receiver it holds as a constant causes the
-    // server to fold a branch that does not apply and refuse the pipeline.
     expect(expr("$.a[0]")).toEqual({
       $switch: {
         branches: [
@@ -145,7 +130,6 @@ describe("compiler/emit/lower — access", () => {
       },
     });
     expect(expr('$.o["k-1"]')).toEqual({ $getField: { field: "k-1", input: { $ifNull: ["$o", {}] } } });
-    // `$arrayElemAt` refuses a key that is not a number, so the array branch tests the key too
     expect(expr("$.a[$.i]")).toEqual({
       $switch: {
         branches: [{ case: { $and: [{ $isArray: "$a" }, { $isNumber: "$i" }] }, then: { $arrayElemAt: ["$a", "$i"] } }],
@@ -158,13 +142,9 @@ describe("compiler/emit/lower — access", () => {
   it("reads a count from the method's one family, and proves a literal's count", () => {
     expect(expr("[1, 2].size()")).toBe(2);
     expect(expr('"abc".length()')).toBe(3);
-    // an array LITERAL receiver holds one element per entry, whatever each entry holds
     expect(expr("[$.a, 2].size()")).toBe(2);
-    // an unproven receiver takes the method's one family, and the server judges the value:
-    // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
     expect(expr("$.x.length()")).toEqual({ $strLenCP: { $ifNull: ["$x", ""] } });
     expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
-    // a proven array refuses `.length()`, and the refusal names `.size()`
     expect(() => expr("[$.a, 2].length()")).toThrow(
       "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
     );
@@ -179,11 +159,8 @@ describe("compiler/emit/lower — calls", () => {
   it("runs a MongoDB operator's row, positional or object-shaped", () => {
     expect(expr("$abs($.a)")).toEqual({ $abs: "$a" });
     expect(expr("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
-    // HR2: one array literal is the operand list as written, counted by its elements
     expect(expr("$eq([$.n, 4])")).toEqual({ $eq: ["$n", 4] });
     expect(expr("$size([$.a])")).toEqual({ $size: ["$a"] });
-    // A 1-operand operator given two elements is given two operands, as written.
-    // DELIBERATELY invalid: mongod refuses it, because `$size` takes exactly one operand.
     expect(expr("$size([$.a, 1])")).toEqual({ $size: ["$a", 1] });
     expect(expr('$arrayToObject([[["a", 1], ["b", 2]]])')).toEqual({
       $arrayToObject: [
@@ -205,10 +182,6 @@ describe("compiler/emit/lower — calls", () => {
   });
 
   it("passes ONE operand of a list operator through as written, in both spellings (HR1, HR2)", () => {
-    // MEASURED: the server reads a lone operand that is not an array as one operand.
-    // `{ $add: "$x" }` answers `$x`, and the server refuses `{ $divide: 10 }`, because
-    // `$divide` takes exactly two operands. Both are your own MQL, so the compiler takes each one unchanged, and
-    // the call spelling gives the same document.
     const disagree: string[] = [];
     let checked = 0;
     for (const [name, row] of Object.entries(NAMES)) {
@@ -221,7 +194,6 @@ describe("compiler/emit/lower — calls", () => {
       if (JSON.stringify(called) !== JSON.stringify(raw)) disagree.push(`${name}: called ${JSON.stringify(called)}`);
     }
     expect(disagree).toEqual([]);
-    // A check that silently compares nothing is worse than no check.
     expect(checked).toBeGreaterThanOrEqual(30);
   });
 
@@ -233,16 +205,13 @@ describe("compiler/emit/lower — calls", () => {
   it("lowers a constructor by its argument class, and refuses a value of the document", () => {
     expect(expr("Date()")).toBe("$$NOW");
     expect(expr("ObjectId()")).toEqual({ $createObjectId: {} });
-    // A value of the document converts with the value's own method, and the refusal names it.
     expect(() => expr("Date($.ms)")).toThrow(/Write '<value>\.toDate\(\)': '\$\.x\.toDate\(\)'/);
     expect(() => expr("ObjectId($.id)")).toThrow(/Write '<value>\.toObjectId\(\)'/);
-    // A type name as a conversion function is not part of JSMQL, for a constant too.
     expect(() => expr("Number($.s)")).toThrow(/^'Number\(x\)' is not part of JSMQL.*'\$\.x\?\.toDouble\(\)'/);
     expect(() => expr('Number("3")')).toThrow(/^'Number\(x\)' is not part of JSMQL/);
   });
 
   it("inlines a declared function and refuses recursion", () => {
-    // a call with no parameters binds nothing, so no `$let` wraps the body
     expect(expr("(() => { const y = $.a * 2; return y + 1 })()")).toEqual({
       $let: { vars: { y: { $multiply: ["$a", 2] } }, in: { $add: ["$$y", 1] } },
     });
@@ -251,8 +220,6 @@ describe("compiler/emit/lower — calls", () => {
   });
 
   it("refuses a MongoDB operator or a global function on a receiver, because neither one reads it", () => {
-    // HR2's escape hatch is the call, and no MQL holds a receiver for it. A document
-    // that holds only the arguments computes from the wrong value.
     const sizeOnValue =
       "'.$size()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '$size(…)' with every operand inside the parentheses.";
     expect(() => expr("$.a.$size($.b)")).toThrow(sizeOnValue);
@@ -260,23 +227,18 @@ describe("compiler/emit/lower — calls", () => {
     expect(() => filter("$.tags.$size(2)")).toThrow(sizeOnValue);
     expect(() => filter("$.a.$size($.b) > 1")).toThrow(sizeOnValue);
     expect(() => pipeline("$.n = $.a.$size($.b);")).toThrow(sizeOnValue);
-    // A `$` name that no row holds is a MongoDB name too.
     expect(() => expr("$.a.$foo()")).toThrow(/^'\.\$foo\(\)' takes no receiver\./);
     expect(() => expr("$.a.Long(7)")).toThrow(
       "'.Long()' takes no receiver. 'Long' is a global function: write 'Long(…)' with the value inside the parentheses.",
     );
-    // A global that no position takes answers with its own refusal, which names the way out.
     expect(() => expr('$.a.Number("7")')).toThrow(/^'Number\(x\)' is not part of JSMQL/);
-    // A stage on a value names its value twin.
     expect(() => expr("$.items.$sort({ a: 1 })")).toThrow(/For the value form, use '\$sortArray\(…\)'/);
-    // The call spellings stay as they are.
     expect(expr("$size($.a)")).toEqual({ $size: "$a" });
     expect(expr("Long(7)")).toEqual(Long.fromNumber(7));
   });
 
   it("refuses a name from a closed set with a suggestion", () => {
     expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
-    // After a dot, a suggestion names a method, never a global: `Number` is not a method.
     expect(() => expr("$.s.toDoubel()")).toThrow(/Did you mean '.toDouble\(\)'/);
     expect(() => expr("$.s.Numbr()")).toThrow(/^Unknown method '.Numbr\(\)' at position 3.$/);
     expect(() => expr("Math.randon()")).toThrow(
@@ -287,12 +249,10 @@ describe("compiler/emit/lower — calls", () => {
 
 describe("compiler/emit/lower — a path segment that starts with `$`", () => {
   it("reads it through $getField with the name as a literal, and every segment after it too", () => {
-    // the server refuses a field-path segment that starts with `$` — measured on mongod
     expect(expr("$.qty.$gt")).toEqual({ $getField: { field: { $literal: "$gt" }, input: "$qty" } });
     expect(expr("$.a.$b.c")).toEqual({
       $getField: { field: "c", input: { $getField: { field: { $literal: "$b" }, input: "$a" } } },
     });
-    // A matcher object holds JSMQL, so a `$` key in it is raw MQL (HR6).
     expect(() => expr("$.items.filter({ qty: { $gt: 5 } })")).toThrow(
       "'{ $gt: … }' is raw MQL, and raw MQL cannot be an operand of '.filter()'.",
     );

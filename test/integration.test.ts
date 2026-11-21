@@ -1,19 +1,3 @@
-// test/integration.test.ts — run jsmql's emitted MQL against a REAL MongoDB and
-// assert on the documents that come back.
-//
-// Why this exists: a passing `toEqual(<MQL>)` in codegen/realistic only proves
-// what jsmql *emits* — not that MongoDB *accepts and runs* it correctly. These
-// tests close that gap. Each case compiles a jsmql source, runs it against the
-// read-only fixture (test/fixtures/), and checks the returned data matches what
-// the dataset implies. Each expected value comes from a live run, not from a
-// guess (see HR3 in docs/LANG_RULES.md and test/fixtures/CLAUDE.md).
-//
-// The suite skips itself only when no server answers on the fixture port, so
-// `npm test` stays green for contributors who have not run `npm run fixture:up`.
-// A server that refuses the read-only user, or holds a stale dataset, fails the
-// file instead (see fixtureReady() in test/fixtures/client.ts).
-// To run it: `npm run fixture:up && npm test`.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -34,15 +18,12 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
 
   beforeAll(async () => {
     ({ client, db } = await connectReadOnly());
-    await assertIntegrity(db); // fail loudly if the on-disk dataset drifted
+    await assertIntegrity(db);
   });
   afterAll(async () => {
     await client?.close();
   });
 
-  // ── helpers ─────────────────────────────────────────────────────────────
-  // Route a compiled jsmql source to the matching driver call. find() is sorted
-  // by _id so result order is deterministic regardless of natural order.
   const find = (coll: string, src: string) =>
     db
       .collection(coll)
@@ -57,61 +38,38 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   const hexes = (docs: { _id: unknown }[]) => docs.map((d) => String(d._id)).sort();
   const ids = (mk: (n: number) => { toHexString(): string }, ns: number[]) => ns.map((n) => mk(n).toHexString()).sort();
 
-  // ── filters (db.coll.find) ────────────────────────────────────────────────
-
-  // In-stock products in a price band. Indexable top-level filter, no $expr.
   it("filter: in-stock products priced 50..400", async () => {
     const rows = await find("products", `$.inStock === true && $.price >= 50 && $.price <= 400`);
     expect(hexes(rows)).toEqual(ids(ID.product, [1, 3, 5, 7]));
   });
 
-  // `$.email != null` + equality. The difference between null and missing matters here
-  // (u5 has an explicit null email and must be excluded).
   it("filter: active users with a non-null email", async () => {
     const rows = await find("users", `$.email != null && $.status === "active"`);
     expect(hexes(rows)).toEqual(ids(ID.user, [1, 2, 3, 6, 8]));
   });
 
-  // `.endsWith()` end-to-end. `$substrCP` aborts the executor on a negative start,
-  // and `$strLenCP` aborts on a missing/null input. A lowering that hits either
-  // returns NO rows, because it kills the whole command.
-  // The dataset hits every hazard at once. u4's "kat@nasa.gov" (12) is SHORTER
-  // than the 13-char needle (→ negative index), u5's email is null, and u9 has
-  // no email field at all. A `toEqual` on emitted MQL cannot catch this class;
-  // only a real run can.
   it("filter: .endsWith() survives receivers shorter than the needle, plus null/missing", async () => {
     const rows = await find("users", `$.email.endsWith("@bletchley.uk")`);
-    expect(hexes(rows)).toEqual(ids(ID.user, [7])); // Joan Clarke, the only match
+    expect(hexes(rows)).toEqual(ids(ID.user, [7]));
   });
 
-  // Every email is shorter than the 19-char needle, so EVERY document takes the
-  // negative-index path. A match of nothing is the correct answer; an abort of the
-  // query is not.
   it("filter: .endsWith() with a needle longer than every value matches nothing, and does not abort", async () => {
     const rows = await find("users", `$.email.endsWith("@flash-payments.com")`);
     expect(rows).toEqual([]);
   });
 
-  // The same hazards through the value-mode string methods. The test asserts the
-  // returned values, not only "it ran". Missing and null both read as "".
   it("expr: string methods on short / null / missing receivers match JS semantics", async () => {
     const rows = (await aggregate(
       "users",
       `$ = { name: $.name, tail: $.email.substr(-13), len: $.email.length() };`,
     )) as { name: string; tail: string; len: number }[];
     const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
-    expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
-    expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 }); // SHORTER → clamped, whole string
-    // under a dot, a null or missing string reads as "" (HR5), so each method gives its answer on ""
-    expect(byName["Margaret Hamilton"]).toEqual({ tail: "", len: 0 }); // email: null
-    expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
+    expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 });
+    expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 });
+    expect(byName["Margaret Hamilton"]).toEqual({ tail: "", len: 0 });
+    expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 });
   });
 
-  // The date vocabulary, end-to-end. Three of these compose more than one
-  // operator. A `toEqual` on emitted MQL cannot validate this class.
-  // `.endOf` is trunc + add + −1 ms, `.set` reads the parts back
-  // through a `$let`, and `.quarter` needs `$toInt` or it returns a double.
-  // Ada Lovelace: createdAt 2025-01-15, lastSeen 2026-06-10, expiresAt 2026-12-01.
   it("expr: the date methods produce the values MongoDB actually computes", async () => {
     const [row] = (await aggregate(
       "users",
@@ -128,18 +86,17 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     )) as Record<string, unknown>[];
     expect(row).toEqual({
       monthStart: new Date("2026-12-01T00:00:00.000Z"),
-      monthEnd: new Date("2026-12-31T23:59:59.999Z"), // the inclusive end, not the next month
+      monthEnd: new Date("2026-12-31T23:59:59.999Z"),
       label: "2026-12",
-      daysLived: 685, // expiresAt − createdAt: the receiver is the LATER date
+      daysLived: 685,
       quarter: 4,
       isoWeek: 49,
-      sameYear: true, // 2026-12-01 and 2026-06-10
+      sameYear: true,
       sameMonth: false,
-      newYearsDay: new Date("2026-01-01T00:00:00.000Z"), // month is 1-based
+      newYearsDay: new Date("2026-01-01T00:00:00.000Z"),
     });
   });
 
-  // The pad of each array element: the receiver is a value that the element computes.
   it("pipeline: padStart fills each element of an array to a constant width", async () => {
     const rows = (await aggregate(
       "orders",
@@ -147,12 +104,9 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
 $sort({ _id: 1 });
 $ = { codes: $.items.map(s => s.qty.toString().padStart(3, "0")) };`,
     )) as { codes: string[] }[];
-    // Expected values match real String.prototype.padStart.
     expect(rows.slice(0, 4).map((r) => r.codes)).toEqual([["001", "002"], ["001"], ["010"], ["002", "001"]]);
   });
 
-  // The three pads fill to a constant width with one character. `.pad` puts the
-  // extra character at the end.
   it("expr: padStart, padEnd and pad fill to the target width", async () => {
     const rows = (await aggregate(
       "users",
@@ -164,16 +118,12 @@ $ = { codes: $.items.map(s => s.qty.toString().padStart(3, "0")) };`,
     expect(byName["Karen Spärck Jones"]).toMatchObject({ s: "<<<bronze", e: "bronze>>>", b: "**bronze***" });
   });
 
-  // The `0x…` ObjectId literal, end-to-end: jsmql mints a live BSON ObjectId so
-  // the query uses the _id index and returns the one document. (realistic.test.ts
-  // "fetch a document by its ObjectId" only checks the *emitted* shape.)
   it("filter: fetch one document by its 0x ObjectId literal", async () => {
     const rows = await find("users", `$._id === 0x6500000000000000000000a1`);
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe("Ada Lovelace");
   });
 
-  // Date literal folded into the query doc (not trapped in $expr) + status match.
   it("filter: orders shipped on/after a date", async () => {
     const rows = await find("orders", `$.status === "shipped" && $.placedAt >= Date("2026-06-01")`);
     expect(hexes(rows)).toEqual(ids(ID.order, [8, 9, 13, 15, 18, 19]));
@@ -184,11 +134,6 @@ $ = { codes: $.items.map(s => s.qty.toString().padStart(3, "0")) };`,
     expect(hexes(rows)).toEqual(ids(ID.review, [1, 2, 3, 5, 7, 9, 12]));
   });
 
-  // ── pipelines (db.coll.aggregate) ─────────────────────────────────────────
-
-  // Top-3 revenue leaderboard: $group then the `.toSorted(desc).slice(0,N)`
-  // stream-chain idiom (→ $sort + $limit). Mirrors realistic.test.ts
-  // "top-10 revenue leaderboard".
   it("pipeline: top-3 revenue leaderboard", async () => {
     const rows = await aggregate(
       "orders",
@@ -202,13 +147,6 @@ $$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 3);`,
     ]);
   });
 
-  // Value-mode array `.slice` is JS-faithful: start and end are INDICES (end
-  // exclusive) and negatives count from the end. MQL `$slice` has
-  // position+count semantics instead. The test slices a 3-element array
-  // that it projects from the items of an order. A count-based lowering reads
-  // `.slice(1)` and `.slice(1, -1)` wrong and emits a negative count that mongod
-  // rejects. So this runs the real thing on a real server.
-  // Each expected value comes from a live run (HR3).
   it("expr: array .slice matches Array.prototype.slice (indices, end-exclusive)", async () => {
     const id = ID.order(15).toHexString();
     const [row] = await aggregate(
@@ -233,30 +171,21 @@ $ = {
     });
   });
 
-  // Statement-position `.pop()` / `.shift()` lower to a `$slice` whose count can
-  // be 0 for an empty or single-element array. In the 3-arg form, mongod rejects
-  // that count even at run time. Run the lowering over the `tags` of every user.
-  // The dataset mixes empty `[]`, single `["vip"]`, and two-element arrays.
-  // The lowering must not error and must not drop the wrong element.
-  // Each expected value comes from a live run (HR3).
   it("expr: .pop() / .shift() run on empty & single-element arrays (no count-0 $slice rejection)", async () => {
     const tagsById = (rows: { _id: unknown; tags: string[] }[]) =>
       Object.fromEntries(rows.map((r) => [String(r._id), r.tags]));
 
     const popped = tagsById((await aggregate("users", "$.tags.pop();")) as { _id: unknown; tags: string[] }[]);
-    expect(popped[ID.user(1).toHexString()]).toEqual(["vip"]); // ["vip","beta"] → drop last
-    expect(popped[ID.user(3).toHexString()]).toEqual([]); //     single ["vip"]  → []
-    expect(popped[ID.user(4).toHexString()]).toEqual([]); //     empty []        → [] (no rejection)
+    expect(popped[ID.user(1).toHexString()]).toEqual(["vip"]);
+    expect(popped[ID.user(3).toHexString()]).toEqual([]);
+    expect(popped[ID.user(4).toHexString()]).toEqual([]);
 
     const shifted = tagsById((await aggregate("users", "$.tags.shift();")) as { _id: unknown; tags: string[] }[]);
-    expect(shifted[ID.user(1).toHexString()]).toEqual(["beta"]); // ["vip","beta"] → drop first
-    expect(shifted[ID.user(3).toHexString()]).toEqual([]); //       single ["vip"]  → []
-    expect(shifted[ID.user(7).toHexString()]).toEqual([]); //       empty []        → [] (no rejection)
+    expect(shifted[ID.user(1).toHexString()]).toEqual(["beta"]);
+    expect(shifted[ID.user(3).toHexString()]).toEqual([]);
+    expect(shifted[ID.user(7).toHexString()]).toEqual([]);
   });
 
-  // Join orders→users, group revenue by the buyer's department. Exercises
-  // $lookup + $unwind + $group + derived field, like realistic.test.ts
-  // "top-orders report by department".
   it("pipeline: revenue by buyer department (lookup + unwind + group)", async () => {
     const rows = await aggregate(
       "orders",
@@ -275,10 +204,6 @@ $limit(3);`,
     ]);
   });
 
-  // Flatten line items across shipped orders, then the 3 most expensive lines.
-  // `.flatMap(o => o.items).map(item => item)` → $unwind + $replaceWith: the callback
-  // after `.flatMap` receives the ITEM. The 3rd place is a 3-way tie at 400, so we
-  // assert the price sequence, not identity.
   it("pipeline: 3 most expensive line items across shipped orders", async () => {
     const rows = await aggregate(
       "orders",
@@ -289,7 +214,6 @@ $limit(3);`,
     expect(rows.map((r) => r.price)).toEqual([800, 500, 400]);
   });
 
-  // Group a child collection by an enum field. $sort by _id keeps it deterministic.
   it("pipeline: shipment count by carrier", async () => {
     const rows = await aggregate("shipments", `$group({ _id: $.carrier, n: $sum(1) });\n$sort({ _id: 1 });`);
     expect(rows.map((r) => ({ carrier: r._id, n: r.n }))).toEqual([
@@ -300,10 +224,6 @@ $limit(3);`,
     ]);
   });
 
-  // `$$.push(...$$$.<coll>.aggregate(...))` — an uncorrelated foreign sub-pipeline
-  // unioned into the stream. The shipment counts per carrier are appended after the
-  // one summary row the outer pipeline produces. This proves `$unionWith.pipeline` really
-  // ran the grouped aggregate (not merely that jsmql emitted it).
   it("pipeline: an aggregate sub-pipeline unioned into the stream through $$.push", async () => {
     const rows = await aggregate(
       "shipments",
@@ -319,9 +239,6 @@ $$.push(...$$$.shipments.aggregate(s => { $group({ _id: s.carrier, n: $sum(1) })
     ]);
   });
 
-  // Group by a COMPUTED key: the email domain through `.split("@").at(1).toLower()`
-  // (the string-method chain from realistic.test.ts "email domain"), run as a
-  // real $group _id expression.
   it("pipeline: user count by email domain (group by computed string expr)", async () => {
     const rows = await aggregate(
       "users",
@@ -338,11 +255,6 @@ $sort({ _id: 1 });`,
     ]);
   });
 
-  // ── raw expression (jsmql.expr) ───────────────────────────────────────────
-
-  // Invariant check across the whole collection: the `.map(i => i.price).reduce(...)`
-  // subtotal (realistic.test.ts "cart subtotal") must equal each order's stored
-  // `total`. The test shows any order that breaks the rule, and expects none.
   it("expr: items.map(price).reduce(sum) equals every order total", async () => {
     const subtotal = jsmql.expr(`$.items.map(i => i.price).reduce((acc, p) => acc + p, 0)`);
     const violations = await db
@@ -352,9 +264,6 @@ $sort({ _id: 1 });`,
     expect(violations).toEqual([]);
   });
 
-  // `.events.map(e => e.at.getTime()).reduce((m, t) => [m, t].max())` — the most-recent-event
-  // reduction (realistic.test.ts "most-recent event timestamp") on real dated
-  // sub-documents. Shipment #1's last event is its delivery on 2026-01-15.
   it("expr: latest shipment event through map(getTime).reduce(max)", async () => {
     const latestExpr = jsmql.expr(`$.events.map(e => e.at.getTime()).reduce((max, t) => [max, t].max(), 0)`);
     const rows = await db
@@ -364,16 +273,6 @@ $sort({ _id: 1 });`,
     expect(Number((rows[0] as { latest: unknown }).latest)).toBe(new Date("2026-01-15T00:00:00.000Z").getTime());
   });
 
-  // ── the quirkiest shapes: nested $lookup, assert(), $$.size() ──────────────
-
-  // Nested $lookup in a block-body predicate: users → their recent orders →
-  // each order's shipments. The inner predicate correlates on TWO levels —
-  // `s.orderId === o._id` (the order) and `s.userId === $._id` (the outer
-  // user). This works because jsmql depth-stamps the `$lookup.let`
-  // names ($$v1_id and $$v0_id), so they do not collide. (realistic.test.ts
-  // "user → recent orders → each order's shipments".) This is the deepest
-  // pipeline that jsmql emits. A run of it proves that the two-level correlation
-  // resolves to the right documents on a real server.
   it("pipeline: nested $lookup — users → recent orders → each order's shipments", async () => {
     const rows = await aggregate(
       "users",
@@ -386,8 +285,6 @@ $.recentOrders = $$$.orders.aggregate(o => {
 });
 $project({ name: 1, recentOrders: 1 });`,
     );
-    // 6 active users (u4/u7 are inactive). Order of the outer stream is not
-    // sorted, so compare names as a set.
     expect(rows.map((r) => (r as { name: string }).name).sort()).toEqual([
       "Ada Lovelace",
       "Alan Turing",
@@ -396,21 +293,17 @@ $project({ name: 1, recentOrders: 1 });`,
       "Hedy Lamarr",
       "Margaret Hamilton",
     ]);
-    // recentOrders ARE deterministically ordered (the inner $sort placedAt desc).
     const orderShipments = (name: string) => {
       const u = rows.find((r) => (r as { name: string }).name === name) as {
         recentOrders: { _id: unknown; shipments: { _id: unknown }[] }[];
       };
       return u.recentOrders.map((o) => ({ order: String(o._id), shipments: o.shipments.map((s) => String(s._id)) }));
     };
-    // Ada's 3 orders, newest first, each with its single shipment.
     expect(orderShipments("Ada Lovelace")).toEqual([
       { order: ID.order(15).toHexString(), shipments: [ID.shipment(12).toHexString()] },
       { order: ID.order(2).toHexString(), shipments: [ID.shipment(2).toHexString()] },
       { order: ID.order(1).toHexString(), shipments: [ID.shipment(1).toHexString()] },
     ]);
-    // Grace's set includes her CANCELLED order (o7), which has no shipment —
-    // the nested lookup correctly yields an empty array there, not a wrong match.
     expect(orderShipments("Grace Hopper")).toEqual([
       { order: ID.order(18).toHexString(), shipments: [ID.shipment(14).toHexString()] },
       { order: ID.order(7).toHexString(), shipments: [] },
@@ -419,14 +312,6 @@ $project({ name: 1, recentOrders: 1 });`,
     ]);
   });
 
-  // Correlated $lookup whose outer field has a HYPHENATED path segment
-  // (`$.meta["ext-id"]`). The hyphen is legal in a field name but illegal in a
-  // MongoDB `$$` variable name. So the compiler derives the emitted `$lookup.let`
-  // var from the sanitized segment (`jsmql_f0_ext_id`). The raw `ext-id` makes
-  // mongod reject the whole pipeline with FailedToParse. A run of it proves
-  // the server accepts the sanitized name AND the correlation still filters
-  // correctly. Only order 1 carries ext-id "X-1", so only its row gets its
-  // shipment; every other order's `tracked` is empty.
   it("pipeline: correlated $lookup on a hyphenated outer field (identifier-safe let var)", async () => {
     const rows = (await aggregate(
       "orders",
@@ -437,12 +322,6 @@ $project({ name: 1, recentOrders: 1 });`,
     expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
   });
 
-  // Correlated $lookup gated on a TOP-LEVEL bracket-accessed outer field
-  // (`$["ext-code"]`). The bare root `$` must contribute no path segment. If it
-  // does, the emitted field path is `.ext-code` (leading dot), and mongod rejects
-  // the whole pipeline (Location15998). This is a distinct code path from the nested `meta["ext-id"]`
-  // case above. Only order 1 has ext-code "EC-1", so only its row keeps its
-  // shipment; every other order's `tracked` is empty.
   it("pipeline: correlated $lookup on a top-level bracket-accessed field (no leading-dot field path)", async () => {
     const rows = (await aggregate(
       "orders",
@@ -453,30 +332,18 @@ $project({ name: 1, recentOrders: 1 });`,
     expect(withTracked[0].tracked.map((s) => String(s._id))).toEqual([ID.shipment(1).toHexString()]);
   });
 
-  // assert(cond, msg) that HOLDS for every document: the aggregate runs to
-  // completion and the following stage computes normally. (realistic.test.ts
-  // "guard against corrupt data before aggregating".)
   it("pipeline: assert that holds lets the aggregate run", async () => {
     const rows = await aggregate("orders", `assert($.total > 0, "order total must be positive");\n$.flagged = false;`);
     expect(rows).toHaveLength(20);
     expect(rows.every((r) => (r as { flagged: boolean }).flagged === false)).toBe(true);
   });
 
-  // assert(cond, msg) that FAILS for some document: it lowers to a $match whose
-  // $convert names the message as a bson type, so MongoDB aborts the WHOLE
-  // aggregate. The server does not know that type name. Its error holds the
-  // message. This is the important behaviour — it proves the server really
-  // rejects, not that jsmql emits a shape that looks plausible.
   it("pipeline: a failing assert aborts the whole aggregate with its message", async () => {
     await expect(aggregate("orders", `assert($.total <= 100, "order total exceeds cap");`)).rejects.toThrow(
       "jsmql assertion failed: order total exceeds cap",
     );
   });
 
-  // $$.size() — the current stream's document count as a value. The compiler materialises it
-  // once through $setWindowFields and reuses it across two $set fields AND an assert,
-  // with the scratch field $unset at the end. (realistic.test.ts "tag each
-  // in-stock product with the category total + size guard".)
   it("pipeline: $$.size() reused across fields + assert guard", async () => {
     const rows = await aggregate(
       "products",
@@ -485,17 +352,12 @@ $.totalInStock = $$.size();
 $.sharePct = 100 / $$.size();
 assert($$.size() <= 1000, "too many in-stock products to render");`,
     );
-    expect(rows).toHaveLength(8); // 8 of 10 products are in stock
+    expect(rows).toHaveLength(8);
     expect(rows.every((r) => (r as { totalInStock: number }).totalInStock === 8)).toBe(true);
     expect(rows.every((r) => (r as { sharePct: number }).sharePct === 12.5)).toBe(true);
-    expect(rows.every((r) => !("__jsmql" in (r as object)))).toBe(true); // scratch namespace cleaned up
+    expect(rows.every((r) => !("__jsmql" in (r as object)))).toBe(true);
   });
 
-  // ── chained stage calls (`.$stage(...)`) ──────────────────────────────────
-
-  // Stage links on the current stream. They give the same
-  // pipeline as the `;`-separated statement spelling. The test asserts this on the
-  // SERVER's output, not just the emitted MQL.
   it("pipeline: stage links on $$ run identically to the statement spelling", async () => {
     const chained = await aggregate(
       "orders",
@@ -512,10 +374,6 @@ assert($$.size() <= 1000, "too many in-stock products to render");`,
     expect(chained).toEqual(statements);
   });
 
-  // A grouped foreign sub-pipeline assembled entirely from chained stage calls,
-  // then mapped value-mode over the lookup result. `$group`/`$sort`/`$limit`
-  // have no JavaScript spelling, so before stage links this chain was
-  // unreachable without an `.aggregate((o) => { … })` block.
   it("pipeline: chained stage calls build a $lookup sub-pipeline", async () => {
     const rows = await aggregate(
       "users",
@@ -536,11 +394,6 @@ $ = { byRegion };`,
     ]);
   });
 
-  // A correlated query-document `$match` — `{ userId: $._id }` reads the OUTER
-  // document. MongoDB does not evaluate `$$` vars in the query language, so the
-  // raw form would silently return nothing; jsmql re-expresses it as a
-  // predicate. This asserts real matched counts, which is the only way to catch
-  // that class of bug (the emitted MQL looked fine).
   it("pipeline: correlated query-document $match returns real matches", async () => {
     const src = (chain: string) =>
       `$match($.status === "active");\n$.orders = ${chain};\n$ = { user: $._id, n: $.orders.size() };`;
@@ -557,16 +410,11 @@ $ = { byRegion };`,
       { user: ID.user(6).toHexString(), n: 3 },
       { user: ID.user(8).toHexString(), n: 3 },
     ];
-    // All three spellings must agree, and none may return zero matches.
     expect(await counts("$$$.orders.aggregate(o => { $match({ userId: $._id }); })")).toEqual(expected);
     expect(await counts("$$$.orders.$match({ userId: $._id })")).toEqual(expected);
     expect(await counts("$$$.orders.filter({ userId: $._id })")).toEqual(expected);
   });
 
-  // A lodash stream chain that feeds `.aggregate((o) => { … })`. It bounds the
-  // foreign scan with `.sort().take()`, groups inside the block, then ranks the
-  // groups with more lodash. Every link lands in the one `$lookup.pipeline`, so
-  // the server does the whole job; nothing materialises into an array first.
   it("pipeline: lodash chain then .aggregate ranks groups server-side", async () => {
     const rows = await aggregate(
       "users",
@@ -586,10 +434,6 @@ $ = { byRegion };`,
     ]);
   });
 
-  // The correlated form: `.filter` pins the foreign set to the outer user (through
-  // `$lookup.let`). `.sort().take(2)` keeps only their two newest orders. The
-  // `.aggregate` block groups those. Per-user counts prove that the `let`
-  // correlation survives the lodash links. A broken correlation returns every order.
   it("pipeline: correlated lodash chain into .aggregate keeps the let binding", async () => {
     const rows = await aggregate(
       "users",
@@ -630,10 +474,6 @@ $ = { user: $._id, recent: $.recent };`,
     ]);
   });
 
-  // `.aggregate` at the HEAD with a lodash tail. `.pick` is the case a green
-  // `toEqual` could never catch. If the head form falls back to value
-  // mode, it reads `$getField` off the result ARRAY, and every row comes back `{}`.
-  // The `.omit` sibling makes mongod refuse the pipeline outright.
   it("pipeline: .aggregate head with a lodash tail projects real documents", async () => {
     const rows = await aggregate(
       "users",
@@ -652,11 +492,6 @@ $ = { shops };`,
     ]);
   });
 
-  // A positional single-array-argument operator (`$size`/`$first`/`$last`/
-  // `$reverseArray`) SPLICES a bare array operand into an argument list. The server
-  // reads `{ $size: [10, 20, 30] }` as three arguments, and `{ $size: [7] }` as the
-  // scalar 7. So the compiler wraps a literal array operand one level deeper.
-  // Only a real run proves the wrap, because the emitted document looks reasonable either way.
   it("pipeline: single-array-argument operators over a literal array match JS", async () => {
     const rows = await aggregate(
       "users",
@@ -664,16 +499,9 @@ $ = { shops };`,
 $ = { n: [10, 20, 30].size(), rev: [10, 20, 30].toReversed(), h: [10, 20, 30].head(),
       l: [10, 20, 30].last(), one: [7].size(), nested: [[1, 2], [3]].head().toReversed() };`,
     );
-    // Values are exactly what JavaScript returns for the same expressions.
     expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
   });
 
-  // A `toEqual` cannot tell an index dispatch that *runs* from one the server
-  // refuses. A bracket index has three receiver types. `.at()` reads an ARRAY
-  // element. One character of a string is `.charAt(i)`, and its tail is `.substr(-n)`.
-  // So run each one and compare it with what JavaScript returns for the same
-  // expression. `tags` is `["vip", "beta"]`, `name` is the string "Ada Lovelace",
-  // `profile` is a document, and `nope` is absent.
   it("pipeline: bracket index, .at(), .charAt() and .substr() match JavaScript on arrays, strings, and documents", async () => {
     const rows = await aggregate(
       "users",
@@ -685,23 +513,18 @@ $ = { arrFirst: $.tags[0], arrLast: $.tags.at(-1),
     );
     expect(rows).toEqual([
       {
-        arrFirst: "vip", // ["vip","beta"][0]
-        arrLast: "beta", // .at(-1)
-        strFirst: "A", // "Ada Lovelace"[0]
-        strAt: "L", // .charAt(4) — A-d-a-space-L
-        strLast: "e", // .substr(-1) — the last character
+        arrFirst: "vip",
+        arrLast: "beta",
+        strFirst: "A",
+        strAt: "L",
+        strLast: "e",
         docKey: true,
-        // A missing receiver stays MISSING through both spellings, so `??` fires.
         absent: "fallback",
         absentIdx: "fallback",
       },
     ]);
   });
 
-  // `$getField.field` must evaluate to a String, or mongod aborts the WHOLE command.
-  // A missing key field reaches it as null. This is ordinary data, not an
-  // exotic case. So the compiler coerces a computed key. `subscription` is a document with a
-  // `tier` field; `keyField` does not exist on any user, and `numKey` is a number.
   it("pipeline: a computed bracket key survives a missing key field and a numeric one", async () => {
     const rows = await aggregate(
       "users",
@@ -710,22 +533,9 @@ const numKey = 0;
 $ = { byLiteral: $.subscription["tier"], byMissing: $.subscription[$.keyField] ?? "no-key",
       byNumber: $.tags[numKey], digitKey: { 0: "zero", 1: "one" }[numKey] };`,
     );
-    expect(rows).toEqual([
-      {
-        byLiteral: "premium",
-        // Without the coercion, the server aborts this read, because `$getField`
-        // needs a string `field` and gets null.
-        byMissing: "no-key",
-        byNumber: "vip", // tags[0] — the array branch
-        // A numeric object KEY builds the field "0", as JavaScript does.
-        digitKey: "zero",
-      },
-    ]);
+    expect(rows).toEqual([{ byLiteral: "premium", byMissing: "no-key", byNumber: "vip", digitKey: "zero" }]);
   });
 
-  // A method chained onto a lookup reads the slot that jsmql itself materialises. jsmql
-  // knows that the slot holds the `$lookup.as` array, so the emitted MQL has no
-  // run-time type guard. A run of it proves the compile-time shortcut picked the right branch.
   it("pipeline: methods chained onto a materialised lookup slot return the right values", async () => {
     const rows = await aggregate(
       "users",
@@ -734,15 +544,9 @@ const mine = $$$.orders.filter(o => o.userId === $._id);
 $ = { n: mine.size(), firstStatus: mine.at(0).status, lastStatus: mine.at(-1).status,
       idxStatus: mine[0].status, tierCount: $$$.orders.filter(o => o.userId === $._id).countBy("status").keys().size() };`,
     );
-    expect(rows).toEqual([
-      // Ada has 3 orders and they all share one status, so countBy has 1 key.
-      { n: 3, firstStatus: "shipped", lastStatus: "shipped", idxStatus: "shipped", tierCount: 1 },
-    ]);
+    expect(rows).toEqual([{ n: 3, firstStatus: "shipped", lastStatus: "shipped", idxStatus: "shipped", tierCount: 1 }]);
   });
 
-  // `.flatMap` lowers to `$unwind`, so the `.aggregate` block that follows sees
-  // one LINE per document. Its parameter is the line, so `line.qty` reads
-  // `$items.qty`. The sum proves the unwind ran before the group.
   it("pipeline: .flatMap then .aggregate sums across unwound lines", async () => {
     const rows = await aggregate(
       "users",
@@ -753,15 +557,6 @@ $ = { lines };`,
     expect(rows).toEqual([{ lines: [{ _id: null, qty: 55 }] }]);
   });
 
-  // The collaborative-filtering shape from test/realistic.test.ts, on fixture data.
-  // The value here is the ROUND TRIP through an object key. `.countBy()` tallies
-  // into a MongoDB object, whose keys are STRINGS, so `.keys()` hands back
-  // hex. Then `id.toObjectId()` ($toObjectId) casts each one back before it meets an
-  // ObjectId `_id`. Both joins below depend on that cast. Without it the server
-  // still runs the pipeline and still returns rows, but `_id` never equals a
-  // string. `candidateProducts` comes back empty, every `name` resolves to
-  // missing, and the key drops out of the document. An emitted-MQL `toEqual` sees
-  // none of that. Only a live run does, which is why this case lives here.
   it("pipeline: collaborative filtering — countBy keys cast back to ObjectId join the product docs", async () => {
     const rows = await aggregate(
       "users",
@@ -803,16 +598,6 @@ $$ = candidateProductIds
   .orderBy({ score: -1, name: 1 })
   .take(10);`,
     );
-    // The equality in the `&&` is the localField/foreignField pair on the multikey
-    // `items.productId`. The date bound is a $match beside it, over the matches
-    // of the pair. The fixture is fixed in time, so the bound is a constant date.
-    // The flagship example writes `Date().minus(1, "year")` there. The one order
-    // that the bound drops (placed 2024-12-01) holds only a product Bo already owns.
-    // Bo owns the headphones, laptop stand, notebook and desk lamp. Two other
-    // orders pair a keyboard with something Bo owns, so the keyboard scores 2.
-    // The rest score 1, and the `name: 1` sort key breaks the tie. Every
-    // `productId` is an ObjectId, not the hex string that keys the tally.
-    // `toEqual` fails on a string here, so this asserts the cast.
     expect(rows).toEqual([
       { productId: ID.product(1), score: 2, name: "Mechanical Keyboard" },
       { productId: ID.product(7), score: 1, name: "4K Monitor" },
@@ -821,10 +606,6 @@ $$ = candidateProductIds
     ]);
   });
 
-  // A missing array field answers through any chain of array methods, where an
-  // unguarded `$size` / `$in` / `$map` input would abort the command. Each method
-  // runs on the empty array (HR5): `.size()` counts 0, `.has()` and `.some()` answer
-  // false. No wrap goes where the array is certainly there: here, the root's keys.
   it("expr: a method on a missing array runs on the empty array through a chain; .size() counts 0", async () => {
     const rows = await aggregate(
       "users",
@@ -836,9 +617,6 @@ $ = { s: $.noSuchField.map(x => x).size(),
     expect(rows).toEqual([{ s: 0, has: false, any: false, keys: true }]);
   });
 
-  // The set methods on an unwound element inside a real pipeline: `.differenceBy`
-  // drops the lines for one product and answers exactly what the `.filter` spelling
-  // does; `.intersectionBy` keeps one line per matching key.
   it("pipeline: .differenceBy / .intersectionBy after .flatMap agree with the .filter spelling", async () => {
     const a1 = "0x6500000000000000000000a1";
     const p1 = `0x${ID.product(1).toHexString()}`;
@@ -861,9 +639,6 @@ $ = { s: $.noSuchField.map(x => x).size(),
     expect(kept.map((r) => String(r.p))).toEqual([ID.product(1).toHexString()]);
   });
 
-  // `.size()` after `.flatMap` in a join counts the joined documents themselves
-  // (one per line) — no pick of the lines first. The long spelling that does pick
-  // them agrees, and so does the sum of the per-order line counts.
   it("pipeline: .size() after .flatMap counts one joined document per line", async () => {
     const rows = await aggregate(
       "users",
@@ -876,12 +651,6 @@ $ = { n: $.n, m: $.m, lines: $.lines };`,
     expect(rows).toEqual([{ n: 6, m: 6, lines: [2, 1, 3] }]);
   });
 
-  // The same recommendations in the JavaScript-native spelling, on the same
-  // fixture. `.flatMap("items")` inside the join hands each LINE to the callbacks
-  // after it (`.filter(i => …)` reads `items.productId`, `.countBy("productId")`
-  // groups on it). `.entries()` feeds a destructured sort key, and
-  // `pr._id in candidateProductIds` is the `$in` query. The same rows as above
-  // prove the unwound-element reading against the server, not only in a `toEqual`.
   it("pipeline: collaborative filtering in the JavaScript-native spelling — .flatMap in the join, a destructured sort key, `in`", async () => {
     const rows = await aggregate(
       "users",

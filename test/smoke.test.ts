@@ -1,30 +1,3 @@
-/**
- * Smoke tests run as part of the unit-test suite to lock down invariants
- * that vitest's own test runtime cannot catch:
- *
- *   1. The `src/` tree stays in TypeScript's strippable subset, so the source
- *      runs as-is on Node 22.18+ / 24.3+ through native type stripping (no flag,
- *      no transpiler. Node 22.18.0 LTS and 24.3.0 unflagged type stripping,
- *      and Node 25.2.0 marked it stable). Deno/Bun parity requires this.
- *      Vitest transforms TS through the loader of Vite. This loader compiles
- *      `enum`, `namespace`, parameter properties, decorators and the like
- *      without complaint. These are the constructs that the strippable subset
- *      bans. The only honest test is to invoke the real Node stripper.
- *
- *   2. The built `dist/index.js` actually loads as ESM and produces correct
- *      MQL. Vitest tests resolve `src/index.ts` directly, never the built
- *      output. So a broken `tsconfig` or `exports` field can ship despite a
- *      green `npm test`. The test skips when `dist/` is absent (the default during
- *      local development) or older than `src/` (a build of old code proves
- *      nothing). It is active in CI / `npm run smoke:dist` after a build.
- *
- *   3. The built `dist/cjs/index.cjs` loads through `require()` and produces the
- *      same MQL across all three call shapes. This is the `require` half of
- *      the dual ESM/CJS package. Node 14+ CJS consumers depend on it.
- *      The bundle step in `scripts/build-cjs.mjs` is easy to break, and
- *      tsc does not see it. The same skip rule applies as for the ESM case.
- */
-
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -33,7 +6,6 @@ import { dirname, join, relative, resolve } from "node:path";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Every `.ts` file under `dir`. */
 const tsFiles = (dir: string, out: string[] = []): string[] => {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
@@ -43,14 +15,6 @@ const tsFiles = (dir: string, out: string[] = []): string[] => {
   return out;
 };
 
-/**
- * Why the build in `dist/` cannot stand for `src/`, or null when it can.
- *
- * Each `src/<x>.ts` must have its `dist/<x>.js`, and that output must be newer than
- * the source. The bundles under `dist/cjs/` must be newer than every source file.
- * `src/globals.ts` has no mtime rule: `pretest` writes it on every run. The registry
- * files it comes from carry the rule instead.
- */
 function distProblem(bundles: readonly string[]): string | null {
   if (!existsSync(resolve(ROOT, "dist/index.js"))) return "absent";
   let newest = 0;
@@ -78,7 +42,6 @@ if (DIST_PROBLEM !== null && DIST_PROBLEM !== "absent") {
       "\n[smoke] Run `npm run smoke:dist` to build and run them.\n",
   );
 }
-/** The built-dist cases run only against a build of the current source. */
 const DIST_FRESH = DIST_PROBLEM === null;
 
 describe("smoke: strippable-TS invariant", () => {
@@ -88,19 +51,11 @@ describe("smoke: strippable-TS invariant", () => {
   });
 
   it("`node src/mongoose.ts` runs without errors", () => {
-    // The mongoose plugin is a separate published entry point, so it gets
-    // the same strippable-TS guarantee as src/index.ts. The `import type {}
-    // from "mongoose"` anchor and the `declare module "mongoose"` block
-    // below it are both type-only constructs. The Node stripper drops them.
-    // This case proves it.
     const result = spawnSync(process.execPath, ["src/mongoose.ts"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
 
   it("`node src/cli.ts` (the bin source) strips and runs without errors", () => {
-    // The build bundles the CLI to dist/cjs/cli.cjs for shipping. The source must
-    // also satisfy the strippable-TS invariant, so contributors can run it
-    // directly. `--help` exercises the full module load + arg parse and exits 0.
     const result = spawnSync(process.execPath, ["src/cli.ts", "--help"], { cwd: ROOT, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Usage:");
@@ -143,12 +98,6 @@ describe("smoke: built dist", () => {
   it.skipIf(!DIST_FRESH || !existsSync(cjsPath))(
     "dist/cjs/index.cjs loads through require() and produces correct MQL",
     () => {
-      // Mirrors the ESM case above but exercises the CommonJS bundle that
-      // ships under the `require` condition of `package.json#exports`.
-      // This targets `node14`. The script uses conservative syntax (no
-      // template literals except the outer one, no optional chaining).
-      // So the same script can also run on the lowest engine that this project
-      // supports.
       const script = `
         const { jsmql } = require(${JSON.stringify(cjsPath)});
         const out = jsmql("$.age > 18");
@@ -178,14 +127,8 @@ describe("smoke: built dist", () => {
   it.skipIf(!DIST_FRESH || !existsSync(cliCjs))(
     "dist/cjs/cli.cjs runs as the jsmql bin (stdin → MQL) and reports its version",
     () => {
-      // This exercises the built executable end-to-end: the esbuild bundle, the
-      // preserved shebang, and the version `define`. spawnSync runs `node
-      // dist/cjs/cli.cjs` (not the bare path), so the test does not depend
-      // on the exec bit of the file.
       const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
       expect(compiled.status, compiled.stderr).toBe(0);
-      // The bin writes JAVASCRIPT, so the test reads the output as a developer reads it:
-      // by an evaluation of it. The printer exists to stop a parse of it as JSON.
       expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
 
       const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
@@ -193,7 +136,6 @@ describe("smoke: built dist", () => {
       const pkgVersion = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).version;
       expect(version.stdout.trim()).toBe(pkgVersion);
 
-      // The first bytes must be the shebang so the file is directly runnable.
       expect(readFileSync(cliCjs, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
     },
   );
@@ -203,14 +145,6 @@ describe("smoke: built dist", () => {
   it.skipIf(!existsSync(mongoosePkg))(
     "mongoose module augmentation in src/mongoose.ts compiles against real mongoose types",
     () => {
-      // Type-only validation: make sure that the `declare module "mongoose"` block at
-      // the bottom of src/mongoose.ts merges with the real `Model<...>` interface of
-      // mongoose and accepts a JSMQL string / arrow at every patched slot.
-      // The devDependencies pin mongoose at `"*"`, so every fresh
-      // `npm install` pulls the latest published mongoose. This case
-      // catches augmentation drift against new mongoose generics before
-      // users hit it. The skip guard stays for degraded environments where
-      // node_modules/mongoose is absent.
       const result = spawnSync(
         resolve(ROOT, "node_modules/.bin/tsc"),
         ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.json")],
@@ -218,8 +152,6 @@ describe("smoke: built dist", () => {
       );
       expect(result.status, result.stdout + result.stderr).toBe(0);
     },
-    // A `tsc` run over mongoose's own types takes seconds, and more when the
-    // whole suite runs beside it. The default budget is 5 s.
     60_000,
   );
 
@@ -228,13 +160,6 @@ describe("smoke: built dist", () => {
   it.skipIf(!existsSync(tscBin))(
     "@koresar/jsmql/globals value-method + stream completion type-checks (test/types/globals-completion.ts)",
     () => {
-      // Type-only validation of the ambient-globals completion surface: the
-      // Array<T> / String / Number prototype augmentations complete and chain on
-      // concretely-typed receivers. Value-method typos error (this proves the
-      // surface is not silently `any`), and a bare `any` receiver stays
-      // permissive. It has its own tsconfig (no mongoose), so it runs when
-      // tsc is present, whether or not mongoose is installed. See
-      // docs/specs/globals-generation.md.
       const result = spawnSync(tscBin, ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.globals.json")], {
         cwd: ROOT,
         encoding: "utf8",
@@ -271,11 +196,6 @@ describe("smoke: built dist", () => {
   it.skipIf(!DIST_FRESH || !existsSync(mongooseCjs))(
     "dist/cjs/mongoose.cjs is callable as require('…')(mongoose)",
     () => {
-      // The `require(...)` form is the primary documented call shape, so the
-      // CJS bundle must promote esbuild's default-export shape to
-      // `module.exports = fn`. Without the post-build fixup in
-      // `scripts/build-cjs.mjs`, this test fails, because the export is not a
-      // function.
       const script = `
         const jsmqlMongoose = require(${JSON.stringify(mongooseCjs)});
         if (typeof jsmqlMongoose !== "function") {
@@ -304,9 +224,6 @@ describe("smoke: built dist", () => {
   it.skipIf(!DIST_FRESH || !existsSync(distPath))(
     "dist/globals.{js,d.ts} are emitted with stage and operator declarations",
     () => {
-      // `@koresar/jsmql/globals` is a pure-types module — the runtime globals.js is essentially
-      // empty (`export {};`), but it must exist so accidental non-type imports
-      // resolve. The .d.ts is the artifact users actually consume.
       if (!existsSync(opsJs)) {
         throw new Error(`expected dist/globals.js to exist after build; rebuild with \`npm run build\``);
       }
@@ -314,9 +231,6 @@ describe("smoke: built dist", () => {
         throw new Error(`expected dist/globals.d.ts to exist after build; rebuild with \`npm run build\``);
       }
       const dts = readFileSync(opsDts, "utf8");
-      // Spot-check that the declaration block is intact and includes both a
-      // canonical stage and a canonical expression operator. If the generator
-      // silently emitted an empty file (for example specs not vendored), this fails.
       expect(dts).toMatch(/declare global/);
       expect(dts).toMatch(/function \$match\(/);
       expect(dts).toMatch(/function \$dateAdd\(/);

@@ -1,9 +1,3 @@
-/**
- * CLI tests for the `jsmql` bin. These spawn `node src/cli.ts` directly. This runs the real un-bundled source
- * through Node's native type stripping. The strippable-TS smoke test relies on the same path, so no build step
- * is needed. The dist-gated cases in smoke.test.ts cover the built `dist/cjs/cli.cjs` (shebang, exec bit,
- * version `define`) separately.
- */
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -14,17 +8,11 @@ import * as mongodb from "mongodb";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Run the CLI with the given args and optional stdin; return {status, stdout, stderr}. */
 function run(args: string[], input?: string) {
   const r = spawnSync(process.execPath, ["src/cli.ts", ...args], { cwd: ROOT, input: input ?? "", encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
-/**
- * The CLI writes JAVASCRIPT. A developer reads the output by a paste into a place that has the driver's BSON
- * classes in scope. An evaluation, not a parse, is itself the assertion the printer exists for: text the driver
- * would refuse fails here first.
- */
 const BSON_GLOBALS: Record<string, unknown> = {
   ObjectId: mongodb.ObjectId,
   Decimal128: mongodb.Decimal128,
@@ -59,7 +47,6 @@ describe("cli: input sources", () => {
     const dir = mkdtempSync(join(tmpdir(), "jsmql-cli-"));
     const file = join(dir, "query.jsmql");
     writeFileSync(file, "$.score >= 90\n");
-    // stdin carries a different predicate to prove --file wins.
     const r = run(["--file", file], "$.age > 18");
     expect(r.status).toBe(0);
     expect(asPasted(r.stdout)).toEqual({ score: { $gte: 90 } });
@@ -99,9 +86,6 @@ describe("cli: output shapes", () => {
 });
 
 describe("cli: formatting", () => {
-  // The output is JAVASCRIPT, not JSON. A Date, an ObjectId, a Decimal128 and a regular expression have no JSON
-  // spelling, and a JSON string of one is WRONG, not lossy. The CLI writes a document on one line when it fits
-  // in 80 columns, and breaks it once it does not, because MQL nests deeply and narrowly.
   it("writes a short document on one line", () => {
     expect(run(["$.age > 18"]).stdout).toBe("{ age: { $gt: 18 } }\n");
   });
@@ -134,15 +118,12 @@ describe("cli: formatting", () => {
     expect(run(["-c", '$.d >= Date("2026-01-01")']).stdout).toBe(
       '{ d: { $gte: new Date("2026-01-01T00:00:00.000Z") } }\n',
     );
-    // `new` is not decoration: the driver's export is a class and the bare call throws.
     expect(run(["-c", '$._id === ObjectId("507f1f77bcf86cd799439011")']).stdout).toBe(
       '{ _id: new ObjectId("507f1f77bcf86cd799439011") }\n',
     );
     expect(run(["-c", "$.name.match(/^a/i)"]).stdout).toBe("{ name: { $regex: /^a/i } }\n");
   });
 
-  // A quoted "__proto__" key sets the prototype when a developer pastes the text, so the field would vanish on
-  // the way back in. The computed form is the only one that survives.
   it("writes a __proto__ key as a computed key", () => {
     expect(run(["-c", "$.__proto__ === 1"]).stdout).toBe('{ ["__proto__"]: 1 }\n');
     const back = asPasted(run(["-c", "$.__proto__ === 1"]).stdout) as Record<string, unknown>;
@@ -243,7 +224,6 @@ describe("cli: errors and meta", () => {
     const r = run(["--argjson", "x", "1"], "  ({ x }, { $ }) => $.a.foo(x)");
     expect(r.status).toBe(1);
     expect(r.stderr.match(/\^/g)).toHaveLength(1);
-    // The caret stands under the `.` of `.foo`, where the call starts.
     const lines = r.stderr.split("\n");
     const caret = lines.findIndex((l) => l.trim() === "^");
     expect(lines[caret].indexOf("^")).toBe(lines[caret - 1].indexOf(".foo"));

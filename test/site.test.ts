@@ -1,13 +1,3 @@
-/**
- * Guards for the published site: the landing page `index.html`, the `CNAME` that binds it to jsmql.js.org, and
- * the `_config.yml` that tells GitHub Pages what to publish. See docs/specs/site.md.
- *
- * The landing page never spells out an MQL document. It compiles each example in the reader's browser with the
- * same `dist/jsmql.js` bundle that the playground imports. So the page cannot show output that the compiler no
- * longer produces. What can still rot is the JSMQL *input*. A syntax change makes an example throw, and the
- * page then shows an error message where a document belongs. These cases compile every example the same way the
- * page does and fail the suite instead.
- */
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,7 +7,6 @@ import { jsmql } from "../src/index.ts";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const INDEX = readFileSync(resolve(ROOT, "index.html"), "utf8");
 
-/** The `data-mode` values the page uses, mapped to the entry point each names. */
 const ENTRIES = {
   auto: jsmql,
   filter: jsmql.filter,
@@ -28,11 +17,9 @@ const ENTRIES = {
 
 type Mode = keyof typeof ENTRIES;
 
-/** A shape label (the chip above an example) and the output type it promises. */
 const CHIP_IS_ARRAY: Record<string, boolean> = { filter: false, expression: false, pipeline: true, update: false };
 
 function decodeEntities(html: string): string {
-  // `&amp;` resolves last. In the other order `&amp;gt;` would turn into `>`.
   return html
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -47,16 +34,8 @@ interface Example {
   source: string;
 }
 
-/**
- * Pull every example out of the page. The shape this reads is one `<article>` per example, a `data-mode`
- * attribute, a chip class, and the JSMQL source in `pre.src > code`. The module script of the page reads the
- * same shape, so a markup change that breaks one breaks the other.
- */
 function readExamples(): Example[] {
   const out: Example[] = [];
-  // `class="example[^"]*"` so a presentational modifier (`class="example tall"`) cannot drop an example out of
-  // the extraction. That failure is silent, and a silent review of fewer examples than the page shows is the
-  // one outcome this file exists to prevent. `countMarkupExamples()` is the backstop.
   const article = /<article class="example[^"]*" data-example data-mode="([a-z]+)">([\s\S]*?)<\/article>/g;
   for (const [, mode, body] of INDEX.matchAll(article)) {
     const chip = /<span class="chip ([a-z]+)">/.exec(body);
@@ -67,16 +46,10 @@ function readExamples(): Example[] {
   return out;
 }
 
-/** How many examples the markup declares, counted independently of the parse above. */
 function countMarkupExamples(): number {
   return (INDEX.match(/<article[^>]*\bdata-example\b/g) ?? []).length;
 }
 
-/**
- * The SQL-and-JSMQL rows: one `<div class="vs">` per idea, a `data-mode`, and the JSMQL cell in `pre.src >
- * code`. They show no MQL on the page. The page compiles each to prove the cell and links the playground for
- * the output. So the guard here is that every cell compiles through the entry it names.
- */
 function readVersus(): Example[] {
   const out: Example[] = [];
   const row = /<div class="vs" data-vs data-mode="([a-z]+)">([\s\S]*?)<a class="play"/g;
@@ -97,8 +70,6 @@ const VERSUS = readVersus();
 
 describe("site: landing-page examples", () => {
   it("extracts every example the markup declares", () => {
-    // Counted two ways on purpose. A lower bound alone passes when an example falls out of the parse. Then the
-    // cases below review a page that is not the published one.
     expect(EXAMPLES.length).toBe(countMarkupExamples());
     expect(EXAMPLES.length).toBeGreaterThanOrEqual(6);
   });
@@ -130,8 +101,6 @@ describe("site: landing-page examples", () => {
   });
 
   it("labels each example with the entry point that compiles it", () => {
-    // `auto` is the exception: the polymorphic entry decides the shape itself,
-    // so the chip states which shape it gives, not which entry runs.
     for (const { mode, chip } of EXAMPLES) {
       if (mode !== "auto") expect(chip).toBe(mode);
     }
@@ -140,16 +109,11 @@ describe("site: landing-page examples", () => {
 
 describe("site: GitHub Pages invariants", () => {
   it("serves the landing page as a static file, not a Jekyll template", () => {
-    // Jekyll renders Liquid only in files that carry YAML front matter. The
-    // page holds JavaScript and MQL braces, so it must stay a plain copy.
     expect(INDEX.startsWith("---")).toBe(false);
     expect(INDEX).not.toMatch(/\{\{|\{%/);
   });
 
   it("binds the site to the domain package.json advertises, whenever CNAME is present", () => {
-    // GitHub Pages redirects the github.io URL to whatever CNAME names, so the file must be absent until the
-    // domain resolves. Otherwise no URL shows the site for review. Hold the binding when the file is there, and
-    // stay quiet when it is deliberately not.
     const cnamePath = resolve(ROOT, "CNAME");
     if (!existsSync(cnamePath)) return;
     const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8"));

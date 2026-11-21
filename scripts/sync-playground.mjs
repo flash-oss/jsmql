@@ -1,50 +1,4 @@
 #!/usr/bin/env node
-/**
- * Produce the two committed playground artefacts from their sources:
- *
- *   1. `dist/jsmql.js`: the jsmql library bundled from `src/index.ts` through
- *      esbuild as a single unminified **pure ES module** (`export { jsmql, … }`,
- *      no harness or UI code). Git-tracked (the only checked-in file under dist/,
- *      see .gitignore) and published by GitHub Pages (see _config.yml). The
- *      playground imports it with `<script type="module"> import { jsmql } from
- *      "./dist/jsmql.js"`. Because it is an ES module import, the playground must be
- *      served over http or https. It does not load over `file://`.
- *
- *   2. `playground.html`: generated from `playground_skeleton.html` (the
- *      hand-authored UI source: markup, CSS, behaviour) with one region injected.
- *      The script extracts the realistic-examples manifest. It lists every top-level
- *      `describe()` and first-`it()` pair in `test/realistic.test.ts`, and reads
- *      the first `jsmql(...)` or `jsmql.expr(...)` call inside. The script embeds
- *      the manifest as a JSON-script tag between the `<!-- jsmql-examples:start … -->` and
- *      `<!-- jsmql-examples:end -->` markers.
- *
- * This script reads the skeleton and only WRITES `playground.html`
- * (never back to the skeleton). Changes to `src/` or `test/realistic.test.ts` can
- * never overwrite UI work. UI development edits the skeleton, not the artefact.
- *
- * The example-discovery uses a Node loader hook (`sync-playground-loader.mjs`)
- * to map `import { describe, it } from "vitest"` onto a mock
- * (`sync-playground-vitest-shim.mjs`) that records every call into a tree.
- * The script then loads the test file with a dynamic `import()`. `describe` bodies run (so
- * the full tree registers), but `it` bodies do not execute. The script captures their source
- * through `Function.prototype.toString`. This approach catches every test exactly as vitest
- * sees it. It also catches a dynamically generated `describe()` block. It stays robust
- * to new entry-point names (`jsmql.expr`, future `jsmql.update`).
- *
- * It skips the `validate(): realistic error cases` block (queries do not compile)
- * and warns on `describe`s where no query can be extracted.
- *
- * Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script
- * whenever Claude Code edits `test/realistic.test.ts` or `playground_skeleton.html`.
- * Both artefacts stay current within a single commit. This script also runs as `prebuild`,
- * so `npm run build` always refreshes them. `src/` edits do NOT trigger the hook.
- * Run it manually after an edit of src/:
- *
- *   npm run sync:playground
- *
- * Idempotent per file: the script (re)writes and stages each artefact only when its
- * contents actually change. If neither changed, the script exits 0 silently.
- */
 
 import ts from "typescript";
 import { build } from "esbuild";
@@ -58,22 +12,10 @@ import path from "node:path";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_FILE = path.join(ROOT, "test/realistic.test.ts");
 const ENTRY = path.join(ROOT, "src/index.ts");
-// The hand-authored UI source. Everything in `playground.html` except the two
-// injected regions lives here. An edit of src/ or realistic.test.ts only drives
-// those two regions, so it can never clobber playground UI work. UI development
-// edits the skeleton; `playground.html` is a pure build artifact.
 const SKELETON = path.join(ROOT, "playground_skeleton.html");
 const HTML = path.join(ROOT, "playground.html");
-// The committed, git-tracked pure-ESM library bundle the playground imports
-// (`<script type="module"> import { jsmql } from "./dist/jsmql.js"`). It's the
-// only file under dist/ that's checked in (see .gitignore) and the only build
-// output GitHub Pages publishes alongside playground.html (see _config.yml).
 const BUNDLE = path.join(ROOT, "dist/jsmql.js");
 
-// ── Vitest loader registration ────────────────────────────────────────────────
-// Must happen BEFORE any `import()` that would resolve "vitest" — so before
-// we import the test file below. The loader redirects "vitest" to our shim
-// (`sync-playground-vitest-shim.mjs`), which records every describe/it call.
 const LOADER_URL = pathToFileURL(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "sync-playground-loader.mjs"),
 ).href;
@@ -83,11 +25,6 @@ const SHIM_URL = pathToFileURL(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "sync-playground-vitest-shim.mjs"),
 ).href;
 
-// ── Stage detection (for the kind label) ──────────────────────────────────────
-// Stage names from the registry. The AST-based kind detector uses them to
-// distinguish pipelines (any `$stage(...)` call or `{ $stage: ... }` key)
-// from filters / expressions. The script reads them off the registry rows the compiler
-// reads, so the heuristic cannot drift from the language definition.
 const { everyStageName } = await import(pathToFileURL(path.join(ROOT, "src/compiler/rows.ts")).href);
 const STAGE_NAMES = new Set(everyStageName());
 
@@ -115,10 +52,6 @@ function makeSlug(title, used) {
   used.add(candidate);
   return candidate;
 }
-
-// Categories come from explicit metadata: `describe(name, { features: [...] }, fn)`.
-
-// ── Query / kind / usage extraction from an `it()` body source ────────────────
 
 function findFirstJsmqlCall(node) {
   let found = null;
@@ -252,13 +185,6 @@ function dedent(text) {
     return min;
   };
   const min = measure(lines);
-  // Pipeline-style templates like `jsmql\`[\n  $match(...)\n]\`` start with
-  // a lone `[` (or `{`, `(`) at column 0. This drags the global minimum
-  // down to zero, so `dedent` cannot strip the body's
-  // test-file indent. When that happens, treat the first line as the
-  // outer anchor. Dedent the body lines against their own minimum, so
-  // the playground shows a canonical 2-space pipeline shape instead of
-  // the raw 6-space test-file indent.
   if ((!Number.isFinite(min) || min === 0) && /^[\[({][ \t]*$/.test(lines[0])) {
     const body = lines.slice(1);
     const bodyMin = measure(body);
@@ -270,17 +196,6 @@ function dedent(text) {
   return lines.map((l) => l.slice(min)).join("\n");
 }
 
-// ── Kind detection ────────────────────────────────────────────────────────────
-// The playground groups examples by **three types** that match the Node.js
-// MongoDB driver: Pipeline / Filter / Expression. An Update Filter (the
-// `{ $set: …, $unset: … }` document `db.coll.updateOne(filter, update)`
-// takes) is a flavour of Expression — produced by `jsmql.expr(...)` — and
-// surfaces through the usage hint, not as its own kind. The rule:
-//   - jsmql.expr(...) with no `;` and no stage call  → expression
-//   - jsmql.expr(...) with `;` or a stage call       → pipeline
-//   - jsmql(...) with `;` or a stage call            → pipeline
-//   - jsmql(...) otherwise                           → filter
-
 function stripStringsAndComments(src) {
   return src
     .replace(/\/\/.*$/gm, "")
@@ -291,8 +206,6 @@ function stripStringsAndComments(src) {
 }
 
 function queryHasStageCall(query) {
-  // Match `$<name>(` or `{ $<name>:` anywhere in the stripped query, then
-  // verify <name> is a registered stage.
   const stripped = stripStringsAndComments(query);
   const calls = stripped.matchAll(/\$([a-zA-Z]+)\s*[(:]/g);
   for (const m of calls) {
@@ -312,51 +225,15 @@ function detectKind(callKind, query) {
   return "filter";
 }
 
-// ── Usage hint extraction ─────────────────────────────────────────────────────
-// Every test in test/realistic.test.ts carries a `// → db.<coll>.<method>(...)`
-// comment above the `const result = …` line. Pull it out so the playground
-// can render the natural call site alongside the source.
-
 const USAGE_RE = /\/\/\s*→\s*(db\.[A-Za-z_][\w.]*\([\s\S]*?\))(?:\s*\n|\s*$)/;
 
 function extractUsage(itSource) {
   const m = itSource.match(USAGE_RE);
   if (!m) return null;
-  // Collapse all whitespace runs (the usage line can wrap in source); the
-  // playground prefers the canonical single-line form.
   return m[1].replace(/\s+/g, " ").trim();
 }
 
-// ── Walk the recorded tree → manifest ─────────────────────────────────────────
-//
-// Manifest shape (new, metadata-driven):
-//
-//   [
-//     {
-//       slug:    "<describe-slug>",
-//       title:   "<describe title>",
-//       features: ["Filters", ...],            // from describe.meta.features
-//       its: [
-//         {
-//           slug:  "<it-slug>",
-//           title: "<it title>",
-//           kind:  "filter" | "pipeline" | "expression",
-//           call:  "jsmql" | "jsmql.expr",
-//           query: "<source>",
-//           usage: "db.<coll>.<method>(...)",
-//         },
-//         …                                    // every it() is its own example
-//       ],
-//     },
-//     …
-//   ]
-//
-// `it.meta.kind` / `it.meta.usage` take precedence; missing values fall back
-// to the AST-based detector and the in-body `// → …` comment heuristic.
-
 async function extractExamples() {
-  // The import of the test file triggers the loader → vitest shim → tree
-  // population. This code discards the import result and reads the shim's `tree`.
   await import(pathToFileURL(TEST_FILE).href);
   const { tree } = await import(SHIM_URL);
 
@@ -367,8 +244,6 @@ async function extractExamples() {
 
   for (const dnode of tree.children) {
     if (dnode.kind !== "describe") continue;
-    // Skip the `jsmql.validate()` describe — its body intentionally throws,
-    // so there's nothing meaningful to surface in the playground.
     if (dnode.title.startsWith("validate():") || dnode.title.startsWith("jsmql.validate():")) {
       continue;
     }
@@ -379,8 +254,6 @@ async function extractExamples() {
     for (const inode of dnode.children) {
       if (inode.kind !== "it" || !inode.source) continue;
 
-      // Parse the captured `fn.toString()` so the existing query extractor
-      // can walk the AST for the first jsmql / jsmql.expr call.
       const wrapped = `const __it = ${inode.source};`;
       const sf = ts.createSourceFile("_it.ts", wrapped, ts.ScriptTarget.Latest, true);
       const found = findFirstJsmqlCall(sf);
@@ -402,7 +275,6 @@ async function extractExamples() {
         continue;
       }
 
-      // Metadata wins, AST/heuristic fills in any gaps.
       const kind = inode.meta?.kind ?? detectKind(found.kind, query);
       const usage = inode.meta?.usage ?? extractUsage(inode.source);
       const itSlug = makeSlug(`${dnode.title} ${inode.title}`, usedItSlugs);
@@ -424,10 +296,6 @@ async function extractExamples() {
 async function bundleJsmql() {
   const result = await build({
     entryPoints: [ENTRY],
-    // `bson` IS bundled here, unlike in the CJS build. A browser cannot resolve a
-    // bare specifier, and the page has no driver to interoperate with. So the one
-    // copy in the bundle is the only copy. A second CDN would only add a way for
-    // the playground to go dark. `platform: "browser"` picks bson's browser build.
     bundle: true,
     format: "esm",
     target: "es2022",
@@ -454,11 +322,6 @@ function replaceRegion(html, startMarker, endMarker, replacement) {
 
 function buildExamplesRegion(describes) {
   const json = JSON.stringify(describes);
-  // Identifies this exact example set. The playground stores it alongside a
-  // saved session. It drops the session when the two disagree. So a visitor
-  // who came here before still sees a new example, and not a
-  // restored copy of the old one. The script derives it from the manifest, so it changes
-  // when — and only when — an example's slug, title, query or metadata does.
   const stamp = createHash("sha256").update(json).digest("hex").slice(0, 12);
   return [
     "    <!-- jsmql-examples:start (generated by scripts/sync-playground.mjs — do not edit) -->",
@@ -477,15 +340,11 @@ const itCount = describes.reduce((sum, d) => sum + d.its.length, 0);
 
 const inGitRepo = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: ROOT, stdio: "ignore" }).status === 0;
 
-// Write `file` only when its contents change (avoids needless mtime churn and
-// git-staging), then stage it. Returns true when it writes the file.
 function writeAndStage(file, contents) {
   let existing = null;
   try {
     existing = readFileSync(file, "utf8");
-  } catch {
-    // Not on disk yet (first run) — `existing` stays null so we write.
-  }
+  } catch {}
   if (existing === contents) return false;
   writeFileSync(file, contents);
   if (inGitRepo) {
@@ -495,12 +354,10 @@ function writeAndStage(file, contents) {
   return true;
 }
 
-// 1. The committed pure-ESM library bundle (dist/jsmql.js).
 const bundleSrc = await bundleJsmql();
 mkdirSync(path.dirname(BUNDLE), { recursive: true });
 const bundleChanged = writeAndStage(BUNDLE, bundleSrc);
 
-// 2. playground.html — skeleton with only the examples region injected.
 const html = replaceRegion(
   readFileSync(SKELETON, "utf8"),
   EXAMPLES_START,

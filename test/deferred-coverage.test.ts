@@ -2,61 +2,19 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, relative } from "node:path";
 
-// ---------------------------------------------------------------------------
-// Drift-protection test for the deferred-tracking system. See
-// docs/DEFERRED.md for the convention.
-//
-// Three gates, all enforced on every `npm test`:
-//
-//   1. FORWARD     — every [DEF-NNN] tag in the live surface must have a
-//                    matching row in docs/DEFERRED.md.
-//   2. REVERSE     — every row in docs/DEFERRED.md must be referenced by at
-//                    least one [DEF-NNN] tag in the live surface (unless
-//                    the row's Status is "design-only").
-//   3. UNTAGGED    — every "not yet supported" / "future work" / "deferred"
-//                    phrase in the live surface must be tagged [DEF-NNN]
-//                    OR appear in test/deferred-allowlist.txt.
-//
-// Plus a meta-gate:
-//
-//   4. STALE-ALLOWLIST — every entry in test/deferred-allowlist.txt must
-//                    match at least one phrase in the live surface, so the
-//                    allowlist cannot accumulate stale entries.
-//
-// Live surface = src/**/*.ts (not globals.ts), docs/specs/**/*.md,
-// docs/LANGUAGE.md, docs/CLAUDE.md, README.md, test/**/*.ts (except this
-// file and operator-spec-coverage.test.ts's meta-comment).
-//
-// Excluded: docs/DEVLOG/ (append-only history), docs/DEFERRED.md itself,
-// this test file itself, the allowlist, vendor/, node_modules/, dist/, tmp/
-// (untracked scratch — a probe script is nobody's deferral), src/globals.ts
-// (generated).
-// ---------------------------------------------------------------------------
-
 const ROOT = resolve(import.meta.dirname, "..");
 const DEF_TAG_RE = /\[DEF-(\d{3})\]/g;
-// Rows live under the `## §A.` section as `### DEF-NNN — title` headings.
 const ROW_HEADING_RE = /^### DEF-(\d{3}) — (.+)$/gm;
 const STATUS_RE = /^- \*\*Status\.\*\* (.+)$/m;
-// Lines within ±TAG_CONTEXT of a phrase line are scanned for [DEF-NNN] tags,
-// so a multi-line markdown list item can carry its tag on the bullet's first
-// line even when the phrase falls on a continuation line.
 const TAG_CONTEXT = 2;
 
-// Phrases that signal a deferral. Case-insensitive substring match against
-// each line. Tuned to match the phrases already in the codebase. A change that tightens
-// these (for example, it drops "follow-up") needs a manual review of every
-// false positive.
 const PHRASE_RE =
   /(not yet (supported|implemented)|not supported in this release|is deferred|are deferred|deferred to|future work|out of scope|punt to a follow-up|coming in a follow-up|coming soon|planned but not yet|planned future work)/i;
 
-// File extensions / paths to scan.
 const SCAN_EXTS = new Set([".ts", ".md"]);
 
-// Skip these directories entirely. `DEVLOG` is docs/DEVLOG/, the append-only history.
 const SKIP_DIRS = new Set(["node_modules", "dist", "vendor", ".git", ".claude", "tmp", "DEVLOG"]);
 
-// Files excluded from gates 1-3 (the meta-files of the system itself).
 const EXCLUDED_FILES = new Set([
   "docs/DEFERRED.md",
   "test/deferred-coverage.test.ts",
@@ -65,8 +23,8 @@ const EXCLUDED_FILES = new Set([
 ]);
 
 interface FileLine {
-  file: string; // relative path from root
-  lineNum: number; // 1-based
+  file: string;
+  lineNum: number;
   text: string;
 }
 
@@ -96,16 +54,12 @@ function extOf(name: string): string {
 
 function parseDeferred(): {
   rows: Map<string, { title: string; status: string; section: string }>;
-  /** Every §A id in file order, duplicates INCLUDED. `rows` is a Map, so a repeated id silently
-   *  overwrites, and both the forward and reverse gates still pass. */
   idsInOrder: string[];
 } {
   const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
   const rows = new Map<string, { title: string; status: string; section: string }>();
   const idsInOrder: string[] = [];
 
-  // Section §B (Decisions) records will-not-implement choices with `### <title>`
-  // (no DEF-NNN ID) — pull only §A. Section markers are `## §A.` / `## §B.`.
   const sectionStart = text.indexOf("## §A.");
   const sectionEnd = text.indexOf("## §B.");
   const sectionA = sectionStart >= 0 && sectionEnd >= 0 ? text.substring(sectionStart, sectionEnd) : text;
@@ -113,7 +67,6 @@ function parseDeferred(): {
   for (const m of sectionA.matchAll(ROW_HEADING_RE)) {
     const id = m[1];
     const title = m[2];
-    // Find the row's body (up to the next `### DEF-` or end of section).
     const headingEnd = m.index! + m[0].length;
     const nextHeading = sectionA.substring(headingEnd).search(/^### DEF-\d{3} — /m);
     const body =
@@ -126,7 +79,6 @@ function parseDeferred(): {
   return { rows, idsInOrder };
 }
 
-/** True if any line within ±TAG_CONTEXT of the given index carries a [DEF-NNN] tag. */
 function hasNearbyTag(surface: FileLine[], idx: number): boolean {
   const file = surface[idx].file;
   for (let j = idx - TAG_CONTEXT; j <= idx + TAG_CONTEXT; j++) {
@@ -159,7 +111,6 @@ function parseAllowlist(): { file: string; phrase: string }[] {
 }
 
 describe("deferred-tracking drift protection", () => {
-  // Build the surface once for all gates.
   const surface: FileLine[] = [];
   walkSourceTree(ROOT, surface);
 
@@ -167,9 +118,6 @@ describe("deferred-tracking drift protection", () => {
   const allowlist = parseAllowlist();
 
   function isAllowlisted(file: string, text: string): boolean {
-    // Do not short-circuit — multiple allowlist entries may match the same
-    // line. The stale-allowlist gate needs to see every entry that matches
-    // anything, not just the first.
     for (let i = 0; i < allowlist.length; i++) {
       const a = allowlist[i];
       if (a.file === file && text.includes(a.phrase)) return true;
@@ -177,16 +125,10 @@ describe("deferred-tracking drift protection", () => {
     return false;
   }
 
-  /** Compute the set of allowlist indices that match at least one phrase line. */
   function computeAllowlistHits(): Set<number> {
     const hits = new Set<number>();
     for (let i = 0; i < surface.length; i++) {
       const line = surface[i];
-      // Scan every line, not just phrase-bearing ones. An allowlist entry's
-      // phrase might be a substring of a line that does not itself carry a
-      // canonical deferral phrase but is part of a multi-line context.
-      // Tighten: only count hits on lines that ARE phrase-bearing (otherwise
-      // a stale phrase would not be detected as stale).
       if (!PHRASE_RE.test(line.text)) continue;
       for (let j = 0; j < allowlist.length; j++) {
         if (hits.has(j)) continue;
@@ -198,9 +140,6 @@ describe("deferred-tracking drift protection", () => {
   }
 
   it("COUNT GATE: the number of open items and decisions, so no prose has to claim it", () => {
-    // A count in prose is stale on the next row, and CLAUDE.md keeps counts out of
-    // prose for exactly that reason. It lives here instead, where a change to it is part
-    // of a change to the file. Update the two numbers when you add or close a row.
     const { idsInOrder } = parseDeferred();
     const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
     const decisions = text.substring(text.indexOf("## §B.")).match(/^### /gm) ?? [];
@@ -213,10 +152,6 @@ describe("deferred-tracking drift protection", () => {
   });
 
   it("UNIQUE-ID GATE: no two §A rows share a DEF-NNN id", () => {
-    // Two features under one id makes every `[DEF-NNN]` tag ambiguous — a reader
-    // following the tag lands on whichever row happens to come first. This gate is
-    // the only one that catches it: `rows` is a Map, so the duplicate overwrites
-    // and both the forward and reverse gates still find their match.
     const { idsInOrder } = parseDeferred();
     const seen = new Set<string>();
     const dupes = idsInOrder.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
@@ -258,8 +193,6 @@ describe("deferred-tracking drift protection", () => {
     const violations: string[] = [];
     for (const [id, row] of rows) {
       if (tagsInSurface.has(id)) continue;
-      // design-only rows are exempt — they describe future work that has not
-      // produced a rejection site in code yet.
       if (row.status === "design-only" || row.status.startsWith("design-only")) continue;
       violations.push(
         `DEF-${id} (${row.title}) has a row in docs/DEFERRED.md with status "${row.status}" but no '[DEF-${id}]' tag anywhere in the live surface. Either tag the rejection site, mark the row 'status: design-only', or delete the row if the feature shipped.`,

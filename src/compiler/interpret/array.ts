@@ -1,12 +1,3 @@
-// The array operators.
-//
-// A read that finds no element is MISSING on the server. No literal spells
-// missing, so the interpreter refuses such a read. A null array gives a null answer for most
-// operators. Where the measured server answer for a null is an error, the rule
-// refuses. A set operator gives each value once, at its first position. The
-// server does not specify the order of a set, so the interpreter keeps the order of first
-// occurrence. One input then always gives one answer.
-
 import type { Answer, Rule, Walk } from "./values.ts";
 import {
   MAX_SIZE,
@@ -29,10 +20,8 @@ import { evalAll, isVariableName, keyed, positional } from "./operand.ts";
 
 const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
 
-/** Does every value of the list hold nothing opaque? A rule compares only such a value. */
 const allInert = (...lists: readonly unknown[][]): boolean => lists.every((l) => l.every(inert));
 
-/** Each value once, in the order of first occurrence. */
 function unique(xs: readonly unknown[]): unknown[] {
   const seen = new Set<string>();
   return xs.filter((x) => {
@@ -45,10 +34,7 @@ function unique(xs: readonly unknown[]): unknown[] {
 
 const has = (xs: readonly unknown[], v: unknown): boolean => xs.some((x) => sameValue(x, v));
 
-/** The values of a list, as the strings that make two equal values equal. */
 const keysOf = (xs: readonly unknown[]): Set<string> => new Set(xs.map(keyOf));
-
-// ── one element ──────────────────────────────────────────────────────
 
 const size = positional(1, 1, ([xs]) => (isArray(xs) ? ok(xs.length) : NO), true);
 
@@ -67,7 +53,6 @@ const end = (which: "first" | "last"): Rule =>
     return ok(which === "first" ? xs[0] : xs[xs.length - 1]);
   });
 
-/** `$firstN` and `$lastN` take a keyed operand. The count is at least 1. */
 const ends = (which: "first" | "last"): Rule =>
   keyed(["n", "input"], [], (parts, walk) => {
     const n = walk.at(parts.n);
@@ -87,11 +72,6 @@ const slice = positional(2, 3, ([xs, a, b]) => {
   return ok(xs.slice(start, start + b));
 });
 
-// ── a new array ────────────────────────────────────────────────────────
-
-// A list of sets has the unspecified order of each set. So the result is a set answer when every
-// operand is one, or is empty. The interpreter refuses a set beside a list that holds elements, because the
-// position of each element then depends on the set.
 const concatArrays = positional(
   0,
   Infinity,
@@ -122,9 +102,6 @@ const range = positional(2, 3, ([from, to, step = 1]) => {
   return ok(Array.from({ length: Math.max(0, count) }, (_, i) => f + i * s));
 });
 
-// ── search ────────────────────────────────────────────────────────────────
-
-// The order of the list does not matter to `$in`, but the order inside each value does.
 const inRule = positional(
   2,
   2,
@@ -164,18 +141,11 @@ const truthEvery = (every: boolean): Rule =>
     true,
   );
 
-// ── the callback operators ───────────────────────────────────────────────────
-
-/** The name that `as` gives to the element. The default is `this`. */
 function elementName(parts: Record<string, unknown>): string | null {
   const name = "as" in parts ? parts.as : "this";
   return isVariableName(name) ? name : null;
 }
 
-/**
- * Evaluate `input`: a null gives a null answer, and an array gives its elements. An operator that
- * reads no position of the array sets `anyOrder`. The input may then be a set answer.
- */
 function inputOf(walk: Walk, node: unknown, anyOrder = false): Answer {
   const input = anyOrder ? walk.raw(node) : walk.at(node);
   if (!input.ok) return input;
@@ -193,7 +163,6 @@ const map = keyed(["input", "in"], ["as"], (parts, walk) => {
     if (!a.ok) return a;
     out.push(a.value);
   }
-  // Each element maps by itself, so the answer has the order of the input.
   return ok(walk.isSet(input.value) ? walk.markSet(out) : out);
 });
 
@@ -205,14 +174,12 @@ const filter = keyed(["input", "cond"], ["as", "limit"], (parts, walk) => {
   if ("limit" in parts) {
     const l = walk.at(parts.limit);
     if (!l.ok) return l;
-    // A null limit means no limit. Any other limit is a positive 32-bit integer.
     if (l.value !== null) {
       if (!isInt32(l.value) || l.value < 1) return NO;
       limit = l.value;
     }
   }
   if (input.value === null) return ok(null);
-  // A limit keeps the first elements, so it reads the order.
   if (limit !== Infinity && walk.isSet(input.value)) return NO;
   const out: unknown[] = [];
   for (const element of input.value as unknown[]) {
@@ -259,9 +226,6 @@ const zip = keyed(["inputs"], ["useLongestLength", "defaults"], (parts, walk) =>
   return spellable(Array.from({ length: width }, (_, i) => arrays.map((l, j) => (i < l.length ? l[i] : fill[j]))));
 });
 
-// ── sort order ──────────────────────────────────────────────────────────────────
-
-/** The value at a dotted path, one segment at a time. Nothing is there unless every step is a document. */
 function readPath(doc: unknown, path: string): unknown {
   let cursor: unknown = doc;
   for (const segment of path.split(".")) {
@@ -273,12 +237,10 @@ function readPath(doc: unknown, path: string): unknown {
 
 const SORTABLE = new Set(["number", "string", "boolean"]);
 
-/** Do the keys have one sortable kind, and no string that a surrogate pair puts out of byte order? */
 const oneSortableKind = (keys: readonly unknown[]): boolean =>
   keys.every((k) => SORTABLE.has(kindOf(k)) && kindOf(k) === kindOf(keys[0])) &&
   keys.every((k) => typeof k !== "string" || isWellFormed(k));
 
-/** The input in a stable order of its keys. A tie keeps the order of the input, ascending or descending. */
 function sortedBy(items: readonly unknown[], columns: readonly (readonly unknown[])[], directions: readonly number[]) {
   const order = items.map((_, i) => i);
   order.sort((i, j) => {
@@ -291,9 +253,6 @@ function sortedBy(items: readonly unknown[], columns: readonly (readonly unknown
   return order.map((i) => items[i]);
 }
 
-// The output order is specified, so the answer is no set answer, even when the input is one. A tie keeps
-// the input order, so the input may be a set answer only when each tie holds equal elements.
-/** Does each group of elements with one key hold equal elements? Then the order of a tie shows nowhere. */
 function tiesAreEqual(items: readonly unknown[], columns: readonly (readonly unknown[])[]): boolean {
   const first = new Map<string, unknown>();
   for (const [i, item] of items.entries()) {
@@ -311,7 +270,6 @@ const sortArray = keyed(["input", "sortBy"], [], (parts, walk) => {
   const items = input.value as unknown[];
   const by = parts.sortBy;
   if (by === 1 || by === -1) {
-    // A list of scalars: the element is its own key.
     if (items.length > 0 && !oneSortableKind(items)) return NO;
     return ok(sortedBy(items, [items], [by]));
   }
@@ -330,7 +288,6 @@ const sortArray = keyed(["input", "sortBy"], [], (parts, walk) => {
   );
 });
 
-/** `$maxN` and `$minN` skip null, and take the n greatest or the n least of a list of one kind. */
 const extremes = (greatest: boolean): Rule =>
   keyed(["input", "n"], [], (parts, walk) => {
     const input = walk.at(parts.input);
@@ -344,13 +301,6 @@ const extremes = (greatest: boolean): Rule =>
     return ok(sorted.slice(0, n.value));
   });
 
-// ── the set operators ────────────────────────────────────────────────────────
-
-/**
- * A set operator over lists: every operand is an array, or one is null and the answer is null.
- * The order of an operand does not matter, but the order inside an element does.
- * An operator that answers a list answers a set, so the rule records the answer as a set.
- */
 function overSets(
   min: number,
   max: number,

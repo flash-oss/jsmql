@@ -1,9 +1,3 @@
-// Phase 5 of src/compiler/ — which rule of a row runs.
-//
-// This suite holds static audits over the whole table. It checks the argument
-// partition and the byArgs routing. It also checks that a row lowers on one field
-// family at most.
-
 import { describe, expect, it } from "vitest";
 import { consult } from "../src/compiler/emit/consult.ts";
 import { select, shapeOf, type Receiver, kindFits, UNPROVEN } from "../src/compiler/emit/select.ts";
@@ -11,7 +5,6 @@ import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { FIELD_FAMILY_TYPES, type FieldFamily } from "../src/registry/vocabulary.ts";
 
-/** The arguments of a parsed call `f(…)`. */
 const argsOf = (src: string): readonly never[] => (parseExpression(src) as { args: readonly never[] }).args;
 const OPAQUE: Receiver = { kind: "opaque", lowered: "$x" };
 const NONE: Receiver = { kind: "none" };
@@ -24,11 +17,9 @@ describe("compiler/emit/select — the argument partition", () => {
     expect(shapeOf(argsOf("f()"))).toEqual({ kind: "none" });
     expect(shapeOf(argsOf("f(1, 2)"))).toEqual({ kind: "multiple" });
     expect(shapeOf(argsOf("f($.y, $.m, $.d)"))).toEqual({ kind: "multiple" });
-    // an object literal is `object` even when every value is constant
     expect(shapeOf(argsOf("f({ length: 3 })"))).toEqual({ kind: "object", keys: ["length"] });
     expect(shapeOf(argsOf("f({ [k]: 3, n: 1 })"))).toEqual({ kind: "object", keys: ["n"] });
     expect(shapeOf(argsOf('f("abc")'))).toEqual({ kind: "constant", value: "abc" });
-    // the fold writes a settled constant back as a literal, so an expression it did not settle is read at run time
     expect(shapeOf(argsOf("f(1 + 2)"))).toEqual({ kind: "dynamic" });
     expect(shapeOf(argsOf("f($.id)"))).toEqual({ kind: "dynamic" });
   });
@@ -40,27 +31,20 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
 
   it("routes each class of `Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
-    // a value of the document is refused, and the refusal names the value's own method
     expect(pick("Date", "f($.ms)")).toMatchObject({ kind: "refused" });
     expect((pick("Date", "f($.ms)") as { message: string }).message).toContain("'$.x.toDate()'");
     expect(pick("Date", "f($.y, $.m)").kind).toBe("rule");
-    // a constant that reached the row did not fold. The row has a rule, because a live date
-    // converts. The rule checks the kind before it refuses the value
     expect(pick("Date", 'f("not a date")').kind).toBe("rule");
-    // the leftover is stated
     expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
     expect(pick("Date", "f(1, 2, 3, 4, 5, 6, 7, 8)")).toMatchObject({ kind: "wrongCount", got: 8 });
   });
 
   it("an object literal falls to the stated leftover — no class claims it", () => {
-    // `byArgs` names 'none', 'multiple', 'constant' and 'dynamic'; an object literal
-    // belongs to none of them, so the row's own 'otherwise' answers.
     expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
     expect(pick("ObjectId", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
   });
 
   it("refuses a type name over a value, and keeps the mint", () => {
-    // `Number(…)` is not part of JSMQL, for a constant too
     expect(pick("Number", 'f("abc")')).toMatchObject({ kind: "refused" });
     expect(pick("Number", "f($.s)")).toMatchObject({ kind: "refused" });
     expect(pick("ObjectId", "f($.id)")).toMatchObject({ kind: "refused" });
@@ -75,7 +59,6 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   it("runs the branch a proven receiver names", () => {
     const r = at("length", value("string"));
     expect(r.kind).toBe("rule");
-    // a receiver that is not proven `present` is tested first, and answers null when it is not there
     expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
       $cond: [{ $lte: ["$x", null] }, null, { $strLenCP: "$x" }],
     });
@@ -87,7 +70,6 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
         args: [kind === "unknown" ? "unknown" : [kind]],
         elements: ["string"],
       });
-    // `.indexOf()` takes an element of the array, and the array holds strings
     expect(pick("number")).toMatchObject({ kind: "wrongKind", fault: { rule: "element" } });
     expect(pick("string").kind).toBe("rule");
     expect(pick("unknown").kind).toBe("rule");
@@ -97,10 +79,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   });
 
   it("takes the one field family as the receiver's family, without a dispatch", () => {
-    // `ceil` is on number and Math: an unprovable receiver is a number by the row's claim,
-    // and the `Math` cell refuses the static.
     expect(at("ceil", OPAQUE).kind).toBe("rule");
-    // the `Math` cell refuses the static: the receiver's own method is the one spelling
     expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("refused");
   });
 
@@ -116,7 +95,6 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
 
   it("checks the count against the branch that will run", () => {
     expect(at("length", value("string"), 1)).toMatchObject({ kind: "wrongCount", got: 1 });
-    // `$abs` takes one operand; two is the count no rule states
     expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2, UNPROVEN)).toMatchObject({
       kind: "wrongCount",
       got: 2,
@@ -141,8 +119,6 @@ describe("compiler/emit/select — the table audit", () => {
       : (Array.isArray(row.on) ? row.on : [row.on as string]).filter((f) => FIELD.includes(f));
 
   it("finds no row that lowers on two field families, so no query tests a receiver's type", () => {
-    // A family the row refuses does not count: `.keys()` lists array and object, refuses
-    // array, and runs on object.
     const lowers = (row: Row, f: string): boolean => {
       const branch = (row.expr as { perFamily: Record<string, unknown> }).perFamily[f];
       return !(typeof branch === "object" && branch !== null && "unsupported" in branch);
@@ -152,9 +128,7 @@ describe("compiler/emit/select — the table audit", () => {
     );
     const two = perFamily.filter(([, row]) => fieldFamilies(row).filter((f) => lowers(row, f)).length >= 2);
     expect(two.map(([name]) => name)).toEqual([]);
-    // the audit read the rows that state a cell per family
     expect(perFamily.length).toBeGreaterThanOrEqual(15);
-    // and an unproven receiver selects the one lowering family on each of them
     for (const [name] of perFamily) {
       const r = select(consult(name, "value"), OPAQUE, { kind: "dynamic" }, 1, UNPROVEN);
       expect(r.kind, name).not.toBe("unknown");

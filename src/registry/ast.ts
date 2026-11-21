@@ -1,41 +1,3 @@
-// The tree the parser builds. Part of the registry, and a LEAF: it imports
-// nothing. Thus `vocabulary.ts` can derive `NodeName` from it, and the type
-// checker tests every production's `becomes` against a real shape.
-//
-// ── NAME-BLIND ───────────────────────────────────────────────────────────────
-//
-// The parser never checks a name against a set. `Math.round(x)` and
-// `$.n.round()` are ONE node type whose receiver differs, because they are one
-// name on two receivers, and `names.ts` already says which families `round` serves:
-//
-//   Math.round($.a)      MethodCall { name: "round", object: Ident("Math") }
-//   $.n.round()          MethodCall { name: "round", object: FieldRef("n") }
-//
-// So there is no node type per NAME. A tree that knew particular names would need
-// one node type for each of these: MathCall, MathConst, ObjectCall, NumberStatic,
-// NewSet, NewDate, DateNow, DateUTC, TypeCast, TypeCastRef, MathCallRef,
-// ObjectIdRef, ParamRef. No reader could tell the last of those from any other
-// bare name. `names.ts` resolves a name, in a later phase.
-//
-// `ObjectIdLiteral` stays, because `0x` with exactly 24 hex digits after it is a
-// re-reading of a NUMBER token — a syntactic fact, not a name.
-
-// ═════════════════════════════════════════════════════════════════════════════
-// operators, spelled exactly as the source spells them
-// ═════════════════════════════════════════════════════════════════════════════
-
-/**
- * `as const` lists, with the types derived from them, like the static name-sets
- * below. Thus the parser test can hold "every operator a row consumes is one of
- * these" as runtime data. A type-level version is empty of meaning, because
- * `becomes` does not pass through a const generic. A conditional on it
- * matches nothing.
- */
-/**
- * Is this node a `"$…"` string that reads as a field path? In raw MQL and at the
- * program root it does (HR1). In JSMQL the HR6 pass or the fold marks it as text,
- * and then it does not. See docs/specs/raw-mql-boundary.md.
- */
 export function isFieldPathString(e: { type: string; value?: unknown; text?: true }): boolean {
   return e.type === "StringLiteral" && typeof e.value === "string" && e.value.startsWith("$") && e.text !== true;
 }
@@ -65,153 +27,41 @@ export const BINARY_OPS = [
 ] as const;
 export type BinaryOp = (typeof BINARY_OPS)[number];
 
-/** `typeof` is here, not in its own node: it is a prefix operator. */
 export const UNARY_OPS = ["!", "-", "~", "typeof"] as const;
 export type UnaryOp = (typeof UNARY_OPS)[number];
 
-/**
- * Every spelling that writes to its target. The parser keeps the compound and
- * the increment forms AS WRITTEN, so that it stays free of meaning. The desugar
- * phase rewrites them to `=` over a `BinaryExpr`.
- */
 export const ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"] as const;
 export type AssignOp = (typeof ASSIGN_OPS)[number];
 
-// ═════════════════════════════════════════════════════════════════════════════
-// pieces that are not expressions on their own
-// ═════════════════════════════════════════════════════════════════════════════
-
 export type SpreadElement = { type: "SpreadElement"; argument: Expr; pos: number };
 
-export type ObjectKey =
-  | { kind: "static"; name: string }
-  /** `{ ["a" + "b"]: 1 }` — the key is computed at run time. */
-  | { kind: "computed"; expr: Expr };
+export type ObjectKey = { kind: "static"; name: string } | { kind: "computed"; expr: Expr };
 
 export type KeyValueEntry = { type: "KeyValueEntry"; key: ObjectKey; value: Expr; pos: number };
 export type ObjectEntry = KeyValueEntry | SpreadElement;
-/**
- * An array literal's element. An element can be a STATEMENT, because the
- * bracketed pipeline form writes its stages as an array:
- *   [$.total = $.qty * $.price, $match($.total > 100)]
- * The position phase answers which array literals can hold one, not the
- * parser. The parser only records what the developer wrote. A `let` or a
- * `const` is never an element: JavaScript refuses a declaration there.
- *
- * The write cases make a bracketed literal a PIPELINE. A `,`-joined run of
- * them is one `UpdateFilter`: one element, one stage, however many fields it
- * writes.
- */
 export type ArrayElement = Expr | SpreadElement | FuncDecl | UpdateOp | UpdateFilter;
 export type CallArg = Expr | SpreadElement;
 
-/**
- * One slot of the entry form's parameter destructure. It sits BESIDE the tree,
- * not in it. For this reason `destructuringParam` in productions.ts says
- * `notANode`.
- * A `$`-family key binds a compiler service; a bare name binds a query parameter.
- */
-export type ParamBinding = {
-  /** The key as written: `$`, `$$`, `$op`, or a plain name. */
-  key: string;
-  /** The local name it binds to, which `key: alias` may rename. */
-  name: string;
-  pos: number;
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// expressions
-// ═════════════════════════════════════════════════════════════════════════════
+export type ParamBinding = { key: string; name: string; pos: number };
 
 export type Expr =
-  // ── literals ──────────────────────────────────────────────────────────────
   | { type: "NumberLiteral"; value: number; pos: number }
   | { type: "BigIntLiteral"; value: string; pos: number }
-  /**
-   * `text` is true for a string that starts with `$` where JSMQL reads it as text.
-   * The HR6 pass marks it in an operand or a whole value that JSMQL owns. The
-   * fold marks each string it computes. Without the mark, a `"$…"` string is a
-   * field path (HR1). See docs/specs/raw-mql-boundary.md.
-   */
   | { type: "StringLiteral"; value: string; pos: number; text?: true }
   | { type: "BooleanLiteral"; value: boolean; pos: number }
   | { type: "NullLiteral"; pos: number }
   | { type: "UndefinedLiteral"; pos: number }
   | { type: "RegexLiteral"; pattern: string; flags: string; injected?: RegExp; pos: number }
-  /** `0x` and exactly 24 hex digits. A re-reading of a Number token. */
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
-  /**
-   * A value that a CALL supplied: a `jsmql.compile` parameter or a template slot.
-   * The source cannot spell it (a Date, a binary), or MQL must not read it (a string
-   * with a dollar at the start, a document with a dollar-key). The injection pass
-   * makes this node. The parser never makes it.
-   */
   | { type: "Injected"; value: unknown; pos: number }
   | { type: "TemplateLiteral"; quasis: readonly string[]; exprs: readonly Expr[]; pos: number }
-  /**
-   * The desugar pass sets `packed` when it gathers a call's ARGUMENTS into this
-   * list — `"a".concat(...xs)` becomes `"a".concat([...xs])`. The difference stays,
-   * because JavaScript keeps it: `.concat(...xs)` passes each element as its own
-   * argument. `.concat(xs)` passes one array. A string receiver writes it out
-   * with commas between the elements.
-   */
   | { type: "ArrayLiteral"; elements: readonly ArrayElement[]; pos: number; packed?: true }
   | { type: "ObjectLiteral"; entries: readonly ObjectEntry[]; pos: number }
-
-  // ── references ────────────────────────────────────────────────────────────
-  /**
-   * `$.a.b` and the bare `$`, which is the whole document and has an empty path.
-   * `optional` is true when any link on the way was `?.`. A consumer that
-   * null-poisons (`$concat`, `$concatArrays`, `$size`) then reads a missing path
-   * as its empty value, as JavaScript's `?.` short-circuits. The fold keeps the
-   * flag, because the path spelling cannot carry it.
-   */
-  | {
-      type: "FieldRef";
-      path: string;
-      optional?: true;
-      /**
-       * The path the LAST `?.` of a folded chain tests — `$.a?.b.c` tests `a`, so a
-       * call after it stops the chain on `a` alone. The compiler reads `a.b.c` as any
-       * other path when `a` is there. Absent when the `?.` sits on the root.
-       */
-      optionalAt?: string;
-      pos: number;
-    }
-  /**
-   * `$$` — the root stream: the documents of the pipeline (HR4).
-   *
-   * Three spellings, three node types, never one node with a level. They are
-   * three different things. `$$` is a stream you can filter and replace. `$$$`
-   * names another collection to read or write. `$$$$` reaches the cluster and
-   * permits no read at all. A reader that had to test a number first, to learn
-   * which of the three it held, would repeat that test everywhere.
-   *
-   * The postfix `.name` and `[expr]` compose on top through MemberAccess and
-   * IndexAccess, so none of the three carries a path of its own.
-   */
+  | { type: "FieldRef"; path: string; optional?: true; optionalAt?: string; pos: number }
   | { type: "StreamRef"; pos: number }
-  /** `$$$` — database scope. `$$$.<coll>` names another collection. */
   | { type: "DatabaseRef"; pos: number }
-  /** `$$$$` — cluster scope. Writes work. The compiler refuses cross-database reads. */
   | { type: "ClusterRef"; pos: number }
-  /**
-   * A bare name. `Math`, `String`, a lambda's parameter, a `let` binding, a
-   * declared function — all of them. WHICH it is comes from scope and from
-   * `names.ts`, never from the parser.
-   */
-  | {
-      type: "Ident";
-      name: string;
-      pos: number;
-      /**
-       * The desugar pass wrote this name for a short spelling (`"name"`, `{ type: "a" }`).
-       * No source spells it, so a message names what it stands for, not the name.
-       */
-      minted?: true;
-    }
-
-  // ── access and application ────────────────────────────────────────────────
+  | { type: "Ident"; name: string; pos: number; minted?: true }
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }
   | {
       type: "IndexAccess";
@@ -219,18 +69,8 @@ export type Expr =
       index: Expr;
       optional: boolean;
       pos: number;
-      /**
-       * The desugar pass wrote this read for an index in an iteratee slot (`.keyBy(5)`).
-       * The emitter refuses it when the elements cannot hold the index.
-       */
       iteratee?: { readonly method: string; readonly slot: number };
     }
-  /**
-   * `wrote` is the name in the SOURCE. It is present only when a pass rewrites this
-   * call to another name, as `.reverse()` to its immutable twin `.toReversed()`. Every
-   * message names `wrote`, because a developer cannot find `.toReversed(` in a program
-   * that says `.reverse(`.
-   */
   | {
       type: "MethodCall";
       object: Expr;
@@ -241,95 +81,37 @@ export type Expr =
       pos: number;
     }
   | { type: "CallExpression"; callee: Expr; args: readonly CallArg[]; pos: number }
-  /** `new X(…)`. The callee is an `Ident`; which constructor it is comes later. */
   | { type: "NewExpression"; callee: Expr; args: readonly CallArg[]; pos: number }
-  /**
-   * The `$op(…)` escape hatch. This node does not record how the developer wrote
-   * the arguments. One argument is the operator's body by the SHAPE its row
-   * states. A parser guess (`style: "object"` for any lone object literal) is
-   * wrong for every one-operand operator whose operand is a document.
-   */
   | { type: "OperatorCall"; name: string; args: readonly CallArg[]; pos: number }
-
-  // ── operators ─────────────────────────────────────────────────────────────
   | { type: "UnaryExpr"; op: UnaryOp; argument: Expr; pos: number }
   | { type: "BinaryExpr"; op: BinaryOp; left: Expr; right: Expr; pos: number }
   | { type: "TernaryExpr"; test: Expr; consequent: Expr; alternate: Expr; pos: number }
-
-  // ── bodies ────────────────────────────────────────────────────────────────
-  | {
-      type: "Lambda";
-      params: readonly string[];
-      /** A JavaScript body. Absent exactly when `stages` is present. */
-      body?: Expr;
-      /**
-       * A body whose statements are pipeline STAGES. Only a name whose row says
-       * `blockBody: "stages"` gives its callback this meaning. Every other name's
-       * block is JavaScript, and the compiler refuses a stage inside one.
-       */
-      stages?: Pipeline;
-      pos: number;
-    }
-  /** `x => { const y = x * 2; return y }` — declarations, then one result. */
+  | { type: "Lambda"; params: readonly string[]; body?: Expr; stages?: Pipeline; pos: number }
   | { type: "ExprBlock"; decls: readonly LetDecl[]; ret: Expr; pos: number };
 
-// ═════════════════════════════════════════════════════════════════════════════
-// statements
-// ═════════════════════════════════════════════════════════════════════════════
-
-export type LetDecl = {
-  type: "LetDecl";
-  name: string;
-  value: Expr;
-  kind: "let" | "const";
-  /**
-   * The source offset of the KEYWORD that opened this declaration. Every declarator
-   * of one `let`/`const` shares it. That lets them share a stage. It also
-   * stops a folded-away neighbour from a bridge across a `;` the developer wrote.
-   */
-  group: number;
-  pos: number;
-};
+export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const"; group: number; pos: number };
 
 export type FuncDecl = {
   type: "FuncDecl";
   name: string;
   lambda: Extract<Expr, { type: "Lambda" }>;
   kind: "let" | "const";
-  /** Two spellings, one node. `function` is not reserved — it lexes as a name. */
   form: "arrow" | "function";
-  /** The keyword's offset, as on LetDecl. A function holds no stage of its own. */
   group: number;
   pos: number;
 };
 
-/** A write. `op` is the spelling as written; desugar reduces it to `=`. */
-export type AssignExpr = {
-  type: "AssignExpr";
-  target: Expr;
-  op: AssignOp;
-  value: Expr;
-  pos: number;
-  /**
-   * The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`).
-   * JavaScript allows that on a `const` binding, and the emitter allows it too.
-   */
-  mutates?: true;
-};
+export type AssignExpr = { type: "AssignExpr"; target: Expr; op: AssignOp; value: Expr; pos: number; mutates?: true };
 export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };
 export type UpdateOp = AssignExpr | DeleteStmt;
 
-/** A `,`-joined run of writes: `$.a = 1, delete $.b`. */
 export type UpdateFilter = { type: "UpdateFilter"; ops: readonly UpdateOp[]; pos: number };
 
 export type PipelineStmt = UpdateFilter | Expr | LetDecl | FuncDecl;
 export type Pipeline = { type: "Pipeline"; stmts: readonly PipelineStmt[]; pos: number };
 
-/** What the parser hands back. */
 export type Program = Expr | UpdateFilter | Pipeline;
 
-/** The lambda variant, named so a parser can return it directly. */
 export type Lambda = Extract<Expr, { type: "Lambda" }>;
 
-/** Every node the parser can build, for `becomes` in productions.ts. */
 export type Node = Expr | SpreadElement | KeyValueEntry | LetDecl | FuncDecl | UpdateOp | UpdateFilter | Pipeline;

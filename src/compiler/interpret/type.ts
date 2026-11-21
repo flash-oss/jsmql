@@ -1,18 +1,8 @@
-// The type operators.
-//
-// A number has two BSON kinds, int and double, and a JavaScript number holds
-// neither. A number that the query WRITES has the kind that the driver gives it. An
-// integer that a 32-bit integer holds is an int, and every other number is a double. A
-// number that an operator COMPUTES has the kind that the server gives it. A
-// `$divide` is always a double, and a sum that overflows 32 bits is a long. So `$type`
-// answers for a written number only, and refuses a computed one.
-
 import type { Rule } from "./values.ts";
 import { NO, isInt32, kindOf, ok } from "./values.ts";
 import { positional } from "./operand.ts";
 import { ObjectId, bsonTagOf, isRegExp } from "../../bson.ts";
 
-/** The `$type` name of every tagged BSON value that the interpreter carries and never reads. */
 const TAGGED: Readonly<Record<string, string>> = {
   Int32: "int",
   Long: "long",
@@ -59,7 +49,6 @@ const type = positional(
 
 const isNumber = positional(1, 1, ([v]) => ok(kindOf(v) === "number" || NUMERIC_TAGS.has(bsonTagOf(v) ?? "")), true);
 
-/** `$toBool` is false for 0, and null for null. Every other value that the interpreter reads is true. */
 const toBool = positional(
   1,
   1,
@@ -89,11 +78,6 @@ const toObjectId = positional(1, 1, ([v]) => {
   return typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v) ? ok(new ObjectId(v)) : NO;
 });
 
-/**
- * `$toInt` of a number cuts the fraction, and fails when the number itself is beyond 32 bits: the
- * server fails on 2147483647.5. A boolean is 1 or 0. A string is a run of ASCII digits with an optional
- * sign and no space, and it fails beyond 32 bits too. Every other value, a Long and a Decimal128 included, is a refusal.
- */
 const toInt = positional(1, 1, ([v]) => {
   if (v === null) return ok(null);
   if (typeof v === "boolean") return ok(v ? 1 : 0);

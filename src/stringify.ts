@@ -1,26 +1,3 @@
-// MQL written out as the JavaScript SOURCE that rebuilds it.
-//
-// `JSON.stringify` cannot spell what MQL holds. A Date and an ObjectId each carry a
-// `toJSON`, so both collapse to strings the server compares as strings; a live RegExp
-// becomes `{}`; every other BSON class becomes its internal byte fields. The document
-// still runs — and matches nothing, which is the worst failure a query can have.
-//
-// So this module writes every value as the expression that MAKES it. The spelling
-// is the one the Node driver requires, `new X(…)`. MEASURED in mongosh 2.9.2, this
-// same text runs there too and yields the identical value — mongosh exposes the
-// driver's BSON classes as globals on top of its own `ISODate` / `NumberDecimal`
-// helpers. There is therefore ONE spelling per type, not one per runtime.
-// The bare-call forms (`ObjectId("…")`, `MinKey()`) run only in mongosh, and the
-// helper names (`ISODate`, `NumberLong`, `BinData`) run only there too, so this
-// module writes neither.
-//
-// To paste the output into a driver script, bring these classes into scope:
-//   const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
-//           MinKey, MaxKey, Code, DBRef, BSONSymbol, BSONRegExp } = require("mongodb");
-// mongosh has them already.
-//
-// See docs/specs/mql-stringify.md.
-
 /** How to lay the document out. */
 export type StringifyOptions = {
   /** Spaces per level, or the literal string to indent with. Default 2. */
@@ -29,19 +6,9 @@ export type StringifyOptions = {
   width?: number;
 };
 
-/** A value that carries MongoDB's own type tag — every `bson` class sets one. */
 const tagOf = (v: unknown): string | undefined =>
   typeof v === "object" && v !== null ? ((v as { _bsontype?: string })._bsontype ?? undefined) : undefined;
 
-// What a value IS, read from its internal slot through the engine's own readers.
-// `instanceof` is false for a Date, a RegExp or a Uint8Array made in another realm,
-// and each reader below is not. A value's own methods and its `Symbol.toStringTag`
-// say nothing here: a subclass or a plain object can set either one, and the text
-// this module writes is code that someone runs. So each reader answers null for an
-// object that only sets the tag, and the object prints as its fields. The tag test
-// is fast, so it goes first, and the slot reader confirms each match. These are copies
-// of the recognisers in src/registry/vocabulary.ts, held here so this module stays
-// a leaf. See docs/specs/bson-types.md § Recognition across realms.
 const kindOf = (v: unknown): string => Object.prototype.toString.call(v);
 const getterOf = (proto: object, key: PropertyKey): ((this: unknown) => unknown) =>
   Object.getOwnPropertyDescriptor(proto, key)!.get!;
@@ -51,7 +18,6 @@ const typedArrayLength = getterOf(TYPED_ARRAY, "length");
 const regexSource = getterOf(RegExp.prototype, "source");
 const regexFlags = getterOf(RegExp.prototype, "flags");
 
-/** The epoch milliseconds of a real Date, or null. */
 function dateTime(v: unknown): number | null {
   if (kindOf(v) !== "[object Date]") return null;
   try {
@@ -61,10 +27,6 @@ function dateTime(v: unknown): number | null {
   }
 }
 
-/**
- * A real RegExp as a regex literal, or null. The engine escapes `source` so that the
- * literal ends where the pattern ends, and `flags` holds flag letters only.
- */
 function regexLiteral(v: unknown): string | null {
   if (kindOf(v) !== "[object RegExp]") return null;
   try {
@@ -74,62 +36,33 @@ function regexLiteral(v: unknown): string | null {
   }
 }
 
-/** The bytes of a real Uint8Array — a Node Buffer is one — or null. */
 function byteValues(v: unknown): number[] | null {
   if (typedArrayName.call(v) !== "Uint8Array") return null;
   const bytes = v as Uint8Array;
   return Array.from({ length: Number(typedArrayLength.call(v)) }, (_, i) => bytes[i]);
 }
 
-/**
- * A key as JavaScript source.
- *
- * `__proto__` is the one name a quoted key cannot carry: in an object literal
- * `{"__proto__": 1}` sets the prototype and creates no own property, so the field
- * would vanish the moment someone pastes the printed text back — MEASURED in
- * mongosh and in Node alike. The computed form is the only spelling that survives.
- */
 function keySource(key: string): string {
   if (key === "__proto__") return `[${JSON.stringify(key)}]`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
 }
 
-/** A string as a JavaScript string literal — `JSON.stringify` is exactly that grammar. */
 const str = (s: string): string => JSON.stringify(s);
 
-/** A number as JavaScript source. `-0` prints as `0` through String(), and the two are different BSON doubles. */
 const num = (n: number): string => (Object.is(n, -0) ? "-0" : String(n));
 
-/**
- * The BSON classes, each as the expression that rebuilds it — or null when the value
- * wears the tag but does not carry the data behind it.
- *
- * Keyed by `_bsontype`, which every class sets and which is what the compiler itself
- * tests. A duck check does not work here: a driver `UUID` reports `_bsontype: "Binary"`
- * AND carries `toHexString`, so testing for that method calls a UUID an ObjectId and
- * prints text that throws in both runtimes.
- *
- * Every case reads its data defensively. A PLAIN OBJECT may wear the tag — the
- * compiler passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is —
- * and a call of the class's methods on it would throw, and take the whole document's
- * output down with it. A null return here lets the caller print the object as
- * what it is.
- */
 function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): string | null {
   const o = v as Record<string, unknown>;
-  /** A method the value itself provides, never the one every object inherits. */
   const own = (name: string): ((...args: unknown[]) => unknown) | null => {
     const f = o[name];
     const everyObject = (Object.prototype as unknown as Record<string, unknown>)[name];
     return typeof f === "function" && f !== everyObject ? (f as (...args: unknown[]) => unknown) : null;
   };
-  /** The value's own `toString()` — every BSON class writes its value there. */
   const text = (): string | null => {
     const f = own("toString");
     return f === null ? null : String(f.call(v));
   };
   switch (tag) {
-    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
     case "ObjectID":
     case "ObjectId": {
       const hex = own("toHexString");
@@ -139,28 +72,19 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
       const s = text();
       return s === null ? null : `new Decimal128(${str(s)})`;
     }
-    // The value goes in as a string. A number is the low 32 bits of `new Long(low, high)`,
-    // so a value past 2^31 would wrap. MEASURED: bson 6, bson 7 and mongosh 2.13 read the
-    // string as the whole value.
     case "Long": {
       const s = text();
       return s === null ? null : `new Long(${str(s)})`;
     }
     case "Int32":
       return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
-    // A whole-number Double must keep its type: `42` would come back as an int.
     case "Double":
       return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
     case "Binary": {
       const bytes = own("toString");
       if (bytes === null) return null;
       const sub = Number(o.sub_type ?? 0);
-      // MEASURED: a Binary filled a byte at a time over-allocates its buffer (260 bytes
-      // held for 5 written), and only its own `toString` knows where the value ends.
       const base64 = String(bytes.call(v, "base64"));
-      // Subtype 4 IS a UUID, and its own spelling reads as one. A UUID has 16 bytes:
-      // 22 base64 characters, then "==". The server stores subtype 4 at any length,
-      // and `toUUID()` throws for every length but 16.
       const uuid = own("toUUID");
       if (sub === 4 && uuid !== null && /^[A-Za-z0-9+/]{22}==$/.test(base64))
         return `new UUID(${str(String(uuid.call(v)))})`;
@@ -180,8 +104,6 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
       return o.scope === undefined || o.scope === null
         ? `new Code(${str(o.code)})`
         : `new Code(${str(o.code)}, ${render(o.scope)})`;
-    // The driver sends `$db` when `db` is not null, and it sends "" too. It then sends
-    // each extra field. MEASURED in bson 7.3 and mongosh 2.13.
     case "DBRef": {
       if (typeof o.collection !== "string") return null;
       const hasDb = o.db !== undefined && o.db !== null;
@@ -221,21 +143,11 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     if (v === null) return "null";
     const time = dateTime(v);
     if (time !== null) {
-      // An Invalid Date has no BSON form: the driver stores it as epoch 0, so any
-      // spelling would print a value the document does not hold.
       if (Number.isNaN(time)) throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
       return `new Date(${str(new Date(time).toISOString())})`;
     }
     const regex = regexLiteral(v);
     if (regex !== null) return regex;
-    // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
-    // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
-    // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
-    // the same text. So this function writes the bytes as themselves, and does not
-    // translate them to a `Binary.createFromBase64(…)` call: what comes back is
-    // the value the document holds, down to its JavaScript class. Without this, the
-    // object branch below walks the byte indices and prints `{ "0": 1, "1": 2 }`,
-    // which matches nothing.
     const bytes = byteValues(v);
     if (bytes !== null) return `new Uint8Array([${bytes.join(", ")}])`;
     const tag = tagOf(v);
@@ -249,9 +161,6 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     if (t === "bigint") return `${String(v)}n`;
     if (t === "number") return num(v as number);
     if (t === "undefined") {
-      // The language declares `undefined` an existence TEST, never a value, so every
-      // entry point refuses it and it cannot reach a compiled document. If the code
-      // gets here, the compiler missed a guard, and an empty print would hide it.
       throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
     }
     return null;

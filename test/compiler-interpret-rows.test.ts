@@ -1,16 +1,8 @@
-// The interpreter holds every operator of the registry that a value can contain.
-//
-// An operator that the interpreter neither runs nor refuses would be a silent gap:
-// the walk refuses it as an unknown name, and nothing says that anyone decided.
-// This audit reads the rows of the registry through src/compiler/rows.ts, and holds
-// each one against the two tables of src/compiler/interpret/rules.ts.
-
 import { describe, expect, it } from "vitest";
 import { everyMongoName, lists } from "../src/compiler/rows.ts";
 import { SYSTEM_VARS } from "../src/compiler/emit/names.ts";
 import { REFUSED, RULES } from "../src/compiler/interpret/rules.ts";
 
-/** Every operator that the registry lets a value hold. */
 const valueRows = everyMongoName().filter((name) => lists(name, "value"));
 
 describe("the interpreter tables and the registry", () => {

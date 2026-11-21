@@ -1,9 +1,3 @@
-// Phase 2 of src/compiler/ — the tree src/compiler/parse/ builds.
-//
-// The AST lives in the registry and imports nothing, so `NodeName` is DERIVED
-// from it. These tests pin its two properties: it is name-blind, and it covers
-// exactly what the productions claim to build.
-
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -14,7 +8,6 @@ import { EVERY_NODE } from "./support/ast-nodes.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Every node name a production says it builds. */
 function claimed(): Set<string> {
   const out = new Set<string>();
   for (const row of Object.values(PRODUCTIONS)) {
@@ -42,8 +35,6 @@ describe("registry/ast — the tree and the rules are consistent", () => {
 
   it("some production builds every node in the tree", () => {
     const built = claimed();
-    // `ObjectIdLiteral` is reached two ways, and both are productions. Everything
-    // else must be reachable, or the tree carries a shape that no syntax produces.
     const orphans = Object.keys(EVERY_NODE).filter((n) => !built.has(n));
     expect(orphans).toEqual([]);
   });
@@ -63,9 +54,6 @@ describe("registry/ast — name-blind", () => {
   });
 
   it("spells operators exactly as the source spells them", () => {
-    // Each spelling must be a JavaScript operator: JavaScript itself compiles it.
-    // An MQL name such as `$and` is a syntax error there. The compound and increment
-    // forms survive parsing because desugar reduces them.
     const notJs: string[] = [];
     const compiles = (body: string): boolean => {
       try {

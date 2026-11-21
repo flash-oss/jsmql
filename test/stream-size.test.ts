@@ -1,8 +1,3 @@
-// Tests for `$$.size()` — the current stream's document count as a reusable
-// value. Lowers to a `$setWindowFields` `$count` stamped onto `__jsmql.size`,
-// hoisted once and recomputed after a stage that changes the count. See
-// docs/specs/stream-size.md and docs/LANGUAGE.md § $$.size().
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -158,12 +153,8 @@ describe("$$.size() — rejections", () => {
   });
 });
 
-// `$$` is the ROOT stream wherever it is written. See docs/specs/stream-size.md
-// § Every depth.
 describe("$$.size() — every pipeline position", () => {
   it("joins on the ROOT count as a field when a lookup predicate compares with it", () => {
-    // `u.n === $$.size()` is an equality, so the join takes the indexed basic form:
-    // the stamped `__jsmql.size` field is the `localField`, and no `let` is needed.
     expect(jsmql("$.peers = $$$.users.filter(u => u.n === $$.size());")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $lookup: { from: "users", localField: "__jsmql.size", foreignField: "n", as: "peers" } },
@@ -195,11 +186,6 @@ describe("$$.size() — cleanup", () => {
 });
 
 describe("nested size usage — sub-stream handles + `$$.size()` (root) at every level", () => {
-  // The composite case: a per-user orders pivot whose `.map` reads three different counts. They are a nested
-  // lookup `.size()` (this order's shipments) and the 3rd-arg handle `ordersColl.size()` (this user's orders
-  // sub-stream). The third is `$$.size()` (the ROOT users stream, captured into the orders $lookup.let as
-  // jsmql_s0_size). Verified end-to-end on a live mongod: per-order shipment counts, per-user order counts, and
-  // a constant root count, all correct, no leak.
   it("compiles three count levels in one block-body .map", () => {
     expect(
       jsmql(`
@@ -240,7 +226,6 @@ describe("nested size usage — sub-stream handles + `$$.size()` (root) at every
   });
 
   it("block-body `.map` with `return` is accepted; an unused index/3rd param on a predicate filter does not throw", () => {
-    // `(s, i, shipmntsColl) => …` — extra params present but unused: valid JS, compiles.
     expect(jsmql("$$ = $$.map((d, _i, _coll) => { return ({ id: d._id }); });")).toEqual([
       { $replaceWith: { id: "$_id" } },
     ]);
@@ -249,14 +234,6 @@ describe("nested size usage — sub-stream handles + `$$.size()` (root) at every
     ]);
   });
 
-  // Four DISTINCT counts and reads in one `.map`, and no collision: the disambiguation matrix. The reads are
-  // the root STREAM count (`$$.size()`) and the root DOC field (`$.length`). The others are an outer-scope
-  // `const` derived from that field, and the sub-stream count (`coll.size()`, the 3rd-arg handle). Each lands
-  // in its own `$lookup.let` var (`jsmql_s0_…` system, `jsmql_f0_…` field, `jsmql_v0_…` binding) or the system
-  // `$__jsmql.size` slot. Needs the correlated lookup form (`$$ = $$$.coll.filter(<corr>)…`) so the outer
-  // context survives into the sub-pipeline — a bare `$$ = $$$.coll.map(…)` is a `$unionWith` source-switch that
-  // discards it. Verified on a live mongod: l0/l1/l2/l3 = 3/7/8/2 for a user with field length=7 and 2 orders
-  // (3 users total).
   it("the root count, the doc field, the const, and the handle count resolve to four distinct, non-colliding vars", () => {
     expect(
       jsmql(`

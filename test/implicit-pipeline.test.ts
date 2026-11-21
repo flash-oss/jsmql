@@ -2,11 +2,6 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { truthy } from "./truthy.ts";
 
-// `;` at top level is the implicit pipeline-stage separator. Each `;`-separated
-// chunk becomes its own stage(s) with no cross-coalescing — in contrast to the
-// explicit `[…]` form, where adjacent update op elements coalesce. `,` remains
-// the in-stage separator and keeps its existing coalescing behaviour.
-
 describe("implicit pipeline — `;` triggers pipeline mode", () => {
   it("single trailing `;` after assignment wraps as a one-stage pipeline", () => {
     expect(jsmql("$.a = 1;")).toEqual([{ $set: { a: 1 } }]);
@@ -105,11 +100,6 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
 });
 
 describe("implicit pipeline — single-statement update-filter inputs always wrap as pipelines", () => {
-  // `jsmql()` always returns an aggregation-pipeline array for update-filter inputs, and for single-statement
-  // ones without a trailing `;` too. So the output is safe to pass directly to `db.coll.updateOne(filter,
-  // update)`. Bare-document form would silently treat RHS expressions as literals; the pipeline form evaluates
-  // them as aggregation expressions. Callers who want the bare-doc shape (for example to embed it in a
-  // hand-written stage body) use `jsmql.expr()` — see test/update-filter.test.ts's `lex regression checks`.
   it("bare assignment without `;` wraps as a one-stage pipeline", () => {
     expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
   });
@@ -119,15 +109,10 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
   });
 
   it("bare stage call without `;` auto-wraps as a Pipeline", () => {
-    // A top-level `$match(...)` is Pipeline intent. It does not throw or
-    // silently produce `{ $expr: { $match: ... } }` (a useless Filter);
-    // `jsmql()` wraps the stage as a one-element Pipeline. The call site needs no `;`.
     expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("bare stage-object literal without `;` auto-wraps the same way", () => {
-    // The Compass copy-paste form (`{ $match: ... }`) is the other shape that
-    // JSMQL reads as Pipeline intent.
     expect(jsmql("{ $match: $.a === 0 }")).toEqual([{ $match: { a: 0 } }]);
   });
 
@@ -195,14 +180,10 @@ describe("implicit pipeline — block-body arrow input", () => {
     const result = jsmql(({ $ }) => {
       $.a = 1;
     });
-    // A write is a statement, so a block body that holds one is a pipeline.
     expect(result).toEqual([{ $set: { a: 1 } }]);
   });
 
   it("block body `{ return <expr> }` is the value form (≡ the expression body)", () => {
-    // A brace body opening directly with `return` is the value form, identical
-    // to `({ $ }) => $.a > 18`. (A `;`-separated body of stage statements stays a
-    // pipeline, and JSMQL rejects a stray `return` in a statement position there.)
     expect(
       jsmql(({ $ }) => {
         return $.a > 18;
@@ -220,9 +201,6 @@ describe("implicit pipeline — block-body arrow input", () => {
   });
 
   it("strips the trailing `;` that a formatter adds to an expression-body arrow", () => {
-    // `toString()` on the arrow source ends it with `;`, because a formatter adds one.
-    // The adapter strips that `;`. A single-statement expression arrow then lowers as an
-    // UpdateFilter, and `jsmql()` wraps it as a one-stage pipeline.
     const fn = ({ $ }: any) => ($.a = 1);
     expect(jsmql(fn)).toEqual([{ $set: { a: 1 } }]);
   });
@@ -238,9 +216,7 @@ describe("implicit pipeline — errors", () => {
   });
 
   it("an unknown stage name is your own MQL, and it passes through with no suggestion", () => {
-    // DELIBERATELY invalid: mongod refuses `$macth`, because it is not a pipeline stage.
     expect(jsmql("$macth($.a); $.b = 1")).toEqual([{ $macth: "$a" }, { $set: { b: 1 } }]);
-    // A JavaScript name keeps its suggestion, because JSMQL owns that closed set.
     const r = jsmql.validate("$$.filterr(d => d.a); $.b = 1");
     expect(r.valid).toBe(false);
     expect(r.errors[0].message).toMatch(/Did you mean '\.filter\(\)'/);

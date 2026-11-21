@@ -1,8 +1,3 @@
-// HR6 — raw MQL can hold JSMQL, and JSMQL cannot take raw MQL as an operand.
-//
-// The rule lives in docs/LANG_RULES.md. The check reads the tree as parsed:
-// docs/specs/raw-mql-boundary.md.
-
 import type { Collection, MongoClient } from "mongodb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -43,9 +38,7 @@ describe("HR6 — JSMQL refuses raw MQL as an operand", () => {
     expect(() => jsmql("$.items.concat([$abs($.x)])")).toThrow(refused("$abs(…)", "an operand of '.concat()'"));
     expect(() => jsmql("[$ifNull($.a, 0)][0] && $.b > 1")).toThrow(refused("$ifNull(…)", "the receiver of '[…]'"));
     expect(() => jsmql.expr("$.o === { a: $abs($.x) }")).toThrow(refused("$abs(…)", "an operand of '==='"));
-    // JSMQL inside raw MQL is JSMQL again, so the rule applies there too
     expect(() => jsmql("$abs($ifNull($.a, 0) + 1)")).toThrow(refused("$ifNull(…)", "an operand of '+'"));
-    // a matcher object holds JSMQL, so a `$` key in it is raw MQL
     expect(() => jsmql("$$.filter({ qty: { $gt: 5 } });")).toThrow(refused("{ $gt: … }", "an operand of '.filter()'"));
   });
 
@@ -54,7 +47,6 @@ describe("HR6 — JSMQL refuses raw MQL as an operand", () => {
     expect(() => jsmql('$.qty > 5 || { status: "A" }')).toThrow(queryDoc("{ status: … }", "||"));
     expect(() => jsmql('!{ status: "A" }')).toThrow(queryDoc("{ status: … }", "!"));
     expect(() => jsmql('$match({ status: "A" } && $.qty > 5);')).toThrow(queryDoc("{ status: … }", "&&"));
-    // on the value road the object is a JavaScript object
     expect(jsmql.expr('{ status: "A" } && $.qty > 5')).toEqual({
       $let: { vars: { jsmqlV: { status: "A" } }, in: { $gt: ["$qty", 5] } },
     });
@@ -144,9 +136,7 @@ describe("HR6 — a '$…' string in JSMQL is text", () => {
     expect(jsmql.expr('$.tags.map(t => "$y")')).toEqual({
       $map: { input: { $ifNull: ["$tags", []] }, as: "t", in: { $literal: "$y" } },
     });
-    // a `const` value is a whole value that JSMQL owns, and the fold keeps its string text
     expect(jsmql('const s = "$y"; $.x = s;')).toEqual([{ $set: { x: { $literal: "$y" } } }]);
-    // the fold computes from JSMQL, so each string it computes is text
     expect(jsmql('$project({ x: "$y" + "!" });')).toEqual([{ $project: { x: { $literal: "$y!" } } }]);
   });
 
@@ -155,15 +145,12 @@ describe("HR6 — a '$…' string in JSMQL is text", () => {
     expect(jsmql.expr('{ a: "$y" }')).toEqual({ a: "$y" });
     expect(jsmql('$project({ x: "$y", o: { a: "$y" } });')).toEqual([{ $project: { x: "$y", o: { a: "$y" } } }]);
     expect(jsmql('$$.$group({ _id: "$tag", n: $sum(1) });')).toEqual([{ $group: { _id: "$tag", n: { $sum: 1 } } }]);
-    // the Filter translation of a top-level `$op` keeps the query reading
     expect(jsmql('$eq($.code, "$x")')).toEqual({ code: { $eq: "$x" } });
   });
 
   it("writes the text as it is where nothing evaluates it", () => {
-    // the query language compares a string as written
     expect(jsmql('$.code === "$x"')).toEqual({ code: "$x" });
     expect(jsmql('$.s.startsWith("$")')).toEqual({ s: { $regex: /^\$/ } });
-    // an update document stores a string as written
     expect(jsmql.update('$.x = "$y";')).toEqual({ $set: { x: "$y" } });
   });
 
@@ -174,7 +161,6 @@ describe("HR6 — a '$…' string in JSMQL is text", () => {
   });
 });
 
-// The server gives JavaScript's answer for each text string.
 describe.skipIf(!(await liveUp()))("HR6 — the text string on a live mongod", () => {
   let client: MongoClient;
   let coll: Collection;

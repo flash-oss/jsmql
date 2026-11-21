@@ -1,30 +1,3 @@
-// Phase 3 — FOLD. Fold computes each `const` whose value it can compute, and every
-// reference to it becomes the value.
-//
-//   const msInDay = 24 * 60 * 60 * 1000;  $.elapsedMs > msInDay
-//     →  $.elapsedMs > 86400000     →   { "elapsedMs": { "$gt": 86400000 } }
-//
-// Without fold, the same program becomes a pipeline. The pipeline recomputes the
-// number on every document, in a `$set` nobody asked for. The result cannot use
-// an index. This is not a size optimisation: it decides which DOCUMENT the
-// program becomes.
-//
-// Fold runs INSIDE the desugar fixpoint, and the two feed each other:
-//   const k = "name"; $.items.map(k)
-//     fold    → $.items.map("name")          the shorthand rule can now see it
-//     desugar → $.items.map(x => x.name)
-//
-// THE TWO WAYS A FOLD CAN GO WRONG, and what stops each:
-//
-//   1. It replaces a name that means something else here. A binder of the same
-//      name — a lambda parameter, or a declaration in a nested scope — makes a
-//      DIFFERENT variable. Substitution through that binder answers with the
-//      constant, where the source meant the other variable. `substitute`
-//      (substitute.ts) refuses to cross one.
-//   2. It replaces a name whose value changes. A write, a mutation, or a second
-//      declaration means the first value is not the only one. `unfoldable`
-//      collects those names, and they keep their runtime binding.
-
 import type { Expr, PipelineStmt, Program } from "../../registry/ast.ts";
 import type { NodeName } from "../../registry/vocabulary.ts";
 import { ParseError } from "../parse/cursor.ts";
@@ -41,9 +14,6 @@ type Any = { type: string } & Record<string, unknown>;
 const isNode = (v: unknown): v is Any =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
-// ── which names may not be folded ────────────────────────────────────────────
-
-/** The name a write or a read path is rooted in — `a` for all of `a`, `a.p`, `a[0]`. */
 function rootName(node: unknown): string | null {
   let cursor = node;
   while (isNode(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
@@ -52,37 +22,18 @@ function rootName(node: unknown): string | null {
   return isNode(cursor) && cursor.type === "Ident" && typeof cursor.name === "string" ? cursor.name : null;
 }
 
-/**
- * Names that keep their runtime binding whatever their value.
- *
- * Four ways a name's value changes from the one it was bound to. The first two are
- * plain; the last two are the ones that are easy to miss:
- *   a = 2               written to
- *   const a = …         a second time
- *   a.p = 9             written to THROUGH a path — the name still changes
- *   a.sort()            mutated by a call, which is a write with no `=` in it
- */
 function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
   const excluded = new Set<string>();
   const declared = new Set<string>();
   const readSoFar = new Set<string>();
 
   for (const stmt of stmts) {
-    // A name READ before it is declared is a `ReferenceError` in JavaScript.
-    // The later value would give it a meaning the language does not have. So the
-    // declaration keeps its binding, and a later phase reports it.
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
       if (readSoFar.has(stmt.name)) excluded.add(stmt.name);
     }
-    // A name BOUND inside the statement — a lambda's parameter — is not a read of
-    // the outer name: `$.items.some(k => k > 1); const k = 5` folds `k`.
     for (const name of freeNamesIn(stmt as Any)) readSoFar.add(name);
   }
 
-  // Fold does not settle a function whose body reads its OWN name, or a name declared only
-  // later. A substitution of it would never end (recursion), or would carry a name that has
-  // no value yet. It stays a binding, and the compiler inlines it where it is called.
-  // The compiler refuses the recursion there. A call of an EARLIER function folds.
   const order = declaredIn(stmts);
   for (const stmt of stmts) {
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
@@ -92,15 +43,7 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
       const later = new Set(order.slice(order.indexOf(stmt.name)));
       if (body?.type === "Lambda" && [...freeNamesIn(body)].some((n) => later.has(n))) excluded.add(stmt.name);
     }
-    // Walked WITH positions, because one test below depends on position. A call
-    // that IS a statement mutates its receiver: `a.sort();` is the whole
-    // statement, and nothing reads its result. The same call in value position
-    // returns a new array and leaves the binding alone. The node's shape alone
-    // cannot tell this apart. It would read `[xs.slice(1)]` in a value slot as a
-    // bracketed pipeline of mutations. It would then keep a constant that fold should
-    // replace.
     for (const [node, where] of everyNodeWithPosition(stmt as Any)) {
-      // A write, however deep the path it writes through.
       if (node.type === "AssignExpr" || node.type === "DeleteStmt") {
         const name = rootName(node.target);
         if (name !== null) excluded.add(name);
@@ -115,7 +58,6 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
   return excluded;
 }
 
-/** Every bare name a statement reads that no binder inside it introduces. */
 function freeNamesIn(stmt: Any): ReadonlySet<string> {
   const out = new Set<string>();
   const step = (node: object, key: string, here: ReadonlySet<string>): ReadonlySet<string> => {
@@ -133,7 +75,6 @@ function freeNamesIn(stmt: Any): ReadonlySet<string> {
   return out;
 }
 
-/** Every node of a statement with the position it stands in, the statement itself at STATEMENT. */
 function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
   const out: (readonly [Any, Where])[] = [];
   mapTreeIn(stmt as object, STATEMENT, edge, (node, where) => {
@@ -143,24 +84,7 @@ function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
   return out;
 }
 
-// ── constant subexpressions ──────────────────────────────────────────────────
-
-/**
- * Replace any subexpression that is already a constant with the value it holds.
- *
- * A read of a constant at RUN TIME is pure waste — the answer cannot change:
- *   const o = { a: 1 };  $.x === o.a
- *     without this  → {"$expr":{"$eq":["$x",{"$getField":{"field":"a","input":{"a":1}}}]}}
- *     with it       → {"x": 1}
- * The second can use an index; the first cannot.
- *
- * A constant that the engine cannot settle stays as it is, and computes at run time.
- */
 function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY): T {
-  // The environment travels down and SHRINKS at every binder. A lambda
-  // parameter named the same as a declared function is a different thing
-  // entirely. A fold of `f(1)` against the outer `f` inside `map(f => f(1))`
-  // would answer about the wrong one.
   const step = (n: object, key: string, here: Constants): Constants => {
     const names = bindsFor(n, key);
     if (names.length === 0) return here;
@@ -171,9 +95,6 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
 
   return mapTreeIn(node, known, step, (inner, env) => {
     const n = inner as Any;
-    // `{ [k]: 1 }` with a constant `k` is `{ "<k>": 1 }` — the key JavaScript would
-    // compute. Fold settles it here so the stage rules that take only a written key
-    // (`$sort({ [field]: 1 })`) see one, and a document literal stays a document.
     if (n.type === "KeyValueEntry") {
       const key = n.key as { kind: string; expr?: Expr };
       if (key.kind !== "computed" || key.expr === undefined) return inner;
@@ -182,25 +103,16 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
         ? ({ ...n, key: { kind: "static", name: computed.value } } as object)
         : inner;
     }
-    // a regex node is a constant. A new spelling of it would lose whether the call supplied it
     if (!EVALUABLE.has(n.type) || n.type === "RegexLiteral") return inner;
     const result = evaluate(n as unknown as Expr, env);
     if (!result.ok) {
       if (result.unspellable !== undefined) throw noLiteralFor(result.unspellable, n.pos as number);
       return inner;
     }
-    // Every EVALUABLE node is JSMQL, so each string it computes is text (HR6).
     return writeBack(result.value, n.pos as number) as object;
   });
 }
 
-/**
- * Every statement of a list, with its constant parts folded against `known`.
- *
- * ONE STATEMENT at a time, never the list around it. A scope's own declarations
- * are exactly what its statements should see. A descent through the
- * `Pipeline` node would make `bindsFor` hide them along with the nested ones.
- */
 function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly PipelineStmt[] {
   const out = stmts.map((stmt) => foldConstantParts(stmt as unknown as object, known) as unknown as PipelineStmt);
   return out.some((stmt, i) => stmt !== stmts[i]) ? out : stmts;
@@ -208,14 +120,6 @@ function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly
 
 const EMPTY: Constants = new Map();
 
-/**
- * The node types worth a question. Every other type either cannot be constant
- * or is one already. A question about it would rebuild the tree for nothing.
- *
- * `OperatorCall` is deliberately absent: `$add(1, 2)` is the escape hatch, and
- * the compiler emits raw MQL as the developer wrote it. A fold of it would break the
- * property that a pasted pipeline round-trips.
- */
 const EVALUABLE_TYPES = [
   "UnaryExpr",
   "BinaryExpr",
@@ -226,15 +130,6 @@ const EVALUABLE_TYPES = [
   "MethodCall",
   "CallExpression",
 ] as const;
-/**
- * The expression types deliberately NOT asked about, each for a stated reason. A
- * literal is already the answer. A new spelling of it would rebuild the node every
- * round, and the fixpoint would never settle. A reference, a lambda and a block
- * are not values. `OperatorCall` is the escape hatch above. The emit phase refuses
- * a `NewExpression` (HR8). Together with `EVALUABLE_TYPES` this must cover every
- * `Expr` type. The two lines below make a new node type a compile error here.
- * Without them, fold would silently never fold a subexpression of that type.
- */
 const NOT_ASKED_TYPES = [
   "NumberLiteral",
   "BigIntLiteral",
@@ -265,21 +160,7 @@ void _everyExprIsDecided;
 void _onlyExprTypes;
 const EVALUABLE: ReadonlySet<string> = new Set(EVALUABLE_TYPES);
 
-// ── the pass ─────────────────────────────────────────────────────────────────
-
-/**
- * Fold every declaration that can be folded, and drop it.
- *
- * The pass walks the statements IN ORDER. Fold substitutes each one with what is known
- * at the point it stands. That is not tidiness. A name read before it is
- * declared is a `ReferenceError` in JavaScript. The later value would give
- * it a meaning the language does not have.
- */
 export function fold(program: Program): Program {
-  // Every NESTED statement list is a scope of its own and folds in its own right:
-  // `$$.aggregate(() => { const a = 2; $match({ b: a }) })` should read 2. An
-  // outer constant reaches into one through the substitution below, which stops
-  // at any binder of the same name; this is the other direction.
   const foldNested = (node: object): object => {
     const n = node as Any;
     if (n.type !== "Pipeline") return node;
@@ -291,10 +172,6 @@ export function fold(program: Program): Program {
   const root = program as Any;
   if (root.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested) as object) as Program;
 
-  // The pass below folds the root. That pass also decides whether the program
-  // collapses to one expression. A walk of it here as well would do that work
-  // first, and would leave the pass below with nothing to report. The collapse
-  // — the whole reason `const a = 1; $.x === a` is a Filter — would never happen.
   const stmts = (root.stmts as readonly PipelineStmt[]).map(
     (stmt) => mapTree(stmt as unknown as object, foldNested) as unknown as PipelineStmt,
   );
@@ -310,11 +187,6 @@ export function fold(program: Program): Program {
 
   const rewritten = { type: "Pipeline", stmts: foldPartsIn(top.stmts, top.env), pos: root.pos as number } as Any;
   const left = rewritten.stmts as readonly PipelineStmt[];
-  // One EXPRESSION left is a Filter, not a pipeline of one predicate. This is
-  // the whole reason `const a = 1; $.x === a` reads as `{ "x": 1 }`. Only an
-  // expression collapses this way: a write or a declaration stays a pipeline
-  // either way. An unwrap of one would throw away the `;` the source wrote, and
-  // gain nothing.
   if (left.length === 1) {
     const only = left[0] as Any;
     const isStatement = only.type === "UpdateFilter" || only.type === "LetDecl" || only.type === "FuncDecl";
@@ -323,7 +195,6 @@ export function fold(program: Program): Program {
   return rewritten as unknown as Program;
 }
 
-/** The fold of one scope: the statements that survive, and whether any went. */
 function foldStatements(stmts: readonly PipelineStmt[]): {
   stmts: readonly PipelineStmt[];
   changed: boolean;
@@ -331,15 +202,11 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
 } {
   const excluded = unfoldable(stmts);
   const folded = new Map<string, unknown>();
-  // Declared functions live HERE and not in `folded`. Fold may evaluate a call to one.
-  // Fold never substitutes the function itself into the tree, where
-  // a lambda would sit in an expression's place.
   const env = new Map<string, unknown>();
   const survivors: PipelineStmt[] = [];
   let changed = false;
 
   for (const stmt of stmts) {
-    // What is known SO FAR, and not one declaration more.
     const resolved =
       folded.size === 0
         ? stmt
@@ -357,12 +224,8 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
     }
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
       const result = evaluate(resolved.value, env);
-      // A constant MongoDB cannot write down needs a clear statement. The
-      // engine names it and propagates it, so an `Infinity` buried three
-      // operators deep reports the same way one at the top does.
       if (!result.ok && result.unspellable !== undefined) throw noLiteralFor(result.unspellable, resolved.pos);
       if (result.ok) {
-        // Every computed value has a node that carries it, so the declaration emits nothing.
         const at = (resolved.value as { pos: number }).pos;
         writeBack(result.value, at);
         folded.set(resolved.name, result.value);
@@ -371,7 +234,6 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
         continue;
       }
     }
-    // A name that did not fold must not be read as one further down either.
     if (resolved.type === "LetDecl" || resolved.type === "FuncDecl") {
       folded.delete(resolved.name);
       env.delete(resolved.name);
@@ -382,7 +244,6 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
   return { stmts: survivors, changed, env };
 }
 
-/** The constant MongoDB cannot write down, named — `10 / 0` inside a folded callback reports as the top-level one does. */
 function noLiteralFor(what: string, pos: number): ParseError {
   return new ParseError(
     `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range — or guard it with a condition.`,

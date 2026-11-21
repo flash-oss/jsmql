@@ -1,7 +1,3 @@
-// Tests for the `$$$.<coll>.find/filter(...)` → `$lookup` lowering.
-// See docs/specs/lookup-stage.md for the design and docs/LANGUAGE.md
-// for the user-facing reference.
-
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
@@ -28,10 +24,6 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   });
 
   it("top-level bracket-accessed local field yields a clean localField (no leading dot)", () => {
-    // `$["ext-code"]` is bracket access on the bare root `$`.
-    // The root is an empty-path FieldRef and must contribute NO path segment.
-    // Otherwise the localField comes out as `.ext-code` (leading dot), which mongod rejects (Location15998).
-    // The author verified it against a live mongod.
     expect(jsmql(`$.x = $$$.orders.filter(o => o.ref === $["ext-code"]);`)).toEqual([
       { $lookup: { from: "orders", localField: "ext-code", foreignField: "ref", as: "x" } },
     ]);
@@ -53,10 +45,6 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   });
 
   it("== between two field paths is rejected by jsmql's project-wide `==`-against-null-only rule", () => {
-    // The lookup surface does NOT carve an exception for `==`: the standard
-    // `===` / `==` table in LANGUAGE.md restricts `==` to comparisons against
-    // `null`. A user who writes `o.userId == $._id` gets the same actionable
-    // error they would anywhere else in jsmql (pointed at `===`).
     expect(() => jsmql("$.orders = $$$.orders.filter(o => o.userId == $._id);")).toThrow(
       /'=='\s*is only allowed against null in JSMQL\. Use '==='/,
     );
@@ -66,7 +54,6 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
 describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest beside it", () => {
   it("a compound && predicate takes the pair from its equality and needs no `let`", () => {
     const out = jsmql("$.user = $$$.users.find(u => u._id === $.userId && u.active);");
-    // Two stages: the $lookup (the pair, `u.active` a $match beside it) and the $set $first for `.find`.
     expect(out).toHaveLength(2);
     const lookupStage = (out as object[])[0] as {
       $lookup: { from: string; let: Record<string, string>; pipeline: object[]; as: string };
@@ -91,9 +78,6 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
   });
 
   it("constant comparisons use index-friendly query form beside the pair", () => {
-    // `o.status === "shipped"` (constant) becomes a `{ status: "shipped" }` query field the server can index,
-    // in the pipeline the server runs over the pair's matches. `o.userId === $._id` is the pair.
-    // The translator is the one the top-level `$match` uses. A live mongod verified that the join is correct.
     expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && o.status === "shipped");')).toEqual([
       {
         $lookup: {
@@ -108,10 +92,6 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
   });
 
   it("an outer field with a char illegal in a MongoDB var name yields an identifier-safe let var", () => {
-    // `meta.sub-id`: the hyphen is legal in a field NAME but illegal in a `$$` VARIABLE name.
-    // So the raw segment cannot become the let-var name verbatim (mongod refuses a `-` in a variable name).
-    // The compiler sanitizes the last path segment to `[A-Za-z0-9_]` for the name only.
-    // The value keeps the raw field path. The author verified it against a live mongod (HR3).
     expect(jsmql('$.x = $$$.orders.filter(o => o.ref === $.meta["sub-id"] && o.qty > 0);')).toEqual([
       {
         $lookup: {
@@ -134,9 +114,6 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
   });
 
   it("two distinct fields that sanitize to the same var base stay distinct (`_2` suffix)", () => {
-    // `sub-id` and `sub_id` are different fields but both sanitize to the base
-    // `jsmql_f0_sub_id`. The allocator interns on the RAW path and disambiguates
-    // with `_2`, so each field keeps its own correlation var.
     expect(jsmql('$.x = $$$.orders.filter(o => o.a === $.meta["sub-id"] && o.b === $.meta["sub_id"]);')).toEqual([
       {
         $lookup: {
@@ -161,9 +138,6 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
   });
 
   it("top-level bracket-accessed local field hoists into `let` cleanly (no leading dot in value or var)", () => {
-    // The `let` counterpart of the pair's leading-dot case: `$["ext-code"]`
-    // must hoist to the `let` VALUE `$ext-code` (not `$.ext-code`) and the var name
-    // `jsmql_f0_ext_code`. The author verified it against a live mongod.
     expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && $["ext-code"] === "K1");')).toEqual([
       {
         $lookup: {
@@ -202,8 +176,6 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
   });
 
   it("the first document of a sub-pipeline is `.aggregate(...).at(0)`", () => {
-    // `.find` is a JavaScript predicate, so the scalar-or-null unwrap it provides
-    // has no block form. Take the first result of a sub-pipeline explicitly.
     const out = jsmql(`
       $.user = $$$.users.aggregate(u => {
         $match(u._id === $._id);
@@ -228,13 +200,7 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
 });
 
 describe("$$$.coll.filter — block-body 3rd 'stream' param (sub-stream size)", () => {
-  // The post-filter sub-stream count, through `<coll>.size()`, usable inside the
-  // block (here in an assert). The author verified it end-to-end on a live mongod: alice
-  // (2 orders) → orders:[…], bob (0 orders) → orders:[].
-  // The assert no-ops on an empty sub-stream: no doc flows through the lookup pipeline to reject.
   it("refuses <coll>.size() in a body that filters — the stamp is taken before the filter", () => {
-    // The count is stamped ahead of the body, so after a `$match` it is the collection's
-    // size and not this user's. The assert the developer wrote is not the one that runs.
     expect(() =>
       jsmql(`
         $.orders = $$$.orders.aggregate((o, i, ordersColl) => {
@@ -245,10 +211,6 @@ describe("$$$.coll.filter — block-body 3rd 'stream' param (sub-stream size)", 
     ).toThrow(/'ordersColl' is the body's own stream\. This body runs '\$match'/);
   });
 
-  // Deep cross-level capture: the OUTERMOST lookup captures a ROOT read (`$.region`) inside a NESTED block-body lookup.
-  // The capture is `jsmql_f0_region`, whose let evaluates against the root doc.
-  // The inner levels read it through `$$` propagation. The compiler does NOT mis-capture it as a field of the immediate parent.
-  // The enclosing foreign param `a._id` is the `localField` of the inner pair.
   it("a root `$.<field>` read inside a nested block-body lookup threads to the outermost let", () => {
     expect(
       jsmql(`
@@ -325,11 +287,6 @@ describe("$$$.coll.filter — block-body 3rd 'stream' param (sub-stream size)", 
     );
   });
 
-  // An ANCESTOR body's handle is a different stream from this body's.
-  // So the compiler stamps its count on the ancestor's own pipeline and carries it down through each
-  // `$lookup.let`: `jsmql_s<level>_size`, the same hop an outer field takes.
-  // If the compiler stamped it on the reading body instead, the two counts would collapse onto one field
-  // and answer the same number, which the server accepts without a word.
   it("counts an ancestor sub-stream on its OWN pipeline, and the body's own on this one", () => {
     expect(
       jsmql(`$.o = $$$.orders.aggregate((o, i, ordersColl) => {
@@ -362,15 +319,11 @@ describe("$$$.coll.filter — block-body 3rd 'stream' param (sub-stream size)", 
     ]);
   });
 
-  // `$$` is the ROOT stream at every depth (HR4), so its count belongs to the top-most chain,
-  // not to the body that reads it.
-  // It does not belong to a `$facet` branch, which assembles a chain of its own at the same level.
   it("keeps the ROOT count on the top-most pipeline, beside a handle's own", () => {
     expect(jsmql("$ = { peers: $$.filter(u => u.n === $$.size()) };")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $facet: { peers: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.size"] } } }] } },
     ]);
-    // a handle read inside a branch counts the stream the BLOCK runs over, not the branch
     expect(jsmql("$$.aggregate((o, i, coll) => { $ = { a: $$.filter(x => x.n === coll.size()) }; });")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $facet: { a: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.size"] } } }] } },
@@ -426,9 +379,6 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   });
 
   it("chained .size() is refused when the lookup is .find (one document has no .size())", () => {
-    // `.find` lowers with `$set $first` so the slot holds a scalar doc (or null).
-    // `$size` on a non-array errors at runtime. The compiler rejects it at compile time and points
-    // the user at `.filter(...).size()` (count matches) instead.
     expect(() => jsmql("let n = $$$.users.find(u => u._id === $._id).size();")).toThrow(
       "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'.",
     );
@@ -497,8 +447,6 @@ describe("$$$.coll.find/filter — error cases", () => {
   });
 
   it("`(element, index, array)` params are accepted unused, rejected when read", () => {
-    // The JavaScript signature, on `.find` exactly as on `.filter`: present-but-unused
-    // compiles, a *read* of one is rejected (nothing to hold it in a predicate).
     expect(jsmql("$.x = $$$.users.find((u, i) => u._id === $.userId);")).toEqual([
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", pipeline: [{ $limit: 1 }], as: "x" } },
       { $set: { x: { $first: "$x" } } },
@@ -535,10 +483,6 @@ describe("$$$.coll.find/filter — error cases", () => {
     );
   });
 
-  // The mode gates key off the chain's BASE, not its head method.
-  // `readsAContextRef` (src/compiler/passes/shape.ts) says a chain rooted in `$$$` is a statement.
-  // So a stream-method head is lookup syntax at every gate.
-  // The strict entries name the shape, and `jsmql.expr()` refuses it, and does not return a `$lookup` pipeline.
   describe("a stream-method-headed chain is lookup syntax at every mode gate", () => {
     const streamHead = "$.x = $$$.users.toSorted({ createdAt: -1 }).take(5)";
     const findHead = "$.x = $$$.users.find(u => u._id === $._id)";
@@ -568,7 +512,6 @@ describe("$$$.coll.find/filter — error cases", () => {
       expect(jsmql(streamHead)).toEqual([
         { $lookup: { from: "users", pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 5 }], as: "x" } },
       ]);
-      // A `$$ =` source switch takes the same path, with or without the `;`.
       const pivot = "$$ = $$$.users.toSorted({ createdAt: -1 }).take(5)";
       expect(jsmql(pivot)).toEqual([
         { $match: { $expr: false } },
@@ -578,17 +521,12 @@ describe("$$$.coll.find/filter — error cases", () => {
   });
 
   it("a bare foreign param (`o` alone) as a predicate is the whole foreign document, which is always truthy", () => {
-    // `o` alone is the foreign document itself. A document is always there and always
-    // truthy, so the truthiness test folds to `true`.
     expect(jsmql("$.users = $$$.users.filter(o => o);")).toEqual([
       { $lookup: { from: "users", pipeline: [{ $match: { $expr: true } }], as: "users" } },
     ]);
   });
 
   it("a bare `$` (whole outer document) as a correlation value hoists `$$ROOT` into `let`", () => {
-    // The local-side mirror of the bare foreign param: `$` alone is the whole outer
-    // doc, not a field path. So it cannot be a `localField` (an empty path, which
-    // mongod rejects); it goes into `let` as `$$ROOT`.
     expect(jsmql("$.x = $$$.orders.filter(o => o.ref === $);")).toEqual([
       {
         $lookup: {
@@ -605,18 +543,11 @@ describe("$$$.coll.find/filter — error cases", () => {
     const r = jsmql.validate("    $.x = $$$.users.find();");
     expect(r.valid).toBe(false);
     expect(r.errors[0].message).toMatch("'.find(predicate)' requires exactly 1 argument, got 0");
-    // The four leading spaces count: position 19 is the '.' of '.find()'.
     expect(r.errors[0].pos).toBe(19);
   });
 });
 
 describe("$$$.coll.find/filter — nested lookups (expression body and block body, any depth)", () => {
-  // Nested lookups materialise as prologue `$lookup` stages inside the outer's
-  // `$lookup.pipeline` body. The inner lookup's `let:` clause auto-captures
-  // references to the outer's foreign-doc param (`o.x`) as path-on-local-doc
-  // bindings. Outer-pipeline `let` vars stay accessible through lexical `$$<name>`
-  // scoping — no need for the inner to re-let them.
-
   it("2-level filter/filter with outer-foreign-doc cross-reference", () => {
     expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).size() > 0)")).toEqual([
       {
@@ -661,10 +592,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   });
 
   it("outer-outer doc ref ($._id) flows through outer.let and is visible inside the inner by lexical $$ scope", () => {
-    // `$._id` is captured by the OUTER lookup's `let: { jsmql_f0__id: "$_id" }` (depth 0).
-    // The inner's `let: { jsmql_f1__id: "$_id" }` (depth 1) captures the POST's `_id`.
-    // The depth prefix keeps them distinct — `$$jsmql_f0__id` (the outermost doc) and
-    // `$$jsmql_f1__id` (the post) cannot collide under lexical `$$` scoping.
     expect(
       jsmql(
         "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).size() > 0)",
@@ -743,8 +670,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   });
 
   it("a bare enclosing foreign param (no member access) hoists `$$ROOT` into the inner `let`", () => {
-    // `a` matches the outer's foreign param with zero segments: the whole outer
-    // foreign document, which the inner `let` carries as `$$ROOT`.
     expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).size() > 0)")).toEqual([
       {
         $lookup: {
@@ -766,14 +691,6 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
       },
     ]);
   });
-
-  // ── Block-body nested lookups ──────────────────────────────────────────────
-  // A body over another collection is a level of its own.
-  // The Env carries the boundary that owns its `let` (src/compiler/emit/env.ts).
-  // An inner lookup written as a statement / stage-body expr / block-bodied lambda lowers the same as the expr-body form.
-  // The body writes its own document through the callback parameter (`a.bs = …`).
-  // The compiler refuses a write to the outer document (`$.bs = …`) inside the body.
-  // A live mongod ran all three emitted shapes, and they join correctly.
 
   it("nested lookup as a STATEMENT inside a block body (as from the LHS field)", () => {
     expect(
@@ -886,20 +803,12 @@ describe("$$$.coll.find/filter — interactions with other features", () => {
 });
 
 describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", () => {
-  // Standalone / replica-set / sharded MongoDB alike reject a `$lookup`/`$unionWith` with a `{ db, coll }` namespace.
-  // So every cross-database READ shape throws. The alternative is the same-database `$$$.<coll>` form.
-  // (Cross-database WRITES — `$$$$.<db>.<coll> = $$` → $out — do work.)
-
   it("a .filter lookup is rejected", () => {
     expect(() => jsmql("$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)")).toThrow(
       "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
-  // `.find` or `.filter`, dot or bracket access, and the nested-with-same-db-inner
-  // case all reject at the SAME chain-base check as the `.filter` case above. The test does not
-  // retest them. The chained terminal reads the slot as a VALUE afterwards
-  // (`joinValue` in src/compiler/emit/join.ts), so it keeps its own case:
   it("a chained .size() on a cross-DB .filter is rejected", () => {
     expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).size();")).toThrow(
       "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
@@ -909,10 +818,6 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
 
 describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup.pipeline body", () => {
   it("a terminal .map(...) that returns a document becomes a $replaceWith in the lookup's pipeline", () => {
-    // The mapped value is an object literal, so each element stays a document and
-    // `$replaceWith` inside the `$lookup.pipeline` is valid.
-    // A map to a scalar cannot go there (mongod rejects a non-document root).
-    // The next cases show the value-mode `$map` it takes instead.
     expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
       {
         $lookup: {
@@ -947,11 +852,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("a value-collapsing .map anywhere in the chain (not just terminal) lowers value-mode, never an in-pipeline $replaceWith", () => {
-    // `.map("productIds")` is NOT terminal here — it is followed by `.slice`, a
-    // stream-registry method. If the map stayed in the sub-pipeline, it would emit
-    // `{$replaceWith:"$productIds"}` (a non-document root — mongod rejects it). The
-    // whole chain instead routes to the expression form.
-    // The sub-pipeline is just the `.filter`'s `$match`, and map+slice run value-mode over the result array.
     expect(jsmql('$.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").slice(0, 3);')).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $set: { r: { $slice: [{ $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.productIds" } }, 3] } } },
@@ -980,9 +880,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("an object-literal-body .map mid-chain still stays in the sub-pipeline ($replaceWith of a document is valid)", () => {
-    // The collapse only fires for a NON-document map. `o => ({ t: o.total })`
-    // yields a document, so `$replaceWith` is valid and the following `.take`
-    // lowers to `$limit` inside the same sub-pipeline (no value-mode detour).
     expect(jsmql("$.r = $$$.orders.filter(o => o.userId === $._id).map(o => ({ t: o.total })).take(5);")).toEqual([
       {
         $lookup: {
@@ -997,8 +894,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it(".toSorted((a, b) => …) — comparator-shape sort that has no clean expression-form equivalent", () => {
-    // The bare `.toSorted((a, b) => …)` shape has no expression-position lowering, because `$sortArray` has no comparator form.
-    // So the compiler pushes it into the pipeline body, where the stage-form `$sort` lowering of the stream-method registry takes it.
     expect(
       jsmql("$.byScore = $$$.users.filter(u => u.active).toSorted((a, b) => b.score - a.score).slice(0, 5);"),
     ).toEqual([
@@ -1028,8 +923,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("a descending sub-pipeline sort is written directly (no reverse-the-previous-sort form)", () => {
-    // A stream has no `.toReversed()`. The descending comparator is the spelling,
-    // and it gives the same single `$sort`.
     expect(
       jsmql(
         "$.recent = $$$.events.filter(e => e.userId === $._id).toSorted((a, b) => b.createdAt - a.createdAt).slice(0, 10);",
@@ -1048,8 +941,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it(".flatMap(d => d.<path>) becomes $unwind inside the lookup's pipeline body, and the value is the unwound elements", () => {
-    // JavaScript's `orders.flatMap(o => o.items)` is the items: the `$lookup` holds
-    // one order per line, and the assignment reads the line off each.
     expect(jsmql("$.items = $$$.orders.filter(o => o.userId === $._id).flatMap(o => o.items);")).toEqual([
       {
         $lookup: {
@@ -1063,7 +954,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       { $set: { items: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } } } },
       { $unset: "__jsmql" },
     ]);
-    // the links after `.flatMap` work on the element, in the body and after it
     expect(
       jsmql(
         '$.n = $$$.orders.filter(o => o.userId === $._id).flatMap("items").filter(i => i.qty > 1).sortBy("price").size();',
@@ -1086,7 +976,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       { $set: { n: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
-    // anything else reads the lines off the documents: a value `.map`, an index
     expect(jsmql('$.n = $$$.orders.flatMap("items").map(i => i.qty).size();')).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $unwind: "$items" }], as: "__jsmql.tmp.0" } },
       {
@@ -1113,7 +1002,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       },
       { $unset: "__jsmql" },
     ]);
-    // `.find` after `.flatMap` is ONE element, and `$ =` becomes it
     expect(jsmql('$.line = $$$.orders.flatMap("items").find(i => i.sku === $.sku);')).toEqual([
       {
         $lookup: {
@@ -1150,9 +1038,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("a chained terminal (.size(), .reduce) takes precedence over the chain extension", () => {
-    // `.size()` and `.reduce(fn, init)` have no stream rule, so `lookupOf`
-    // (src/compiler/emit/join.ts) stops the peel at them.
-    // The rest of the chain reads the slot as a value: the `$size` / `$reduce` shapes.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).size();")).toEqual([
       {
         $lookup: {
@@ -1180,12 +1065,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("non-registered chain methods (for example .toLower) fall through to the existing expression-form path", () => {
-    // `.toLower()` is not a stream method, so the chain stops the peel there.
-    // The rest reads the slot as a value (`joinValue` in src/compiler/emit/join.ts).
-    // This gives the bulkier but still correct expression form. Unrelated string /
-    // array operators on lookup results are unaffected.
     const out = jsmql("$.firstName = $$$.users.find(u => u._id === $.userId).name;") as object[];
-    // The .find + member-access path is that same value road over the slot.
     expect(out).toEqual([
       {
         $lookup: {
@@ -1204,7 +1084,6 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
 });
 
 describe("$$$.coll.<streamMethod>… — any lodash stream method may start the chain", () => {
-  // The author verified this end-to-end on a live mongod (chain-order + correlation) in tmp/verify-lookup.ts.
   it("single stream-method head → lean $lookup (no let, no vacuous $match)", () => {
     expect(jsmql("$.recent = $$$.orders.toSorted({ createdAt: -1 });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $sort: { createdAt: -1 } }], as: "recent" } },
@@ -1300,12 +1179,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
 });
 
 describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial review)", () => {
-  // Each case guards a shape that is easy to emit as invalid or wrong MQL.
-  // A live mongod verified each one.
   it("a lone shorthand .filter({obj}) head lowers exactly like the equivalent arrow", () => {
-    // The desugar pass rewrites the shorthand to its arrow before any road reads it.
-    // So it takes the same direct-lookup path, and the `as: "x"` writes straight to the destination field
-    // (no tmp slot, no trailing `$set`/`$unset`), as for the arrow form.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
@@ -1314,12 +1188,6 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     ]);
   });
 
-  // Spelling must never change the emitted MQL.
-  // The desugar pass rewrites a shorthand predicate to its arrow before the join road reads it.
-  // So `.filter({ userId: $._id })` earns the same indexed `localField`/`foreignField` `$lookup` as its arrow twin.
-  // `.size()` on it earns the same `$size` materialisation.
-  // A road that read the two apart would give one of them a strictly worse plan for the same meaning.
-  // The author verified this against a live mongod.
   const SPELLINGS: ReadonlyArray<readonly [string, string]> = [
     ["matches-object", `{ userId: $._id }`],
     ["matchesProperty", `["userId", $._id]`],
@@ -1337,30 +1205,21 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     });
 
     it(`a ${label} predicate hits the same Filter-mode gate as its arrow`, () => {
-      // Detection drives the mode gate too.
-      // An undetected shorthand falls through to the generic refusal of a `$$$` reference alone, instead of the actionable
-      // refusal that names Pipeline mode.
       expect(() => jsmql(`$$$.orders.filter(${shorthand}).size() > 0`)).toThrow(/needs Pipeline mode/);
     });
   }
 
   it("an uncorrelated $lookup omits `let` entirely, whatever assembled it", () => {
-    // `let` is optional to the server, so an empty `let: {}` is pure noise. A decision of
-    // the rule per emission site would make these four disagree for no semantic
-    // reason, so `pipelineLookupBody` is the single decider.
-    // The author verified this against a live mongod.
     const lookupOf = (src: string) => ((jsmql(src) as object[])[0] as { $lookup: Record<string, unknown> }).$lookup;
     for (const src of [
-      "$.x = $$$.orders.filter(o => o.uid === 1);", // direct lookup, filter head
-      "$.x = $$$.orders.filter({ uid: 1 });", // …and its shorthand twin
-      "$.x = $$$.orders.filter(o => o.uid === 1).take(2);", // chained, filter head
-      "$.x = $$$.orders.take(2);", // chained, stream-method head
-      "$.x = $$$.orders.aggregate(o => { $limit(2); });", // .aggregate
+      "$.x = $$$.orders.filter(o => o.uid === 1);",
+      "$.x = $$$.orders.filter({ uid: 1 });",
+      "$.x = $$$.orders.filter(o => o.uid === 1).take(2);",
+      "$.x = $$$.orders.take(2);",
+      "$.x = $$$.orders.aggregate(o => { $limit(2); });",
     ]) {
       expect(Object.keys(lookupOf(src)), src).not.toContain("let");
     }
-    // A correlated equality becomes the `localField` / `foreignField` pair, so it
-    // needs no `let` either. The shape follows the predicate, never the code path.
     expect(jsmql("$.x = $$$.orders.filter(o => o.uid === $._id && o.qty > 0);")).toEqual([
       {
         $lookup: {
@@ -1375,8 +1234,6 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   });
 
   it("a malformed shorthand still reports its own targeted error, not a lookup-shape one", () => {
-    // `filterArgToLambda` returns null, and does not throw, so `validateLookupShape`
-    // (which runs the throwing `shorthandToLambda`) stays the owner of the message.
     expect(() => jsmql("$.x = $$$.orders.filter({});")).toThrow(
       "'.filter({ … })' matches a document by its fields, and '{}' names none. Write the field to match — '.filter({ status: \"paid\" })' — or an arrow — '.filter(d => d.status === \"paid\")'.",
     );
@@ -1392,10 +1249,6 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   });
 
   it("a no-statement / const-only block-body .map value-extracts identically to the expression form", () => {
-    // `o => { return o.total }` is valid JS, identical to `o => o.total` (and to the same
-    // block on an in-document array). The parser reads it on a stream as a stage-less sub-pipeline
-    // block, but it must lower to the SAME value-mode $map — never a scalar $replaceWith.
-    // The author verified it on a live mongod.
     const asExpr = jsmql("$.x = $$$.orders.map(o => o.total);");
     expect(asExpr).toEqual([
       { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.0" } },
@@ -1415,14 +1268,9 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   });
 
   it("a stage in a value-position `.map` block names the value position, not just the method", () => {
-    // The stage rejection is the same rule everywhere, but the rewrite is position-accurate.
-    // Consumed as a value, the chain lowers to an array operator with nowhere to run stages at all.
-    // Both named rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
       "`$sort(...)` at position 28 is a pipeline stage. The 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
-    // Rewrite 1: stay a sub-pipeline and reshape with a stage.
-    // `$` inside the body is the OUTER document, which the body reads and never writes.
     expect(
       jsmql(
         "$.x = $$$.orders.filter(o => o.uid === $._id).aggregate(o => { $sort({ x: -1 }); $replaceWith({ t: o.total }); });",
@@ -1438,7 +1286,6 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
         },
       },
     ]);
-    // Rewrite 2: move the stages into the heading `.aggregate` block.
     expect(jsmql("$.x = $$$.orders.aggregate(o => { $sort({ x: -1 }); }).map(o => o.total);")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $sort: { x: -1 } }], as: "__jsmql.tmp.0" } },
       { $set: { x: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } },
@@ -1559,8 +1406,6 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
   });
 
   it("refuses <coll>.size() in a body that groups — the stamp is dropped with the fields", () => {
-    // `$group` keeps no field the input carried, so the stamped count is gone and the
-    // assertion read a missing value. It fired on every document, empty or not.
     expect(() =>
       jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.size() > 0, "empty"); });'),
     ).toThrow(/'coll' is the body's own stream\. This body runs '\$group'/);
@@ -1600,9 +1445,6 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
 });
 
 describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a sub-pipeline", () => {
-  // `.aggregate` is a registered stream method, so it composes with the lodash
-  // chain in BOTH directions: lodash stages before it, lodash stages after it,
-  // all peeled into the one `$lookup.pipeline` in source order.
   it("sort + take then .aggregate — lodash stages lead, aggregate stages follow", () => {
     expect(
       jsmql(
@@ -1786,11 +1628,6 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     ]);
   });
 
-  // An `.aggregate` HEAD peels its chain exactly like a `.filter` / lodash head.
-  // A peel gated on the head method would make the emitted shape depend on which emission site ran.
-  // `.pick` read `$getField` off the result ARRAY and gave `{}`.
-  // mongod rejected outright `.omit`'s `$objectToArray` over an array.
-  // But one preceding `.sort()` lowered both to a clean `$project`.
   describe("an .aggregate head lowers the same as an .aggregate link", () => {
     it(".take peels to $limit in the sub-pipeline, not $slice on the result", () => {
       expect(jsmql("$.r = $$$.orders.aggregate((o) => { $sort({ total: -1 }); }).take(5);")).toEqual([
@@ -1854,12 +1691,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     });
   });
 
-  // Argument-shape and param errors must read the same whether `.aggregate` sits
-  // at the head or after a lodash chain.
-  // The two call positions share `validateAggregateArg` / `validateAggregateParams` so they cannot drift.
   describe("argument errors match the head form's wording", () => {
-    // The message for each argument; `at` is the offset of the argument in the source,
-    // for the one message that states positions.
     const pairs: [string, string, (at: number) => string][] = [
       [
         "expression body",
@@ -1901,7 +1733,6 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     }
 
     it("both positions carry a real .pos for tooling", () => {
-      // The position is the `=>` of the arrow whose body is not a block.
       for (const [src, pos] of [
         ["$.r = $$$.orders.aggregate((o) => o.total);", 31],
         ["$.r = $$$.orders.sort({ t: 1 }).aggregate((o) => o.total);", 46],
@@ -1944,9 +1775,6 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   it("$$.aggregate (current stream) appends its stages to the chain, in every container", () => {
-    // On `$$` the block's statements are simply the chain's stages. A `$facet` branch
-    // is the container that needs it: a branch IS a sub-pipeline, so there is no
-    // "write them directly" spelling to redirect to.
     expect(jsmql("$$.aggregate((o) => { $group({ _id: o.s }); });")).toEqual([{ $group: { _id: "$s" } }]);
     expect(jsmql("$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });")).toEqual([
       { $match: { a: 1 } },
@@ -1998,9 +1826,6 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
-  // The message names the `$$$.<coll>` HEAD, never the methods that may follow it.
-  // That set grows (`.find`/`.filter`, `.aggregate`, every lodash stream method, every chained stage call)
-  // and an enumeration goes stale on each addition. So every head gets the identical rejection.
   it("every chain head gets the same no-destination rejection (no method enumeration)", () => {
     for (const src of [
       "$$$.c.find(o => o.a === 1)",
@@ -2027,9 +1852,6 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
-  // `.aggregate` needs a document STREAM. On a receiver the chain already reduced
-  // to a value, the generic value-mode path would refuse `.aggregate()` as an unknown method and leave the user nowhere.
-  // The tailored message says what the receiver became, as the sibling `.find()` case does.
   describe("on a receiver the chain already collapsed to a value", () => {
     const collapsed = [
       ["head()", ".head()"],
@@ -2051,7 +1873,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       });
     }
 
-    // HR7: the slot holds documents, so a numeric terminal over it is refused first.
     it("a numeric terminal over documents is refused before the chain is read", () => {
       expect(() => jsmql("$.x = $$$.orders.sum().aggregate((o) => { $limit(1); });")).toThrow("'.sum()' takes numbers");
       expect(() => jsmql("$.x = $$$.orders.sum();")).toThrow("'.sum()' takes numbers");
@@ -2064,7 +1885,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       expect(() => jsmql("$.x = $$$.orders.find(o => o.v > 0).total.aggregate((o) => { $limit(1); });")).toThrow(
         /'\.aggregate\(\)' produces pipeline stages, not a value/,
       );
-      // The compiler refuses `.length` over the joined array, as it does for any array.
       expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0).length.aggregate((o) => { $limit(1); });")).toThrow(
         "write '.size()'",
       );
@@ -2086,7 +1906,6 @@ describe("$$$.coll.aggregate — error cases", () => {
           },
         },
       ]);
-      // A value terminal AFTER the aggregate is the valid direction.
       expect(jsmql("$.x = $$$.orders.aggregate((o) => { $limit(3); }).head();")).toEqual([
         { $lookup: { from: "orders", pipeline: [{ $limit: 3 }], as: "__jsmql.tmp.0" } },
         { $set: { x: { $first: "$__jsmql.tmp.0" } } },
@@ -2097,18 +1916,11 @@ describe("$$$.coll.aggregate — error cases", () => {
     it("carries a .pos for tooling", () => {
       const res = jsmql.validate("$.x = $$$.orders.head().aggregate((o) => { $limit(1); });");
       expect(res.valid).toBe(false);
-      // Position 23 is the '.' of '.aggregate()'.
       expect(res.errors[0].pos).toBe(23);
     });
   });
 
-  // A `$$$.<coll>` stream is a stream of DOCUMENTS, so an element-returning value terminal on it always yields a document.
-  // mongod refuses `$map` / `$filter` / `$slice` / `$trim` over a document at execution time.
-  // An emit of it would break HR3, so the compiler refuses these shapes before they reach the server.
-
   describe("a value terminal over a joined stream gives ONE DOCUMENT, and the array methods are refused on it", () => {
-    // Every terminal whose row answers `returns: "element"`. The slot holds the
-    // foreign collection's documents, so the element is a document.
     for (const terminal of [
       "head()",
       "first()",
@@ -2126,7 +1938,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       });
     }
 
-    // A numeric terminal over documents is refused (HR7), and `.size()` gives a number, not a document.
     it("refuses '.map()' after '.size()'", () => {
       expect(() => jsmql("$.r = $$$.orders.size().map(x => x);")).toThrow(/'\.map\(\)' is not available on a 'number'/);
     });
@@ -2136,7 +1947,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       });
     }
 
-    // Every method family the server refuses over a document, each with its own operator.
     for (const [method, spelling] of [
       ["filter", ".filter(x => x.total > 1)"],
       ["some", ".some(x => x.total > 1)"],
@@ -2178,8 +1988,6 @@ describe("$$$.coll.aggregate — error cases", () => {
     });
 
     it("a link that REPLACES the elements leaves them unproven, so the array methods stay open", () => {
-      // `.map` peels into the sub-pipeline and the slot still holds documents.
-      // The proof belongs to the binding, and only a plain read of it carries one.
       expect(jsmql("$.r = $$$.orders.map(o => ({ t: o.total })).head().t;")).toEqual([
         { $lookup: { from: "orders", pipeline: [{ $replaceWith: { t: "$total" } }], as: "__jsmql.tmp.0" } },
         { $set: { r: { $let: { vars: { jsmqlV: { $first: "$__jsmql.tmp.0" } }, in: "$$jsmqlV.t" } } } },
@@ -2188,7 +1996,6 @@ describe("$$$.coll.aggregate — error cases", () => {
     });
 
     it("a field path proves nothing, so an in-document array keeps its methods", () => {
-      // SR2: `$.items` has no provable type, so `.head()` over it is not a document.
       expect(jsmql("$.r = $.items.head().map(x => x);")).toEqual([
         {
           $set: {
@@ -2200,8 +2007,6 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   it("$$ = source-switch with an outer-doc $. reference pivots through $lookup + $unwind", () => {
-    // `$unionWith` has no `let`, so a body that correlates with the outer document
-    // lowers to a `$lookup`, and the joined documents become the stream.
     expect(jsmql('$$ = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$s" }); });')).toEqual([
       {
         $lookup: {
@@ -2218,7 +2023,6 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   it("the chained form (.filter(p).aggregate(bad)) validates through the same rules", () => {
-    // The row's own callback rule answers, whether the chain heads at the collection or peels first.
     expect(() => jsmql("$.x = $$$.c.filter(o => o.v > 1).aggregate(o => o.v);")).toThrow(
       "'.aggregate()' takes an arrow whose body is a block of stages — 'o => { $match(…); $limit(1); }' — or a bracketed list of them.",
     );
@@ -2228,9 +2032,6 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 });
 
-// ── Chained stage calls on a foreign collection ──────────────────────────────
-// Stage links peel into `$lookup.pipeline` alongside the lodash chain methods.
-// See docs/specs/lookup-stage.md and docs/specs/aggregation-stages.md.
 describe("chained stage calls on $$$.<coll>", () => {
   it("peels a run of stage links into $lookup.pipeline", () => {
     expect(jsmql("const top = $$$.orders.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(3);")).toEqual([
@@ -2245,9 +2046,6 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // THE EQUIVALENCE: in a foreign chain a stage link is lowered as the
-  // one-statement `.aggregate((o) => { <stage>; })` block it stands for,
-  // through the same engine — so the two spellings cannot drift.
   it("is equivalent to the one-statement .aggregate(...) block spelling", () => {
     const chained = jsmql("$.t = $$$.orders.$match({ x: 1 });");
     const block = jsmql("$.t = $$$.orders.aggregate((o) => { $match({ x: 1 }); });");
@@ -2255,8 +2053,6 @@ describe("chained stage calls on $$$.<coll>", () => {
     expect(block).toEqual(chained);
   });
 
-  // `$.` in a foreign sub-pipeline means the OUTER document and hoists into
-  // `$lookup.let`. That works in every aggregation-EXPRESSION slot…
   it("hoists an outer-document read into $lookup.let in an expression slot", () => {
     expect(jsmql("$.t = $$$.orders.$set({ owner: $.tag });")).toEqual([
       {
@@ -2270,20 +2066,12 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // …and in a query-document `$match` body the compiler re-expresses it as a predicate first,
-  // because MongoDB does not evaluate `$$` vars in the query language.
-  // The server accepts a raw `{ $match: { userId: "$$jsmql_f0__id" } }` and silently matches nothing (verified live).
-  // Whatever `.filter(...)` emits for the same predicate, `.$match` emits too — byte for byte.
   it("re-expresses a correlated query-document $match as a predicate", () => {
-    // A lone `.$match(<plain equality map>)` IS `.filter(<matches object>)`: same predicate.
-    // So it normalises to `filter` in `detectLookupCall` and earns the same indexed basic form, not a correlated sub-pipeline.
     const stageLink = jsmql("$.t = $$$.orders.$match({ userId: $._id });");
     expect(stageLink).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }]);
     expect(jsmql("$.t = $$$.orders.filter({ userId: $._id });")).toEqual(stageLink);
   });
 
-  // Uncorrelated terms stay in index-friendly query form; only the correlated
-  // ones move into `$expr` — again matching `.filter({ … })` exactly.
   it("splits a mixed correlated/plain query-document $match like .filter does", () => {
     const stageLink = jsmql('$.t = $$$.orders.$match({ userId: $._id, status: "shipped" });');
     expect(stageLink).toEqual([
@@ -2301,8 +2089,6 @@ describe("chained stage calls on $$$.<coll>", () => {
   });
 
   it("an operator-bearing $match body is NOT converted — it is not a lodash matcher", () => {
-    // `{ qty: { $gt: 5 } }` as a QUERY means "greater than 5". A lodash matcher
-    // holds JSMQL, so `.filter` refuses the `$` key as raw MQL (HR6).
     expect(jsmql("$.t = $$$.orders.$match({ qty: { $gt: 5 } });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], as: "t" } },
     ]);
@@ -2311,7 +2097,6 @@ describe("chained stage calls on $$$.<coll>", () => {
     );
   });
 
-  // Comparison-operator form correlates too.
   it("translates a correlated comparison-operator query term", () => {
     expect(jsmql("$.t = $$$.orders.$match({ createdAt: { $gte: $.since } });")).toEqual([
       {
@@ -2325,11 +2110,7 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // An UNcorrelated query document keeps the verbatim query-form path (HR1).
   it("leaves an uncorrelated query-document $match verbatim", () => {
-    // The point is the BODY: an uncorrelated term stays index-friendly query form
-    // and is never rewritten into `$expr`. (The lone head also writes straight to
-    // `as: "t"` — it normalises to `.filter`, which skips the tmp slot.)
     expect(jsmql('$.t = $$$.orders.$match({ status: "shipped" });')).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { status: "shipped" } }], as: "t" } },
     ]);
@@ -2338,16 +2119,12 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // The `$expr` escape hatch is the supported hand-written correlation, and
-  // `$$vars` DO resolve inside it — the guard must not fire there.
   it("allows an outer-document read inside the $expr escape hatch", () => {
     expect(jsmql('$.t = $$$.orders.$match({ $expr: { $eq: ["$userId", $._id] } });')).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } },
     ]);
   });
 
-  // The `.aggregate(...)` block spelling correlates through the same path, so it
-  // cannot fall back to the raw query form, which matches nothing in silence.
   it("correlates a query-document $match inside an .aggregate(...) block", () => {
     expect(jsmql("$.orders = $$$.orders.aggregate((o) => { $match({ userId: $._id }); });")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
@@ -2377,8 +2154,6 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // Placement rules are the declarative `forbiddenIn` fact on the stage's row —
-  // the same source the statement path reads.
   it("rejects a stage forbidden inside a $lookup sub-pipeline", () => {
     expect(() => jsmql("$.t = $$$.orders.$out('archive');")).toThrow(
       "'$out' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
@@ -2395,8 +2170,6 @@ describe("chained stage calls on $$$.<coll>", () => {
   });
 
   it("passes an unknown `$` stage in a foreign chain through, and suggests for a JavaScript name", () => {
-    // A `$`-named link is your own MQL. DELIBERATELY invalid: mongod refuses
-    // `$sortt`, because it is not a pipeline stage.
     expect(jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } },
     ]);
@@ -2407,11 +2180,6 @@ describe("chained stage calls on $$$.<coll>", () => {
 });
 
 describe("$$$.coll — where the hoisted $lookup lands", () => {
-  // A join in a callback reads the document that callback's STAGE receives, so the
-  // `$lookup` stands directly ahead of that stage. Ahead of the whole statement it
-  // would read the document the statement STARTED from. That document differs as soon as
-  // any stage between the two reshapes it. See docs/specs/lookup-stage.md § Where a
-  // hoisted stage lands.
   it("lands after a stage that replaces the document with a group key", () => {
     expect(
       jsmql("$$.$sortByCount($.productIds).map(g => ({ _id: g._id, name: $$$.products.find({ _id: g._id }).name }));"),
@@ -2516,13 +2284,10 @@ describe("$$$.coll — where the hoisted $lookup lands", () => {
     ]);
   });
 
-  // Only a stage can carry a `$lookup`, so a callback that binds its own element
-  // has nowhere to put one. The body would read a variable that the stage never bound.
   it("refuses a join whose body reads a variable an enclosing callback binds", () => {
     expect(() => jsmql("$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name);")).toThrow(
       "'x' is bound by an enclosing callback. A read of another collection is a '$lookup' STAGE: the server runs it over the documents, outside that callback, where 'x' has no value. Make the elements documents first — '$$ = $.<array>;' — then each one is a document the join reads: '$.<field> = $$$.<coll>.find(…)'. Or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.",
     );
-    // both spellings the message names do compile
     expect(jsmql("$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;")).toEqual([
       { $unwind: "$items" },
       { $replaceWith: "$items" },

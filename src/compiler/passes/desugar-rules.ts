@@ -1,9 +1,3 @@
-// Phase 3 — the DESUGAR RULES. Each rule rewrites one sugar to the construct that the
-// language already has. `RULES` holds them in the order they are tried, and `applyRules`
-// runs the whole list once over a tree. The driver in desugar.ts repeats that run until
-// nothing changes. The constant engine in evaluate.ts runs it once over a subtree, to
-// ask whether the subtree is settled. See docs/specs/desugar-pass.md.
-
 import { type AssignOp, type BinaryOp, type Expr, type UpdateFilter, ASSIGN_OPS } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
 import { parseExpression } from "../parse/parser.ts";
@@ -27,39 +21,12 @@ import type { Where } from "./position.ts";
 import { edge } from "./position.ts";
 import { mapTreeIn } from "./walk.ts";
 
-/**
- * One rewrite. It returns the node unchanged to decline, or it returns a replacement.
- *
- * A rule never recurses. `mapTree` rewrites the children first, so the
- * node a rule sees is as reduced as it will get.
- */
-export type Rule = {
-  /** The name matches the production it removes, so a failure traces to a row. */
-  name: string;
-  /** `where` is the position the node stands in. Most rules do not read it. */
-  apply: (node: object, where: Where) => object;
-};
+export type Rule = { name: string; apply: (node: object, where: Where) => object };
 
-// ── the rules, in the order they are tried ───────────────────────────────────
-
-/**
- * `+=` `-=` `*=` `/=` → `=` over the matching binary operator.
- *
- * The pass DERIVES this from the AST's own list of assignment spellings. Every
- * compound operator is a binary operator followed by `=`. So the table is the
- * list minus `=` itself and the two increments. A hand-written copy here would
- * make a third table of assignment spellings, and a new `%=` would then need
- * all three.
- */
 const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
   ASSIGN_OPS.filter((op) => op.length > 1 && op.endsWith("=")).map((op) => [op, op.slice(0, -1) as BinaryOp]),
 );
 
-/**
- * Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — and not a field?
- * The parser refuses an arithmetic write on `$` and `$$` before this pass runs.
- * The rewrite would turn `$ += 1` into the valid-looking `$ = $ + 1`.
- */
 function writesACollection(target: Expr): boolean {
   const base = chainBase(target) as { type: string };
   return base.type === "DatabaseRef" || base.type === "ClusterRef";
@@ -68,41 +35,25 @@ function writesACollection(target: Expr): boolean {
 const compoundAssign: Rule = {
   name: "fieldAssignment",
   apply: (node, where) => {
-    // A write in an update document is a field of the document, spelled as it stands.
     if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; value?: Expr; pos?: number };
     if (n.type !== "AssignExpr" || n.op === undefined) return node;
     const binop = COMPOUND.get(n.op);
     if (binop === undefined) return node;
-    // A COLLECTION is not a scalar, so `+=` on one is not arithmetic. It names
-    // the stage that ADDS to what the collection holds, where `=` replaces it.
-    // The emit phase reads the spelling, so the rewrite must leave it alone.
     if (writesACollection(n.target as Expr)) return node;
     return {
       type: "AssignExpr",
       target: { ...(n.target as object) },
       op: "=",
-      // The target appears twice: once as the destination, once as the left
-      // operand. Each copy is FRESH, so no node object sits in two slots. The
-      // walk in walk.ts compares nodes by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n.target, right: n.value, pos: n.pos },
       pos: n.pos,
     } as object;
   },
 };
 
-/**
- * `++` and `--`, prefix or postfix, on a field or a binding.
- *
- * All four spellings produce the same MQL, because a write at statement
- * position has no value in MQL. So the pass cannot tell prefix from
- * postfix. The parser records `value` as a placeholder copy of the target.
- * This rule overwrites it, and does not read it.
- */
 const incDec: Rule = {
   name: "increment",
   apply: (node, where) => {
-    // A write in an update document is a field of the document, spelled as it stands.
     if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; pos?: number };
     if (n.type !== "AssignExpr") return node;
@@ -123,13 +74,6 @@ const incDec: Rule = {
   },
 };
 
-/**
- * `x => { return E }` → `x => E`.
- *
- * This rule is REQUIRED, not tidiness. The parser builds a zero-declaration
- * `ExprBlock` for this form, and without the rewrite an empty `$let: { vars: {} }`
- * would reach the emitter.
- */
 const bareReturnBlock: Rule = {
   name: "blockReturn",
   apply: (node) => {
@@ -140,32 +84,12 @@ const bareReturnBlock: Rule = {
   },
 };
 
-/**
- * `MemberAccess` over a `FieldRef` → one dotted `FieldRef`.
- *
- * MQL spells a nested field one way — `"$a.b"` — so the tree should hold it one
- * way too. Every reader downstream then asks ONE question ("is this a
- * FieldRef?"), and does not walk a chain to find out.
- *
- * A member of a NAMESPACE (`Math.PI`) is the one read that is not a field, and the
- * registry states so (`call: false` on a row whose `on` is the namespace). Every
- * `.name` on a value is a field, and every computation is a call:
- *   $.a.b         → FieldRef("a.b")
- *   $.a.length    → FieldRef("a.length")   ← a field really called `length`
- *   $.a.length()  → the character count of `a`, a MethodCall left alone
- *
- * The rule collects the WHOLE chain from where it stands. It does not fold one
- * link. So a path of any depth becomes one FieldRef.
- */
 const fieldPath: Rule = {
   name: "memberAccess",
   apply: (node) => {
     const n = node as { type: string; object?: object; name?: string };
     if (n.type !== "MemberAccess" || n.name === undefined) return node;
-    // A `$`-led segment is not a path segment: MQL paths cannot hold one, and
-    // the spelling belongs to the chained stage call (`.$match(…)`).
     if (n.name.startsWith("$") || isFieldProperty(n.name)) return node;
-    // Each member with its own `?.` flag: `a?.b` is the member `b` whose accessor tests `a`.
     const members: { name: string; optional: boolean }[] = [
       { name: n.name, optional: (n as { optional?: boolean }).optional === true },
     ];
@@ -185,11 +109,8 @@ const fieldPath: Rule = {
       base = base.object as typeof base;
     }
     if (base.type !== "FieldRef") return node;
-    // The bare `$` has an empty path, so it contributes no leading segment.
     const head = base.path === "" ? [] : [base.path as string];
     const optional = base.optional === true || members.some((m) => m.optional);
-    // The path the LAST `?.` tests: the segments before that member. A `?.` on the
-    // root tests the document, which is always there, and records no path.
     let optionalAt: string | undefined;
     for (let i = members.length - 1; i >= 0; i--) {
       if (!members[i].optional) continue;
@@ -197,8 +118,6 @@ const fieldPath: Rule = {
       if (before !== "") optionalAt = before;
       break;
     }
-    // The walk runs bottom-up, so the base can be a path that an earlier `?.` folded:
-    // the walk folds `$.a?.b` before `.c`. With no `?.` after it, its tested path stays the last one.
     if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded as object;
@@ -208,37 +127,19 @@ const fieldPath: Rule = {
   },
 };
 
-// ── the statement mutators ───────────────────────────────────────────────────
-//
-// A mutator is the one JavaScript shape whose whole meaning is "write this back":
-//   $.items.sort();   is   $.items = $.items.toSorted();
-// So the rewrite is a WRITE, and the position matters. In any other position the
-// row's own message refuses the same tree. This is why both rules below check
-// `where` before anything else — see position.ts.
-
 type Node = { type: string; pos: number } & Record<string, unknown>;
 
 const isNode = (v: unknown): v is Node =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
 
-/** The write, spelled the way the parser spells `$.a = …;`. */
 function writeBack(target: Node, value: object, pos: number): object {
   return {
     type: "UpdateFilter",
-    // The destination gets a FRESH copy of the target: the target now appears
-    // twice, and a later phase compares nodes by identity.
-    // `mutates` marks a mutator's own write, which JavaScript also allows on a `const` binding.
     ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos, mutates: true }],
     pos: target.pos,
   };
 }
 
-/**
- * `$.a.sort(k);` → `$.a = $.a.toSorted(k);`
- *
- * The twin name comes from the row, never from here. Only a same-argument twin
- * has one, so the rule forwards the arguments untouched.
- */
 const mutatorTwin: Rule = {
   name: "methodCall",
   apply: (node, where) => {
@@ -251,18 +152,12 @@ const mutatorTwin: Rule = {
     if (target === null) return node;
     return writeBack(
       target,
-      // `wrote` keeps the source spelling, so a refusal names `.reverse()`, not the twin.
       { type: "MethodCall", object: target, name: twin, wrote: n.name, args: n.args, optional: false, pos: n.pos },
       n.pos,
     );
   },
 };
 
-/**
- * The row's write form, instantiated: `_r` is the receiver, `_0`… are the
- * arguments as written. Every node the form contributes stands at the
- * statement's position; the substituted subtrees keep their own position.
- */
 function instantiate(form: string, recv: Node, args: readonly unknown[], pos: number): object {
   const sub = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(sub);
@@ -279,13 +174,6 @@ function instantiate(form: string, recv: Node, args: readonly unknown[], pos: nu
   return sub(parseExpression(form)) as object;
 }
 
-/**
- * `$.a.pop();` → `$.a = $.a.slice(0, -1);`
- *
- * A mutator with no same-argument twin states its WRITE FORM on the row, by
- * argument count. The form is JSMQL, so it reaches the same value cells a
- * developer's own spelling would. A count the row does not state is an arity error.
- */
 const mutatorForm: Rule = {
   name: "mutatorForm",
   apply: (node, where) => {
@@ -311,13 +199,6 @@ const mutatorForm: Rule = {
   },
 };
 
-/**
- * `$.a.push(9);` → `$.a = [...$.a, 9];`   and the mirror for `.unshift()`.
- *
- * The rule uses spread, not `.concat()`, because they are not the same
- * function: `[1].push([2])` is `[1, [2]]`, and `[1].concat([2])` is `[1, 2]`.
- * Spread keeps push's meaning for an array argument; concat would flatten it.
- */
 const mutatorSpread: Rule = {
   name: "spreadElement",
   apply: (node, where) => {
@@ -335,13 +216,6 @@ const mutatorSpread: Rule = {
   },
 };
 
-/**
- * `$.o.assign(...$.a, x)` → `$.o.assign([...$.a, x])`. A call whose rule reads its
- * arguments as ONE list (`args.spread` on the row) gets them in one array
- * literal. This way the cell sees a single operand, and the array
- * literal's own lowering splices the spread. A rule that reads arguments one by
- * one keeps the spread, and select.ts refuses it with the alternative the row names.
- */
 const packSpread: Rule = {
   name: "packSpread",
   apply: (node, where) => {
@@ -349,7 +223,6 @@ const packSpread: Rule = {
     const n = node as Node & { args?: readonly Node[]; name?: string; callee?: Node };
     if ((n.type !== "MethodCall" && n.type !== "CallExpression") || !Array.isArray(n.args)) return node;
     if (!n.args.some((a) => a.type === "SpreadElement")) return node;
-    // `$$.push(...$$$.coll)` spreads a COLLECTION into the stream. The union road reads that spread itself.
     if (n.type === "MethodCall" && readsAContextRef(n.object as object)) return node;
     const name =
       n.type === "MethodCall"
@@ -362,24 +235,6 @@ const packSpread: Rule = {
   },
 };
 
-// ── the iteratee shorthands ──────────────────────────────────────────────────
-//
-// A shorthand is a shorter spelling of an arrow, so this is the plainest kind of
-// sugar there is. The rewrite here, and not inside each lowering,
-// makes the spellings agree, which they otherwise do not:
-//
-//   $.items.some(x => x.active === true)  → {"items":{"$elemMatch":{"active":true}}}
-//   $.items.some({ active: true })        → {"$expr":{"$anyElementTrue":{"$map":…}}}
-//
-// Both lines mean the same thing. On a document whose `items` is a string,
-// the second FAILS the query and the first answers it. The rewrite runs first
-// and leaves one shape to lower.
-//
-// The row states WHICH slots may be rewritten; the rule never reads this off the
-// argument: `{f:1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`.
-// See `iterateeSlots` in names.ts.
-
-/** `x` → `x.a.b`, one MemberAccess per dotted segment. */
 function pathOn(param: string, path: string, pos: number): object {
   let out: object = { type: "Ident", name: param, pos, minted: true };
   for (const segment of path.split(".")) {
@@ -396,23 +251,12 @@ const strictEq = (left: object, right: object, pos: number): object => ({
   pos,
 });
 
-/** The static key an object entry was written with, or null if it was computed. */
 function writtenKey(entry: object): string | null {
   const e = entry as { type: string; key?: { kind?: string; name?: string } };
   if (e.type !== "KeyValueEntry" || e.key?.kind !== "static") return null;
   return typeof e.key.name === "string" ? e.key.name : null;
 }
 
-/**
- * The arrow a short spelling means, or undefined when this argument is not one
- * of the spellings this slot accepts.
- *
- * `bareCallable` is a callable GLOBAL passed unapplied — `.map(String)`,
- * `.filter(Boolean)`, `.map(ObjectId)` — and means the arrow
- * that applies it to the element. Which slots accept it is the row's decision
- * (its `iterateeSlots`), never this rewrite's. The rewrite only tells a global
- * apart from a binding.
- */
 function asArrow(
   arg: object | undefined,
   forms: readonly string[],
@@ -428,15 +272,12 @@ function asArrow(
   }
 
   const a = arg as { type: string; value?: unknown; entries?: readonly object[]; elements?: readonly object[] };
-  // The parameter must not capture a name the spliced-in values mention.
   const param = freshParam("x", arg);
 
   if (a.type === "StringLiteral" && accepts("propertyPath") && typeof a.value === "string") {
     return { type: "Lambda", params: [param], body: pathOn(param, a.value, pos), pos };
   }
 
-  // lodash's `_.property(5)`: each element read at index 5. A negative number or a
-  // fraction reads no element in JavaScript. It stays as written, and the emitter refuses it.
   const n = a.value;
   if (
     a.type === "NumberLiteral" &&
@@ -454,10 +295,8 @@ function asArrow(
     if (a.entries.length === 0) return undefined;
     const tests = matchTests(param, "", a.entries, pos);
     if (tests === undefined) return undefined;
-    // `{ a: {} }` matches every value: there is nothing to test.
     if (tests.length === 0)
       return { type: "Lambda", params: [param], body: { type: "BooleanLiteral", value: true, pos }, pos };
-    // The chain is left-associated, the way `a === 1 && b === 2 && c === 3` parses.
     const body = tests.reduce((left, right) => ({ type: "BinaryExpr", op: "&&", left, right, pos }));
     return { type: "Lambda", params: [param], body, pos };
   }
@@ -477,17 +316,6 @@ function asArrow(
   return undefined;
 }
 
-/**
- * This function gives the tests that a matcher object states. A matcher object
- * takes the API of lodash's `_.matches`.
- * It is a PARTIAL deep match, not an equality: `{ a: { b: { c: 3 } } }` is
- * `x.a.b.c === 3` and says nothing about `x.a.b.d`. `{ qty: { $gt: 5 } }` is the
- * field `qty.$gt` equal to 5, because a matcher's keys are field names. An array
- * is a subset — `{ tags: ["a", "b"] }` is `x.tags.includes("a") && x.tags.includes("b")`
- * — when its elements are constants, and an equality otherwise. An empty object
- * or array matches anything. The function returns undefined when a key is not
- * written out (a spread, a computed key).
- */
 function matchTests(param: string, prefix: string, entries: readonly object[], pos: number): object[] | undefined {
   const tests: object[] = [];
   for (const entry of entries) {
@@ -522,7 +350,6 @@ function matchTests(param: string, prefix: string, entries: readonly object[], p
 
 const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 
-/** `String` → `String(x)`; `Math.random` → `Math.random(x)`. Anything that is not a callable global maps to undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
   const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
@@ -545,24 +372,14 @@ const iterateeShorthand: Rule = {
 
     const recv = n.object as { type?: string; name?: string } | undefined;
     const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
-    // A receiver supplies a FAMILY. A chain rooted in a context reference is
-    // the stream family wherever the call stands: as a `$facet` branch, as the
-    // argument of `$$.push(…)`, as the right of `$.o = …`. A read of the call's own
-    // position resolves every one of those to the array family.
     const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
     if (family === undefined) return node;
 
-    // A method that runs as another row on a stream (`.find` as `filter`) takes that row's shorthands.
     const runsAs = picksOneOf(n.name);
-    // A value terminal on a stream chain (`$$$.c.filter(p).maxBy("total")`) has no
-    // stream layout: it reads the joined documents as an ARRAY, so the array
-    // family's shorthands apply.
     const layout =
       iterateeSlotsOf(n.name, family) ??
       (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
       (family === "stream" ? iterateeSlotsOf(n.name, "array") : undefined);
-    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none. The pass
-    // reads a sort specification as an order and does not rewrite it to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;
 
     const args = n.args as readonly object[];
@@ -570,7 +387,6 @@ const iterateeShorthand: Rule = {
     let changed = false;
     for (const [key, forms] of Object.entries(layout)) {
       const slot = Number(key);
-      // An absent slot is the `omitted` case, and only when it is the next slot.
       if (slot > args.length) continue;
       const arrow = asArrow(args[slot], forms as readonly string[], n.pos, { method: n.name, slot });
       if (arrow === undefined) continue;
@@ -581,38 +397,18 @@ const iterateeShorthand: Rule = {
   },
 };
 
-/**
- * Every rule, in the order the audits established. The order is important
- * where two rules match one input. Where the rules cannot collide, it is
- * declaration order and nothing more.
- */
 export const RULES: readonly Rule[] = [
-  // The write normalisations come first: everything downstream assumes `op` is
-  // `"="`, and with it the sugar dispatch that routes a write by its target.
   compoundAssign,
   incDec,
   bareReturnBlock,
-  // The fold of a path is independent of every rule above and below it: no rule
-  // matches on a MemberAccess, and none builds one.
   fieldPath,
-  // This runs AFTER fieldPath, which is what makes `$.a.b.sort()` reach a
-  // FieldRef target. Between them the two cover a name at most once: a row
-  // carries `immutableTwin` or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
-  // Independent of the two above: a row carries a twin, an array-literal order or a write form, never two.
   mutatorForm,
-  // This runs AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
   packSpread,
-  // Independent of every rule above: it rewrites an ARGUMENT of a call none of
-  // them matches, and the arrow it builds is not a shape any of them looks for.
   iterateeShorthand,
 ];
 
-/**
- * Run every rule once, in order, over `root`, which stands at `where`. The same reference comes
- * back when no rule fired.
- */
 export function applyRules<T extends object>(root: T, where: Where): T {
   let next = root;
   for (const rule of RULES) next = mapTreeIn(next, where, edge, rule.apply);

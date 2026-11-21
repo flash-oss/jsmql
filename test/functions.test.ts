@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// Reusable named functions: `const f = (a) => …` declared at the top of a
-// pipeline, expanded INLINE at each call site as an IIFE → `$let` (re-lowered
-// per call, never hoisted). See docs/specs/reusable-functions.md.
-
 describe("reusable functions — declaration + call", () => {
   it("two call sites each re-lower to their own $let (Fact 3)", () => {
     expect(jsmql("const double = (x) => x * 2; $ = { a: double($.price), b: double($.cost) };")).toEqual([
@@ -141,14 +137,11 @@ describe("reusable functions — call sites in various contexts", () => {
 
 describe("reusable functions — output stability", () => {
   it("a declared-but-uncalled function emits no stage and no namespace", () => {
-    // Byte-identical to the same pipeline without the declaration: the compiler erases a function declaration
-    // unless a call uses it.
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual(jsmql("$.y = $.z + 1;"));
   });
 
   it("is refused as a bracketed-pipeline element; the statement form inlines it", () => {
-    // `[const double = …]` is a JavaScript SyntaxError: a declaration is not an array element.
     expect(() => jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toThrow(
       "`const double = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. Write the pipeline as statements, with a ';' after each one: `const double = …; $match(…);`. A sub-pipeline takes its statements in an '.aggregate' block: `$.<field> = $$$.<coll>.aggregate(() => { const double = …; $match(…); })` for a '$lookup', `$$.push(...$$$.<coll>.aggregate(() => { … }))` for a '$unionWith', and `$ = { k: $$.aggregate(() => { … }) }` for a '$facet' branch.",
     );
@@ -157,9 +150,6 @@ describe("reusable functions — output stability", () => {
     ]);
   });
 
-  // The compiler must escape a param that the server cannot spell as a `$$` variable. It must escape the param
-  // at the call site's $let too, not just in the array-method binding sites. MongoDB refuses a user variable
-  // name that starts with `_`.
   it("a param name the server rejects is escaped at the call site", () => {
     expect(jsmql.expr("((_) => 1)(2)")).toEqual(1);
     expect(jsmql("const f = (_, n) => n + 1; $.y = f($.a, $.b);")).toEqual([
@@ -197,7 +187,6 @@ describe("reusable functions — rejections (actionable errors)", () => {
     expect(() => jsmql("const double = (x) => x * 2; $ = { f: double };")).toThrow(
       "'double' is a reusable function, and a function is not a value MQL can carry. Call it — 'double(x)' — or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => double(x))'.",
     );
-    // The way out the message names compiles.
     expect(jsmql("const double = (x) => x * 2; $.a = $.xs.map((x) => double(x));")).toEqual([
       {
         $set: {
@@ -278,8 +267,6 @@ describe("reusable functions — validate() carries a meaningful .pos", () => {
 
 describe("reusable functions — edge cases", () => {
   it("a function declared in an .aggregate block lambda closes over the foreign param", () => {
-    // `u.age` inside the function body must hoist to "$age" in the $lookup
-    // sub-pipeline, exactly like a `let` would (the function is a named IIFE).
     expect(
       jsmql("$.users = $$$.users.aggregate(u => { const score = () => u.age * 2; $match(score() > 100); });"),
     ).toEqual([
@@ -306,10 +293,6 @@ describe("reusable functions — edge cases", () => {
   });
 });
 
-// The `function` keyword: a second spelling of the reusable-function/arrow
-// surface, accepted everywhere arrows are (declaration, inline callback, IIFE,
-// entry form). Each case asserts byte-identical MQL to the arrow equivalent.
-// See docs/specs/reusable-functions.md § The `function` keyword.
 describe("`function` keyword — parity with the arrow form", () => {
   it("declaration form lowers identically to `const f = (x) => …`", () => {
     const arrow = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
@@ -434,10 +417,6 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
   });
 
-  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). The compiler rejects every
-  // positional shape: a bare `$`, a bare doc identifier, the two-slot `($, { $op })`, and the three-slot
-  // `(params, $, { $op })`. (String inputs route through the same `parseFunctionInput` path as live arrows, and
-  // do not trip the toolbox param type in this .ts file.)
   it("rejects the bare-`$` arrow entry form `($) => …`", () => {
     expect(() => jsmql.compile("($) => $.age > 18")).toThrow(/object destructure pattern/);
   });
@@ -482,7 +461,6 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(() => jsmql("function* f(x) { return x } $ = { a: f($.n) }")).toThrow(
       "jsmql does not support generator functions ('function*') at position 8. Write a plain 'function (…) { return <expr>; }' or an arrow '(…) => <expr>'.",
     );
-    // `async` gets the same sentence, and a binding or field NAMED async is untouched
     expect(() => jsmql("async function f(x) { return x } $.a = f($.n);")).toThrow(
       /jsmql does not support async functions/,
     );
@@ -490,16 +468,12 @@ describe("`function` keyword — parity with the arrow form", () => {
   });
 
   it("`function` is not a reserved keyword — object keys and field paths continue to work", () => {
-    // It lexes as an ordinary identifier. The parser intercepts it only where a function expression/declaration
-    // can actually start, so `{ function: … }` (object key) and `$.function` (field path) are unaffected.
     expect(jsmql.expr("{ function: $.x }")).toEqual({ function: "$x" });
     expect(jsmql.expr("$.function")).toEqual("$function");
   });
 });
 
 describe("compile params resolve inside every higher-order callback", () => {
-  // The compiler spreads the lambda contexts from the caller's, so a binding reaches the body of every method
-  // that opens a scope. It does not reach only the methods whose context builder happened to list `bindings`.
   it("resolves a param inside .reduce", () => {
     const build = jsmql.expr.compile<{ rate: number }>(({ rate }, { $ }) => $.items.reduce((a, x) => a + x * rate, 0));
     expect(build({ rate: 1.1 })).toEqual({

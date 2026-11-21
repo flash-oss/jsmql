@@ -18,31 +18,11 @@ import {
 import { OPERATOR_CATEGORIES } from "../src/registry/vocabulary.ts";
 import { generateGlobalsSource } from "../scripts/generate-globals.mjs";
 
-// ---------------------------------------------------------------------------
-// Drift-protection test: keep the registry in sync with mongodb/mql-specifications.
-//
-// Reads YAML definitions from vendor/mql-specifications and asserts the registry
-// states a row for every operator the official spec defines. Each failure message
-// names the specific drift, so a contributor can act without a manual search.
-//
-// `npm install` vendors the spec through vendor/fetch-mql-specs.mjs at a pinned commit. The vendor directory is
-// gitignored — re-fetch with `node vendor/fetch-mql-specs.mjs` if missing.
-// ---------------------------------------------------------------------------
-
 const SPEC_ROOT = resolve(import.meta.dirname, "..", "vendor", "mql-specifications", "definitions");
 
-// The folders that hold the operators the registry states rows for. The spec's
-// remaining folders (stage/, types/) describe the pipeline stages and the BSON
-// type names, which the registry states as their own kinds of row.
 const IN_SCOPE_FOLDERS = ["expression", "accumulator", "query"];
 
-// Operators present in MongoDB's documentation (and in jsmql's registry) but
-// not in the official YAML spec at the pinned commit. Acceptable; document each
-// addition here so the gap is visible.
 const REGISTRY_ONLY = new Set([
-  // Update-document operators. The pinned spec commit has no update/ folder, so
-  // every operator an `updateOne` document takes lives here. See
-  // https://www.mongodb.com/docs/manual/reference/operator/update/
   "$bit",
   "$currentDate",
   "$each",
@@ -54,13 +34,10 @@ const REGISTRY_ONLY = new Set([
   "$pullAll",
   "$rename",
   "$setOnInsert",
-  // Queryable Encryption — not in spec as of pinned commit; shapes inferred from
-  // https://www.mongodb.com/docs/manual/reference/operator/aggregation/encStrContains/ and the like.
   "$encStrContains",
   "$encStrEndsWith",
   "$encStrNormalizedEq",
   "$encStrStartsWith",
-  // BSON type converters added after pinned spec commit.
   "$toUUID",
   "$toObject",
   "$toArray",
@@ -76,9 +53,6 @@ function loadSpec(folders: readonly string[]): Map<string, SpecOp> {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".yaml")) continue;
       let txt = readFileSync(resolve(dir, file), "utf8");
-      // Strip the tests: block; it contains custom BSON tags (!bson_int64,
-      // !bson_utcdatetime, and others) that js-yaml's default schema rejects. The test
-      // only needs the metadata above tests: anyway.
       const i = txt.indexOf("\ntests:");
       if (i >= 0) txt = txt.slice(0, i);
       const doc = yaml.load(txt) as SpecOp;
@@ -91,9 +65,6 @@ function loadSpec(folders: readonly string[]): Map<string, SpecOp> {
 const spec = loadSpec(IN_SCOPE_FOLDERS);
 const stageSpec = loadSpec(["stage"]);
 
-// The operator rows: every MongoDB name the registry states that is not a stage. A row exists for each. A row
-// also exists for the ones the registry confines to another operator's body (`$case`, `$box`), and for the ones
-// it refuses outright (`$where`). The question this file asks is coverage, not callability.
 const stageNames = new Set(everyStageName());
 const operatorRows = everyMongoName().filter((name) => !stageNames.has(name));
 
@@ -138,13 +109,6 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("src/globals.ts is byte-equal to the generator output", () => {
-    // The committed src/globals.ts is the artifact that ships in the npm package. The generator runs as part of
-    // `prebuild` and `pretest`. But a contributor who edits a registry row without re-running the generator (or
-    // who edits src/globals.ts by hand) would otherwise ship drifted types. Catch that here.
-    //
-    // The CLI of the generator writes the file through oxfmt before it exits, so the test does the same. It
-    // pipes the generated string through oxfmt before the comparison, because otherwise the test would always
-    // fail on whitespace.
     const raw = generateGlobalsSource();
     const root = resolve(import.meta.dirname, "..");
     const oxfmt = resolve(root, "node_modules/.bin/oxfmt");
@@ -161,41 +125,21 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("declares the $$ / $$$ / $$$$ context refs with typed diagnostic methods", () => {
-    // The context-ref ambient globals let arrow-form `$$` / `$$$` / `$$$$` code
-    // type-check, and surface the collection-/cluster-scoped diagnostic stages
-    // with completion. A future generator change must not silently drop them.
     const src = generateGlobalsSource();
-    // Two named interfaces, one extends the other. The `extends` is what lets a single `$$$` index type serve
-    // both roles of the database ref. The roles are the read head (`$$$.coll.find(…)`) and the `$out` write
-    // target (`$$$.coll = $$`). TypeScript resolves a target's named members against the DECLARED members of
-    // the source, and never through its index signature. Drop the `extends` and `$$$.coll = $$` no longer
-    // type-checks.
     expect(src).toContain("interface JsmqlForeignRef {");
     expect(src).toContain("interface JsmqlStreamRef extends JsmqlForeignRef {");
-    // `$$` must be `var`, not `const`: the `$$ = …` replace-stream / `$facet` sugar reassigns it wholesale, and
-    // `const $$` makes TS reject that valid jsmql (TS2588). `$$$` / `$$$$` stay `const` — they only take
-    // property writes (`$$$.coll = …` → `$out`), which `const` permits.
     expect(src).toContain("var $$: JsmqlStreamRef;");
     expect(src).not.toContain("const $$: JsmqlStreamRef;");
-    // `$$$` indexes to the foreign ref — that is what gives a foreign chain
-    // completion. `$$$$`'s second level is a database, so it keeps a plain tail.
     expect(src).toContain("const $$$: { [collection: string]: JsmqlForeignRef };");
     expect(src).toContain("const $$$$: {");
-    // Diagnostic methods derived from each stage row's `diagnostic` fact, with annotated args.
     expect(src).toContain("collStats(options?: {");
     expect(src).toContain("indexStats(): any;");
     expect(src).toContain("currentOp(options?: {");
     expect(src).toContain("shardedDataDistribution(): any;");
-    // Permissive tail lets the non-diagnostic ref sugar type-check.
     expect(src).toContain("[key: string]: any;");
   });
 
   it("declares the stream vocabulary on both refs, each chaining back to itself", () => {
-    // Every registered stream method (plus the non-registry `.filter` / `.reject`, and `.push` on the
-    // collection ref alone) surfaces as a typed member. So a chain gets IDE completion, and does not fall
-    // through to the `[key: string]` tail. Each ref re-declares them with ITSELF as the return type: a chain
-    // keeps the identity of its root. This is the rule that jsmql enforces for `.find` (legal anywhere on a
-    // foreign chain, nowhere on a `$$` chain).
     const src = generateGlobalsSource();
     const foreign = src.slice(src.indexOf("interface JsmqlForeignRef {"), src.indexOf("interface JsmqlStreamRef"));
     const collection = src.slice(src.indexOf("interface JsmqlStreamRef"), src.indexOf("var $$:"));
@@ -206,24 +150,16 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
       expect(block).toContain(`filter(predicate: ((doc: any) => any) | Record<string, any>): ${ref};`);
       expect(block).toContain(`map(transform: ((doc: any) => any) | string): ${ref};`);
       expect(block).toContain(`take(n: number): ${ref};`);
-      // Chained stage calls — every non-diagnostic stage, body typed `any` so a
-      // stage that also accepts a bare string (`.$unwind("$items")`) still fits.
       expect(block).toContain(`$match(body: any): ${ref};`);
       expect(block).toContain(`$unwind(body: any): ${ref};`);
-      // Registry is the source of truth: every STREAM_METHODS name must appear.
       for (const name of streamMethodNames()) expect(block).toContain(`${name}(`);
-      // …and every stage EXCEPT the diagnostic ones, which keep their own non-`$` spelling (`$$.indexStats()`),
-      // and the compiler rejects them as `.$indexStats()`.
       for (const stage of everyStageName()) {
         if (diagnosticOf(stage) === undefined) expect(block).toContain(`${stage}(body: any): ${ref};`);
         else expect(block).not.toContain(`${stage}(body: any)`);
       }
     }
-    // `.push` is the statement-level `$unionWith` — current stream only.
     expect(collection).toContain("push(...docs: any[]): JsmqlStreamRef;");
     expect(foreign).not.toContain("push(...docs: any[])");
-    // A stream is an array where it genuinely is one: the count, the value
-    // terminals, and enough iterability for `$$.push(...$$$.other)` to spread.
     expect(foreign).toContain("readonly length: number;");
     expect(foreign).toContain("size(): number;");
     expect(foreign).toContain("head(): any;");
@@ -245,14 +181,11 @@ describe("operator registry coverage against mongodb/mql-specifications", () => 
   });
 
   it("object-shape registry entries use keys that exist in the spec", () => {
-    // jsmql's positional key order may legitimately differ from the spec's. A change to it would be a breaking
-    // API change for callers that use the positional form. What we DO require is set membership: every key the
-    // registry exposes for positional invocation must be a name the spec recognises for that operator.
     const violations: string[] = [];
     for (const name of everyOperatorName()) {
       if (operandShapeOf(name) !== "object") continue;
       const specOp = spec.get(name);
-      if (!specOp || !specOp.arguments) continue; // covered by REGISTRY_ONLY check
+      if (!specOp || !specOp.arguments) continue;
       const specNames = new Set(specOp.arguments.map((a) => a.name));
       for (const key of positionalKeysOf(name)) {
         if (!specNames.has(key)) {

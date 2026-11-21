@@ -1,36 +1,6 @@
-// REGISTRY 2 of 4 — the reserved words. LEXICAL phase.
-//
-// Keyed by the word. A row exists here only if the LEXER promotes that word to
-// its own token type. A word that stays an identifier gets no row. That test
-// makes the boundary with tokens.ts sharp, and it has an answer that can surprise:
-// `function` is NOT reserved. The lexer reads it as an identifier and the parser
-// recognises it, so it lives in productions.ts.
-//
-// Like tokens.ts, this file holds NO MQL. The meaning of a keyword is the
-// production it heads, and that production lives in productions.ts.
-//
-// Every reserved word is also a legal NAME: JavaScript allows any IdentifierName
-// after `.` and before `:` in an object literal, and a MongoDB field can have any
-// name. So `$.delete`, `{ null: 1 }` and `$in(…)` all compile. The lexer reads
-// the word as an `Ident` after an introducer (see `introducesName` in tokens.ts),
-// and the parser accepts any keyword token where a key is expected.
-// The one place a reserved word is NOT a name is the shorthand `{ in }`, which
-// JavaScript refuses. Only `undefined` is an identifier there.
-
 import type { TokenName } from "./vocabulary.ts";
 
-// NO import of productions.ts, deliberately. A keyword that points at the rules
-// it heads, together with those rules that point back at the keyword they
-// consume, is a type cycle. TypeScript refuses it. It is also the same fact in two
-// files, and the two can disagree. The edge stays in ONE direction: a rule lists its `tokens`.
-// So the question "which rule does `return` head?" is a search of
-// productions.ts, and there is nothing here to contradict it.
-
-export type KeywordSpec = {
-  doc: string;
-  /** The token type the lexer promotes this word to. */
-  token: TokenName;
-};
+export type KeywordSpec = { doc: string; token: TokenName };
 
 export type KeywordEntry = KeywordSpec & { kind: "keyword" };
 

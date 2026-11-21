@@ -1,30 +1,7 @@
-// test/permutations.test.ts — the lodash "chinese wall".
-//
-// A generative smoke test. It CHAINS the lodash array/collection methods in every ordered pair (reshaper ×
-// reshaper, reshaper × terminal) and asserts:
-//   1. every chain COMPILES (no throw) — always runs, the primary regression net;
-//   2. every emitted MQL RUNS on a real mongod without a server error. It connects to
-//      a local mongod and self-skips (green) when none is reachable.
-//
-// Why: chaining N methods is a combinatorial surface no hand-written case can
-// cover. This is where "method X breaks when chained after Y" gets caught. It has
-// already caught two real bugs (a `$slice: [arr, 0, 0]` mongod-rejection in
-// `takeWhile`/`*RightWhile` and in `drop`/`dropRight`/`tail`/`initial` on an empty
-// array or `n ≥ size`).
-//
-// The mongod half runs on :27018 (see test/fixtures/config.ts); `npm run fixture:up` starts it.
-//
-// The server half MUST default to on. A gate behind an unset environment variable would make every one of these
-// chains compile-only in a normal `npm test`. So the half that catches server rejections, the half that found
-// the two bugs above, would never run.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { liveClient } from "./fixtures/live.ts";
 
-// ── the method vocabulary, by input→output shape ─────────────────────────────
-
-// value-mode: numeric array → numeric array (safe to chain with each other)
 const NUM_RESHAPERS = [
   "map(x => x + 1)",
   "filter(x => x > 2)",
@@ -51,7 +28,6 @@ const NUM_RESHAPERS = [
   "dropRightWhile(x => x < 3)",
   "sampleSize(3)",
 ];
-// value-mode: numeric array → single value / object
 const NUM_TERMINALS = [
   "sum()",
   "mean()",
@@ -68,7 +44,6 @@ const NUM_TERMINALS = [
   "sample()",
   "chunk(2)",
 ];
-// value-mode: object array → object array
 const OBJ_RESHAPERS = [
   "filter(o => o.val > 2)",
   "filter({ type: 'a' })",
@@ -91,7 +66,6 @@ const OBJ_RESHAPERS = [
   "takeRightWhile(o => o.val < 9)",
   "dropRightWhile(o => o.val < 3)",
 ];
-// value-mode: object array → value / object / grouping
 const OBJ_TERMINALS = [
   "map('val')",
   "sumBy('val')",
@@ -114,7 +88,6 @@ const OBJ_TERMINALS = [
   "unionBy([{ id: 99, type: 'z', val: 0 }], 'id')",
   "xorBy([{ id: 1 }], 'id')",
 ];
-// stream-mode: document stream → document stream (pipeline stages)
 const STREAM_RESHAPERS = [
   "filter(o => o.val > 2)",
   "filter({ type: 'a' })",
@@ -136,15 +109,6 @@ const STREAM_RESHAPERS = [
   "shuffle()",
   "flatMap('items')",
 ];
-// `countBy` and `groupBy` are NOT stream reshapers. They COLLAPSE the stream to a
-// single object (`{ <key>: <count> }` / `{ <key>: [docs] }`). So they are in the list
-// below of terminals that collapse the stream to a value. A reshaper that removes
-// fields before them gives `$arrayToObject` a null key, and mongod refuses that key.
-// stream-mode reshapers over the `orders` lookup (doc-PRESERVING, on real order
-// fields) — so the value-terminals below still see `total`/`userId`.
-// (The doc-reshape ones — map/pick/omit/flatMap — are covered by the reshaper×reshaper
-// matrix. A pair of one of them with a terminal that reads a field is a nonsensical chain,
-// not a lowering to test.)
 const STREAM_LOOKUP_RESHAPERS = [
   "filter(o => o.total > 5)",
   "sort('total')",
@@ -159,9 +123,6 @@ const STREAM_LOOKUP_RESHAPERS = [
   "sampleSize(2)",
   "shuffle()",
 ];
-// stream-mode: value-collapsing terminals (valid only in a value position). No numeric
-// terminal (`.sum()`, `.mean()`, `.min()`, `.max()`) is here, because the elements of the
-// stream are documents (HR7). `.sumBy()` and `.meanBy()` read a number from each document.
 const STREAM_TERMINALS = [
   "head()",
   "first()",
@@ -181,11 +142,6 @@ const STREAM_TERMINALS = [
   "map('total')",
 ];
 
-// What each stream reshaper reads off the document. A reshaper that builds a closed document also states the
-// fields it keeps. A link that reads a field the link before it did not keep gives no value, so the compiler
-// refuses the chain: `$$.map(o => ({ id: o.id, v: o.val })).filter(o => o.val > 2)` filters on `val`, which no
-// document holds after the `.map`. A person writes this table by hand, so the refused pairs never come from the
-// compiler under test.
 const STREAM_READS: Readonly<Record<string, readonly string[]>> = {
   "filter(o => o.val > 2)": ["val"],
   "filter({ type: 'a' })": ["type"],
@@ -200,7 +156,6 @@ const STREAM_READS: Readonly<Record<string, readonly string[]>> = {
   "tail()": [],
   "slice(0, 3)": [],
   "uniqBy('type')": ["type"],
-  // pick and omit take a missing key as it is: they read nothing that must be there.
   "pick(['id', 'val'])": [],
   "omit(['items'])": [],
   "sample()": [],
@@ -215,49 +170,35 @@ const STREAM_KEEPS: Readonly<Record<string, readonly string[]>> = {
 const readsWhatWasDropped = (a: string, b: string): boolean =>
   STREAM_KEEPS[a] !== undefined && STREAM_READS[b].some((f) => !STREAM_KEEPS[a].includes(f));
 
-// ── chain builders ───────────────────────────────────────────────────────────
-/** `refused`: the compiler must refuse the chain, because a link reads a field that is not there. */
 type Chain = { kind: "expr" | "pipe"; src: string; refused?: true };
 const chains: Chain[] = [];
-// value: reshaper × reshaper → `.size()` (any array → number, so the whole chain
-// is a concrete scalar; this exercises every reshaper-after-reshaper pair).
 for (const a of NUM_RESHAPERS)
   for (const b of NUM_RESHAPERS) chains.push({ kind: "expr", src: `$.nums.${a}.${b}.size()` });
 for (const r of NUM_RESHAPERS) for (const t of NUM_TERMINALS) chains.push({ kind: "expr", src: `$.nums.${r}.${t}` });
 for (const a of OBJ_RESHAPERS)
   for (const b of OBJ_RESHAPERS) chains.push({ kind: "expr", src: `$.objs.${a}.${b}.size()` });
 for (const r of OBJ_RESHAPERS) for (const t of OBJ_TERMINALS) chains.push({ kind: "expr", src: `$.objs.${r}.${t}` });
-// stream: reshaper × reshaper (bare statement chain → pipeline stages).
 for (const a of STREAM_RESHAPERS) {
   for (const b of STREAM_RESHAPERS) {
     chains.push({ kind: "pipe", src: `$$.${a}.${b};`, ...(readsWhatWasDropped(a, b) ? { refused: true } : {}) });
   }
 }
-// stream value-terminals in a VALUE position (assignment RHS over a lookup result):
-// reshaper stages build the $lookup sub-pipeline, the terminal peels to value-mode.
 for (const r of STREAM_LOOKUP_RESHAPERS) {
   for (const t of STREAM_TERMINALS) {
     chains.push({ kind: "pipe", src: `$.out = $$$.orders.filter(o => o.userId === $._id).${r}.${t};` });
   }
 }
 
-// ── optional mongod runtime check ────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types are not imported unless MONGO is set
 let mainColl: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any = null;
 
 beforeAll(async () => {
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   client = await liveClient(2500);
   if (client !== null) {
     const db = client.db("jsmql_permutations");
     await db.dropDatabase();
     const t = db.collection("t");
     await t.insertMany([
-      // Varied array sizes — INCLUDING single-element (row 4) and empty (row 5),
-      // which are what surface the count-0 `$slice` edge on drop/tail/takeWhile.
       {
         _id: 1,
         id: 1,
@@ -327,7 +268,6 @@ afterAll(async () => {
   await client?.close();
 });
 
-/** Does any field at any depth carry the compiler's namespace? */
 const holdsNamespace = (v: unknown): boolean =>
   Array.isArray(v)
     ? v.some(holdsNamespace)
@@ -335,8 +275,6 @@ const holdsNamespace = (v: unknown): boolean =>
       ? Object.entries(v).some(([k, x]) => k.startsWith("__jsmql") || holdsNamespace(x))
       : false;
 
-// Compile every chain in `subset`; when a mongod is connected, run each emitted
-// MQL and collect any server rejection. Fails with the offending chains listed.
 async function checkAll(subset: Chain[]) {
   const compileFails: string[] = [];
   const runFails: string[] = [];
@@ -363,7 +301,6 @@ async function checkAll(subset: Chain[]) {
           await mainColl.aggregate([{ $addFields: { __v: mql } }, { $project: { _id: 0, __v: 1 } }]).toArray();
         } else {
           const docs = await mainColl.aggregate(mql as Record<string, unknown>[]).toArray();
-          // `__jsmql` is the compiler's scratch space, and never the developer's data.
           if (holdsNamespace(docs)) runFails.push(`${src}  ::  a document holds a field under __jsmql`);
         }
       } catch (e) {
@@ -377,7 +314,6 @@ async function checkAll(subset: Chain[]) {
   served += ran;
 }
 
-/** How many chains actually reached the server. Read by the coverage guard below. */
 let served = 0;
 
 const only = (k: Chain["kind"], pred: (s: string) => boolean) => chains.filter((c) => c.kind === k && pred(c.src));
@@ -406,10 +342,6 @@ describe("lodash chain permutations (chinese wall)", () => {
   });
 
   it("reports whether the server half ran, so a green run cannot hide a skip", () => {
-    // A compile of every chain proves jsmql does not throw. It says nothing about whether the emitted MQL RUNS,
-    // which is the half that caught the real bugs here. A suite that silently degrades to compile-only looks
-    // identical to one that passed. So state which happened: either every chain reached the server, or none
-    // did.
     if (mainColl === null) {
       console.warn("\n[permutations] no mongod reachable — compile-only. Start one to exercise the runtime half.\n");
       expect(served).toBe(0);

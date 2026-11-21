@@ -1,19 +1,3 @@
-// THE proof that the interpreter is safe: for every operator that it runs, the value
-// that it computes equals the value that the server computes for the SAME MQL.
-//
-// Nothing else can establish this. A `toEqual` on the interpreter's answer proves
-// what the interpreter says, never that the server agrees. Every rule that looks like
-// an arbitrary restriction in src/compiler/interpret/ is there because a case in this
-// file once failed. See src/compiler/interpret/CLAUDE.md.
-//
-// There is one table of cases for each operator in RULES. A row is one MQL expression.
-// The server runs `[{ $documents: [{}] }, { $addFields: { v: <mql> } }]`. A row holds an
-// expression that the interpreter answers. A test of a refusal is in
-// compiler-interpret.test.ts, because the server gives no answer for it.
-//
-// The suite skips itself, and reports green, when no mongod is reachable. The guards at
-// the foot of the file check that every case ran, or that none did.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp } from "bson";
@@ -26,26 +10,22 @@ import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 const up = await liveUp();
 if (!up) announceSkip("interpret-agrees");
 
-// Characters that a string operator must count in code points or in bytes, not in UTF-16 units.
 const ASTRAL = "😀";
-const LIGATURE = "ﬁ"; // U+FB01 sorts below U+1F600 in code points and above it in UTF-16 units
+const LIGATURE = "ﬁ";
 const ACCENT = "é";
 
-/** The code points that `$trim` removes by default, as one string. */
 const SPACES = [0, 9, 10, 11, 12, 13, 32, 0xa0, 0x1680, ...Array.from({ length: 11 }, (_, i) => 0x2000 + i)]
   .map((cp) => String.fromCodePoint(cp))
   .join("");
 
 const OID = "507f1f77bcf86cd799439011";
 
-/** A Sunday in ISO week 10, with every field of the time set. */
 const WHEN = new Date("2024-03-10T13:45:30.123Z");
-/** The dates where the week rules, the year rules and the calendar differ. */
 const EDGE_DATES = [
   WHEN,
-  new Date("2021-01-03T00:00:00Z"), // a Sunday that belongs to ISO week 53 of 2020
-  new Date("2024-12-30T08:00:00Z"), // a Monday that belongs to ISO week 1 of 2025
-  new Date("2023-01-01T00:00:00Z"), // a Sunday: week 1 by Sunday, week 52 by ISO
+  new Date("2021-01-03T00:00:00Z"),
+  new Date("2024-12-30T08:00:00Z"),
+  new Date("2023-01-01T00:00:00Z"),
   new Date("2020-12-31T23:59:59.999Z"),
   new Date("0001-01-01T00:00:00Z"),
   new Date("-000001-12-31T12:00:00Z"),
@@ -67,12 +47,7 @@ const DATE_PARTS = [
   "$isoDayOfWeek",
 ] as const;
 
-/**
- * The cases, one table for each operator. A new operator adds one table, and the guard
- * at the foot of the file fails until it does. Each table holds four to twelve rows.
- */
 export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
-  // ── arithmetic ─────────────────────────────────────────────────────────────
   $add: [
     { $add: [1, 2] },
     { $add: [] },
@@ -190,7 +165,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
   ],
   $bitNot: [{ $bitNot: 5 }, { $bitNot: -1 }, { $bitNot: 0 }, { $bitNot: 2147483647 }, { $bitNot: -2147483648 }],
 
-  // ── comparison ─────────────────────────────────────────────────────────────
   $eq: [
     { $eq: [1, 1] },
     { $eq: [1, 1.5] },
@@ -275,7 +249,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $cmp: [1e300, 1e-300] },
   ],
 
-  // ── logic, scope and constants ─────────────────────────────────────────────
   $and: [{ $and: [] }, { $and: [1, "a", [], ""] }, { $and: [true, 0] }, { $and: [null] }, { $and: [{}] }],
   $or: [{ $or: [] }, { $or: [0, null, false] }, { $or: [0, ""] }, { $or: [0, 2] }],
   $not: [{ $not: [0] }, { $not: [""] }, { $not: null }, { $not: [[]] }, { $not: [true] }, { $not: [{ a: 1 }] }],
@@ -340,7 +313,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $literal: null },
   ],
 
-  // ── arrays ─────────────────────────────────────────────────────────────────
   $size: [
     { $size: [[1, 2]] },
     { $size: [[]] },
@@ -625,7 +597,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $setIsSubset: [[[1]], [[1], 2]] },
   ],
 
-  // ── documents ──────────────────────────────────────────────────────────────
   $objectToArray: [
     { $objectToArray: { a: 1, b: 2 } },
     { $objectToArray: {} },
@@ -711,7 +682,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $unsetField: { field: "b", input: { a: 1, b: { c: 2 }, d: 3 } } },
   ],
 
-  // ── strings ────────────────────────────────────────────────────────────────
   $concat: [
     { $concat: ["a", "b"] },
     { $concat: [] },
@@ -864,7 +834,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $toString: ASTRAL },
   ],
 
-  // ── types ──────────────────────────────────────────────────────────────────
   $type: [
     { $type: 1 },
     { $type: 1.5 },
@@ -924,7 +893,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $toInt: "-0" },
   ],
 
-  // ── regular expressions ────────────────────────────────────────────────────
   $regexMatch: [
     { $regexMatch: { input: "abc", regex: "^ab?c$" } },
     { $regexMatch: { input: "Abc", regex: "^[a-c]+$", options: "i" } },
@@ -968,7 +936,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $regexFindAll: { input: "fooBar-baz 9", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
   ],
 
-  // ── accumulators, in their expression form ─────────────────────────────────
   $sum: [
     { $sum: [1, 2, 3] },
     { $sum: [[1, 2, 3]] },
@@ -1020,7 +987,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
     { $min: [[false, true]] },
   ],
 
-  // ── dates ──────────────────────────────────────────────────────────────────
   ...Object.fromEntries(
     DATE_PARTS.map((op) => [
       op,
@@ -1204,9 +1170,6 @@ export const BATTERIES: Readonly<Record<string, readonly unknown[]>> = {
   ],
 };
 
-// ── the widened rules ─────────────────────────────────────────────────────────
-
-/** One value of each kind that the server orders, for the pairs of kinds. A Long and a Decimal128 are numbers. */
 const KINDS: readonly [string, unknown][] = [
   ["null", null],
   ["number", 5],
@@ -1230,7 +1193,6 @@ const KINDS: readonly [string, unknown][] = [
   ["decimal", Decimal128.fromString("7.5")],
 ];
 
-/** Two opaque values of one place: the interpreter refuses to order those, as the unit tests state. */
 const opaque = (v: unknown): boolean =>
   rankOf(v) !== undefined &&
   !["null", "number", "fraction", "string", "empty string", "document", "empty document"].includes(
@@ -1247,7 +1209,6 @@ const pairsOf = (op: string): unknown[] =>
     .filter(([a, b]) => comparable(a, b))
     .map(([a, b]) => ({ [op]: [a, b] }));
 
-/** Documents and arrays that hold values of two kinds, and the field names that order a document. */
 const NESTED: readonly [unknown, unknown][] = [
   [{ a: 1 }, { b: 0 }],
   [{ a: 1 }, { a: "x" }],
@@ -1321,19 +1282,13 @@ const FINITE = (x: number) => ({
   ],
 });
 
-/**
- * The cases of the rules that the interpreter runs on more than the battery of the operator
- * holds. A table here may hold more than twelve cases. Each case is a value that the interpreter answers.
- */
 export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
-  // Two kinds: equality is false, and an order follows the place of each kind in the BSON order.
   "$eq of every pair of kinds": pairsOf("$eq"),
   "$ne of every pair of kinds": pairsOf("$ne"),
   "$cmp of every pair of kinds": pairsOf("$cmp"),
   "$lt of every pair of kinds": pairsOf("$lt"),
   "$lte of every pair of kinds": pairsOf("$lte"),
   "$gt of every pair of kinds": pairsOf("$gt"),
-  // A key that reads as an array index keeps its place in a document. The answer is the pairs in order.
   "$arrayToObject with keys that read as array indexes": [
     {
       $arrayToObject: [
@@ -1391,13 +1346,11 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
   "$cmp of documents and arrays": NESTED_PAIRS("$cmp"),
   "$eq of documents and arrays": NESTED_PAIRS("$eq"),
   "$lt of documents and arrays": NESTED_PAIRS("$lt"),
-  // The comparisons that the lowerings of HR5 write on any value.
   "$lte with null": [null, 0, "", "a", [], {}, false, new Date(0), new ObjectId(OID)].map((x) => ({ $lte: [x, null] })),
   "$ne with the empty string": [null, 0, "", "a", [], {}, false, new Date(0), new ObjectId(OID)].map((x) => ({
     $ne: [x, ""],
   })),
 
-  // The text of a value of a BSON type, and the finite-number test that a lowering writes.
   $toString: [
     { $toString: new ObjectId(OID) },
     { $toString: new ObjectId("000000000000000000000000") },
@@ -1431,7 +1384,6 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
     { $toInt: { $ceil: { $divide: [{ $month: new Date("2020-12-05T20:30:40.123Z") }, 3] } } },
   ],
 
-  // The patterns that the lowerings write, a non-ASCII subject, and each edge that the server measured.
   $regexFindAll: [
     ...["fooBar-baz 9", "XMLHttpRequest", "", "héllo wörld 😀 AbC", "user_name-2 HTTPServer", "__x__", "a1B2"].map(
       (input) => ({ $regexFindAll: { input, regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } }),
@@ -1486,7 +1438,6 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
     { $regexMatch: { input: "aB", regex: "A[b]", options: "i" } },
   ],
 
-  // A set answer flows through the operators that read no order.
   "$map over a set": [
     PAIRS_OF_SET,
     { $map: { input: SET, in: { $add: ["$$this", 1] } } },
@@ -1538,15 +1489,6 @@ export const WIDENED: Readonly<Record<string, readonly unknown[]>> = {
   ],
 };
 
-/**
- * The one place where the interpreter answers and the server fails. The server folds
- * every constant part of an expression before it runs the whole. So a division by
- * zero in a branch that is not taken fails the whole. The interpreter evaluates
- * only the branch that the answer needs, as JavaScript does: a guard such as
- * `d === 0 ? 0 : 1 / d` is the idiom that every JavaScript developer writes. A case
- * stays here with its reason. The test asserts that the server still fails. A
- * change of the server moves the row to BATTERIES.
- */
 const FAILS_ON_THE_SERVER = "the server folds the constant part that the answer does not need";
 const NOT_TAKEN = { $divide: [1, 0] };
 export const DIVERGE: readonly { mql: unknown; value: unknown; why: string }[] = [
@@ -1561,12 +1503,10 @@ export const DIVERGE: readonly { mql: unknown; value: unknown; why: string }[] =
   { mql: { $filter: { input: [], cond: NOT_TAKEN } }, value: [], why: FAILS_ON_THE_SERVER },
 ];
 
-/** One case of the run: the operator, its MQL and what happened. */
 type Outcome = "compared" | "both-refused";
 
 const tallies = { cases: 0, ran: 0, compared: 0 };
 
-/** The value of a field that the server did not write. */
 const MISSING = Symbol("missing");
 
 async function serverValue(db: Db, mql: unknown): Promise<{ value: unknown } | { error: string }> {
@@ -1595,7 +1535,6 @@ async function check(db: Db, mql: unknown): Promise<Outcome | string> {
   if ("error" in server)
     return `the interpreter answers ${show(answer.value)}, and the server fails (${server.error}) for ${show(mql)}`;
   if (answer.value instanceof OrderedDocument) {
-    // A driver reads a document into a JavaScript object, which loses the order. The server lists the pairs in order.
     const pairs = await serverValue(db, { $objectToArray: mql });
     const held = answer.value.pairs.map(([k, v]) => ({ k, v }));
     return "value" in pairs && sameValue(pairs.value, held)
@@ -1665,7 +1604,6 @@ describe.skipIf(!up)("the interpreter agrees with the server", () => {
     expect(Object.keys(BATTERIES).filter((name) => !(name in RULES))).toEqual([]);
   });
 
-  // A case that returns early asserts nothing, so the run states how much of it ran.
   it("ran each case, or none", () => {
     const total = [...Object.values(BATTERIES), ...Object.values(WIDENED)].reduce((n, cases) => n + cases.length, 0);
     expect(tallies.cases).toBe(total);

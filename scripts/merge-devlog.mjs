@@ -1,31 +1,4 @@
 #!/usr/bin/env node
-/**
- * Auto-resolve a `docs/DEVLOG/*.md` merge conflict.
- *
- * DEVLOG entries are append-only, one file per month (`docs/DEVLOG/YYYY-MM.md`),
- * separated by `\n\n---\n\n`. When two branches each add a new entry to the same
- * month's file, git cannot pick a correct answer and asks for a manual conflict
- * resolution. This script does the structural merge instead: split each side into
- * entries, take the union (deduplicated by the `## YYYY-MM-DD — Title` heading),
- * and sort newest-first.
- *
- * Run it after a merge stops on one or more files under `docs/DEVLOG/`:
- *
- *     ./scripts/merge-devlog.mjs
- *
- * With no argument, it finds every unmerged `docs/DEVLOG/YYYY-MM.md` path on its
- * own and resolves each one. Pass one or more paths to resolve only those:
- *
- *     ./scripts/merge-devlog.mjs docs/DEVLOG/2026-09.md
- *
- * The script reads the three index stages (base, ours, theirs) that git preserves
- * during an unresolved conflict, writes the merged file, and runs `git add` on it.
- * A file added on both sides (a new month, with no base stage) merges the same
- * way, reading its missing base as empty. Continue the merge with
- * `git merge --continue` or `git commit` afterwards. If a file is not
- * auto-resolvable (header diverged, a past entry edited differently on both
- * sides), the script reports that file, exits non-zero, and leaves it unchanged.
- */
 
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -55,7 +28,6 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   const ours = parse(oursText);
   const theirs = parse(theirsText);
 
-  // Header: accept any one-sided edit. Reject two edits that differ.
   let header;
   if (ours.header === theirs.header) header = ours.header;
   else if (ours.header === base.header) header = theirs.header;
@@ -67,8 +39,6 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   const theirsMap = new Map(theirs.entries.map((e) => [headingOf(e), e]));
   const merged = new Map();
 
-  // Step 1: entries that existed in the base. The append-only convention says past
-  // entries should not change, but a one-sided edit (for example, a typo fix) is acceptable.
   for (const [k, baseEntry] of baseMap) {
     const o = oursMap.get(k);
     const t = theirsMap.get(k);
@@ -84,13 +54,11 @@ export function mergeDevlog(baseText, oursText, theirsText) {
     else return { ok: false, reason: `entry "${k}" was edited differently on both sides` };
   }
 
-  // Step 2: net-new entries from ours.
   for (const [k, e] of oursMap) {
     if (baseMap.has(k)) continue;
     merged.set(k, e);
   }
 
-  // Step 3: net-new entries from theirs.
   for (const [k, e] of theirsMap) {
     if (baseMap.has(k)) continue;
     if (merged.has(k) && merged.get(k) !== e) {
@@ -99,7 +67,6 @@ export function mergeDevlog(baseText, oursText, theirsText) {
     merged.set(k, e);
   }
 
-  // Newest first. When two entries share a date, use alphabetical order to break the tie.
   const sorted = [...merged.values()].sort((a, b) => {
     const da = dateOf(a);
     const db = dateOf(b);
@@ -111,15 +78,9 @@ export function mergeDevlog(baseText, oursText, theirsText) {
 }
 
 function git(args) {
-  // The DEVLOG grows across a month, and `spawnSync` has its own default maximum
-  // buffer size. Without a bigger one, a read fails with ENOBUFS and reports itself
-  // as "not conflicted". This is the opposite of what actually happened.
   return spawnSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 }
 
-/** Reads one conflict stage of a path. A path absent from a stage (an add/add
- * conflict, where the file is new on one or both sides) reads as empty text —
- * the same as a month's file that does not exist yet. */
 function readStageOrEmpty(stage, path) {
   const r = git(["show", `:${stage}:${path}`]);
   if (r.status === 0) return r.stdout;

@@ -1,20 +1,7 @@
-// Hand-written mirror of the emit-side `jsTruthy()` helper (src/compiler/emit/mode.ts),
-// for expected values in tests. JS truthy/falsy: false, null (or missing), "", and 0 are
-// falsy; everything else is truthy.
-//
-// This is deliberately a SECOND implementation, not an import of the real one. A test that built its
-// expectation from the code under test would pass no matter what that code emitted. This file stays one module,
-// so a change to the rule is one edit here plus the emitter. It is not a sweep of every suite that asserts a
-// predicate shape.
-
-/** `jsTruthy(v)` — the wrap every boolean position gets when the value is not provably bool. */
 export const truthy = (v: unknown) => ({
   $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });
 
-/** `and()` of a `&&` chain: `$and` of the boolified operands, spliced flat. */
 export const truthyAnd = (...vs: unknown[]) => ({ $and: vs.flatMap((v) => truthy(v).$and) });
 
-/** `or()` of a `||` chain: `$or` of the boolified operands (no splice — the
- *  operands are `$and`s, a different connective). */
 export const truthyOr = (...vs: unknown[]) => ({ $or: vs.map((v) => truthy(v)) });

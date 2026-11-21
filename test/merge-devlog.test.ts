@@ -1,9 +1,3 @@
-/**
- * Unit tests for the structural-merge core of `scripts/merge-devlog.mjs`. The script's smoke usage covers the
- * CLI side (it reads git index stages and calls `git add`) indirectly. Here we exercise the pure merge function
- * directly, so future regressions in the merge logic surface in `npm test`.
- */
-
 import { describe, it, expect } from "vitest";
 import { mergeDevlog, parse } from "../scripts/merge-devlog.mjs";
 
@@ -43,9 +37,7 @@ describe("merge-devlog: append-friendly merges", () => {
     expect(r.result).toContain("Old entry A");
     expect(r.result).toContain("Old entry B");
 
-    // 2026-05-10 entries appear before 2026-04-01 (newest-first).
     expect(r.result.indexOf("2026-05-10")).toBeLessThan(r.result.indexOf("2026-04-01"));
-    // Same-date entries ordered alphabetically by heading: "Other …" < "Smoke …"
     expect(r.result.indexOf("Other thing")).toBeLessThan(r.result.indexOf("Smoke checks codified"));
   });
 
@@ -53,7 +45,6 @@ describe("merge-devlog: append-friendly merges", () => {
     const r = mergeDevlog(BASE, BASE, BASE);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // The merge normalises the output, but the content equals BASE.
     expect(parse(r.result)).toEqual(parse(BASE));
   });
 

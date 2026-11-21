@@ -1,15 +1,3 @@
-// Convert a test file's expectations when the compiler changes their POLARITY.
-//
-//   expect(() => X).toThrow(…)  →  expect(X).toEqual(<value>)   when X no longer throws (unless X matches a KEEP pattern)
-//   expect(X).toEqual(…)        →  expect(() => X).toThrow(msg)  when X now throws
-//
-// A KEEP pattern (a regex over the call's source) protects a refusal the suite must
-// continue to assert. The conversion then leaves that `toThrow` alone, so the run
-// fails and names the input the compiler now accepts. Review the result as a
-// difference. An accepted input that the compiler must refuse is a compiler bug,
-// not a test to convert.
-//
-// Run by hand:  node scripts/convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]
 import ts from "typescript";
 import { compilerThrew, expectCall, literalSubject, openSuite, spell } from "./expectations.mjs";
 

@@ -1,15 +1,3 @@
-// Phase 5 of src/compiler/ — the METHOD cells of the value target, family by family.
-//
-// A method's row carries its value cell (`expr: { args, emit }`). This suite holds
-// one spelling per cell, asserts the MQL, and runs every spelling on a live mongod
-// over a fixture. It compares the value the server returns with the value JavaScript
-// returns for the same input. Where JavaScript and MongoDB cannot agree (a local-time
-// accessor on a server that knows no client timezone), the case says so and asserts
-// the MongoDB answer.
-//
-// This suite self-skips (reports green) when no mongod is reachable, with the all-or-nothing
-// guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
-
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Binary, Decimal128, Long, MongoClient, ObjectId, UUID, type Collection } from "mongodb";
 import { expr, filter } from "../src/compiler/index.ts";
@@ -18,10 +6,8 @@ import { NAMES } from "../src/registry/names.ts";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
 
-/** Is the project's mongod running? Settled once, for the blocks that need it. */
 const up = await liveUp();
 
-/** One document, every field a method below reads. */
 const DOC = {
   _id: 1,
   s: "  Hello World  ",
@@ -35,12 +21,10 @@ const DOC = {
   keys: ["a", "_c"],
   kname: "_c",
   h: "<a & b>",
-  // separator runs around the words, for lodash's word-case methods
   dashed: "--Foo-Bar--",
   under: "__FOO_BAR__",
   a: [3, 1, 2],
   b: [2, 5],
-  // an array that holds a value more than once, for the set operations
   dup: [3, 1, 3, 2, 1],
   docs: [
     { k: "x", v: 2 },
@@ -48,22 +32,18 @@ const DOC = {
     { k: "x", v: 3 },
   ],
   nested: [[1, 2], [3]],
-  // rows of six, for the index shorthand (`.keyBy(5)`)
   rows: [
     [1, 2, 3, 4, 5, 6],
     [7, 8, 9, 0, 1, 2],
   ],
   pairs: [["k", 1]],
   mixed: [0, 1, "", "a", null, false, true],
-  // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
   mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
-  // this document holds documents, to test the shorthands of an object predicate
   team: {
     ann: { active: false, role: "user", tags: ["x"] },
     bob: { active: true, role: "admin", tags: [] },
     cy: { active: true, role: "user", tags: ["y", "z"] },
   },
-  // one value of each BSON type that a type test names
   bt: {
     l: Long.fromNumber(5),
     dec: Decimal128.fromString("1.5"),
@@ -71,32 +51,19 @@ const DOC = {
     uuid: new UUID("6ac24965-7917-4323-8d44-920ad1d69b94"),
     bin: new Binary(Buffer.from("hi")),
   },
-  // an object whose values give one key more than once, for `.invertBy()`
   inv: { a: { k: "x", n: 1 }, b: { k: "y", n: 2 }, c: { k: "x", n: 3 }, d: { n: 4 } },
 };
 
 type Case = { src: string; js: (d: typeof DOC) => unknown; note?: string; unordered?: true };
 const RUNS: Case[] = [];
-/** Assert the shape, and remember the source for the server half with the JavaScript answer. */
 const compiled = (src: string, js: (d: typeof DOC) => unknown, note?: string): unknown => {
   RUNS.push({ src, js, note });
   return expr(src);
 };
-/**
- * For a SET operation: MongoDB's `$setUnion` and its kin return elements in no promised
- * order. A developer never writes an order, so we compare the elements, not their
- * sequence. This reflects MongoDB behaviour (SR2).
- */
 const unordered = (src: string, js: (d: typeof DOC) => unknown): unknown => {
   RUNS.push({ src, js, unordered: true });
   return expr(src);
 };
-/**
- * The shape a JavaScript method takes on a receiver that may be null or missing. This
- * shape tests the receiver first, then runs the method inside. It answers null where
- * JavaScript would throw. A receiver that is certainly there (a literal, a `$lookup`'s
- * array) does not need a test.
- */
 const nullOr = (recv: unknown, body: unknown): unknown => ({ $cond: [{ $lte: [recv, null] }, null, body] });
 
 describe("compiler/emit — string methods", () => {
@@ -150,7 +117,6 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // a string that is long enough stays as it is, and a "$" pad stays text
     compiled('$.csv.padStart(3, "-")', (d) => d.csv.padStart(3, "-"));
     compiled('$.csv.padEnd(9, "$")', (d) => d.csv.padEnd(9, "$"));
     compiled("$.nope.padStart(3)", () => "   ");
@@ -159,8 +125,6 @@ describe("compiler/emit — string methods", () => {
     });
     expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({ $substrCP: ["$csv", 2, 2] });
     expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({ $substrCP: ["$csv", 1, 2] });
-    // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A negative position
-    // reads as 0, as in JavaScript, because `$indexOfCP` refuses a negative start.
     expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({
       $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"],
     });
@@ -194,7 +158,6 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // lodash
     expect(compiled("$.w.capitalize()", () => "Foobar baz-qux")).toEqual({
       $concat: [
         { $toUpper: { $substrCP: ["$w", 0, 1] } },
@@ -233,7 +196,6 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // these are the expected answers: the lower-case and upper-case words of the same fields
     expect(compiled("$.w.lowerCase()", () => "foo bar baz qux")).toEqual({
       $toLower: {
         $reduce: {
@@ -348,7 +310,6 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
-    // for a missing field, the dot form gives "", and `?.` gives null
     expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
     expect(compiled("$.nope?.upperCase()", () => null)).toHaveProperty("$cond");
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
@@ -476,7 +437,6 @@ describe("compiler/emit — string methods", () => {
 
 describe("compiler/emit — date methods", () => {
   it("counts months and weekdays from 0, as JavaScript does", () => {
-    // measured: `$month` of March is 3, `$dayOfWeek` of a Sunday is 1
     expect(compiled("$.d.getUTCFullYear()", (d) => d.d.getUTCFullYear())).toEqual({
       $year: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
     });
@@ -501,7 +461,6 @@ describe("compiler/emit — date methods", () => {
     expect(compiled("$.d.getUTCMilliseconds()", (d) => d.d.getUTCMilliseconds())).toEqual({
       $millisecond: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
     });
-    // the local-time accessors are the same operators: the server knows no client timezone, so they read UTC
     expect(compiled("$.d.getMonth()", (d) => d.d.getUTCMonth(), "local time is UTC on the server")).toEqual({
       $subtract: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
     });
@@ -609,8 +568,6 @@ describe("compiler/emit — date methods", () => {
 
 describe("compiler/emit — object methods", () => {
   it("reads a .pickBy / .omitBy predicate with the JavaScript truth rules", () => {
-    // `""` and `[]` split the two languages: `""` is false in JavaScript and true to a
-    // raw MongoDB condition. The server answer must be JavaScript's for both methods.
     const truth = {
       $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
     };
@@ -629,7 +586,6 @@ describe("compiler/emit — object methods", () => {
         $filter: { input: pairs, as: "jsmqlKv", cond: { $not: [{ $let: { vars: { v: "$$jsmqlKv.v" }, in: truth } }] } },
       },
     });
-    // A predicate that answers a boolean needs no test.
     expect(
       compiled("$.mo.pickBy(v => v === 0)", (d) => Object.fromEntries(Object.entries(d.mo).filter(([, v]) => v === 0))),
     ).toEqual({
@@ -644,7 +600,6 @@ describe("compiler/emit — object methods", () => {
   });
 
   it("finds the key of the first entry that passes", () => {
-    // this copy of lodash's `_.findKey` gives the first own key whose value passes, or `undefined`
     const findKey = <V>(o: Record<string, V> | undefined, p: (v: V, k: string) => unknown): string | undefined =>
       Object.keys(o ?? {}).find((k) => p(o![k], k));
     const pairs = (f: string) => ({ $objectToArray: { $ifNull: [f, {}] } });
@@ -666,7 +621,6 @@ describe("compiler/emit — object methods", () => {
         { $eq: [{ $indexOfCP: [{ $ifNull: ["$$k", ""] }, "_"] }, 0] },
       ),
     );
-    // the predicate reads the JavaScript truth rules: `""` and `0` fail, `[]` passes
     expect(compiled("$.mo.findKey(v => v)", (d) => findKey(d.mo, (v) => v))).toEqual(
       first(
         pairs("$mo"),
@@ -674,7 +628,6 @@ describe("compiler/emit — object methods", () => {
         { $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }] },
       ),
     );
-    // the shorthands `_.property`, `_.matches` and `_.matchesProperty` read the VALUE
     expect(compiled('$.team.findKey("active")', (d) => findKey(d.team, (v) => v.active))).toEqual(
       first(
         pairs("$team"),
@@ -703,12 +656,9 @@ describe("compiler/emit — object methods", () => {
     expect(compiled('$.team.findKey(["role", "admin"])', (d) => findKey(d.team, (v) => v.role === "admin"))).toEqual(
       first(pairs("$team"), { x: "$$jsmqlKv.v" }, { $eq: ["$$x.role", "admin"] }),
     );
-    // when no entry passes, when the object is empty or when the field is missing, the answer is `undefined`.
-    // On the server, `undefined` is a missing value.
     compiled("$.o.findKey(v => v > 9)", (d) => findKey(d.o, (v) => v > 9));
     compiled("({}).findKey(v => v > 1)", () => findKey({}, () => true));
     compiled("$.nope.findKey(v => v > 1)", () => findKey(undefined, () => true));
-    // a `?.` gives null for a missing receiver, with no null test
     expect(compiled("$.nope?.findKey(v => v > 1)", () => null)).toEqual({
       $getField: {
         field: "k",
@@ -814,8 +764,6 @@ describe("compiler/emit — object methods", () => {
         },
       },
     });
-    // A key list the source does not SPELL — a field path, or an element read at run
-    // time — is one only the server knows. So both read the object's own keys instead.
     expect(
       compiled("$.o.pick($.keys)", (d) => Object.fromEntries(Object.entries(d.o).filter(([k]) => d.keys.includes(k)))),
     ).toEqual({
@@ -851,8 +799,6 @@ describe("compiler/emit — object methods", () => {
         },
       },
     });
-    // A missing key list picks nothing and omits nothing — `$in` would
-    // otherwise ABORT the command on a second operand that is not an array.
     expect(compiled("$.o.pick($.nope)", () => ({}))).toEqual({
       $arrayToObject: {
         $filter: {
@@ -947,7 +893,6 @@ describe("compiler/emit — object methods", () => {
         },
       },
     });
-    // A method of another family is refused as it is on any document.
     expect(() => expr("$.trim()")).toThrow(/'\.trim\(\)' is not available on an 'object' — it is defined on 'string'/);
     expect(() => expr("$.map(x => x)")).toThrow(/A document is not a list/);
     expect(() => expr("$.o.mapValues(5)")).toThrow(/one- or two-parameter arrow/);
@@ -959,7 +904,6 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.map(x => x * 2)", (d) => d.a.map((x) => x * 2))).toEqual({
       $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
     });
-    // an index READ makes the input the `[i, x]` pairs
     expect(compiled("$.a.map((x, i) => x + i)", (d) => d.a.map((x, i) => x + i))).toEqual({
       $map: {
         input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
@@ -1108,7 +1052,6 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.toSorted()", (d) => d.a.toSorted())).toEqual({
       $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 },
     });
-    // `(a, b) => a - b` names no field, so the elements themselves are the key
     expect(compiled("$.a.toSorted((a, b) => a - b)", (d) => d.a.toSorted((a, b) => a - b))).toEqual({
       $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 },
     });
@@ -1127,7 +1070,6 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.docs.sortBy(x => x.v)", (d) => d.docs.toSorted((p, q) => p.v - q.v))).toEqual({
       $sortArray: { input: { $ifNull: ["$docs", []] }, sortBy: { v: 1 } },
     });
-    // a computed key sorts `{ k, v }` pairs and takes the values back
     expect(
       compiled("$.docs.sortBy(x => x.v % 2)", () => [
         { k: "x", v: 2 },
@@ -1209,7 +1151,6 @@ describe("compiler/emit — array methods", () => {
         },
       },
     });
-    // measured: a three-argument `$slice` refuses a count of 0, which the first and last index reach
     expect(compiled("$.a.with(2, 9)", (d) => d.a.with(2, 9))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] }, jsmqlIdx: 2, jsmqlVal: 9 },
@@ -1302,7 +1243,6 @@ describe("compiler/emit — array methods", () => {
         },
       },
     });
-    // a start counted from the end, and the two ends JavaScript clamps
     expect(compiled("$.a.toSpliced(-1, 1)", (d) => d.a.toSpliced(-1, 1))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -1473,7 +1413,6 @@ describe("compiler/emit — array methods", () => {
         },
       },
     });
-    // the count left out removes everything from the start on
     expect(compiled("$.a.toSpliced(2)", (d) => d.a.toSpliced(2))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -1576,7 +1515,6 @@ describe("compiler/emit — array methods", () => {
         },
       },
     });
-    // a start read at run time: the sign is not known until the server sees it
     expect(compiled("$.a.toSpliced($.neg, 1)", (d) => d.a.toSpliced(d.neg, 1))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -1622,8 +1560,6 @@ describe("compiler/emit — array methods", () => {
   });
 
   it("lowers `.indexOf` and `.lastIndexOf` to the array form on a bare receiver", () => {
-    // Both are array methods: the receiver is an array by the row's claim, and the
-    // server judges any other value. A string takes `.indexOfSubstring`.
     expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
       $indexOfArray: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, "b"],
@@ -1648,7 +1584,6 @@ describe("compiler/emit — array methods", () => {
   });
 
   it("lowers each method of one family to that family's operator on a bare receiver", () => {
-    // Membership is `.has` on an array; the substring test is `.includes` on a string.
     expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual({ $in: [2, { $ifNull: ["$a", []] }] });
     expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual({
       $gte: [{ $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"] }, 0],
@@ -1658,9 +1593,6 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.csv.substring(2)", (d) => d.csv.substring(2))).toEqual({
       $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, 2] }] }],
     });
-    // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
-    // array it stands for. JavaScript's `Array.prototype.concat` reads it the same way.
-    // An argument that the proof cannot place tests `$isArray` when it runs.
     expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({
       $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }],
     });
@@ -1682,22 +1614,14 @@ describe("compiler/emit — array methods", () => {
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
       $concatArrays: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, ["!"], ["?"]],
     });
-    // Strings join with `+`.
     expect(compiled('$.csv + "!" + "?"', (d) => d.csv + "!" + "?")).toEqual({ $concat: ["$csv", "!", "?"] });
-    // `.size()` counts the elements of an array, and a missing array counts as empty; the
-    // number of fields of an object is the size of its keys.
     expect(compiled("$.a.size()", (d) => d.a.length)).toEqual({ $size: { $ifNull: ["$a", []] } });
     expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toEqual({
       $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
-    // `.toString()` is the bare `$toString`. On an array it gives MongoDB's text ("[3,1,2]"),
-    // and `.join()` gives JavaScript's text ("3,1,2").
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: { $ifNull: ["$n", ""] } });
     expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
     expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
-    // `$ifNull` wraps the reduce so an EMPTY array answers "", not the reduce's own
-    // `null` seed. That guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
-    // The seed is `null` so a leading "" element keeps its separator.
     expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toEqual({
       $ifNull: [
         {
@@ -1738,7 +1662,6 @@ describe("compiler/emit — array methods", () => {
   });
 
   it("computes the folds, the set operations and the groups of an array", () => {
-    // `$sum`, `$avg` and `$max` answer null as they answer `[]`, so HR5 adds no `$ifNull`.
     expect(compiled("$.a.sum()", (d) => 6)).toEqual({ $sum: "$a" });
     expect(compiled("$.a.mean()", (d) => 2)).toEqual({ $avg: "$a" });
     expect(compiled("$.a.max()", (d) => 3)).toEqual({ $max: "$a" });
@@ -1829,8 +1752,6 @@ describe("compiler/emit — array methods", () => {
     expect(unordered("$.a.intersection($.b)", () => [2])).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
-    // The set difference: each value once, as a JavaScript Set holds it. lodash's
-    // `_.difference([3, 1, 3, 2, 1], [2, 5])` keeps the duplicates, [3, 1, 3, 1].
     expect(unordered("$.a.difference($.b)", (d) => [...new Set(d.a).difference(new Set(d.b))])).toEqual({
       $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
@@ -1971,7 +1892,6 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.a.flat(2)")).toThrow(/from 1 to 1/);
     expect(() => expr("$.a.has(x => x > 1)")).toThrow(/searches for a VALUE/);
     expect(() => expr("$.csv.includes(x => x > 1)")).toThrow(/searches for a STRING/);
-    // a receiver proven to be the other family: the refusal names that family's spelling
     expect(() => expr('$.csv.split(",").includes("b")')).toThrow("For membership in an array, write '.has(x)'.");
     expect(() => expr('$.s.trim().has("x")')).toThrow("For a substring test, write '.includes(x)'.");
     expect(() => expr('$.csv.split(",").length()')).toThrow("For the number of elements, write '.size()'.");
@@ -1992,8 +1912,6 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.indexOfSubstring(1)")).toThrow(
       "'.indexOfSubstring()' argument 1 takes a string, but got a number.",
     );
-    // Each argument of a string method takes one kind (HR7). The server refuses a fractional
-    // index or count, and a number where it reads a string.
     expect(() => expr("$.s.substring(1.5)")).toThrow("'.substring()' argument 1 takes an integer, but got a fraction.");
     expect(() => expr("$.s.substring(0, 2.5)")).toThrow(
       "'.substring()' argument 2 takes an integer, but got a fraction.",
@@ -2007,7 +1925,6 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.startsWith(1)")).toThrow("'.startsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.endsWith(1)")).toThrow("'.endsWith()' argument 1 takes a string, but got a number.");
     expect(() => expr("$.s.includes(1)")).toThrow("'.includes()' argument 1 takes a string, but got a number.");
-    // A needle that is not a string means membership in an array: the refusal names '.has()', on both roads.
     expect(() => expr("$.arr.includes(3)")).toThrow(
       "'.includes()' argument 1 takes a string, but got a number. For membership in an array, write '.has(x)'.",
     );
@@ -2021,9 +1938,7 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.includes($.s.length())")).toThrow(
       "'.includes()' argument 1 takes a string, but got a number.",
     );
-    // The query road falls back to the value cell. Both cells state the kind.
     expect(() => jsmql("$.s.startsWith(1)")).toThrow("'.startsWith()' argument 1 takes a string, but got a number.");
-    // the position is an integer: `$indexOfCP` refuses a fractional start (HR7)
     expect(() => expr('$.s.indexOfSubstring("b", 1.9)')).toThrow(
       "'.indexOfSubstring()' argument 2 takes an integer, but got a fraction.",
     );
@@ -2035,17 +1950,11 @@ describe("compiler/emit — array methods", () => {
   });
 });
 
-/** lodash's `_.groupBy` and `_.countBy` over rows, keyed by one index: the answers the server must give. */
 const byIndex = (rows: readonly (readonly number[])[], i: number) => ({
   groups: rows.reduce<Record<string, number[][]>>((o, r) => ({ ...o, [r[i]]: [...(o[r[i]] ?? []), [...r]] }), {}),
   counts: rows.reduce<Record<string, number>>((o, r) => ({ ...o, [r[i]]: (o[r[i]] ?? 0) + 1 }), {}),
 });
 
-/**
- * lodash's `_.invertBy`: the original keys, grouped by the string of the iteratee's
- * result, in entry order. JSMQL spells a missing result as `"null"`, as `.groupBy()`
- * does. lodash spells it `"undefined"`. So a case with a missing result maps it to null.
- */
 const invertBy = (o: Record<string, unknown>, f: (v: any) => unknown = (v) => v): Record<string, string[]> => {
   const out: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(o)) (out[String(f(v))] ??= []).push(k);
@@ -2084,7 +1993,6 @@ describe("compiler/emit — `.invertBy()` gives lodash's `_.invertBy` object", (
         },
       },
     });
-    // two keys on one result: the group keeps the entry order
     expect(compiled("$.inv.invertBy(v => v.n % 2)", (d) => invertBy(d.inv, (v) => v.n % 2))).toEqual({
       $let: {
         vars: {
@@ -2123,12 +2031,10 @@ describe("compiler/emit — `.invertBy()` gives lodash's `_.invertBy` object", (
         },
       },
     });
-    // a number, a boolean, an empty string and null each become a key
     compiled('$.mo.omit(["g"]).invertBy()', (d) =>
       invertBy(Object.fromEntries(Object.entries(d.mo).filter(([k]) => k !== "g"))),
     );
     compiled("$.o.invertBy(v => v / 2)", (d) => invertBy(d.o, (v) => v / 2));
-    // an empty object, and a missing one under a dot, give the empty object
     compiled("$.o.pickBy(v => v > 5).invertBy()", () => ({}));
     compiled("$.nope.invertBy()", () => ({}));
   });
@@ -2137,7 +2043,6 @@ describe("compiler/emit — `.invertBy()` gives lodash's `_.invertBy` object", (
     const same = (short: string, long: string, js: (d: typeof DOC) => unknown) => {
       expect(compiled(short, js)).toEqual(expr(long));
     };
-    // `d` holds no `k`: a missing result is the key "null"
     same('$.inv.invertBy("k")', "$.inv.invertBy(x => x.k)", (d) => invertBy(d.inv, (v: { k?: string }) => v.k ?? null));
     same('$.inv.invertBy({ k: "x" })', '$.inv.invertBy(x => x.k === "x")', (d) =>
       invertBy(d.inv, (v: { k?: string }) => v.k === "x"),
@@ -2162,7 +2067,6 @@ describe("compiler/emit — a whole number in an iteratee slot is lodash's `_.pr
     same("$.rows.differenceBy($.nested, 0)", "$.rows.differenceBy($.nested, x => x[0])", (d) =>
       d.rows.filter((r) => !d.nested.some((m) => m[0] === r[0])),
     );
-    // a constant receiver folds, and a constant or injected index means the same arrow
     expect(expr("[[1, 2, 3, 4, 5, 6], [7, 8, 9, 0, 1, 2]].keyBy(5)")).toEqual({
       $arrayToObject: [
         [
@@ -2202,9 +2106,6 @@ describe("compiler/emit — a whole number in an iteratee slot is lodash's `_.pr
   });
 });
 
-// ── the server ───────────────────────────────────────────────────────────────
-
-/** lodash's `_.range` (its `baseRange`), the answer each `.range()` case compares with. */
 const lodashRange = (start: number, end?: number, step?: number): number[] => {
   if (end === undefined) [start, end] = [0, start];
   const by = step === undefined ? (start < end ? 1 : -1) : step;
@@ -2215,7 +2116,6 @@ const lodashRange = (start: number, end?: number, step?: number): number[] => {
 
 describe("compiler/emit — number ranges", () => {
   it("folds the direction when both bounds are constants", () => {
-    // a closed range is a constant, so the fold writes the list itself
     expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual([0, 1, 2, 3]);
     expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual([0, -1, -2, -3]);
     expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual([1, 2, 3, 4]);
@@ -2253,7 +2153,6 @@ describe("compiler/emit — number ranges", () => {
         in: { $range: [1, "$$jsmqlEnd", { $cond: [{ $lt: [1, "$$jsmqlEnd"] }, 1, -1] }] },
       },
     });
-    // the answer is never null, so a chain after it pays no guard
     expect(compiled("$.neg.range().size()", (d) => lodashRange(d.neg).length)).toEqual({
       $size: { $range: [0, { $ifNull: ["$neg", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$neg", 0] }] }, 1, -1] }] },
     });
@@ -2284,7 +2183,6 @@ describe("compiler/emit — number ranges", () => {
   });
 });
 
-/** lodash's `_.pad` for a pad of one character, the answer each `.pad()` case compares with. */
 const lodashPad = (string: unknown, length?: number, chars?: string): string => {
   const s = string == null ? "" : String(string);
   const size = [...s].length;
@@ -2297,7 +2195,6 @@ const lodashPad = (string: unknown, length?: number, chars?: string): string => 
 
 describe("compiler/emit — `.pad()` is lodash's `_.pad`", () => {
   it("adds the pad on alternate sides, and gives the end the odd character", () => {
-    // the step whose `$$this` has the parity of the length adds at the end
     expect(compiled("$.csv.pad(9)", (d) => lodashPad(d.csv, 9))).toEqual({
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$csv", ""] } },
@@ -2389,7 +2286,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.bt.dec.isNumber()", () => true)).toEqual({ $isNumber: "$bt.dec" });
     expect(compiled("$.csv.isNumber()", () => false)).toEqual({ $isNumber: "$csv" });
     expect(compiled("$.n.isDouble()", () => true)).toEqual({ $eq: [{ $type: "$n" }, "double"] });
-    // the driver writes a whole JavaScript number as a 32-bit integer
     expect(compiled("$.neg.isInt()", () => true)).toEqual({ $eq: [{ $type: "$neg" }, "int"] });
     expect(compiled("$.n.isInt()", () => false)).toEqual({ $eq: [{ $type: "$n" }, "int"] });
     expect(compiled("$.bt.l.isLong()", () => true)).toEqual({ $eq: [{ $type: "$bt.l" }, "long"] });
@@ -2398,9 +2294,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.d.isDate()", () => true)).toEqual({ $eq: [{ $type: "$d" }, "date"] });
     expect(compiled("$.bt.oid.isObjectId()", () => true)).toEqual({ $eq: [{ $type: "$bt.oid" }, "objectId"] });
     expect(compiled("$.o.isObject()", () => true)).toEqual({ $eq: [{ $type: "$o" }, "object"] });
-    // an array is not a document, unlike lodash's `_.isObject`
     expect(compiled("$.a.isObject()", () => false)).toEqual({ $eq: [{ $type: "$a" }, "object"] });
-    // `$type` names every binData "binData", so `.isUUID()` also asks for subtype 4
     const uuidTest = (v: string) => ({
       $and: [
         { $eq: [{ $type: v }, "binData"] },
@@ -2410,20 +2304,16 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.bt.uuid.isUUID()", () => true)).toEqual(uuidTest("$bt.uuid"));
     expect(compiled("$.bt.bin.isUUID()", () => false)).toEqual(uuidTest("$bt.bin"));
     expect(compiled("$.kname.isUUID()", () => false)).toEqual(uuidTest("$kname"));
-    // a computed receiver is bound once
     expect(compiled("$.kname.trim().isUUID()", () => false)).toEqual({
       $let: { vars: { jsmqlV: { $trim: { input: { $ifNull: ["$kname", ""] } } } }, in: uuidTest("$$jsmqlV") },
     });
-    // HR5: a missing value has the `$type` "missing", so the dot needs no safe value
     expect(compiled("$.nope.isString()", () => false)).toEqual({ $eq: [{ $type: "$nope" }, "string"] });
     expect(compiled("$.nope.isNumber()", () => false)).toEqual({ $isNumber: "$nope" });
     expect(compiled("$.mo.d.isObject()", () => false)).toEqual({ $eq: [{ $type: "$mo.d" }, "object"] });
     expect(compiled("$.nope.isUUID()", () => false)).toEqual(uuidTest("$nope"));
-    // a `?.` gives null for a missing value
     expect(compiled("$.nope?.isString()", () => null)).toEqual(
       nullOr("$nope", { $eq: [{ $type: "$nope" }, "string"] }),
     );
-    // a constant folds
     expect(expr('"a".isString()')).toBe(true);
     expect(expr("[1].isString()")).toBe(false);
   });
@@ -2457,29 +2347,22 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
     const epoch = new Date("1970-01-01T00:00:00.000Z");
     expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
-    // `$toInt` of a double drops the fraction
     expect(compiled("$.n.toInt()", (d) => Math.trunc(d.n))).toEqual({ $toInt: { $ifNull: ["$n", 0] } });
     expect(compiled("$.neg.toLong()", (d) => d.neg)).toEqual({ $toLong: { $ifNull: ["$neg", 0] } });
     expect(expr("$.n.toDecimal()")).toEqual({ $toDecimal: { $ifNull: ["$n", 0] } });
     expect(compiled("$.n.toBool()", () => true)).toEqual({ $toBool: { $ifNull: ["$n", false] } });
     expect(compiled("$.mo.c.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$mo.c", false] } });
-    // MongoDB's `$toBool` reads every string as true, where JavaScript's `Boolean("")` is false
     expect(compiled("$.mo.a.toBool()", () => true, "$toBool of a string")).toEqual({
       $toBool: { $ifNull: ["$mo.a", false] },
     });
     expect(compiled("$.d.toDate()", (d) => d.d)).toEqual({ $toDate: { $ifNull: ["$d", epoch] } });
-    // HR5: a missing value reads as the safe value of the kind that the method answers
     expect(compiled("$.nope.toDouble()", () => 0)).toEqual({ $toDouble: { $ifNull: ["$nope", 0] } });
     expect(compiled("$.nope.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$nope", false] } });
     expect(compiled("$.nope.toDate()", () => epoch)).toEqual({ $toDate: { $ifNull: ["$nope", epoch] } });
-    // after a `?.` the operator gives null, and no `$cond` tests the receiver
     expect(compiled("$.nope?.toDouble()", () => null)).toEqual({ $toDouble: "$nope" });
-    // an ObjectId and a UUID have no safe value, so the dot and `?.` emit one document
     expect(compiled("$.nope.toObjectId()", () => null)).toEqual({ $toObjectId: "$nope" });
     expect(expr("$.nope?.toObjectId()")).toEqual({ $toObjectId: "$nope" });
     expect(expr("$.id.toUUID()")).toEqual({ $toUUID: "$id" });
-    // DELIBERATELY invalid: the server refuses to convert an array. The literal goes one
-    // level deeper, so the server reads it as one argument and gives that conversion error.
     expect(expr("[1, 2].toDouble()")).toEqual({ $toDouble: [[1, 2]] });
   });
 
@@ -2493,7 +2376,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ],
     });
     expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({ $cmp: [{ $ifNull: ["$neg", 0] }, 0] });
-    // HR5: a missing number reads as 0, the safe value, so its sign is 0
     expect(compiled("$.nope.sign()", () => 0)).toEqual({ $cmp: [{ $ifNull: ["$nope", 0] }, 0] });
     expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: { $ifNull: ["$n", 0] } });
     expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({
@@ -2553,7 +2435,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ["Math.atan2($.y, $.x)", "'<y>.atan2(<x>)'"],
       ["Math.max($.a, $.b)", "'[a, b].max()'"],
       ["Math.pow($.x, 2)", "'base ** exponent'"],
-      // The method spelling of a static that JSMQL refuses takes the same refusal.
       ["$.n.pow(2)", "'$.n ** 2'"],
       ["$.a.map(x => x.pow(2))", "'$.n ** 2'"],
     ]) {
@@ -2562,20 +2443,16 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("refuses a type name as a conversion function, and lowers the Number, Array and Object statics", () => {
-    // The value's own method converts it, and each refusal names the method.
     expect(() => expr("String($.n)")).toThrow(/'\$\.x\?\.toString\(\)'/);
     expect(() => expr("Boolean($.neg)")).toThrow(/'!!\$\.x'/);
     expect(() => expr("Number($.n)")).toThrow(/'\$\.x\?\.toDouble\(\)'/);
-    // lodash's `_.toNumber` as a method: JavaScript has no `.toNumber()`, and the refusal names the conversion.
     expect(() => expr("$.n.toNumber()")).toThrow(/'\.toNumber\(\)' is not part of JSMQL.*'\$\.x\.toDouble\(\)'/);
     expect(() => expr("$.a.map(x => x.toNumber())")).toThrow(/'\$\.x\.toDouble\(\)'/);
-    // JavaScript's case methods: JSMQL spells them as lodash and MongoDB do, and the refusal names that spelling.
     expect(() => expr("$.s.toUpperCase()")).toThrow(/'\.toUpperCase\(\)' is not part of JSMQL.*'\$\.x\.toUpper\(\)'/);
     expect(() => expr("$.s.toLowerCase()")).toThrow(/'\.toLowerCase\(\)' is not part of JSMQL.*'\$\.x\.toLower\(\)'/);
     expect(() => expr("$.a.map(x => x.toLowerCase())")).toThrow(/'\$\.x\.toLower\(\)'/);
     expect(() => jsmql("$.s = $.s.toUpperCase();")).toThrow(/'\$\.x\.toUpper\(\)'/);
     expect(() => jsmql('$.s.toLowerCase() === "a"')).toThrow(/'\$\.x\.toLower\(\)'/);
-    // A dot reads a missing string as "", and the conversion cannot take it: the `?.` goes on the field.
     expect(() => expr("Number($.s.trim())")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toDouble\(\)'/);
     expect(() => expr("Long($.s)")).toThrow(/right after the field: '\$\.x\?\.trim\(\)\.toLong\(\)'/);
     expect(compiled("$.n.isInteger()", () => Number.isInteger(DOC.n))).toEqual({
@@ -2595,7 +2472,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.n.isNaN()", () => Number.isNaN(DOC.n))).toEqual({
       $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
     });
-    // a missing value is no number, and a string is no number, as in JavaScript
     expect(compiled("$.nope.isInteger()", () => false)).toEqual({
       $and: [
         {
@@ -2610,7 +2486,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.csv.isNaN()", () => Number.isNaN(DOC.csv))).toEqual({
       $and: [{ $isNumber: "$csv" }, { $eq: [{ $toString: "$csv" }, "NaN"] }],
     });
-    // a computed receiver is bound once
     expect(compiled("$.n.abs().isInteger()", () => false)).toEqual({
       $let: {
         vars: { jsmqlV: { $abs: { $ifNull: ["$n", 0] } } },
@@ -2627,13 +2502,11 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // a namespace is no value: each static refuses, and the message names the method
     expect(() => expr("Number.isInteger($.n)")).toThrow(/'\$\.x\.isInteger\(\)'/);
     expect(() => expr("Number.isNaN($.n)")).toThrow(/'\$\.x\.isNaN\(\)'/);
     expect(compiled("$.a.isArray()", () => Array.isArray(DOC.a))).toEqual({ $isArray: "$a" });
     expect(compiled("$.n.isArray()", () => Array.isArray(DOC.n))).toEqual({ $isArray: "$n" });
     expect(compiled("$.nope.isArray()", () => false)).toEqual({ $isArray: "$nope" });
-    // a namespace is no value: the static refuses, and the message names the method
     expect(() => expr("Array.isArray($.a)")).toThrow(/'\$\.x\.isArray\(\)'/);
     expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
@@ -2643,7 +2516,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // A list of pairs written in the source is the `$map` input itself, with no extra array level.
     expect(
       compiled('[["a", 1], ["b", $.n]].fromEntries()', (d) =>
         Object.fromEntries([
@@ -2662,7 +2534,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // A number key becomes a string key, as in JavaScript.
     expect(
       compiled('[[7, $.neg], ["b", 1]].fromEntries()', (d) =>
         Object.fromEntries([
@@ -2684,9 +2555,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("merges with .assign(): the receiver first, an empty receiver left out, a spread as the list of sources", () => {
-    // `({}).assign(...list)` is the one spelling that merges an array of objects. The
-    // empty target means the call writes nothing into `docs[0]`. With no spread, one
-    // argument is one source object, so the `{}` stays and keeps it an object operand.
     const merged = (...xs: object[]) => Object.assign({}, ...xs);
     expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
     expect(compiled("({}).assign($.o)", (d) => merged(d.o))).toEqual({ $mergeObjects: [{}, "$o"] });
@@ -2705,7 +2573,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("refuses a static and a type name as a callback, and names the arrow", () => {
-    // A type name as a conversion function is not part of JSMQL, in a callback too.
     expect(() => expr("$.a.map(String)")).toThrow(/In a callback, write 'x => x\.toString\(\)'/);
     expect(() => expr("$.a.map(Number)")).toThrow(/In a callback, write 'x => x\.toDouble\(\)'/);
     expect(() => expr("$.a.map(Long)")).toThrow(/In a callback, write 'x => x\.toLong\(\)'/);
@@ -2747,7 +2614,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // MongoDB has no set type, so the row of `Set` refuses the call on each element.
     expect(() => expr("$.a.map(Set)")).toThrow(/is not part of JSMQL, because MongoDB has no set type/);
   });
 
@@ -2853,7 +2719,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
-    // a body that calls anything reads the reducer's two variables through a `$let`: the call may own a `$reduce`
     expect(
       compiled("$.a.reduceRight((acc, x) => acc.concat([x]), [])", () =>
         DOC.a.reduceRight((acc: number[], x) => acc.concat([x]), []),
@@ -2889,11 +2754,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("does each JavaScript Set operation with an array method", () => {
-    // MongoDB has no set type. Each case is the array form of one Set operation, and
-    // JavaScript's own Set gives the answer that the server must agree with. A set
-    // operator promises no order, so the elements are compared, not their sequence.
-    // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an array.
-    // So a missing receiver runs on `[]` (HR5), and a missing list argument is `[]`.
     expect(unordered("$.dup.uniq()", (d) => [...new Set(d.dup)])).toEqual({ $setUnion: { $ifNull: ["$dup", []] } });
     expect(compiled("$.dup.uniq().size()", (d) => new Set(d.dup).size)).toEqual({
       $size: { $setUnion: { $ifNull: ["$dup", []] } },
@@ -2924,7 +2784,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(unordered("$.dup.difference($.b)", (d) => [...new Set(d.dup).difference(new Set(d.b))])).toEqual({
       $setDifference: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }],
     });
-    // Two spellings of one answer: the Set name binds each list once, lodash's name reads each twice.
     expect(
       unordered("$.dup.symmetricDifference($.b)", (d) => [...new Set(d.dup).symmetricDifference(new Set(d.b))]),
     ).toEqual({
@@ -2959,10 +2818,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("packs a spread into the one list a variadic method reads", () => {
-    // a constant spread folds to the call JavaScript makes: one argument per element
     expect(expr("[1].concat(...[[2], 3])")).toEqual([1, 2, 3]);
     expect(expr("[...[1, 5], 7].max()")).toBe(7);
-    // each element of a spread is an argument of its own, and follows concat's rule
     expect(compiled("$.a.concat(...$.b, 1)", () => DOC.a.concat(...DOC.b, 1))).toEqual({
       $concatArrays: [
         { $ifNull: ["$a", []] },
@@ -2988,7 +2845,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       ],
     });
-    // the proof shows each element is an array, so the `$reduce` splices it with no test
     expect(compiled("$.a.concat(...$.b.map(x => [x]))", () => DOC.a.concat(...DOC.b.map((x) => [x])))).toEqual({
       $concatArrays: [
         { $ifNull: ["$a", []] },
@@ -3020,7 +2876,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(expr('$switch([$case($.n > 1, "big")], "small")')).toEqual({
       $switch: { branches: [{ case: { $gt: ["$n", 1] }, then: "big" }], default: "small" },
     });
-    // a constant constructor folds; its month counts from 0, as JavaScript's does
     expect(expr("Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
     expect(expr("Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
     expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
@@ -3041,8 +2896,6 @@ let coll: Collection | null = null;
 
 beforeAll(async () => {
   client = await liveClient();
-  // Null means the instance is not running, and only that: liveClient throws on any
-  // other refusal, so this suite cannot skip itself green.
   if (client === null) return;
   const c = client;
   coll = c.db("jsmql_compiler_methods").collection("t");
@@ -3063,24 +2916,11 @@ const canonical = (v: unknown): string =>
     return x;
   });
 
-/**
- * The list operands that ABORT the whole command when they are not an array.
- *
- * MEASURED: `$in`'s second operand, both of `$setIsSubset`'s and `$size`'s one refuse a
- * null or missing value, where `$map`, `$filter`, `$slice`, `$setUnion` and the rest
- * answer null in turn. A document that lacks the field would take the query down with it.
- * So each of these reads its list as the empty list. The list ARGUMENT reads it through
- * the cell's own guard. The RECEIVER reads it through HR5, which runs an array method on `[]`.
- *
- * Each row: the source, what it answers over an EMPTY document, and what it answers
- * when only the LIST is missing. `undefined` means the row wrote no field at all.
- */
 const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.difference($.b)", [], [1, 2]],
   ['$.a.differenceBy($.b, "id")', [], [1, 2]],
   ['$.a.intersectionBy($.b, "id")', [], []],
   ['$.a.xorBy($.b, "id")', [], [1, 2]],
-  // a missing RECEIVER runs on `[]` (HR5)
   ["$.a.isSubsetOf($.b)", true, false],
   ["$.a.isSupersetOf($.b)", true, true],
   ["$.a.isDisjointFrom($.b)", true, true],
@@ -3091,7 +2931,6 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.initial()", [], [1]],
   ["$.o.pick($.b)", {}, {}],
   ["$.o.omit($.b)", {}, { x: 1 }],
-  // a missing list ARGUMENT of a set operation is the empty list
   ["$.a.union($.b)", [], [1, 2]],
   ["$.a.intersection($.b)", [], []],
   ["$.a.symmetricDifference($.b)", [], [1, 2]],
@@ -3099,20 +2938,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.unionBy($.b, x => x)", [], [1, 2]],
 ];
 
-/**
- * Every reader of an object, over a document that lacks the field.
- *
- * `$objectToArray` answers null for a missing field and `$arrayToObject` passes that
- * null on. HR5 decides the answer by the accessor the source spells:
- *
- *   - a method under a DOT runs on `{}`, so it answers `{}`, or `[]` where it answers an
- *     array — `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`.
- *   - a `?.` with a call after it STOPS the chain, so the chain answers null.
- *
- * Each row: the source, and what it answers when the receiver is missing.
- */
 const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
-  // lodash — the empty value, whatever the source spells
   ["$.o.mapValues(v => v * 2)", {}],
   ["$.o.mapKeys((v, k) => k)", {}],
   ['$.o.pick(["a"])', {}],
@@ -3125,13 +2951,11 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.invertBy()", {}],
   ['$.o.invertBy("k")', {}],
   ["$.o.toPairs()", []],
-  // an object method under a dot runs on `{}` (HR5)
   ["$.o.keys()", []],
   ["$.o.values()", []],
   ["$.o.entries()", []],
   ["$.o.assign({ z: 1 })", { z: 1 }],
   ["({}).assign($.o)", {}],
-  // a `?.` with a call after it stops the chain, so the chain answers null
   ["$.o?.keys()", null],
   ["$.o?.values()", null],
   ["$.o?.entries()", null],
@@ -3140,11 +2964,8 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o?.keys().size()", null],
   ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
-  // the `?.` tests `o`, and a call after it stops the chain
   ["$.o?.sub.keys()", null],
-  // nothing runs after this `?.`, so the document and the answer are what they were
   ['$.first + " " + $.user?.last', "An "],
-  // the root document is there, so it takes no neutral
   ["$.keys().size()", 2],
 ];
 
@@ -3174,8 +2995,6 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
     }
     expect(problems, problems.join("\n")).toEqual([]);
     expect(compared).toBe(GUARDED.length);
-    // `.sample()` picks at random, so it is the one row whose answer is a membership. An
-    // element of `[]` is MISSING on the server, so a missing `a` writes no field at all.
     const picked = await guarded
       .aggregate([{ $addFields: { __v: expr("$.a.sample()") } }, { $sort: { _id: 1 } }])
       .toArray();
@@ -3200,8 +3019,6 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
   });
 
   it("a `?.` guards the value before it alone, however many members follow it", async () => {
-    // Document 1 has no `o`, so the chain stops with null. Document 2 holds `o` and no
-    // `o.z`: the `?.` passes, and the dot rule runs `.uniq()` on `[]` (HR5).
     for (const src of ["$.o?.z.uniq()", "$.o?.z.w.uniq()"]) {
       const out = await guarded
         .aggregate([{ $addFields: { __v: expr(src) } }, { $project: { __v: 1 } }, { $sort: { _id: 1 } }])
@@ -3217,8 +3034,6 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
   });
 
   it("a `?.` on a callback parameter reads as a `?.` on a field path", async () => {
-    // `.trim()` answers null for null on its own, so the `?.` adds no test. `.size()` does
-    // not, so the test stays. Its second branch reads the proven parameter with no `$ifNull`.
     const cases: readonly (readonly [string, unknown, unknown])[] = [
       [
         "$.v.map(x => x?.trim())",
@@ -3248,16 +3063,6 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
   });
 });
 
-/**
- * `.concat()` against JavaScript's own `concat`, one document per kind of argument.
- *
- * JavaScript adds the elements of an array argument, and adds any other argument as one
- * element. A spread passes each element of its array as an argument of its own. MongoDB
- * has no `undefined`, so a missing argument adds null — `canonical` writes JavaScript's
- * `undefined` in an array as null too. JavaScript throws for a spread of a missing or a
- * null value; JSMQL spreads nothing there, as `[...$.b]` does. Those rows state the
- * answer instead of a JavaScript function.
- */
 const CONCAT_DOCS = [
   { _id: 1, a: [1], b: [2] },
   { _id: 2, a: [1], b: 5 },
@@ -3303,15 +3108,6 @@ describe.skipIf(!up)("compiler/emit — .concat() adds each argument as JavaScri
   });
 });
 
-/**
- * The refusals that name a spelling to write instead of the refused one.
- *
- * The test reads the spelling out of the message itself, fills in its placeholder, and
- * runs the result. So a hint that aborts on a missing field fails here, and the hint
- * text cannot drift from the spelling this test proves.
- *
- * Each row: the refused source, the placeholder in its hint, and the text that fills it.
- */
 const HINTS: readonly (readonly [string, string, string])[] = [
   ['$.s.split("")', "$.<field>", "$.s"],
   ["[...$.s.trim()]", "<string>", "$.s.trim()"],
@@ -3338,7 +3134,6 @@ describe.skipIf(!up)("compiler/emit — the spelling a refusal names runs on eve
       expect(hint, `${refused} names no spelling: ${message}`).toBeDefined();
       const src = hint!.split(placeholder).join(fill);
       const docs = await hinted.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
-      // JavaScript throws for a missing or a null receiver; the spelling answers the empty list
       expect([src, docs.map((d) => d.__v)]).toEqual([src, [[], [], "".split(""), "abc".split("")]]);
     }
   });
@@ -3376,19 +3171,12 @@ describe.skipIf(!up)("compiler/emit — the `?.` that a conversion refusal names
       const hint = /right after the field: '([^']+)'/.exec(message)?.[1];
       expect(hint, `${refused} names no '?.': ${message}`).toBeDefined();
       const src = hint!.split("$.x").join("$.s");
-      // DELIBERATELY refused by the server: the dot reads the missing `s` as "", and the conversion stops on it.
       await expect(run(src.replace("?.", ".")), src).rejects.toThrow();
       expect([src, (await run(src)).map((d) => d.__v)]).toEqual([src, [null, null]]);
     }
   });
 });
 
-/**
- * A number of milliseconds converts with `.toLong().toDate()`. MEASURED: `$toDate` refuses an
- * int, and a driver sends a whole JavaScript number below 2^31 as an int. `$toLong` reads every
- * number and cuts a fraction toward zero. Each case gives the field and the instant that
- * JavaScript's own `new Date(x)` gives.
- */
 const MILLIS: readonly (readonly [string, unknown, Date])[] = [
   ["an int", 1700000000, new Date(1700000000)],
   ["a negative int", -5, new Date(-5)],
@@ -3420,7 +3208,6 @@ describe.skipIf(!up)("compiler/emit — a number of milliseconds converts with .
       message = (e as Error).message;
     }
     expect(/a number of milliseconds, write '([^']+)'/.exec(message)?.[1], message).toBe("$.x.toLong().toDate()");
-    // DELIBERATELY refused by the server: `$toDate` cannot convert an int.
     await expect(run("$.v.toDate()")).rejects.toThrow();
   });
 });
@@ -3438,7 +3225,6 @@ describe.skipIf(!up)("compiler/emit — the server answers each method as JavaSc
         continue;
       }
       const want = js(DOC);
-      // a set operation answers in no promised order (SR2): its elements are compared, not their sequence
       const sorted = (v: unknown): unknown =>
         anyOrder && Array.isArray(v) ? [...v].map((x) => canonical(x)).sort() : v;
       if (canonical(sorted(got)) !== canonical(sorted(want)))
@@ -3448,20 +3234,7 @@ describe.skipIf(!up)("compiler/emit — the server answers each method as JavaSc
   });
 });
 
-/**
- * The `neverNull` and `readsNullAsEmpty` facts of the JavaScript rows, measured.
- *
- * The presence proof reads these facts to leave out an `$ifNull`, so a wrong claim gives
- * a wrong answer. A row that states `neverNull` answers a value, never null or missing,
- * over inputs that are there. A row that states `"always"` also answers a value when each
- * ARGUMENT is missing. A row that states `readsNullAsEmpty` answers a missing receiver
- * exactly as it answers the empty value of its family.
- *
- * Each row: a source over inputs that are there, and for `"always"` the same call with
- * each argument missing.
- */
 const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
-  // strings
   trim: ["$.s.trim()"],
   trimStart: ["$.s.trimStart()"],
   trimLeft: ["$.s.trimLeft()"],
@@ -3510,7 +3283,6 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   escape: ["$.h.escape()"],
   truncate: ["$.w.truncate({ length: 5 })"],
   test: ["/l/.test($.s)", "/l/.test($.nope)"],
-  // arrays
   has: ["$.a.has(3)", "$.a.has($.nope)"],
   slice: ["$.a.slice(1)"],
   concat: ["$.a.concat($.b)", "$.a.concat($.nope)"],
@@ -3574,7 +3346,6 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   reject: ["$.a.reject(x => x > 1)"],
   fromPairs: ["$.pairs.fromPairs()"],
   fromEntries: ["$.pairs.fromEntries()"],
-  // objects
   entries: ["$.o.entries()"],
   keys: ["$.o.keys()"],
   values: ["$.o.values()"],
@@ -3588,7 +3359,6 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   invertBy: ["$.o.invertBy()"],
   toPairs: ["$.o.toPairs()"],
   assign: ["$.o.assign({ z: 1 })", "$.o.assign($.nope)"],
-  // numbers and Math
   clamp: ["$.n.clamp(0, 5)"],
   inRange: ["$.n.inRange(0, 10)"],
   range: ["$.neg.range()", "$.neg.range($.nope)"],
@@ -3636,7 +3406,6 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   isObjectId: ["$.n.isObjectId()"],
   isObject: ["$.o.isObject()"],
   isUUID: ["$.n.isUUID()"],
-  // dates
   getFullYear: ["$.d.getFullYear()"],
   getMonth: ["$.d.getMonth()"],
   getDate: ["$.d.getDate()"],
@@ -3673,9 +3442,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   set: ["$.d.set({ year: 2030 })"],
   now: ["Date.now()"],
   UTC: ["Date.UTC(2020, 1, 1)"],
-  // the globals
   ObjectId: ["ObjectId()"],
-  // a constructor takes a constant: the fold builds it, and the server receives it
   Date: ['Date("2024-01-01")'],
   ISODate: ['ISODate("2024-01-01")'],
   Decimal128: ['Decimal128("1.5")'],
@@ -3690,7 +3457,6 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   MaxKey: ["MaxKey()"],
 };
 
-/** Each row: the call on a receiver the document lacks, and the same call on the empty value. */
 const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
   sum: ["$.nope.sum()", "[].sum()"],
   mean: ["$.nope.mean()", "[].mean()"],
@@ -3702,7 +3468,6 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
   assign: ["$.nope.assign({ z: 1 })", "({}).assign({ z: 1 })"],
 };
 
-/** Each row that states `nullReceiverAs`: the call on a missing receiver, and the same call on the stated value. */
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   log: ["$.nope.log()", "(1).log()"],
   log2: ["$.nope.log2()", "(1).log2()"],
@@ -3717,11 +3482,6 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   toDate: ["$.nope.toDate()", "Date(0).toDate()"],
 };
 
-/**
- * Each row that states `passesNull` has two cases: a call after a `?.` on a receiver the
- * document lacks, and the same call on a receiver that holds null. Each answers null with
- * no `$cond` test.
- */
 const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   keys: ["$.nope?.keys()", "$.mo.d?.keys()"],
   values: ["$.nope?.values()", "$.mo.d?.values()"],
@@ -3898,7 +3658,6 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
 });
 
 describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` claim holds on the server", () => {
-  /** The `$type` of what `src` answers over the document, or the server's refusal. */
   const typeOf = async (src: string): Promise<string> => {
     const docs = await coll!
       .aggregate([{ $addFields: { __v: expr(src) } }, { $project: { t: { $type: "$__v" } } }])
@@ -3920,7 +3679,6 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
   it("answers a missing receiver as the empty value of its family", async () => {
     const wrong: string[] = [];
     for (const [row, [onMissing, onEmpty]] of Object.entries(NULL_AS_EMPTY)) {
-      // `$addFields`, not `$project`: a folded `0` there would read as an exclusion flag
       const answer = async (src: string) =>
         canonical(
           (
@@ -3929,7 +3687,6 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
         );
       const [a, b] = [await answer(onMissing), await answer(onEmpty)];
       if (a !== b) wrong.push(`${row}: ${onMissing} → ${a}, ${onEmpty} → ${b}`);
-      // and the compiler leaves the `$ifNull` out, which is the reason for the fact
       if (JSON.stringify(expr(onMissing)).includes('"$ifNull":["$nope"'))
         wrong.push(`${row}: ${onMissing} still wraps its receiver`);
     }
@@ -3940,7 +3697,6 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     const wrong: string[] = [];
     for (const [row, sources] of Object.entries(PASSES_NULL)) {
       for (const src of sources) {
-        // the `?.` null test stands at the top of the chain; a `$cond` inside the body is the row's own
         if (JSON.stringify(expr(src)).startsWith('{"$cond":[{"$lte":['))
           wrong.push(`${row}: ${src} still tests its receiver`);
         const docs = await coll!
@@ -3966,11 +3722,6 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
   });
 });
 
-/**
- * Each production that states `passesNull`: an expression with a `?.` read as its operand,
- * over a document that has no `b`. The read takes no `$ifNull`, and the answer is the one
- * the wrapped read gives.
- */
 const PRODUCTION_PASSES_NULL: Readonly<Record<string, readonly [src: string, wrapped: unknown]>> = {
   addition: ["$.nob?.c + 1", { $add: [{ $ifNull: ["$nob.c", null] }, 1] }],
   subtraction: ["$.nob?.c - 1", { $subtract: [{ $ifNull: ["$nob.c", null] }, 1] }],
@@ -4008,10 +3759,6 @@ describe.skipIf(!up)("registry — a production that states `passesNull` answers
   });
 });
 
-/**
- * This test checks `.random()` against lodash's `_.random`. It checks the range, both ends
- * for two whole bounds, and the form of the answer. Each source runs 400 times on the server.
- */
 const RANDOMS: readonly (readonly [src: string, lo: number, hi: number, whole: boolean])[] = [
   ["(1).random(6)", 1, 6, true],
   ["(6).random(1)", 1, 6, true],
@@ -4039,15 +3786,6 @@ describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the 
   });
 });
 
-/**
- * Each `$ifNull` the compiler emits changes an answer on some document.
- *
- * The test drops one guard at a time and keeps the value it guarded. It runs both documents
- * over fields that are missing, null, empty, set, or of another type. When no answer
- * changes, the guard was dead. Then the presence proof, a row's `neverNull` or its
- * `readsNullAsEmpty` did not know that the value is there. Each source is a case where a
- * value is there although a field it reads may be missing.
- */
 const GUARD_FREE: readonly string[] = [
   "$.a.intersection($.b).size()",
   "$.a.union($.b).map(x => x * 2)",
@@ -4085,14 +3823,12 @@ describe.skipIf(!up)("compiler/emit — no `$ifNull` guards a value that is ther
     await guards.insertMany(DOCS.map((d) => ({ ...d })));
   });
 
-  /** Every path to an `{ $ifNull: [x, fallback] }` in an emitted document. */
   const guardPaths = (v: unknown, path: (string | number)[] = []): (string | number)[][] => {
     if (v === null || typeof v !== "object") return [];
     const here = Object.keys(v).length === 1 && "$ifNull" in v ? [path] : [];
     const kids = Object.entries(v).flatMap(([k, x]) => guardPaths(x, [...path, Array.isArray(v) ? Number(k) : k]));
     return [...here, ...kids];
   };
-  /** The document with the guard at `path` replaced by the value it guards. */
   const unguarded = (v: unknown, path: (string | number)[]): unknown => {
     const copy = structuredClone(v) as Record<string | number, unknown>;
     if (path.length === 0) return (copy as { $ifNull: unknown[] }).$ifNull[0];
@@ -4102,7 +3838,6 @@ describe.skipIf(!up)("compiler/emit — no `$ifNull` guards a value that is ther
     parent[last] = (parent[last] as { $ifNull: unknown[] }).$ifNull[0];
     return copy;
   };
-  /** One answer per document, or the code of the server's refusal on it. */
   const answers = async (pipeline: object[]): Promise<string[]> => {
     const out: string[] = [];
     for (const d of DOCS) {
@@ -4130,7 +3865,6 @@ describe.skipIf(!up)("compiler/emit — no `$ifNull` guards a value that is ther
       }
     }
     expect(dead).toEqual([]);
-    // a null test is `$lte` or `$gt`, not an `$ifNull`, so a source can hold no guard at all
     expect(guardsChecked).toBeGreaterThan(GUARD_FREE.length / 2);
   });
 });

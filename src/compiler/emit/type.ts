@@ -1,34 +1,18 @@
-// Phase 5 — EMIT. The `Type` value: what the compiler proves about a value, and
-// the operations that combine two proofs. See docs/specs/types.md.
-//
-// A `Type` is a proof, not a guess. `ANY` says nothing. `of("string")` says the
-// value is a string. `join` says "one of these": a `? :` whose branches disagree.
-// `merge` says "these objects spread into one": a `{ ...a, ...b }`. `at` and
-// `written` walk a document's properties by a dotted path, so a write to `$.a.b`
-// and a read of `$.a.b` meet on the same node. Nothing here reads the registry,
-// and nothing here reads a node: `prove.ts` does both and calls in here.
-
 import type { Family, Kind, Type, TypeExpr } from "../../registry/vocabulary.ts";
 import type { Proof } from "../kinds.ts";
 
 const has = (t: Type, k: Kind): boolean => t.kinds === "any" || t.kinds.has(k);
 
-/** A value nothing is known about: any kind, maybe null or missing, any properties. */
 export const ANY: Type = { kinds: "any", absent: true, open: true };
 
-/** A value that is certainly null or missing — a closed object's property nobody wrote, a `null` literal. */
 export const NOTHING: Type = { kinds: new Set(), absent: true, open: false };
 
-/** Is this the proof of a value that is certainly null or missing? */
 export const isNothing = (t: Type): boolean => t.kinds !== "any" && t.kinds.size === 0;
 
-/** A document nothing is known about, but which IS there: the root, a foreign collection's document. */
 export const DOCUMENT: Type = { kinds: new Set<Kind>(["object"]), absent: false, open: true };
 
-/** A value of exactly one kind, present unless said otherwise. */
 export const of = (k: Kind, absent = false): Type => ({ kinds: new Set([k]), absent, open: k === "object" });
 
-/** An array whose elements are `element`. */
 export const arrayOf = (element: Type, absent = false): Type => ({
   kinds: new Set<Kind>(["array"]),
   absent,
@@ -36,7 +20,6 @@ export const arrayOf = (element: Type, absent = false): Type => ({
   open: false,
 });
 
-/** An array of a fixed length, one type per position. */
 export const tupleOf = (items: readonly Type[], absent = false): Type => ({
   kinds: new Set<Kind>(["array"]),
   absent,
@@ -45,7 +28,6 @@ export const tupleOf = (items: readonly Type[], absent = false): Type => ({
   open: false,
 });
 
-/** An object with the named properties; `open` when others may exist, and it holds `values` when stated. */
 export const objectOf = (
   props: ReadonlyMap<string, Type>,
   open: boolean,
@@ -53,53 +35,34 @@ export const objectOf = (
   absent = false,
 ): Type => ({ kinds: new Set<Kind>(["object"]), absent, props, open, ...(values === undefined ? {} : { values }) });
 
-/** The same proof, with the value certainly there. */
 export const present = (t: Type): Type => (t.absent ? { ...t, absent: false } : t);
 
-/** The same proof, with the value possibly null or missing. */
 export const maybeAbsent = (t: Type): Type => (t.absent ? t : { ...t, absent: true });
 
-/** Can the value be of kind `k`? `ANY` can be anything. */
 export const mayBe = has;
 
-/** Can the value NOT be of kind `k` — is every kind it can be another one? `ANY` can be anything. */
 export const cannotBe = (t: Type, k: Kind): boolean => t.kinds !== "any" && !t.kinds.has(k);
 
-/** Is the value certainly of kind `k` — one kind, and this one? */
 export const isOnly = (t: Type, k: Kind): boolean => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
 
-/** The one kind the proof shows, or "unknown" when it shows none or more than one. */
 export function single(t: Type): Kind | "unknown" {
   if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
   return [...t.kinds][0];
 }
 
-/** The kinds as a list, or null for `ANY`. */
 export const kindsOf = (t: Type): readonly Kind[] | null => (t.kinds === "any" ? null : [...t.kinds]);
 
-/** The proof of a value, as the kind check reads it. Presence is not a kind, so it does not affect the proof. */
 export function proofOf(t: Type): Proof {
   if (t.kinds === "any") return "unknown";
   return t.kinds.size === 0 ? ["null"] : [...t.kinds];
 }
 
-/**
- * The proof of ONE element of an array value. An array with no element, or with only
- * null elements, proves nothing about them, so that `[].has(1)` stays legal. An element
- * that can be null proves the kind `null` beside its other kinds, so `[1, null].has(null)`
- * is legal. Only the element's own presence counts, because a missing array holds no element.
- */
 export function elementProofOf(t: Type): Proof {
   const e = elementOf(t);
   if (e.kinds === "any" || e.kinds.size === 0) return "unknown";
   return t.element?.absent === true ? [...e.kinds, "null"] : [...e.kinds];
 }
 
-/**
- * The proof of EACH position of an array value of a fixed length, or undefined for an
- * array of unknown length. A position that proves nothing is unproven. A position that
- * can be null proves the kind `null`, as a `null` operand does.
- */
 export function itemProofsOf(t: Type): readonly Proof[] | undefined {
   if (!has(t, "array") || t.items === undefined) return undefined;
   return t.items.map((i): Proof => {
@@ -108,88 +71,51 @@ export function itemProofsOf(t: Type): readonly Proof[] | undefined {
   });
 }
 
-/** What ONE element of an array value is. A value that may not be an array proves nothing of its elements. */
 export function elementOf(t: Type): Type {
   if (!has(t, "array")) return NOTHING;
   const element = t.element ?? ANY;
-  // an element read off a missing array is missing too
   return t.absent ? maybeAbsent(element) : element;
 }
 
-/** What position `i` of an array value holds: the tuple's item when stated, else the element. */
 export function itemOf(t: Type, i: number): Type {
   if (t.items !== undefined) return i < t.items.length ? t.items[i] : NOTHING;
-  // an index into an array of unknown length may fall outside it
   return maybeAbsent(elementOf(t));
 }
 
-/**
- * What an index the compiler cannot read holds: an element of an array, a
- * property value of an object. Nothing is proven for another kind.
- */
 export function anyItemOf(t: Type): Type {
   if (t.kinds === "any") return ANY;
   if ([...t.kinds].some((k) => k !== "array" && k !== "object")) return ANY;
   const parts: Type[] = [];
   if (t.kinds.has("array")) parts.push(elementOf(t));
   if (t.kinds.has("object")) parts.push(flattenOnce({ ...t, kinds: new Set<Kind>(["object"]), absent: false }));
-  // the index may fall outside the array, or name a property that is not there
   return maybeAbsent(joinAll(parts));
 }
 
-/**
- * What property `name` of a value holds. A closed object without it holds
- * nothing. A path THROUGH an array reads the property of every element, as an
- * array: MEASURED, `"$a.b"` over `a: [{ b: 1 }, { b: 2 }]` is `[1, 2]`. So a
- * value that may be an array holds either its object's property or that list.
- */
 export function propOf(t: Type, name: string): Type {
   if (t.kinds === "any") return ANY;
   const asObject = t.kinds.has("object") ? ownProp(t, name) : NOTHING;
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name)) : NOTHING;
   const own = isNothing(asArray) ? asObject : isNothing(asObject) ? asArray : join(asObject, asArray);
-  // a property read off a missing value is missing too
   return t.absent ? maybeAbsent(own) : own;
 }
 
-/**
- * Why a property read can give no value: the value has no fields, or it is a closed
- * object without the name. `elements` marks a query path through an array whose
- * elements are such closed objects.
- */
 export type Unreadable =
   | { readonly kind: "noFields"; readonly kinds: readonly Kind[] }
   | { readonly kind: "closed"; readonly keys: readonly string[]; readonly elements?: true };
 
-/**
- * Why a read of property `name` gives NO value, by the proof of the value before the
- * dot, or null when it can give one. Only an object has fields, and a closed object
- * has only the fields it names. `throughArrays` keeps MongoDB's path through an array,
- * as a query reads it: `{ "items.sku": "a" }` matches an element's `sku`. MEASURED:
- * `{ $getField: { field: "size", input: [1, 2] } }` and `{ $getField: { field: "b",
- * input: { a: 1 } } }` both answer missing.
- */
 export function unreadable(t: Type, name: string, throughArrays: boolean): Unreadable | null {
-  // A stream read has its own refusal, which names the stream form (`$$.first()`).
   if (t.kinds === "any" || t.kinds.has("stream")) return null;
   if (throughArrays && t.kinds.has("array")) {
-    // A query reads the field off each element, so the path passes where an element can hold it.
     if (t.kinds.size > 1) return null;
     const inner = unreadable(t.element ?? ANY, name, true);
     if (inner === null) return null;
-    // Elements with no fields leave the read on the array itself, and an array has no fields.
     return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
   }
   if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
-  // Another possible kind, an open object, or a field the object names can hold a value.
   if (t.kinds.size > 1 || t.open || t.props?.has(name) === true) return null;
   return { kind: "closed", keys: [...(t.props?.keys() ?? [])] };
 }
 
-/**
- * The first segment of the dotted `path` that the proof `t` shows can give no value,
- * and why. Null when each segment can give one. `index` counts from 0.
- */
 export function unreadableAt(
   t: Type,
   path: string,
@@ -203,16 +129,13 @@ export function unreadableAt(
   return null;
 }
 
-/** The property an OBJECT value holds under `name`. */
 function ownProp(t: Type, name: string): Type {
   const known = t.props?.get(name);
   if (known !== undefined) return known;
   if (!t.open) return NOTHING;
-  // a property `props` does not name may not be there
   return t.values === undefined ? ANY : maybeAbsent(t.values);
 }
 
-/** The value at a dotted path under a document `Type`. `""` is the document itself. */
 export function at(t: Type, path: string): Type {
   if (path === "") return t;
   let cur = t;
@@ -223,15 +146,6 @@ export function at(t: Type, path: string): Type {
   return cur;
 }
 
-/**
- * The document after a write of `value` at `path`. A whole-field write
- * replaces the field's proof. A dotted write keeps the parent's other
- * properties. For example `$.address.full = s` makes `address` a present object, open when it
- * was not known, with `full` set inside it. MEASURED, `{ $set: { "a.b": 1 } }`:
- * a scalar, null or missing `a` becomes `{ b: 1 }`; an object `a` keeps its
- * other fields; an ARRAY `a` gets `b` written into every element, so
- * `[1, 2]` becomes `[{ b: 1 }, { b: 1 }]`. See docs/specs/types.md § The write rules.
- */
 export function written(doc: Type, path: string, value: Type): Type {
   if (path === "") return value;
   const dot = path.indexOf(".");
@@ -246,18 +160,12 @@ export function written(doc: Type, path: string, value: Type): Type {
   );
 }
 
-/** The same object proof with one property set. */
 function withProp(obj: Type, name: string, value: Type): Type {
   const props = new Map(obj.props ?? []);
   props.set(name, value);
   return { ...obj, props };
 }
 
-/**
- * A dotted write lands INSIDE `t`: on the object it is, on every element of
- * the array it is, or on either when the proof cannot tell. A value proven to
- * be neither becomes the object the server makes of it.
- */
 function into(t: Type, write: (parent: Type) => Type): Type {
   if (isOnly(t, "array") && !t.absent) return { ...t, element: write(asObject(elementOf(t))) };
   const asObj = write(asObject(t));
@@ -267,7 +175,6 @@ function into(t: Type, write: (parent: Type) => Type): Type {
   return join(asObj, asArr);
 }
 
-/** The document after a removal of `path`. */
 export function removed(doc: Type, path: string): Type {
   const dot = path.indexOf(".");
   const head = dot === -1 ? path : path.slice(0, dot);
@@ -284,10 +191,8 @@ export function removed(doc: Type, path: string): Type {
   return { ...doc, props };
 }
 
-/** A value read as the object a dotted write makes of it: present, an object, and open when it was not proven closed. */
 function asObject(t: Type): Type {
   if (isOnly(t, "object") && !t.absent) return t;
-  // A value that may be an object keeps what is known of that object's properties.
   const known = t.kinds !== "any" && t.kinds.has("object");
   return {
     kinds: new Set<Kind>(["object"]),
@@ -298,11 +203,9 @@ function asObject(t: Type): Type {
   };
 }
 
-/** One of the listed proofs. None at all proves nothing. */
 export const joinAll = (list: readonly Type[]): Type =>
   list.length === 0 ? NOTHING : list.reduce((acc, t) => join(acc, t));
 
-/** One of `a` or `b`: the two branches of a `? :`, the operands of `??`. A branch that is nothing makes the other maybe absent. */
 export function join(a: Type, b: Type): Type {
   if (isNothing(a)) return maybeAbsent(b);
   if (isNothing(b)) return maybeAbsent(a);
@@ -331,11 +234,6 @@ export function join(a: Type, b: Type): Type {
   return out;
 }
 
-/**
- * `{ ...a, ...b }`: b's properties win. An open `b` may hold any of a's names, so
- * those become unknown. A `b` that may be absent spreads as `{}`, so its
- * properties may be missing. MEASURED: `$mergeObjects` skips a null operand.
- */
 export function merge(a: Type, b: Type): Type {
   const props = new Map<string, Type>();
   const bOpen = b.kinds === "any" || b.open;
@@ -351,7 +249,6 @@ export function merge(a: Type, b: Type): Type {
   return objectOf(props, open, open ? values : undefined);
 }
 
-/** The families a `Type` names, for a per-family `returns` map — `null` for a kind no family covers. */
 export function familyOf(k: Kind): Family | null {
   switch (k) {
     case "string":
@@ -366,35 +263,21 @@ export function familyOf(k: Kind): Family | null {
   }
 }
 
-/** What a `TypeExpr` needs from its call site to evaluate. */
 export type Site = {
-  /** The receiver's proof. `ANY` for a bare call. */
   readonly receiver: Type;
-  /** The receiver's family as SOURCE — a namespace, a regex, a set — when it has no kind of its own. */
   readonly family: Family | null;
-  /** The n-th argument's proof. */
   readonly arg: (n: number) => Type;
-  /** How many arguments the call has, for `args`. */
   readonly argCount: number;
-  /** What the n-th callback argument returns. */
   readonly callback: (n: number) => Type;
-  /** The property names the first argument spells, for `picked` / `omitted`, or null when it spells none. */
   readonly names: readonly string[] | null;
 };
 
 const isTerm = (e: TypeExpr, key: string): boolean => typeof e === "object" && e !== null && key in e;
 
-/**
- * A row's `returns`, evaluated at one call. Every term answers a present value:
- * whether the CALL is present is the row's `neverNull` fact and the operands',
- * which `prove.ts` settles. So an `absent` here says only "the row could not
- * show the value", as `ANY` does.
- */
 export function evaluate(e: TypeExpr, site: Site): Type {
   if (typeof e === "string") {
     switch (e) {
       case "same":
-        // a method over a fixed-length array keeps its elements, not its positions
         return site.receiver.items === undefined ? site.receiver : { ...site.receiver, items: undefined };
       case "element":
         return elementOf(site.receiver);
@@ -424,7 +307,6 @@ export function evaluate(e: TypeExpr, site: Site): Type {
     const [of, n] = (e as { itemOf: readonly [TypeExpr, number] }).itemOf;
     return itemOf(evaluate(of, site), n);
   }
-  // A per-family map: the receiver's own family picks the term.
   const map = e as Partial<Record<Family, TypeExpr>>;
   const family = site.family ?? familyOfType(site.receiver);
   if (family !== null) {
@@ -434,31 +316,23 @@ export function evaluate(e: TypeExpr, site: Site): Type {
   return ANY;
 }
 
-/** The terms of a list, with an `{ args: n }` term expanded to one proof per argument. */
 function expandList(terms: readonly TypeExpr[], site: Site): Type[] {
   return terms.flatMap((t) =>
     isTerm(t, "args") ? expandArgs((t as { args: number }).args, site) : [evaluate(t, site)],
   );
 }
 
-/** Every argument from `n` on. */
 function expandArgs(n: number, site: Site): Type[] {
   const out: Type[] = [];
   for (let i = n; i < site.argCount; i++) out.push(site.arg(i));
   return out;
 }
 
-/**
- * One flat level: an array gives its element, anything else stays —
- * what `.flatMap` keeps of a callback's answer, and what an object's property
- * values are (`elementOf` on an object).
- */
 export function flattenOnce(t: Type): Type {
   if (t.kinds === "any") return ANY;
   const parts: Type[] = [];
   if (t.kinds.has("array")) parts.push(t.element ?? ANY);
   if (t.kinds.has("object") && !t.kinds.has("array")) {
-    // the values of an object: its unnamed value, joined with every named property
     const values = [...(t.props?.values() ?? [])];
     if (t.open) values.push(t.values ?? ANY);
     return joinAll(values);
@@ -468,13 +342,11 @@ export function flattenOnce(t: Type): Type {
   return joinAll(parts);
 }
 
-/** The one family a `Type` belongs to, or null when it shows none or more than one. */
 export function familyOfType(t: Type): Family | null {
   const k = single(t);
   return k === "unknown" ? null : familyOf(k);
 }
 
-/** The receiver's props kept (`keep`) or dropped by `names`. A receiver of unknown shape gives an open object. */
 function selectProps(recv: Type, names: readonly string[] | null, keep: boolean): Type {
   if (names === null) return objectOf(new Map(), true);
   const props = new Map<string, Type>();

@@ -1,13 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// `$match` translates expression-form predicates to MongoDB's query language
-// when the predicate is index-safe, and falls back to $expr for the parts that
-// are not. So the filter does not silently lose its index to `{ $expr: ... }`.
-//
-// See `docs/specs/emit-pass.md` § The filter target for the translation rules and
-// the documented semantic divergences from the aggregation form.
-
 describe("$match translation — equality", () => {
   it("translates `===` against a string literal", () => {
     expect(jsmql('[$match($.email === "alice@example.com")]')).toEqual([{ $match: { email: "alice@example.com" } }]);
@@ -64,10 +57,6 @@ describe("$match translation — ordered comparisons", () => {
 });
 
 describe("$match translation — null and missing semantics", () => {
-  // `===` / `!==` are strict (JS-like): missing fields are NOT null. `==` / `!=` are loose: they treat missing
-  // fields as null. The strict form compiles to `$type: "null"` so MongoDB excludes missing-field docs; the
-  // loose form keeps the query-language shape which already matches "null OR missing".
-
   it("translates `=== null` to `{ field: { $type: 'null' } }` (strict — excludes missing)", () => {
     expect(jsmql("[$match($.deletedAt === null)]")).toEqual([{ $match: { deletedAt: { $type: "null" } } }]);
   });
@@ -114,8 +103,6 @@ describe("$match translation — boolean combinators", () => {
 });
 
 describe("$match translation — partial extraction", () => {
-  // When part of an `&&` predicate is translatable and part is not, the compiler keeps the translatable half in
-  // query-language form (so indexes still apply). It wraps the residual in $expr.
   it("keeps the clause that uses an index, wraps residual in $expr", () => {
     expect(jsmql('[$match($.status === "active" && $.score > $.threshold)]')).toEqual([
       { $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } },
@@ -129,8 +116,6 @@ describe("$match translation — partial extraction", () => {
   });
 
   it("lowers each `||` branch on its own: a query clause beside an $expr residual", () => {
-    // A branch's query form never depends on its sibling, so the translatable
-    // branch keeps its query clause and only the other branch becomes `$expr`.
     expect(jsmql('[$match($.status === "active" || $.score > $.threshold)]')).toEqual([
       { $match: { $or: [{ status: "active" }, { $expr: { $gt: ["$score", "$threshold"] } }] } },
     ]);
@@ -159,8 +144,6 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("array literal as equality target stays in $expr", () => {
-    // A translation to `{ tags: [1, 2] }` would silently switch to array-element
-    // match semantics — too much of a surprise. Leave it as $expr.
     expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([{ $match: { $expr: { $eq: ["$tags", [1, 2]] } } }]);
   });
 });
@@ -199,8 +182,6 @@ describe("$match translation — typeof → $type", () => {
 
 describe("$match translation — escape hatch", () => {
   it("object-literal body with $expr passes through unchanged", () => {
-    // The existing object-literal passthrough is the explicit opt-out for
-    // strict aggregation `$eq` semantics.
     expect(jsmql('[$match({ $expr: $.email === "x" })]')).toEqual([{ $match: { $expr: { $eq: ["$email", "x"] } } }]);
   });
 
@@ -212,11 +193,6 @@ describe("$match translation — escape hatch", () => {
 });
 
 describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
-  // MongoDB's query language does not evaluate aggregation expressions in operator value slots — `{ $gte: {
-  // $toDate: "..." } }` would be compared as a literal subdoc, never matching anything. When the `Date(...)`
-  // arguments are themselves compile-time literals, the compiler folds them to a real Date instance, which BSON
-  // compares as a date. This form is index-friendly.
-
   it("translates `>=` against `Date(stringLiteral)` to field-form Date", () => {
     expect(jsmql('[$match($.createdAt >= Date("2026-01-01"))]')).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
@@ -255,8 +231,6 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
   });
 
   it("folds the date-from-parts form (all-numeric args) as UTC", () => {
-    // JSMQL reads multi-arg `Date(y, m, d)` as UTC, the same as the `$dateFromParts` codegen lowering. So the
-    // folded value is TZ-independent (the expected uses Date.UTC, NOT the machine-local `new Date(2026,0,1)`).
     expect(jsmql("[$match($.createdAt >= Date(2026, 1, 1))]")).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
     ]);
@@ -269,8 +243,6 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
   });
 
   it("falls back to $expr for `Date()` (zero-arg — must evaluate at query time)", () => {
-    // `Date()` lowers to the server-side `"$$NOW"`; a compile-time fold
-    // would freeze the timestamp. Must stay in $expr.
     expect(jsmql("[$match($.expiresAt < Date())]")).toEqual([{ $match: { $expr: { $lt: ["$expiresAt", "$$NOW"] } } }]);
   });
 
@@ -284,13 +256,10 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
         },
       },
     ]);
-    // the constructor refuses a value of the document, and the refusal names '.toDate()'
     expect(() => jsmql("[$match($.createdAt >= Date($.cutoffStr))]")).toThrow(/'\$\.x\.toDate\(\)'/);
   });
 
   it("rejects a constant string that cannot be parsed as a date (HR3)", () => {
-    // The constant is unparseable and the server would reject the equivalent `{ $toDate }`. So the comparison
-    // drops to the $expr residual, and codegen refuses it at compile time. It does not emit a bogus filter.
     expect(() => jsmql('[$match($.createdAt >= Date("not-a-date"))]')).toThrow(
       'Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write Date("2026-01-01") or Date(0).',
     );
@@ -308,10 +277,6 @@ describe("$match translation — `Date(...)` RHS (compile-time fold)", () => {
 });
 
 describe("$match translation — .has() → $in / array-element", () => {
-  // Two query-position forms; both index-friendly. The first IS MongoDB's "field value, or array containing
-  // value", which is what `.has` asks on an array. The second is set-membership over a constant list.
-  // `.includes` is the substring test of a STRING, and the query spelling for it is an escaped `$regex`.
-
   it("translates `field.has(<literal>)` to an implicit array-element match", () => {
     expect(jsmql('[$match($.tags.has("vip"))]')).toEqual([{ $match: { tags: "vip" } }]);
   });
@@ -327,7 +292,6 @@ describe("$match translation — .has() → $in / array-element", () => {
   });
 
   it("falls through to $expr when both sides are field paths", () => {
-    // `$in` needs an array, so a missing `tags` runs the test on the empty array (HR5).
     expect(jsmql("[$match($.tags.has($.target))]")).toEqual([
       { $match: { $expr: { $in: ["$target", { $ifNull: ["$tags", []] }] } } },
     ]);
@@ -360,8 +324,6 @@ describe("$match translation — .match(regex) → BSON regex", () => {
   });
 
   it("falls through to $expr when the argument is non-literal", () => {
-    // A computed regex (or string arg) cannot go in the query-doc slot, so the
-    // existing $regexMatch translation handles it.
     expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
       { $match: { $expr: { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: "^a" } } } },
     ]);
@@ -388,8 +350,6 @@ describe("$match translation — .some(p) → $elemMatch", () => {
   });
 
   it("falls through to $expr when the lambda body is index-unfriendly", () => {
-    // A method call inside the body has no clean query-doc form — fall through
-    // to the expression-level $anyElementTrue translation.
     expect(jsmql("[$match($.items.some(it => it.tag.toLower() === 'vip'))]")).toEqual([
       {
         $match: {
@@ -408,8 +368,6 @@ describe("$match translation — .some(p) → $elemMatch", () => {
   });
 
   it("falls through to $expr when the body references the bare param (would need $$ROOT)", () => {
-    // The bare-param body forces the expression-form `.some`, which wraps in
-    // the jsBool truthiness-shim (matches JS, not MQL, semantics).
     expect(jsmql("[$match($.items.some(it => it))]")).toEqual([
       {
         $match: {
@@ -436,9 +394,6 @@ describe("$match translation — .some(p) → $elemMatch", () => {
 });
 
 describe("$match translation — === undefined / !== undefined → $exists", () => {
-  // `undefined` in match position lowers to MongoDB's $exists check. It matches "field present" or "field
-  // missing", which agrees with JS `=== undefined` semantics (JS treats a missing property as undefined).
-
   it("translates `=== undefined` to `$exists: false`", () => {
     expect(jsmql("[$match($.field === undefined)]")).toEqual([{ $match: { field: { $exists: false } } }]);
   });
@@ -458,8 +413,6 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
   });
 
   it("is an existence test in expression position too, not an error", () => {
-    // `$type` distinguishes a missing field ("missing") from a present-but-null one ("null"), which is exactly
-    // the difference that `$exists` tests. So the expression language CAN express existence, and does.
     expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({ $cond: [{ $eq: [{ $type: "$x" }, "missing"] }, 1, 2] });
   });
 
@@ -470,8 +423,6 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
 
 describe("$match translation — typeof: 'boolean' is refused, 'bool' is the name", () => {
   it("refuses JS-form `typeof === 'boolean'` and names BSON `bool`", () => {
-    // JS's typeof returns "boolean"; MongoDB's $type uses "bool". A `typeof`
-    // comparison names a BSON type, so the JS name gets the MongoDB one.
     expect(() => jsmql("[$match(typeof $.flag === 'boolean')]")).toThrow(
       "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one, so the comparison is never true. Did you mean 'bool'?",
     );
@@ -483,11 +434,6 @@ describe("$match translation — typeof: 'boolean' is refused, 'bool' is the nam
 });
 
 describe("$match translation — .size() → a guarded $size under $expr", () => {
-  // `.size()` counts the elements of an array. The query language has no operator for a count, so the
-  // comparison stays under `$expr`. For a missing array, `.size()` runs on the empty array (HR5), so `$size`
-  // never aborts. `.length()` is the length of a STRING. On a bare field it takes `$strLenCP` under a null
-  // guard, with no test of the receiver's type at run time.
-
   it("translates `$.arr.size() === N` to a guarded `$size`", () => {
     expect(jsmql("[$match($.items.size() === 3)]")).toEqual([
       { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, 3] } } },
@@ -525,14 +471,12 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
   });
 
   it("compares the count against any literal, natural or not", () => {
-    // A count is a whole number, so `=== 3.5` and `=== -1` select nothing; the shape stays the same.
     expect(jsmql("[$match($.items.size() === 3.5)]")).toEqual([
       { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
     ]);
     expect(jsmql("[$match($.items.size() < 3.5)]")).toEqual([
       { $match: { $expr: { $lt: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
     ]);
-    // HR7: a count is a number, so the compiler refuses a comparison with a string
     expect(() => jsmql('[$match($.items.size() === "x")]')).toThrow("'===' takes operands of one kind");
     expect(jsmql("[$match($.items.size() === -1)]")).toEqual([
       { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, -1] } } },
@@ -546,12 +490,9 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
   });
 
   it('`["length"]` is RAW access — a property named "length", never a count', () => {
-    // Bracket access reads a property called "length"; "length" is a string key (never a
-    // numeric index), so it lowers to $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
       { $match: { $expr: { $eq: [{ $getField: { field: "length", input: { $ifNull: ["$items", {}] } } }, 3] } } },
     ]);
-    // A string-literal key on the bare root is a plain field reference.
     expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([
       { $match: { $expr: { $eq: ["$cart.field.length", 5] } } },
     ]);
@@ -598,8 +539,6 @@ describe("$match translation — $all folding from .has && .has", () => {
   });
 
   it("does NOT fold mixed chains (.has + other predicates)", () => {
-    // The user can reorder to enable the fold; the un-folded form has
-    // identical semantics on array-valued fields, so this is not a pitfall.
     expect(jsmql('[$match($.tags.has("a") && $.age > 18)]')).toEqual([{ $match: { tags: "a", age: { $gt: 18 } } }]);
   });
 });

@@ -1,32 +1,11 @@
-// Phase 5 — EMIT. What a row says about one name in one position.
-//
-// Every phase that touches a name asks this first, and the row alone answers.
-// That is the whole arrangement described in ../CLAUDE.md: the registry says
-// what the language HAS, an ANSWER lives in a row, and code builds a DOCUMENT.
-// Nothing here builds a document.
-//
-// The answer is one of six things, and five of them are already final — a
-// refusal, a fallback, a compose-only, an unknown name, or a position with no
-// cell in the row. Only the sixth needs a lowering to run. This is why the
-// refusal surface of the whole language works before anyone writes a lowering.
-
 import type { Arity, Family, Position } from "../../registry/vocabulary.ts";
 import { NAMES } from "../../registry/names.ts";
 import { suggestedAs } from "../rows.ts";
 import { PRODUCTIONS } from "../../registry/productions.ts";
 import type { Where } from "../passes/position.ts";
 
-// Two registries answer this question, because the language has two kinds of
-// thing to answer for. A NAME is an identifier the source writes — `sort`,
-// `Math`, `$inc`. A PRODUCTION is a construct — `%`, `===`, `?:`. Both carry the
-// same cells, so this module reads both, and a caller never needs to know
-// which registry its name came from.
-//
-// The keys cannot collide: a production carries a descriptive name (`remainder`,
-// never `"%"`), and no row of names.ts uses one of those names.
 const ROWS: Readonly<Record<string, Row | undefined>> = Object.assign(Object.create(null), NAMES, PRODUCTIONS);
 
-/** The one cell shape this module reads. Deliberately structural — see below. */
 type Cell =
   | { unsupported: string }
   | { fallback: "expr" }
@@ -40,12 +19,6 @@ type Row = { kind: string; where: readonly Position[]; on?: Family | readonly Fa
   unknown
 >;
 
-/**
- * Which cell of a row answers which position.
- *
- * `expr` and `value` are the same thing under two names — the row spells the
- * cell `expr` and the position is called `value`. The other five match.
- */
 const CELL_OF: Readonly<Record<Position, string>> = {
   value: "expr",
   filter: "filter",
@@ -56,63 +29,22 @@ const CELL_OF: Readonly<Record<Position, string>> = {
   updateDoc: "updateDoc",
 };
 
-/**
- * The position a `Where` names, or null when it names none.
- *
- * `target`, `stageBody` and `stageEntry` are waypoints, not positions: nothing
- * evaluates on the left of `=`, and the inside of a stage body leads to a
- * position, and is not one itself. `CELL_OF` answers this, so every
- * position the registry has is a position here. A hand-written switch would
- * answer only for the positions it lists, and it would silently drop every one
- * added after it.
- */
 export function positionOf(where: Where): Position | null {
   return where.at in CELL_OF ? (where.at as Position) : null;
 }
 
-/** What the row says. Five of the six need no lowering to be final. */
 export type Verdict =
-  /** No row at all. The caller suggests a near name; the row cannot. */
   | { kind: "unknown"; name: string }
-  /**
-   * The row's own text. Nothing here writes prose a row could have carried.
-   *
-   * `needsSubject` means the row carried the REASON only, because one reason
-   * serves every spelling that reaches it. `refusalSentence` puts the two
-   * together; a caller that prints `message` on its own drops the subject.
-   */
   | { kind: "refused"; name: string; position: Position; message: string; needsSubject: boolean }
-  /** Legal, with no native form here: wrap the value form (`$expr` in a filter). */
   | { kind: "fallback"; name: string; position: Position }
-  /** Legal only folded into another construct, which is named. */
   | { kind: "composedOnly"; name: string; position: Position; owners: readonly string[] }
-  /** A lowering must run. The code hands `cell` on untouched; only emit/ reads it. */
   | { kind: "lower"; name: string; position: Position; cell: unknown }
-  /**
-   * The row answers PER FAMILY, and the caller did not supply the receiver's
-   * family, or supplied one the row does not list. This is not an error on its
-   * own: a caller that cannot prove the family runs the row's one lowering family.
-   * The code leaves the answer unchanged, as it leaves `cell` for `lower`.
-   */
   | { kind: "perFamily"; name: string; position: Position; branches: Readonly<Record<string, unknown>> }
-  /**
-   * The row has no cell for this position, which is not the same as a refusal of it.
-   * Only a MongoDB row has an `updateDoc` cell, because only a MongoDB operator
-   * is ever specific to an update document. `$.views++` is a STATEMENT.
-   * Whether the program lowers to `{$inc:…}` or to `{$set:…}` is a property of
-   * the whole program, not of that node.
-   */
   | { kind: "noCell"; name: string; position: Position }
-  /**
-   * A cell the row hands to a PASS — `inCode(<file>)`. There is nothing here to
-   * lower. The pass either rewrote the node already or left it. A caller that
-   * meets this verdict must read the node the way its other cells describe.
-   */
   | { kind: "inCode"; name: string; position: Position; file: string; args: Arity | undefined };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-/** The families a row lists, widened so a caller never checks the shape. */
 function familiesOf(row: Row): readonly Family[] | "any" | undefined {
   const on = row.on;
   if (on === undefined) return undefined;
@@ -141,12 +73,6 @@ function readCell(name: string, position: Position, cell: unknown): Verdict {
   return { kind: "lower", name, position, cell };
 }
 
-/**
- * What the row for `name` says about `position`.
- *
- * `family` resolves a `perFamily` cell. Omit it when the receiver's family is
- * not provable, and the branches come back for the caller to dispatch on.
- */
 export function consult(name: string, position: Position, family?: Family): Verdict {
   const row = ROWS[name];
   if (row === undefined) return { kind: "unknown", name };
@@ -163,14 +89,6 @@ export function consult(name: string, position: Position, family?: Family): Verd
   return readCell(name, position, cell);
 }
 
-/**
- * The refusal to show the user: the row's reason, with the subject the caller
- * supplies when the row left one out.
- *
- * `subject` is how the source SPELLED it — `'.toReversed(...)'`, `'$$.size()'`.
- * The caller knows the spelling; the row cannot, because one row answers for
- * every spelling that reaches it.
- */
 export function refusalSentence(
   verdict: Extract<Verdict, { kind: "refused" }>,
   subject: string,
@@ -180,32 +98,19 @@ export function refusalSentence(
   return `${subject} isn't available on ${container} — ${verdict.message}`;
 }
 
-/** Does the row list this position at all? The claim `where` makes, unresolved. */
 export function listedIn(name: string, position: Position): boolean {
   return ROWS[name]?.where.includes(position) === true;
 }
 
-/** The receiver families a name applies to, for a caller building a dispatch. */
 export function familiesFor(name: string): readonly Family[] | "any" | undefined {
   const row = ROWS[name];
   return row === undefined ? undefined : familiesOf(row);
 }
 
-/**
- * Every NAME the registry holds, for a `didYouMean` over a real closed set.
- *
- * Names only. A production is a construct, not something a user can misspell.
- */
 export function everyName(): readonly string[] {
   return Object.keys(NAMES);
 }
 
-/**
- * Every METHOD name: a row that a value calls after a dot. A global (`Number`) and a static
- * of a namespace (`Array.isArray`) are not methods, so a suggestion after a dot never names one.
- * A row that refuses in every position is not here either, because a suggestion must name a
- * method that runs. A renamed row stays, and the suggestion shows its new name (`suggestedAs`).
- */
 export function everyMethodName(): readonly string[] {
   const namespaces = new Set(
     Object.entries(NAMES)

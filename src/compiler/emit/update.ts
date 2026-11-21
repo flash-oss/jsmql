@@ -1,10 +1,3 @@
-// Phase 5 — EMIT, the UPDATE-DOCUMENT target: the object form of an update,
-// `db.coll.updateOne(filter, { $set: { … }, $inc: { … } })`. A document-form
-// update takes CONSTANTS. The server reads `"$b"` there as the string. So
-// every value must be a constant the compiler knows at compile time. The
-// compiler refuses a read of the document. The message names the pipeline
-// form as the way out. See docs/specs/emit-pass.md § The update-document
-// target.
 import type { Expr, QueryDoc } from "../../registry/vocabulary.ts";
 import type { PipelineStmt, Program, UpdateFilter } from "../../registry/ast.ts";
 import { UPDATE_DOC } from "../passes/position.ts";
@@ -18,16 +11,12 @@ import { lowerValue } from "./lower.ts";
 
 type Update = Record<string, Record<string, unknown>>;
 
-/** A document of fields, which the merge reads path by path. */
 const isFields = (v: unknown): v is Record<string, unknown> => isPlainObject(v);
 
-/** The update document a program means. */
 export function lowerUpdate(program: Program, env: Env): QueryDoc {
   const stmts: readonly PipelineStmt[] = program.type === "Pipeline" ? program.stmts : [program as PipelineStmt];
   const scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   const out: Update = {};
-  // An operand that is not a document of fields — `{ $foo: 1 }` — is the developer's own
-  // MQL. It stands as written, and HR3 does not apply to it.
   const asWritten = new Map<string, unknown>();
   const claimed = new Map<string, string>();
   const put = (op: string, path: string, value: unknown, pos: number): void => {
@@ -37,7 +26,6 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
     claimed.set(path, op);
     setKey((out[op] ??= {}), path, value);
   };
-  // `$.b = $.a; delete $.a;` is one `$rename` — either order.
   const deleted = new Set<string>();
   for (const s of stmts) {
     if (s.type !== "UpdateFilter") continue;
@@ -147,7 +135,6 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
   if (Object.keys(doc).length === 0) throw E.notAnUpdate((program as { pos: number }).pos);
   return doc;
 
-  /** `{ $inc: { a: 1 } }` from a row's cell, merged path by path. */
   function merge(doc: unknown, pos: number): void {
     if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw E.notAnUpdate(pos);
     for (const [op, fields] of Object.entries(doc as Record<string, unknown>)) {
@@ -161,13 +148,11 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
   }
 }
 
-/** `$.a` and `$.a.b` name the path; anything else is not a field to update. */
 function pathOf(target: Expr, pos: number): string {
   if (target.type === "FieldRef" && target.path !== "") return target.path;
   throw E.updateTargetNeedsField(pos);
 }
 
-/** `$.n = [$.n, 5].min()` is `$min: { n: 5 }` — the SAME path on both sides. */
 function minMax(v: Expr, path: string): { op: "$min" | "$max"; value: Expr } | null {
   if (v.type !== "MethodCall" || v.object.type !== "ArrayLiteral" || v.args.length !== 0) return null;
   if (v.name !== "min" && v.name !== "max") return null;
@@ -184,7 +169,6 @@ function number(v: unknown, op: string, pos: number): number {
   return v;
 }
 
-/** `Date()` with no argument: the server's clock. As the whole write it is `$currentDate`. */
 function isNow(v: Expr, env: Env): boolean {
   return (
     v.type === "CallExpression" &&
