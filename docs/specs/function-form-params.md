@@ -111,7 +111,7 @@ jsmql.validate(input)     // { valid, errors } instead of a throw
 
 `jsmql.validate` accepts every shape that `jsmql.compile` accepts. It also accepts the one-shot string / function / template-tag shapes of `jsmql()`. So editor tooling can check a parameterised arrow before it passes the arrow to `jsmql.compile`. The check binds each parameter to a value of no known kind (`ParameterValue` in [src/index.ts](../../src/index.ts)). The check does not bind `null`, because each slot that takes a value other than `null` refuses `null` (HR7). The call can pass a value of the kind that the slot takes. See [types.md](types.md#the-kind-check).
 
-`jsmql.compile` resolves the arrow source and parses it once. The source is `Function.prototype.toString.call` for a function input and the trimmed string itself for a string input. `parseEntry` gives the params, the toolbox names and the program. The returned closure, on each call:
+`jsmql.compile` resolves the arrow source and parses it once. The source is the trimmed text of `Function.prototype.toString.call` for a function input, and the string itself for a string input. `parseEntry` gives the params, the toolbox names and the program. The returned closure, on each call:
 
 1. Looks each destructured key up on the params object. It refuses a missing key by name, and the message shows the call that passes it.
 2. Checks each value (`checkValue`, shared with the template tag): it refuses `undefined`, a function, a symbol, a non-finite number, an Invalid Date and a circular structure, by slot (`JsmqlInterpolationError`, with the key on `.key`).

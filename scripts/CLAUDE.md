@@ -40,7 +40,7 @@ The script runs as `prebuild`, so `npm run build` always refreshes both artifact
 
 ### `build-cjs.mjs`
 
-This script bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` into `dist/cjs/{index,globals,mongoose,cli}.cjs`. It uses esbuild and targets `node14`, so the package's `require` condition resolves to a working CommonJS module.
+This script bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` into `dist/cjs/{index,globals,mongoose,cli}.cjs`. It uses esbuild. It targets the oldest Node version that `package.json#engines` allows. So the `require` condition of the package resolves to a working CommonJS module.
 
 It also copies the ESM `.d.ts` files to sibling `.d.cts` files, for consumers with `moduleResolution: nodenext`. The `cli` entry is an executable, not an importable type, so the script excludes it from that mirror loop. The script also drops a `dist/cjs/package.json` with `"type": "commonjs"`, so Node treats the `.cjs` files as CJS even though the parent has `"type": "module"`.
 

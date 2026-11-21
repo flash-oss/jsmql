@@ -245,8 +245,8 @@ regex_literal  = "/" REGEX_CHARS "/" REGEX_FLAGS?            (* context-sensitiv
 REGEX_FLAGS    = [gimsuy]+
 
 number         = hex_number
-               | DIGIT_SEQ ("." DIGIT_SEQ)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
-                 (* decimal point only consumed when followed by a digit *)
+               | DIGIT_SEQ ("." DIGIT_SEQ?)? (("e"|"E") ("+"|"-")? DIGIT_SEQ)?
+                 (* as in JavaScript, a "." after the digits is always the decimal point *)
 hex_number     = ("0x"|"0X") HEX_SEQ
                  (* parser classifies: exactly 24 hex digits → ObjectId literal
                     (rejected if its embedded timestamp predates 2009 — a typo);
@@ -296,7 +296,7 @@ JS allows one trailing comma after the last element of any comma-separated list 
 
 ## Function-form input is not part of the grammar
 
-`jsmql()` and `validate()` are polymorphic: each accepts a string, a function (an arrow `({ $ }) => …` or a `function ({ $ }) { return … }`), or a template-tag invocation (see [architecture.md](architecture.md)). When given a function, an adapter in `src/index.ts` extracts the body through `Function.prototype.toString()` and feeds the body to the parser. The function wrapper itself never reaches the parser, and this grammar does **not** describe it. A `function ({ $ }) { return <expr> }` entry body is the value form (≡ `({ $ }) => <expr>`); a `function ({ $ }) { <stmts> }` body is the `;`-pipeline form (≡ `({ $ }) => { <stmts> }`). When called as a template tag, the adapter joins the literal chunks with `JSON.stringify`'d interpolations and feeds the resulting source to the parser. In every case the parser sees ordinary `expression`-conforming source, so this grammar covers all three call shapes.
+`jsmql()` and `validate()` are polymorphic: each accepts a string, a function (an arrow `({ $ }) => …` or a `function ({ $ }) { return … }`), or a template-tag invocation (see [architecture.md](architecture.md)). For a function input, an adapter in `src/index.ts` extracts the body with `Function.prototype.toString()` and gives the body to the parser. The function wrapper itself never reaches the parser, and this grammar does **not** describe it. A `function ({ $ }) { return <expr> }` entry body is the value form (≡ `({ $ }) => <expr>`); a `function ({ $ }) { <stmts> }` body is the `;`-pipeline form (≡ `({ $ }) => { <stmts> }`). For a template tag, the adapter (`templateSource`) puts a name in place of each interpolation. It binds each name to its value. Then it gives the joined source to the parser. A value never becomes source text. In every case the parser sees ordinary `expression`-conforming source, so this grammar covers all three call shapes.
 
 ## Template literals
 
@@ -335,9 +335,11 @@ A `$op(…)` call, known or unknown, refuses a spread, because a spread has no M
 > It always lexes a leading `-` as a `Minus` token, and the `unary` rule handles
 > unary minus. Codegen optimises `UnaryExpr('-', NumberLiteral(n))` to `-n` directly.
 
-> **Note on decimal numbers:** The lexer treats `.` as a decimal point only when the
-> character right after it is also a digit. So `0.5` is one number token,
-> but `$.items.0.name` tokenizes correctly as three separate segments.
+> **Note on decimal numbers:** As in JavaScript, the lexer reads a `.` after the
+> digits of a number as the decimal point. A digit after the `.` is optional.
+> So `1.` is 1, and `1.e3` is 1000. A number cannot start with `.`. A numeric
+> segment after a dot (`$.items.0`) is not valid JavaScript, so write bracket
+> access: `$.items[0]`.
 
 ## Object-style detection rule
 
@@ -347,7 +349,7 @@ An operator call uses **object-style** if and only if:
 
 If there is more than one argument, the call is always **positional**, even when the first argument is an object literal. For example, `$foo({ a: 1 }, $.b)` is positional, with two args.
 
-The rule runs in the parser's argument loop, [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
+The parser does not decide the shape: it keeps the arguments as it reads them. The emit phase applies the rule. An operator whose row states a cell for the position uses the row's emitter (for example `objectBody` in [src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)). Any other operator takes the plain form (`plainOperator` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)).
 
 ## Field ref — one segment only
 

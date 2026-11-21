@@ -33,7 +33,7 @@ Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
 | Input | Output stage(s) |
 |---|---|
 | `$$ = []` (drop all documents) | `[{ $match: { $expr: false } }]` |
-| `$$ = [{ a: 1 }, { a: 2 }]` (as the first statement) | `[{ $documents: [{ a: 1 }, { a: 2 }] }]` |
+| `$$ = [{ a: 1 }, { a: 2 }]` | `[{ $match: { $expr: false } }, { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } }]` — the server runs `$documents` only on a database-level aggregation, so the list takes the source-switch road |
 | `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5 } } }]` — the same as the bare chain `$$.filter(t => t.x > 5);` |
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
 | `$$ = $$$.t.filter(t => t.x > 5)` (uncorrelated) | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |

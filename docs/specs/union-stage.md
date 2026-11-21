@@ -64,6 +64,11 @@ document, and a written list of them — `$$.push({ … })`, `$$.push(...[{ … 
 arguments together, kept in source order. An array the data decides has no
 append form at all; `$$ = <array>` makes the stream from it instead.
 
+A run on the server shows that it also refuses `$documents` anywhere inside a
+`$facet`, at any depth. So the compiler refuses a written document append inside a `$facet`
+branch. The message names two alternatives: the collection append, and an
+append outside the branch.
+
 JSMQL lowers the list inside the `$unionWith` body, where the server evaluates
 it — `noStageInDocuments` in
 [src/compiler/emit/union.ts](../../src/compiler/emit/union.ts) holds the other

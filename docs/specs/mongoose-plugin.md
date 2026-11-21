@@ -44,10 +44,10 @@ The plugin **does not parse function arguments to disambiguate** between a JSMQL
 One named wrapper per patched method, written inline. Each block in [src/mongoose.ts](../../src/mongoose.ts) follows the same four-line pattern:
 
 ```ts
-const find = Model.find;
+const _find = Model.find;
 Model.find = function find(conditions, projection, options) {
   if (isJsmql(conditions)) conditions = jsmql.filter(conditions);
-  return find.call(this, conditions, projection, options);
+  return _find.call(this, conditions, projection, options);
 };
 ```
 

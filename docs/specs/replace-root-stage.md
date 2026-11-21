@@ -74,7 +74,7 @@ the user's first cue to what the statement does to the document.
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
 | `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = $.x.entries()` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
-| `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
+| `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot and does not read `$first`.
 `$replaceWith: { $first: … }` fails on the server for every document whose match

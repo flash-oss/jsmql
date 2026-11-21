@@ -129,7 +129,7 @@ time with `package.json`'s version. A `typeof` guard falls back to
 
 `src/cli.ts` stays in the strippable-TS subset. Its first line carries
 `#!/usr/bin/env node`. The `cli` esbuild entry in `scripts/build-cjs.mjs`
-bundles it to `dist/cjs/cli.cjs` (Node 14 target, shebang preserved). The
+bundles it to `dist/cjs/cli.cjs` and keeps the shebang. The
 script also runs `chmod 0o755` on it. `package.json#bin` maps the command
 name `jsmql` to that file.
 

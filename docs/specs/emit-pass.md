@@ -665,8 +665,11 @@ chain's trailing cleanup drops it. A constant `let` never gets that far: the
 fold inlines it. `x = …` writes the binding again when it is a `let`, and the
 compiler refuses it when it is a `const`. The compiler refuses a second `let x`
 in the same block, as JavaScript does. A nested block — a stage's `[ … ]` body,
-an `o => { … }` block — declares its own names and sees the outer ones, so a
-`let` there shadows and never collides.
+an `o => { … }` block — declares its own names and sees the outer ones. Over the
+same documents, the compiler refuses a declaration that shadows an outer
+binding in a field, because both write one field. A body over another
+collection may shadow an outer name. See
+[let-bindings.md § Blocks and sub-pipelines](let-bindings.md#blocks-and-sub-pipelines).
 
 ```js
 let x = $.a * 2; $.b = x;            // → [{"$set":{"__jsmql.var.x":{"$multiply":["$a",2]}}},{"$set":{"b":"$__jsmql.var.x"}},{"$unset":"__jsmql"}]
@@ -691,7 +694,7 @@ callback's index or receiver parameter that the stream cannot fill, or a
 function inside its own body. The marker carries the wording that its read
 throws. This way the compiler words the reason where it removes the name, and
 does not guess it where it reads the name. `$$ = [ … ]` starts the stream from a
-literal list of documents — see docs/specs/replace-root-stage.md for the pair it
+literal list of documents — see docs/specs/replace-stream-stage.md for the pair it
 emits and why. The empty list is a stream of nothing.
 
 ### The join road
@@ -873,9 +876,10 @@ counts, `[acc, d.x].max()`/`.min()` is `$max` / `$min`, `acc ?? d.x` is
 `$first`, a bare `d.x` is `$last`, and `[...acc, d.x]` or `acc.concat(d.x)` is
 `$push`. It refuses a body that spells none, and names them. The object form
 `[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]` names every
-fold in its body and its init, and the two sets must agree. The init is
-JavaScript's own and stays unread: MongoDB's accumulators have their own neutral
-elements. The compiler refuses a `$$.reduce` anywhere but inside this wrap, and
+fold in its body and its init, and the two sets must agree. The init must be a
+constant, because MongoDB's accumulators start empty. The compiler adds the
+seed to the result, as JavaScript does. With the init `10`, `acc + d.x` gives
+the `$sum` plus 10. `$last` reads no seed. The compiler refuses a `$$.reduce` anywhere but inside this wrap, and
 names the wrap.
 
 **The source stages** — `$$.indexStats()`, `$$$$.currentOp(…)` and their kind —

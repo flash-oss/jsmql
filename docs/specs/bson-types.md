@@ -234,10 +234,10 @@ There is no MQL expression that produces one either: the server refuses
 `{ $minKey: 1 }`, because `$minKey` is not an expression operator. So the value
 can only be the live one the fold builds, and their rows say `inCode`.
 
-JSMQL does not refuse `MinKey() + 1` at compile time, because it refuses none of its
-siblings either: `true + 1`, `[1,2] + 1` and `0x507f… + 1` all emit `$add` today. A
-general operand gate over every kind would be its own change; a MinKey-only gate would
-be an inconsistency, not a fix.
+The compiler refuses `MinKey() + 1` at compile time. The general operand check
+refuses it. This check also refuses `true + 1`. An operand of an arithmetic
+operator must be a kind that the operator takes. See
+[emit-pass.md § Operand shapes and the checks](emit-pass.md#operand-shapes-and-the-checks).
 
 ## Run against both majors
 

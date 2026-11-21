@@ -1520,7 +1520,6 @@ jsmql.expr('$.tags.split(",").toUpper()')                // ✗ .toUpper() on an
 
 The check covers every method that applies to only one type. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver. It does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that really accepts more than one type:
 
-- `.size` works on an array or a document.
 - `.clamp` and `.inRange` work on a number or a date.
 - `.toString` and `.getTime` work on anything.
 
@@ -3427,7 +3426,7 @@ $.a.isBefore($.b, "month")           // strictly an earlier calendar month
 
 #### The trailing `timezone` or options argument
 
-Every date method takes the same optional last argument. It is a **timezone string**, or an **object literal** whose keys are the remaining fields of the underlying operator.
+A date method that reads the calendar — a part, a span, a format or a unit — takes the same optional last argument. It is a **timezone string**, or an **object literal** whose keys are the remaining fields of the underlying operator. A method whose answer no zone changes takes no argument, for example `.getTime()` and `.toISOString()`.
 
 ```js
 $.end.diff($.start, "week", "UTC")
@@ -4998,7 +4997,7 @@ A constant stays a runtime expression when the server does not specify its answe
 - a conversion that changes the BSON numeric type
 - a statistical accumulator
 
-An `$op(…)` call never folds, so `$stdDevPop([1, 2, 3])` stays as you wrote it. A date method that names UTC, or that gives an option which UTC decides (`.startOf("week", { startOfWeek: "monday" })`), folds. A call with a named zone such as `.plus(1, "month", "Europe/Kyiv")` stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number with sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` stays `$toDouble`: the server gives a double, where a written `42` is an int. The full rule, and the operators that the compiler refuses to compute, are in [specs/constant-engine.md](specs/constant-engine.md).
+An `$op(…)` call never folds, so `$stdDevPop([1, 2, 3])` stays as you wrote it. A date method folds when it names UTC or gives an option that UTC decides, for example `.startOf("week", { startOfWeek: "monday" })`. A call with a named zone such as `.plus(1, "month", "Europe/Kyiv")` stays the aggregation operator. `n.toString()` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number with sixteen or more digits stays `$toString`, because JavaScript and MongoDB spell an exponent differently. `"42".toDouble()` stays `$toDouble`: the server gives a double, but a written `42` is an int. The full rule, and the operators that the compiler refuses to compute, are in [specs/constant-engine.md](specs/constant-engine.md).
 
 > A constant expression that JSMQL cannot represent as a MongoDB literal — for example, one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error, not silently broken MQL.
 
