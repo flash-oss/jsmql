@@ -1084,7 +1084,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       );
     });
 
-    it("`$.<field>` inside a TOP-LEVEL `$$` block `.map` body is rejected — must use the lambda param", () => {
+    it("`$.<field>` inside a top-level `$$` block `.map` body reads the current document", () => {
       expect(jsmql(`$$ = $$.map(d => { return { n: $.name }; });`)).toEqual([{ $replaceWith: { n: "$name" } }]);
     });
 

@@ -369,7 +369,7 @@ describe("let bindings — sub-pipeline boundaries", () => {
     ]);
   });
 
-  it("outer lets are NOT visible inside a sub-pipeline", () => {
+  it("an outer let reaches a sub-pipeline through the $lookup.let", () => {
     expect(
       jsmql(`
         let cutoff = $.start;
