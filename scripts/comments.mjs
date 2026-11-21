@@ -15,7 +15,7 @@ const DIRECTIVES = [
   /^\/\/\/\s*<reference\b/,
   /^\/\/\s*@ts-expect-error\b/,
   /^\/[/*]\s*[#@]__(PURE|NO_SIDE_EFFECTS)__/,
-  /^\/\/\s*oxfmt-ignore\b/,
+  /^\/\/\s*(oxfmt|prettier)-ignore\b/,
   /^\/\/\s*@vitest-environment\b/,
 ];
 

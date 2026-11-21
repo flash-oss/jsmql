@@ -146,7 +146,7 @@
   "test/permutations.test.ts": 66,
   "test/pipeline.test.ts": 247,
   "test/query-expr-agreement.test.ts": 77,
-  "test/realistic.test.ts": 457,
+  "test/realistic.test.ts": 456,
   "test/registry-agrees.test.ts": 48,
   "test/registry-contracts.test.ts": 3,
   "test/registry-fields-read.test.ts": 14,
