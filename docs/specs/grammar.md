@@ -381,7 +381,7 @@ Outside an iteratee slot, a bare name has no value to stand for. The emit phase 
 
 ## Context-sensitive `/` (regex or divide)
 
-`/` is context-sensitive. After a **value-ending token** (`Number`, `String`, `True`, `False`, `Null`, `Ident`, `RParen`, `RBracket`), `/` is a divide operator. After anything else (an operator, an opening delimiter, or the start of input), `/` starts a regex literal.
+`/` is context-sensitive. After a **token that ends a value**, `/` is a divide operator. `ENDS_A_VALUE` in [src/registry/tokens.ts](../../src/registry/tokens.ts) lists these tokens, for example a number, an identifier, `)` or the end of a template. After any other token (an operator, an opening delimiter, or the start of input), `/` starts a regex literal.
 
 This matches the JavaScript lexer rules and enables `.match(/pattern/flags)`.
 
