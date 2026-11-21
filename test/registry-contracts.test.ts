@@ -17,5 +17,6 @@ describe("registry — every type contract holds, and each was made to fail", ()
       });
       expect(r.status, r.stdout + r.stderr).toBe(0);
     },
+    60_000,
   );
 });

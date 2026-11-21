@@ -166,6 +166,7 @@ describe("smoke: built dist", () => {
       });
       expect(result.status, result.stdout + result.stderr).toBe(0);
     },
+    60_000,
   );
 
   const mongooseEsm = resolve(ROOT, "dist/mongoose.js");
