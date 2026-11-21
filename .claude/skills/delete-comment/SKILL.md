@@ -3,7 +3,7 @@ name: delete-comment
 description: >-
   Remove code comments from jsmql and move the knowledge they hold to its right
   home. Each comment is classified as a Tautology or Stale (delete it), an Excuse
-  (delete it and file a GitHub issue to fix the shortcut), or a Decision Record
+  (delete it and report the shortcut to the developer), or a Decision Record
   (move it to an ADR under docs/adr/, or confirm that a spec already states it).
   Then the skill lowers the comment ratchet baseline. Use this skill when the user
   types /delete-comment. Also use it when the user asks to "delete comments",
@@ -40,10 +40,9 @@ those comments are JSMQL source under test. It skips generated files, `vendor/`,
    its block list. Tell the sub-agent not to edit the repository.
 4. **Act on each category.**
    - **T — Tautology** and **S — Stale**: delete.
-   - **E — Excuse**: delete, and file one GitHub issue per distinct fix on
-     `flash-oss/jsmql` (the GitHub MCP `issue_write` tool). Search the open
-     issues first. This prevents a duplicate issue. End the body with the footer
-     that the GitHub rules of the session require.
+   - **E — Excuse**: delete. Report each distinct fix to the developer in your
+     reply: the code site, the shortcut and the proper fix. Never open a GitHub
+     issue.
    - **D — Decision Record**: when a spec, `docs/LANG_RULES.md` or a `CLAUDE.md`
      file already states the decision, delete. Otherwise add or extend an ADR in
      `docs/adr/` (format: [docs/adr/CLAUDE.md](docs/adr/CLAUDE.md)), add its row to
@@ -63,7 +62,7 @@ those comments are JSMQL source under test. It skips generated files, `vendor/`,
 ## Never
 
 - Never raise a number in `test/comment-baseline.json` by hand. Put the fact in a
-  name, an ADR, a spec or an issue, not in a new comment.
+  name, an ADR or a spec, not in a new comment.
 - Never delete a comment inside a JSMQL input or `test/human/`.
 - Never delete a `[DEF-NNN]` tag before its row in `docs/DEFERRED.md` has another
   tag site. The deferred-coverage test needs one.

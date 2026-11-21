@@ -16,7 +16,7 @@ root. A `../`-relative link from the skill file would point outside the repo.
 | Skill | Triggers on | Encodes |
 |---|---|---|
 | [verify-mql](verify-mql/SKILL.md) | You are about to assert or trust emitted MQL; you add an operator, a stage or a method; "does this run?" | The HR3 "run it on a real `mongod` before you trust it" procedure — `jsmql` CLI → `test/probe` (or the MongoDB MCP). Canonical authority: [test/CLAUDE.md](../../test/CLAUDE.md). |
-| [delete-comment](delete-comment/SKILL.md) | `/delete-comment`; the comment ratchet test fails; "move this comment to an ADR" | Classify each comment (Tautology, Stale, Excuse, Decision Record), then delete it, file an issue, or write an ADR, and lower the ratchet baseline. Canonical authority: § No comments in code in the root [CLAUDE.md](../../CLAUDE.md). |
+| [delete-comment](delete-comment/SKILL.md) | `/delete-comment`; the comment ratchet test fails; "move this comment to an ADR" | Classify each comment (Tautology, Stale, Excuse, Decision Record), then delete it, report a shortcut, or write an ADR, and lower the ratchet baseline. Canonical authority: § No comments in code in the root [CLAUDE.md](../../CLAUDE.md). |
 | [devlog](devlog/SKILL.md) | You finish an observable change and commit it; DEVLOG merge conflicts | The `docs/DEVLOG/YYYY-MM.md` entry format + the `scripts/merge-devlog.mjs` resolver. Canonical authority: [docs/DEVLOG/CLAUDE.md](../../docs/DEVLOG/CLAUDE.md). |
 
 ## Conventions

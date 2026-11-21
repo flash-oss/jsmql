@@ -13,7 +13,7 @@ import {
 } from "../scripts/comments.mjs";
 
 const FIX =
-  "Delete the comment. Record a non-obvious decision in docs/adr/, and file an issue for a shortcut. " +
+  "Delete the comment. Record a non-obvious decision in docs/adr/, and report a shortcut to the developer. " +
   "The /delete-comment skill walks through the steps.";
 
 describe("the comment ratchet", () => {

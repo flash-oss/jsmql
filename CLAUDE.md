@@ -149,7 +149,7 @@ Source code holds no comments. A comment is a second copy of a fact, so it drift
 - A name that says what the code does, in place of a comment that explains it.
 - An ADR in [docs/adr/](docs/adr/CLAUDE.md) for a non-obvious decision that no spec states.
 - A spec in `docs/specs/` for a rule of a feature.
-- A GitHub issue for a shortcut that needs a fix.
+- A report to the developer for a shortcut that needs a fix. Never open a GitHub issue.
 
 The rule has three exemptions: a tool directive (`/// <reference>`, `@ts-expect-error`), a comment inside a JSMQL input that a test compiles, and a generated file. The rule does not apply to `test/human/`.
 

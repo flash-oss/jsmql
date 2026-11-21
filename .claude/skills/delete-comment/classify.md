@@ -4,7 +4,7 @@ The `delete-comment` skill gives this file to each agent that classifies comment
 
 JSMQL is a JS-subset language that compiles to MongoDB MQL. Its source holds no comments. Classify each
 comment block in your list. A script then deletes each comment, and its knowledge goes to the correct document.
-**Do not edit any file in the repository. Do not file issues. Do not run git commands that change state.** Write only
+**Do not edit any file in the repository. Do not open GitHub issues. Do not run git commands that change state.** Write only
 the three output files that your task names. Write them in the output directory `<out>`.
 
 ## Input
@@ -24,7 +24,7 @@ or claim that a comment mentions still exists and is still true.
 - **E — Excuse.** Admits or justifies a shortcut: a hack, workaround, crude or approximate logic, a heuristic
   that can misfire, "best effort", "for now", TODO/FIXME, "good enough", a known gap that the code papers over,
   an `any` or cast justified by a weak reason, a duplicated code path justified rather than removed, a test that
-  is skipped or weakened with an explanation. Delete the comment, and file an issue to fix the code. Use E only
+  is skipped or weakened with an explanation. Delete the comment, and report the fix to the developer. Use E only
   when there is a real engineering fix to make — a deliberate, sound trade-off is D, not E.
 - **D — Decision Record.** Documents an important, non-obvious decision: why the code is shaped this way and not
   the obvious way, a MongoDB server constraint the code obeys (e.g. "the server rejects the bare form"), an
@@ -39,13 +39,13 @@ or claim that a comment mentions still exists and is still true.
 
 Tie-breaks: T over D when the code already makes the reason obvious to a reader who knows JS + MongoDB. Choose S
 when any part of the claim is false. A block that mixes a decision with a hack is E
-(the issue body may quote the decision). Tests: a comment that explains WHY an expected MQL shape is what it is
+(the fix note may quote the decision). Tests: a comment that explains WHY an expected MQL shape is what it is
 (server behaviour, a language rule) is D; a comment that restates the test title or the input is T.
 
 ## Outputs (all three files, even if empty)
 1. `<out>/<batch>.jsonl` — one JSON object per block, every block id in your list, in order:
-   `{"id":"src/x.ts:12","cat":"T|S|E|D|K","why":"<= 15 words","issue":"<issue-key>"?,"adr":"<adr-key>"?,"home":"<doc § section>"?}`
-   `issue` is required for E. For D exactly one of `adr` / `home`.
+   `{"id":"src/x.ts:12","cat":"T|S|E|D|K","why":"<= 15 words","fix":"<fix-key>"?,"adr":"<adr-key>"?,"home":"<doc § section>"?}`
+   `fix` is required for E. For D exactly one of `adr` / `home`.
 2. `<out>/<batch>-adrs.md` — one section per adr key you used:
    ```
    ## adr: <key>
@@ -62,20 +62,20 @@ when any part of the claim is false. A block that mixes a decision with a hack i
    comment about one decision (and closely related small decisions about one module) under one key. An ADR may
    hold a short list of related small decisions for one module. Carry over every fact the comments state —
    the ADR replaces them. Keep code names exact.
-3. `<out>/<batch>-issues.md` — one section per issue key:
+3. `<out>/<batch>-fixes.md` — one section per fix key:
    ```
-   ## issue: <key>
+   ## fix: <key>
    title: <imperative title, e.g. "Replace the regex comment strip in registry-fields-read with an AST walk">
    sources: <file:line list>
    <body: what the code does now, why it is a shortcut, what a proper fix looks like, how to verify>
    ```
    Group excuses that one fix resolves under one key.
 
-## Prose rules for ADR and issue text (the repo enforces these; read docs/STE.md once)
+## Prose rules for ADR and fix text (the repo enforces these; read docs/STE.md once)
 Simplified Technical English: one idea per sentence, max ~20 words per instruction / 25 per description, active
 voice, no `-ing` verb forms, keep articles, no idioms, "because" not "since". Do NOT quote any error message
 text — describe the refusal in your own words. Do not narrate history ("was added", "previously"). Do not list
 the current members of a changing set (methods, operators, stages). Do not give counts. Technical names stay exact.
 
-When done, reply with only: counts per category, number of ADR keys, number of issue keys, and any block you
+When done, reply with only: counts per category, number of ADR keys, number of fix keys, and any block you
 were unsure about (id + one line). Keep the reply under 15 lines.

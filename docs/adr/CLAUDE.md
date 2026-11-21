@@ -10,7 +10,7 @@ the code does not show and that no spec states.
 - Write one when a reader of the code would ask "why not the simple way?", and
   the answer is not in `docs/specs/`, `docs/LANG_RULES.md` or a `CLAUDE.md` file.
 - Do not write one for a rule that a spec owns. Change the spec instead.
-- Do not write one for a shortcut that needs a fix. File a GitHub issue instead.
+- Do not write one for a shortcut that needs a fix. Report the shortcut to the developer instead.
 
 ## Format
 
