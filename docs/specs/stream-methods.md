@@ -525,18 +525,16 @@ its result. The bare form means "transform the running stream". See
 
 ## The Stage cell is answered for every array-receiver method
 
-A method whose receiver is an array **can** have a stream form, so the grid requires it to
-carry an answer. There are four answers, and no fifth:
+A method whose receiver is an array **can** have a stream form, so its row must state a
+`stream` cell. The cell holds one of two answers:
 
-| Answer | Where |
+| Answer | What it says |
 |---|---|
-| a lowering | the row's `stream` cell — the stages the link means |
-| a value terminal | a row with a value cell and no stream cell (`.sum()`, `.head()`, `.size()`) — the chain ends in a value, which a join reads over its slot and the root stream refuses for want of a destination |
-| a written reason | an `unsupported(reason)` stream cell — why this one cannot work on a stream, and what to write instead |
+| a lowering | the stages that the link means |
+| a written reason | an `unsupported(reason)` cell: why this method cannot work on a stream, and what to write instead. A method that gives a value, for example `.sum()`, says so here. |
 
-`test/stream-methods.test.ts` fails in three cases. An array-receiver method has
-none of the four. A name appears in two of them. A reason is too short to be
-useful.
+`test/stream-methods.test.ts` fails when an array-receiver row states no `stream` cell, or
+when a reason is not a full sentence.
 
 A written reason says why *this* method is absent, and what to write instead
 ([ADR 0172](../adr/0172-stream-method-decisions.md)).

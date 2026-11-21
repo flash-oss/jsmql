@@ -3,6 +3,7 @@ import { jsmql } from "../src/index.ts";
 import { everyName, listedIn } from "../src/compiler/emit/consult.ts";
 import { restoresDocumentsOf } from "../src/compiler/rows.ts";
 import { GROUP_SLOT } from "../src/registry/vocabulary.ts";
+import { NAMES } from "../src/registry/names.ts";
 
 describe(".slice(start, end?) — on $$ (top-level stream)", () => {
   it("two-arg slice lowers to $skip + $limit", () => {
@@ -2378,5 +2379,22 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(
       "'.sortBy()' element 1 takes a field name, but got a number. Write a field name, for example \"age\".",
     );
+  });
+});
+
+describe("every array-receiver method answers the stream position", () => {
+  const arrayRows = Object.entries(NAMES).filter(([, row]) => [row.on].flat().includes("array"));
+
+  it("states a stream cell on each row", () => {
+    const silent = arrayRows.filter(([, row]) => (row as { stream?: unknown }).stream === undefined).map(([k]) => k);
+    expect(silent).toEqual([]);
+  });
+
+  it("gives a full sentence as the reason of each refusal", () => {
+    const thin = arrayRows
+      .map(([k, row]) => [k, (row as { stream?: { unsupported?: unknown } }).stream?.unsupported] as const)
+      .filter(([, reason]) => typeof reason === "string" && !/^\S.{19,}[.)]$/s.test(reason))
+      .map(([k]) => k);
+    expect(thin).toEqual([]);
   });
 });
